@@ -10,17 +10,20 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, cast
 
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session
 
 from app.api.deps import get_session
+from app.auth.deps import get_optional_user
 from app.models.component import ComponentType
+from app.models.user import User
 from app.services import component_service as cs
 from app.services import invoice_service as inv
 from app.services import location_service as ls
 from app.services import stock_service as ss
+from app.services import user_service as us
 from app.services._common import require_entity
 from app.web.presenter import build_component_table, format_parameter_value
 
@@ -30,19 +33,69 @@ templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 router = APIRouter(tags=["web"])
 
 
+def require_web_user(request: Request, session: Session = Depends(get_session)) -> User:
+    """Return the logged-in user or redirect to the login page (session, D11)."""
+    user = get_optional_user(request, session)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_303_SEE_OTHER, headers={"Location": "/login"}
+        )
+    return user
+
+
+@router.get("/login", response_class=HTMLResponse)
+def login_form(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(request, "login.html", {})
+
+
+@router.post("/login", response_model=None)
+def login_submit(
+    request: Request,
+    username: str = Form(),
+    password: str = Form(),
+    session: Session = Depends(get_session),
+) -> HTMLResponse | RedirectResponse:
+    user = us.authenticate(session, username, password)
+    if user is None:
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"error": "Invalid username or password."},
+            status_code=status.HTTP_401_UNAUTHORIZED,
+        )
+    request.session["user_id"] = user.id
+    return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/logout")
+def logout(request: Request) -> RedirectResponse:
+    request.session.clear()
+    return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+
+
 @router.get("/", response_class=HTMLResponse)
-def index(request: Request, session: Session = Depends(get_session)) -> HTMLResponse:
+def index(
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_web_user),
+) -> HTMLResponse:
     """Main page: component table with a type filter (spec §11)."""
     return templates.TemplateResponse(
         request,
         "index.html",
-        {"types": cs.list_types(session), "locations": ls.list_all(session)},
+        {
+            "types": cs.list_types(session),
+            "locations": ls.list_all(session),
+            "current_user": user,
+        },
     )
 
 
 @router.get("/web/api/components")
 def components_feed(
-    type_id: int | None = None, session: Session = Depends(get_session)
+    type_id: int | None = None,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_web_user),
 ) -> dict[str, Any]:
     """JSON feed for the Tabulator component table."""
     return build_component_table(session, type_id)
@@ -53,6 +106,7 @@ def component_detail(
     component_id: int,
     request: Request,
     session: Session = Depends(get_session),
+    user: User = Depends(require_web_user),
 ) -> HTMLResponse:
     """Component details: parameters, stock, purchase history (spec §12)."""
     from app.models.component import Component
@@ -110,5 +164,6 @@ def component_detail(
             "history": history,
             "movements": movements,
             "all_locations": ls.list_all(session),
+            "current_user": user,
         },
     )

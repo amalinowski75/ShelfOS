@@ -24,6 +24,14 @@
         </ul>
         <ul>
           <li><a href="/docs">API</a></li>
+          {% if current_user %}
+          <li>{{ current_user.name }} ({{ current_user.role.value }})</li>
+          <li>
+            <form action="/logout" method="post" style="margin: 0">
+              <button type="submit" class="secondary outline">Log out</button>
+            </form>
+          </li>
+          {% endif %}
         </ul>
       </nav>
       {% block content %}{% endblock %}

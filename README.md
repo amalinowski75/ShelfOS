@@ -42,6 +42,23 @@ Run the API locally (interactive docs at `/docs`):
 uvicorn app.main:app --reload
 ```
 
+### Authentication
+
+The UI and API require login (decision D11). On first startup a bootstrap admin
+is seeded from the environment (defaults `admin` / `admin`):
+
+```bash
+export SHELFOS_SECRET_KEY="a-long-random-secret-at-least-32-bytes"
+export SHELFOS_ADMIN_USERNAME="admin"
+export SHELFOS_ADMIN_PASSWORD="change-me"
+```
+
+- **Web UI:** sign in at `/login` (session cookie).
+- **API:** `POST /api/auth/token` with `{"username", "password"}` returns a JWT;
+  send it as `Authorization: Bearer <token>`.
+- Roles: `read-only` (GET only), `user` (read + write), `admin` (+ delete and
+  user management under `/api/admin/users`).
+
 Load fictional demo data to explore the UI (a few dozen sample components):
 
 ```bash

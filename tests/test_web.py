@@ -121,3 +121,47 @@ def test_build_component_table_empty(session) -> None:  # type: ignore[no-untype
     payload = build_component_table(session)
     assert payload["data"] == []
     assert [c["field"] for c in payload["columns"]][0] == "type"
+
+
+def _seed_admin(session) -> None:  # type: ignore[no-untyped-def]
+    from app.models.enums import UserRole
+    from app.services import user_service as us
+
+    us.create_user(session, username="admin", password="admin", role=UserRole.ADMIN)
+
+
+def test_web_pages_require_login(anon_client: TestClient) -> None:
+    resp = anon_client.get("/", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/login"
+
+
+def test_login_page_renders(anon_client: TestClient) -> None:
+    resp = anon_client.get("/login")
+    assert resp.status_code == 200
+    assert "Sign in" in resp.text
+
+
+def test_login_flow_grants_access(session, anon_client: TestClient) -> None:  # type: ignore[no-untyped-def]
+    _seed_admin(session)
+    resp = anon_client.post(
+        "/login",
+        data={"username": "admin", "password": "admin"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    # The session cookie now grants access to protected pages.
+    assert anon_client.get("/", follow_redirects=False).status_code == 200
+
+
+def test_login_invalid_credentials(session, anon_client: TestClient) -> None:  # type: ignore[no-untyped-def]
+    resp = anon_client.post("/login", data={"username": "ghost", "password": "x"})
+    assert resp.status_code == 401
+    assert "Invalid" in resp.text
+
+
+def test_logout_clears_session(session, anon_client: TestClient) -> None:  # type: ignore[no-untyped-def]
+    _seed_admin(session)
+    anon_client.post("/login", data={"username": "admin", "password": "admin"})
+    anon_client.post("/logout", follow_redirects=False)
+    assert anon_client.get("/", follow_redirects=False).status_code == 303
