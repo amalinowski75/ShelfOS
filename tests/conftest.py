@@ -40,11 +40,8 @@ def session(engine: Engine) -> Iterator[Session]:
         yield db_session
 
 
-@pytest.fixture
-def client(engine: Engine) -> Iterator[object]:
-    """Provide a FastAPI TestClient bound to the in-memory engine."""
-    from fastapi.testclient import TestClient
-
+def _build_app(engine: Engine):  # type: ignore[no-untyped-def]
+    """Build an app bound to the given in-memory engine."""
     app = create_app(create_tables=False)
 
     def override_get_session() -> Iterator[Session]:
@@ -52,5 +49,34 @@ def client(engine: Engine) -> Iterator[object]:
             yield session
 
     app.dependency_overrides[get_session] = override_get_session
+    return app
+
+
+@pytest.fixture
+def anon_client(engine: Engine) -> Iterator[object]:
+    """An unauthenticated TestClient bound to the in-memory engine."""
+    from fastapi.testclient import TestClient
+
+    with TestClient(_build_app(engine)) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def client(engine: Engine) -> Iterator[object]:
+    """An admin-authenticated TestClient (default for most tests)."""
+    from app.models.enums import UserRole
+    from app.services import user_service as us
+    from fastapi.testclient import TestClient
+
+    app = _build_app(engine)
+    with Session(engine) as setup_session:
+        us.create_user(
+            setup_session, username="admin", password="admin", role=UserRole.ADMIN
+        )
+
     with TestClient(app) as test_client:
+        token = test_client.post(
+            "/api/auth/token", json={"username": "admin", "password": "admin"}
+        ).json()["access_token"]
+        test_client.headers["Authorization"] = f"Bearer {token}"
         yield test_client

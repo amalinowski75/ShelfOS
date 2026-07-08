@@ -109,12 +109,17 @@ def set_password(session: Session, user_id: int, password: str) -> User:
 
 
 def ensure_admin(session: Session, *, username: str, password: str) -> User:
-    """Seed a bootstrap admin if no admin account exists yet (D11).
+    """Seed a bootstrap admin if no login-capable admin exists yet (D11).
 
-    Returns the existing or newly created admin. Idempotent.
+    The seeded "system" user is an admin but cannot log in (no password), so it
+    is explicitly ignored here. Returns the existing or newly created admin;
+    idempotent.
     """
     existing_admin = session.exec(
-        select(User).where(User.role == UserRole.ADMIN)
+        select(User).where(
+            User.role == UserRole.ADMIN,
+            col(User.password_hash).is_not(None),
+        )
     ).first()
     if existing_admin is not None:
         return existing_admin

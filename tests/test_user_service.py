@@ -83,6 +83,16 @@ def test_ensure_admin_is_idempotent(session: Session) -> None:
     assert third.id == first.id
 
 
+def test_ensure_admin_ignores_non_login_system_user(session: Session) -> None:
+    # The system user is an admin but cannot log in; a real admin must still be
+    # seeded so someone can actually authenticate.
+    system = ensure_system_user(session)
+    admin = us.ensure_admin(session, username="admin", password="admin")
+    assert admin.id != system.id
+    assert admin.password_hash is not None
+    assert us.authenticate(session, "admin", "admin") is not None
+
+
 def test_list_users_ordered(session: Session) -> None:
     us.create_user(session, username="zoe", password="pw")
     us.create_user(session, username="amy", password="pw")

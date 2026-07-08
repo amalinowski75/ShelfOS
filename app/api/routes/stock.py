@@ -5,8 +5,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, status
 from sqlmodel import Session
 
-from app.api.deps import get_current_user_id, get_session
+from app.api.deps import get_session
 from app.api.schemas import StockAdd, StockCorrection, StockRemove
+from app.auth.deps import current_user_id
 from app.models.stock import StockMovement
 from app.services import stock_service as ss
 
@@ -17,7 +18,7 @@ router = APIRouter(prefix="/api/stock", tags=["stock"])
 def add_stock(
     payload: StockAdd,
     session: Session = Depends(get_session),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(current_user_id),
 ) -> StockMovement:
     return ss.add_stock(
         session,
@@ -37,7 +38,7 @@ def add_stock(
 def remove_stock(
     payload: StockRemove,
     session: Session = Depends(get_session),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(current_user_id),
 ) -> StockMovement:
     return ss.remove_stock(
         session,
@@ -56,7 +57,7 @@ def remove_stock(
 def correct_stock(
     payload: StockCorrection,
     session: Session = Depends(get_session),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(current_user_id),
 ) -> StockMovement:
     return ss.apply_correction(
         session,

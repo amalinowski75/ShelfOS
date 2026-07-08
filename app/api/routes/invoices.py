@@ -5,13 +5,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, status
 from sqlmodel import Session
 
-from app.api.deps import get_current_user_id, get_session
+from app.api.deps import get_session
 from app.api.schemas import (
     InvoiceCreate,
     InvoiceFinalize,
     InvoiceLineCreate,
     LineLocationSet,
 )
+from app.auth.deps import current_user_id
 from app.models.invoice import Invoice, InvoiceLine
 from app.services import invoice_service as inv
 
@@ -83,7 +84,7 @@ def finalize_invoice(
     invoice_id: int,
     payload: InvoiceFinalize,
     session: Session = Depends(get_session),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(current_user_id),
 ) -> Invoice:
     return inv.finalize_invoice(
         session, invoice_id, user_id=user_id, total_gross=payload.total_gross
