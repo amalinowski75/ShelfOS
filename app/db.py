@@ -46,7 +46,6 @@ def create_db_engine(database_url: str | None = None, *, echo: bool = False) -> 
         echo: Whether to log emitted SQL statements.
     """
     url = database_url or os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL)
-    _ensure_sqlite_dir(url)
     return create_engine(url, echo=echo, **_engine_kwargs(url))
 
 
@@ -56,11 +55,17 @@ engine: Engine = create_db_engine()
 
 
 def init_db(target_engine: Engine | None = None) -> None:
-    """Create all tables that do not yet exist."""
+    """Create all tables that do not yet exist.
+
+    Creating the SQLite parent directory happens here (not at import time) so
+    merely importing the app never writes to disk.
+    """
     # Importing the models module registers every table on SQLModel.metadata.
     import app.models  # noqa: F401  (side-effect import)
 
-    SQLModel.metadata.create_all(target_engine or engine)
+    active_engine = target_engine or engine
+    _ensure_sqlite_dir(str(active_engine.url))
+    SQLModel.metadata.create_all(active_engine)
 
 
 @contextmanager

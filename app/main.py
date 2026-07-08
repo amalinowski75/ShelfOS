@@ -7,6 +7,8 @@ Run locally with::
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -21,11 +23,21 @@ _STATIC_DIR = Path(__file__).parent / "web" / "static"
 
 
 def create_app(*, create_tables: bool = True) -> FastAPI:
-    """Build and configure the ShelfOS FastAPI application."""
-    app = FastAPI(title="ShelfOS", version="1.0.0")
+    """Build and configure the ShelfOS FastAPI application.
 
-    if create_tables:
-        init_db()
+    When ``create_tables`` is true, the schema is created on application
+    startup (via the lifespan handler), not at import time — so importing this
+    module in tests never touches a real database. Tests pass
+    ``create_tables=False`` and bind their own in-memory engine.
+    """
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        if create_tables:
+            init_db()
+        yield
+
+    app = FastAPI(title="ShelfOS", version="1.0.0", lifespan=lifespan)
 
     register_error_handlers(app)
 
@@ -42,4 +54,4 @@ def create_app(*, create_tables: bool = True) -> FastAPI:
     return app
 
 
-app = create_app(create_tables=False)
+app = create_app()
