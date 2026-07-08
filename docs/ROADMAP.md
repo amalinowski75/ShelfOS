@@ -35,6 +35,24 @@ lint + type-check.
 - Generic vs type-specific component views (§11), details view (§12),
   add/take stock dialogs (§14–15), hover row actions.
 
-## Later (deferred, D10)
-CSV import/export, attachments upload, BOM/KiCad, full auth + roles,
-PostgreSQL, Playwright UI tests.
+Phases 0–5 are complete and tested. The remaining work is prioritized below.
+
+## Post-v1.0 backlog (priority order)
+
+Priorities set by the user on 2026-07-08.
+
+1. **Users, authentication & roles (§18).** Replace the "system user" stub (D2)
+   with real login and enforcement of admin / user / read-only. **Next up.**
+2. **Type & parameter creation (§13).** Convenient API + flow to create component
+   types and their parameter definitions (currently only low-level endpoints).
+3. **Invoices — expanded workflow (§16).** Deepen invoice handling; considered
+   clearly more important than CSV import or DB migration.
+4. **CSV import / export (§21).** Low priority for now.
+5. **Attachments upload (§10).** Actual file upload/serving; today only metadata.
+6. **Alembic migrations + PostgreSQL.** Near-last; may never be needed — revisit
+   only if required.
+
+Deferred / unscheduled: BOM & KiCad integration (§22), Playwright UI tests.
+
+UI polish/rework is held until the feature set above is complete (user has UI
+notes on hold).

@@ -120,3 +120,8 @@ Tracking scope per spec §19: quantity, location, invoice and parameter changes.
 
 Deferred (per spec, "Future"): CSV import, invoice upload/OCR, BOM, KiCad
 integration, project workflows, full auth, PostgreSQL, UI tests (Playwright).
+
+These are now prioritized in `ROADMAP.md` ("Post-v1.0 backlog"). Order set by the
+user on 2026-07-08: users/auth first, then type/parameter creation, then invoice
+workflow; CSV and Alembic/PostgreSQL are low priority (migration may never
+happen).
