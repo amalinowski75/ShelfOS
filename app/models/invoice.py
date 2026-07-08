@@ -45,3 +45,5 @@ class InvoiceLine(SQLModel, table=True):
     quantity: int
     unit_price: Decimal = Field(max_digits=_MONEY_DIGITS, decimal_places=_MONEY_PLACES)
     total_price: Decimal = Field(max_digits=_MONEY_DIGITS, decimal_places=_MONEY_PLACES)
+    # Destination stock location, assigned before finalization (spec §16 step 6).
+    location_id: int | None = Field(default=None, foreign_key="locations.id")

@@ -119,7 +119,8 @@ An invoice must have ≥ 1 line.
 | supplier_part_number | str?    |                           |
 | quantity             | int     |                           |
 | unit_price           | Decimal |                           |
-| total_price          | Decimal |                           |
+| total_price          | Decimal | computed = quantity×unit   |
+| location_id          | int FK? | destination stock location (spec §16) |
 
 ## attachments
 | field       | type   | notes                                        |
