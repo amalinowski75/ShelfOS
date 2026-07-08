@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from sqlmodel import Session, func, select
+from sqlmodel import Session, col, func, select
 
 from app.models.component import Component
 from app.models.enums import StockReason
@@ -175,6 +175,22 @@ def finalize_invoice(
     session.commit()
     session.refresh(invoice)
     return invoice
+
+
+def list_purchase_history(
+    session: Session, component_id: int
+) -> list[tuple[InvoiceLine, Invoice]]:
+    """Return finalized invoice lines for a component, newest first (spec §12)."""
+    rows = session.exec(
+        select(InvoiceLine, Invoice)
+        .join(Invoice, col(InvoiceLine.invoice_id) == Invoice.id)
+        .where(
+            InvoiceLine.component_id == component_id,
+            col(Invoice.is_finalized).is_(True),
+        )
+        .order_by(col(Invoice.invoice_date).desc(), col(Invoice.id).desc())
+    ).all()
+    return [(line, invoice) for line, invoice in rows]
 
 
 def _require_draft(session: Session, invoice_id: int) -> Invoice:

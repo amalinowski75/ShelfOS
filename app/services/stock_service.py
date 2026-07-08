@@ -9,7 +9,7 @@ lets a location's quantity drop below zero.
 
 from __future__ import annotations
 
-from sqlmodel import Session, func, select
+from sqlmodel import Session, col, func, select
 
 from app.models.component import Component
 from app.models.enums import ContainerType, StockReason
@@ -121,6 +121,46 @@ def quantity_from_movements(
         )
     ).one()
     return int(total)
+
+
+def total_quantities_by_component(
+    session: Session,
+) -> dict[int, int]:
+    """Return a ``{component_id: total_quantity}`` map in a single query (§11)."""
+    rows = session.exec(
+        select(
+            ComponentLocation.component_id,
+            func.coalesce(func.sum(ComponentLocation.quantity), 0),
+        ).group_by(col(ComponentLocation.component_id))
+    ).all()
+    return {component_id: int(total) for component_id, total in rows}
+
+
+def list_component_locations(
+    session: Session, component_id: int
+) -> list[ComponentLocation]:
+    """Return the locations where a component is currently stocked (qty > 0)."""
+    return list(
+        session.exec(
+            select(ComponentLocation)
+            .where(
+                ComponentLocation.component_id == component_id,
+                ComponentLocation.quantity > 0,
+            )
+            .order_by(col(ComponentLocation.location_id))
+        ).all()
+    )
+
+
+def list_movements(session: Session, component_id: int) -> list[StockMovement]:
+    """Return a component's stock movements, most recent first (§17)."""
+    return list(
+        session.exec(
+            select(StockMovement)
+            .where(StockMovement.component_id == component_id)
+            .order_by(col(StockMovement.timestamp).desc(), col(StockMovement.id).desc())
+        ).all()
+    )
 
 
 def verify_cache_consistency(session: Session) -> bool:

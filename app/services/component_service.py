@@ -11,7 +11,7 @@ Key rules implemented here:
 
 from __future__ import annotations
 
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.models.component import (
     Component,
@@ -153,6 +153,21 @@ def create_component(
     session.commit()
     session.refresh(component)
     return component
+
+
+def list_components(session: Session, *, type_id: int | None = None) -> list[Component]:
+    """List non-deleted components, optionally filtered to a single type (§11)."""
+    statement = select(Component).where(col(Component.deleted_at).is_(None))
+    if type_id is not None:
+        statement = statement.where(Component.type_id == type_id)
+    return list(session.exec(statement.order_by(col(Component.id))).all())
+
+
+def list_types(session: Session) -> list[ComponentType]:
+    """List all component types ordered by name (for the type filter, §11)."""
+    return list(
+        session.exec(select(ComponentType).order_by(col(ComponentType.name))).all()
+    )
 
 
 def list_parameter_values(

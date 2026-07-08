@@ -6,12 +6,17 @@ and traversal while preventing cycles.
 
 from __future__ import annotations
 
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.models.enums import LocationType
 from app.models.location import Location
 from app.services._common import require_entity
 from app.services.errors import ValidationError
+
+
+def list_all(session: Session) -> list[Location]:
+    """Return every location ordered by name (for selection dropdowns)."""
+    return list(session.exec(select(Location).order_by(col(Location.name))).all())
 
 
 def create_location(
