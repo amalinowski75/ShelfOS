@@ -7,11 +7,17 @@ Run locally with::
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.api.errors import register_error_handlers
 from app.api.routes import admin, components, invoices, locations, stock, types
 from app.db import init_db
+from app.web import routes as web_routes
+
+_STATIC_DIR = Path(__file__).parent / "web" / "static"
 
 
 def create_app(*, create_tables: bool = True) -> FastAPI:
@@ -25,6 +31,9 @@ def create_app(*, create_tables: bool = True) -> FastAPI:
 
     for module in (types, components, locations, stock, invoices, admin):
         app.include_router(module.router)
+
+    app.include_router(web_routes.router)
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
     @app.get("/health", tags=["meta"])
     def health() -> dict[str, str]:

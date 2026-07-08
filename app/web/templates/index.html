@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Components — ShelfOS{% endblock %}
+
+{% block content %}
+<header>
+  <hgroup>
+    <h1>Components</h1>
+    <p>Inventory of electronic components.</p>
+  </hgroup>
+  <label for="type-filter">
+    Type
+    <select id="type-filter">
+      <option value="">All types</option>
+      {% for t in types %}
+      <option value="{{ t.id }}">{{ t.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+</header>
+
+<div id="components-table"></div>
+
+<dialog id="stock-dialog">
+  <article>
+    <header>
+      <button aria-label="Close" rel="prev" data-close></button>
+      <strong id="stock-dialog-title">Add stock</strong>
+    </header>
+    <form id="stock-form">
+      <input type="hidden" name="component_id" />
+      <input type="hidden" name="mode" />
+      <label>
+        Quantity
+        <input type="number" name="quantity" min="1" value="1" required />
+      </label>
+      <label>
+        Location
+        <select name="location_id" required>
+          {% for loc in locations %}
+          <option value="{{ loc.id }}">{{ loc.name }} ({{ loc.type.value }})</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        Note
+        <input type="text" name="note" placeholder="optional" />
+      </label>
+      <p id="stock-error" class="error" hidden></p>
+      <footer>
+        <button type="button" class="secondary" data-close>Cancel</button>
+        <button type="submit">Save</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/app.js"></script>
+{% endblock %}

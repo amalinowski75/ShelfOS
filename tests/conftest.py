@@ -11,6 +11,8 @@ from collections.abc import Iterator
 
 import app.models  # noqa: F401  (register tables on SQLModel.metadata)
 import pytest
+from app.api.deps import get_session
+from app.main import create_app
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
@@ -36,3 +38,19 @@ def session(engine: Engine) -> Iterator[Session]:
     """Provide a session bound to the in-memory engine."""
     with Session(engine) as db_session:
         yield db_session
+
+
+@pytest.fixture
+def client(engine: Engine) -> Iterator[object]:
+    """Provide a FastAPI TestClient bound to the in-memory engine."""
+    from fastapi.testclient import TestClient
+
+    app = create_app(create_tables=False)
+
+    def override_get_session() -> Iterator[Session]:
+        with Session(engine) as session:
+            yield session
+
+    app.dependency_overrides[get_session] = override_get_session
+    with TestClient(app) as test_client:
+        yield test_client

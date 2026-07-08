@@ -6,27 +6,7 @@ dependency, so requests exercise the real services against an isolated database.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-
-import pytest
-from app.api.deps import get_session
-from app.main import create_app
 from fastapi.testclient import TestClient
-from sqlalchemy.engine import Engine
-from sqlmodel import Session
-
-
-@pytest.fixture
-def client(engine: Engine) -> Iterator[TestClient]:
-    app = create_app(create_tables=False)
-
-    def override_get_session() -> Iterator[Session]:
-        with Session(engine) as session:
-            yield session
-
-    app.dependency_overrides[get_session] = override_get_session
-    with TestClient(app) as test_client:
-        yield test_client
 
 
 def test_health(client: TestClient) -> None:

@@ -9,11 +9,23 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, SQLModel, create_engine
 
 DEFAULT_DATABASE_URL = "sqlite:///data/shelfos.db"
+
+_SQLITE_FILE_PREFIX = "sqlite:///"
+
+
+def _ensure_sqlite_dir(database_url: str) -> None:
+    """Create the parent directory for a file-backed SQLite database."""
+    if not database_url.startswith(_SQLITE_FILE_PREFIX):
+        return
+    path = database_url[len(_SQLITE_FILE_PREFIX) :]
+    if path and path != ":memory:":
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
 
 
 def _engine_kwargs(database_url: str) -> dict[str, object]:
@@ -34,6 +46,7 @@ def create_db_engine(database_url: str | None = None, *, echo: bool = False) -> 
         echo: Whether to log emitted SQL statements.
     """
     url = database_url or os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL)
+    _ensure_sqlite_dir(url)
     return create_engine(url, echo=echo, **_engine_kwargs(url))
 
 
