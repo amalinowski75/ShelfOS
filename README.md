@@ -35,3 +35,9 @@ black --check .
 mypy app
 pytest --cov
 ```
+
+Run the API locally (interactive docs at `/docs`):
+
+```bash
+uvicorn app.main:app --reload
+```

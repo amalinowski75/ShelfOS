@@ -32,6 +32,10 @@ include = ["app*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra -q --strict-markers"
+filterwarnings = [
+    # Starlette's TestClient still imports httpx; not actionable from our code.
+    "ignore:Using `httpx` with `starlette.testclient`",
+]
 
 [tool.coverage.run]
 source = ["app"]
@@ -47,6 +51,8 @@ src = ["app", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
+# B008: FastAPI relies on calling Depends()/Query() in argument defaults.
+ignore = ["B008"]
 
 [tool.black]
 target-version = ["py312"]

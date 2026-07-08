@@ -21,6 +21,7 @@ from app.models.component import (
     ParameterEnumValue,
 )
 from app.models.enums import MountingType, ParameterDataType
+from app.models.location import ComponentLocation
 from app.services._common import require_entity
 from app.services.errors import ValidationError
 
@@ -152,6 +153,38 @@ def create_component(
     session.commit()
     session.refresh(component)
     return component
+
+
+def list_parameter_values(
+    session: Session, component_id: int
+) -> list[ComponentParameter]:
+    """Return all stored EAV values for a component."""
+    require_entity(session, Component, component_id, "component")
+    return list(
+        session.exec(
+            select(ComponentParameter).where(
+                ComponentParameter.component_id == component_id
+            )
+        ).all()
+    )
+
+
+def hard_delete_component(session: Session, component_id: int) -> None:
+    """Permanently delete a component and its EAV/stock rows (admin only, §20).
+
+    This is the administrative delete exposed through the backend API; the normal
+    UI never deletes components. Related stock movements and invoice lines are
+    left untouched as historical records.
+    """
+    component = require_entity(session, Component, component_id, "component")
+    for param in list_parameter_values(session, component_id):
+        session.delete(param)
+    for cl in session.exec(
+        select(ComponentLocation).where(ComponentLocation.component_id == component_id)
+    ).all():
+        session.delete(cl)
+    session.delete(component)
+    session.commit()
 
 
 def set_parameter_value(

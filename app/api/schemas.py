@@ -1,0 +1,109 @@
+"""Request body schemas for the API.
+
+Response models reuse the SQLModel table classes directly (they are Pydantic
+models), so only inbound payloads need dedicated schemas here.
+"""
+
+from __future__ import annotations
+
+from datetime import date
+from decimal import Decimal
+
+from pydantic import BaseModel
+
+from app.models.enums import (
+    ContainerType,
+    LocationType,
+    MountingType,
+    ParameterDataType,
+    StockReason,
+)
+
+# Order matters for Pydantic union coercion: bool before int (bool is an int
+# subclass) so JSON ``true`` stays a bool rather than becoming ``1``.
+ParameterValue = bool | int | float | str
+
+
+class TypeCreate(BaseModel):
+    name: str
+    parent_id: int | None = None
+
+
+class ParameterDefinitionCreate(BaseModel):
+    name: str
+    label: str
+    data_type: ParameterDataType
+    unit: str | None = None
+    is_filterable: bool = False
+    is_table_column: bool = False
+    sort_order: int = 0
+    enum_values: list[str] | None = None
+
+
+class ComponentCreate(BaseModel):
+    type_id: int
+    manufacturer: str | None = None
+    mpn: str | None = None
+    package: str | None = None
+    mounting_type: MountingType = MountingType.OTHER
+    notes: str | None = None
+
+
+class ParameterValueSet(BaseModel):
+    parameter_definition_id: int
+    value: ParameterValue
+
+
+class LocationCreate(BaseModel):
+    type: LocationType
+    name: str
+    parent_id: int | None = None
+
+
+class StockAdd(BaseModel):
+    component_id: int
+    location_id: int
+    quantity: int
+    container_type: ContainerType = ContainerType.LOOSE
+    reason: StockReason = StockReason.PURCHASE
+    note: str | None = None
+
+
+class StockRemove(BaseModel):
+    component_id: int
+    location_id: int
+    quantity: int
+    reason: StockReason = StockReason.USAGE
+    note: str | None = None
+
+
+class StockCorrection(BaseModel):
+    component_id: int
+    location_id: int
+    delta: int
+    note: str | None = None
+
+
+class InvoiceCreate(BaseModel):
+    supplier: str
+    invoice_number: str
+    invoice_date: date
+    currency: str
+    notes: str | None = None
+    file_path: str | None = None
+
+
+class InvoiceLineCreate(BaseModel):
+    component_id: int
+    quantity: int
+    unit_price: Decimal
+    supplier_part_number: str | None = None
+    location_id: int | None = None
+
+
+class LineLocationSet(BaseModel):
+    location_id: int
+
+
+class InvoiceFinalize(BaseModel):
+    total_gross: Decimal | None = None
