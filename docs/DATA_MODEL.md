@@ -134,11 +134,13 @@ An invoice must have ≥ 1 line.
 | notes       | str?   |                                              |
 
 ## users
-| field | type   | notes                        |
-|-------|--------|------------------------------|
-| id    | int PK |                              |
-| name  | str    |                              |
-| role  | enum   | admin/user/read-only (D2)    |
+| field         | type   | notes                                    |
+|---------------|--------|------------------------------------------|
+| id            | int PK |                                          |
+| name          | str    | username, unique (D11)                   |
+| role          | enum   | admin/user/read-only (D11)               |
+| password_hash | str?   | bcrypt; None = cannot log in (system)    |
+| is_active     | bool   | disabled accounts cannot authenticate    |
 
 ## audit_log
 See D9 (generic change table).

@@ -27,11 +27,28 @@ user is held in Polish.
 
 ## D2. Users and authentication  [CONFIRMED]
 
-- `User` model and roles (`admin`, `user`, `read-only`) **exist** in the schema.
-- In v1.0 there is **no real login** — a fixed "system user" is used
-  (seeded on database initialization).
-- `user_id` in stock movements and audit log points to this user.
-- Full auth (sessions/passwords/token) and role enforcement — **deferred**.
+Superseded by D11 (real auth). Historical note: v1.0 initially shipped with no
+login and a fixed "system user".
+
+## D11. Authentication and authorization  [CONFIRMED]
+
+Decided 2026-07-08 when implementing real auth (replaces the D2 stub).
+
+- **Mechanisms (both):** signed-cookie **sessions** for the web UI and **JWT
+  bearer tokens** for the JSON API. Same `SECRET_KEY` (env var) signs both.
+- **Password hashing:** bcrypt (`app.services.user_service`).
+- **Roles / enforcement:** `admin` > `user` > `read-only`.
+  - reads (GET/HEAD): any authenticated active user (read-only included);
+  - writes (POST/PUT/DELETE): `user` or `admin` — read-only is rejected (403),
+    i.e. "read-only = GET only";
+  - admin-only: hard delete (§20) and user management.
+- **Accounts:** admin creates accounts; **no self-registration**. A first admin
+  is seeded on startup from `ADMIN_USERNAME` / `ADMIN_PASSWORD` env (defaults
+  `admin`/`admin`, with a warning) so there is a bootstrap account.
+- **System user:** the seeded "system" user is kept as the owner of automated
+  actions (seeding, imports) and **cannot log in** (no password); humans use
+  their own accounts, and stock/audit records are attributed to the logged-in
+  user.
 
 ## D3. EAV parameters — inheritance  [CONFIRMED]
 
