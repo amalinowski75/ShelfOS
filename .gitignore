@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Database and runtime data
+*.db
+*.sqlite
+*.sqlite3
+/data/
+/attachments/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
