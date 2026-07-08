@@ -41,3 +41,10 @@ Run the API locally (interactive docs at `/docs`):
 ```bash
 uvicorn app.main:app --reload
 ```
+
+Load fictional demo data to explore the UI (a few dozen sample components):
+
+```bash
+python scripts/seed_demo.py          # only if the database is empty
+python scripts/seed_demo.py --force  # add demo data anyway
+```
