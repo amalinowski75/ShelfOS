@@ -9,17 +9,64 @@ const table = new Tabulator("#components-table", {
   placeholder: "No components",
 });
 
+const esc = (value) =>
+  String(value ?? "").replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
+  );
+
+// Fields the presenter always emits get bespoke formatting; anything else
+// (type, manufacturer, per-type parameter columns) renders as plain text.
+function columnDef(column) {
+  const base = { title: column.title, field: column.field };
+  switch (column.field) {
+    case "mpn":
+      return {
+        ...base,
+        formatter: (cell) => `<span class="cell-mpn">${esc(cell.getValue())}</span>`,
+      };
+    case "package":
+      return {
+        ...base,
+        formatter: (cell) => `<span class="cell-mono">${esc(cell.getValue())}</span>`,
+      };
+    case "mounting_type":
+      return {
+        ...base,
+        formatter: (cell) => {
+          const value = cell.getValue();
+          const cls = value === "THT" ? "b-accent" : "b-neutral";
+          return `<span class="badge ${cls}"><span class="dot"></span>${esc(value)}</span>`;
+        },
+      };
+    case "quantity":
+      return {
+        ...base,
+        hozAlign: "right",
+        formatter: (cell) => {
+          const value = Number(cell.getValue()) || 0;
+          const zero = value === 0 ? " is-zero" : "";
+          return `<span class="cell-qty${zero}">${value.toLocaleString()}</span>`;
+        },
+      };
+    default:
+      return base;
+  }
+}
+
 function actionColumn() {
   return {
     title: "",
     field: "actions",
     headerSort: false,
-    width: 190,
+    width: 200,
+    hozAlign: "right",
     formatter: () =>
       `<div class="row-actions">
-         <button data-act="add">Add</button>
-         <button data-act="take">Take</button>
-         <a data-act="details" role="button" class="secondary outline">Details</a>
+         <button class="btn btn-secondary btn-sm" data-act="add">Add</button>
+         <button class="btn btn-secondary btn-sm" data-act="take">Take</button>
+         <button class="btn btn-ghost btn-sm" data-act="details">Details</button>
        </div>`,
     cellClick: (event, cell) => {
       const act = event.target.dataset.act;
@@ -43,7 +90,7 @@ async function loadTable() {
   const payload = await fetch(
     `/web/api/components${currentTypeQuery()}`,
   ).then((r) => r.json());
-  const columns = payload.columns.map((c) => ({ title: c.title, field: c.field }));
+  const columns = payload.columns.map(columnDef);
   columns.push(actionColumn());
   table.setColumns(columns);
   await table.setData(payload.data);

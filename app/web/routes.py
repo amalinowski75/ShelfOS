@@ -28,7 +28,23 @@ from app.services._common import require_entity
 from app.web.presenter import build_component_table, format_parameter_value
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
+_STATIC_DIR = Path(__file__).parent / "static"
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+
+
+def _static_version() -> str:
+    """Cache-busting token: the newest static-file mtime.
+
+    Exposed as a Jinja global so templates can append ``?v={{ static_version() }}``
+    to asset links. The token changes whenever a CSS/JS file is edited, so
+    browsers fetch the new file without a manual hard refresh.
+    """
+    files = (f for f in _STATIC_DIR.glob("*") if f.is_file())
+    newest = max((f.stat().st_mtime for f in files), default=0.0)
+    return str(int(newest))
+
+
+templates.env.globals["static_version"] = _static_version
 
 router = APIRouter(tags=["web"])
 

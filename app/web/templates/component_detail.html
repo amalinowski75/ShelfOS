@@ -1,33 +1,45 @@
 {% extends "base.html" %}
 {% block title %}{{ component.mpn or "Component" }} — ShelfOS{% endblock %}
 
-{% block content %}
-<hgroup>
-  <h1>{{ component.mpn or ("Component #" ~ component.id) }}</h1>
-  <p>{{ type_name }}{% if component.manufacturer %} · {{ component.manufacturer }}{% endif %}</p>
-</hgroup>
-<p><a href="/">&larr; Back to components</a></p>
+{% macro status_badge(status) -%}
+  {%- set cls = {"active": "b-ok", "archived": "b-neutral", "obsolete": "b-warn", "hidden": "b-neutral"} -%}
+  <span class="badge {{ cls.get(status, 'b-neutral') }}"><span class="dot"></span>{{ status }}</span>
+{%- endmacro %}
 
-<div class="grid">
-  <section>
+{% macro mount_badge(mount) -%}
+  <span class="badge {{ 'b-accent' if mount == 'THT' else 'b-neutral' }}"><span class="dot"></span>{{ mount }}</span>
+{%- endmacro %}
+
+{% block content %}
+<p class="crumb"><a href="/">&larr; Back to components</a></p>
+
+<div class="head">
+  <div>
+    <h1>{{ component.mpn or ("Component #" ~ component.id) }}</h1>
+    <p>{{ type_name }}{% if component.manufacturer %} · {{ component.manufacturer }}{% endif %}</p>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="card card-pad">
     <h2>Overview</h2>
-    <table>
+    <table class="kv">
       <tbody>
         <tr><th>Type</th><td>{{ type_name }}</td></tr>
         <tr><th>Manufacturer</th><td>{{ component.manufacturer or "—" }}</td></tr>
-        <tr><th>MPN</th><td>{{ component.mpn or "—" }}</td></tr>
-        <tr><th>Package</th><td>{{ component.package or "—" }}</td></tr>
-        <tr><th>Mounting</th><td>{{ component.mounting_type.value }}</td></tr>
-        <tr><th>Status</th><td>{{ component.status.value }}</td></tr>
+        <tr><th>MPN</th><td class="mono">{{ component.mpn or "—" }}</td></tr>
+        <tr><th>Package</th><td class="mono">{{ component.package or "—" }}</td></tr>
+        <tr><th>Mounting</th><td>{{ mount_badge(component.mounting_type.value) }}</td></tr>
+        <tr><th>Status</th><td>{{ status_badge(component.status.value) }}</td></tr>
       </tbody>
     </table>
-    {% if component.notes %}<p>{{ component.notes }}</p>{% endif %}
-  </section>
+    {% if component.notes %}<p class="muted" style="margin: 14px 0 0">{{ component.notes }}</p>{% endif %}
+  </div>
 
-  <section>
+  <div class="card card-pad">
     <h2>Parameters</h2>
     {% if parameters %}
-    <table>
+    <table class="kv">
       <tbody>
         {% for p in parameters %}
         <tr><th>{{ p.label }}</th><td>{{ p.value or "—" }}</td></tr>
@@ -35,77 +47,85 @@
       </tbody>
     </table>
     {% else %}
-    <p>No parameters defined for this type.</p>
+    <p class="empty">No parameters defined for this type.</p>
     {% endif %}
-  </section>
+  </div>
 </div>
 
-<section>
-  <h2>Stock by location</h2>
-  {% if locations %}
-  <table>
-    <thead>
-      <tr><th>Location</th><th>Quantity</th><th>Container</th></tr>
-    </thead>
-    <tbody>
-      {% for loc in locations %}
-      <tr>
-        <td>{{ loc.path }}</td>
-        <td>{{ loc.quantity }}</td>
-        <td>{{ loc.container }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p>Not currently in stock.</p>
-  {% endif %}
-</section>
+<div class="stack" style="margin-top: 20px">
+  <div class="card card-pad">
+    <h2>Stock by location</h2>
+    {% if locations %}
+    <div class="table-wrap">
+      <table class="data">
+        <thead>
+          <tr><th>Location</th><th style="text-align:right">Quantity</th><th>Container</th></tr>
+        </thead>
+        <tbody>
+          {% for loc in locations %}
+          <tr>
+            <td>{{ loc.path }}</td>
+            <td class="num">{{ loc.quantity }}</td>
+            <td><span class="badge b-neutral">{{ loc.container }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty">Not currently in stock.</p>
+    {% endif %}
+  </div>
 
-<section>
-  <h2>Purchase history</h2>
-  {% if history %}
-  <table>
-    <thead>
-      <tr><th>Date</th><th>Invoice</th><th>Supplier</th><th>Qty</th><th>Unit price</th></tr>
-    </thead>
-    <tbody>
-      {% for h in history %}
-      <tr>
-        <td>{{ h.date }}</td>
-        <td>{{ h.invoice_number }}</td>
-        <td>{{ h.supplier }}</td>
-        <td>{{ h.quantity }}</td>
-        <td>{{ h.unit_price }} {{ h.currency }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p>No finalized purchases.</p>
-  {% endif %}
-</section>
+  <div class="card card-pad">
+    <h2>Purchase history</h2>
+    {% if history %}
+    <div class="table-wrap">
+      <table class="data">
+        <thead>
+          <tr><th>Date</th><th>Invoice</th><th>Supplier</th><th style="text-align:right">Qty</th><th style="text-align:right">Unit price</th></tr>
+        </thead>
+        <tbody>
+          {% for h in history %}
+          <tr>
+            <td class="mono">{{ h.date }}</td>
+            <td class="mono">{{ h.invoice_number }}</td>
+            <td>{{ h.supplier }}</td>
+            <td class="num">{{ h.quantity }}</td>
+            <td class="num">{{ h.unit_price }} {{ h.currency }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty">No finalized purchases.</p>
+    {% endif %}
+  </div>
 
-<section>
-  <h2>Stock movements</h2>
-  {% if movements %}
-  <table>
-    <thead>
-      <tr><th>When</th><th>Δ</th><th>Reason</th><th>Note</th></tr>
-    </thead>
-    <tbody>
-      {% for m in movements %}
-      <tr>
-        <td>{{ m.timestamp.strftime("%Y-%m-%d %H:%M") }}</td>
-        <td>{{ "%+d" | format(m.delta_quantity) }}</td>
-        <td>{{ m.reason.value }}</td>
-        <td>{{ m.note or "" }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p>No movements recorded.</p>
-  {% endif %}
-</section>
+  <div class="card card-pad">
+    <h2>Stock movements</h2>
+    {% if movements %}
+    <div class="table-wrap">
+      <table class="data">
+        <thead>
+          <tr><th>When</th><th style="text-align:right">Δ</th><th>Reason</th><th>Note</th></tr>
+        </thead>
+        <tbody>
+          {% for m in movements %}
+          <tr>
+            <td class="mono">{{ m.timestamp.strftime("%Y-%m-%d %H:%M") }}</td>
+            <td class="num">{{ "%+d" | format(m.delta_quantity) }}</td>
+            <td><span class="badge b-neutral">{{ m.reason.value }}</span></td>
+            <td>{{ m.note or "" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty">No movements recorded.</p>
+    {% endif %}
+  </div>
+</div>
 {% endblock %}
