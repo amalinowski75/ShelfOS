@@ -19,6 +19,114 @@ def test_create_type_rejects_unknown_parent(session: Session) -> None:
         cs.create_type(session, "mosfet", parent_id=999)
 
 
+def test_create_type_with_parameters_creates_type_and_definitions(
+    session: Session,
+) -> None:
+    ctype = cs.create_type_with_parameters(
+        session,
+        "capacitor",
+        parameters=[
+            cs.ParameterSpec(
+                name="capacitance",
+                label="Capacitance",
+                data_type=ParameterDataType.NUMBER,
+                unit="farad",
+                sort_order=0,
+            ),
+            cs.ParameterSpec(
+                name="dielectric",
+                label="Dielectric",
+                data_type=ParameterDataType.ENUM,
+                enum_values=["X7R", "C0G"],
+                sort_order=1,
+            ),
+        ],
+    )
+
+    definitions = cs.list_own_parameter_definitions(session, ctype.id)
+    assert [d.name for d in definitions] == ["capacitance", "dielectric"]
+
+    # The enum values are persisted and the value routes/validates correctly.
+    component = cs.create_component(session, ctype.id)
+    dielectric = definitions[1]
+    param = cs.set_parameter_value(session, component.id, dielectric.id, "X7R")
+    assert param.value_text == "X7R"
+    with pytest.raises(ValidationError):
+        cs.set_parameter_value(session, component.id, dielectric.id, "NP0")
+
+
+def test_create_type_with_parameters_is_atomic_on_bad_spec(session: Session) -> None:
+    with pytest.raises(ValidationError):
+        cs.create_type_with_parameters(
+            session,
+            "capacitor",
+            parameters=[
+                cs.ParameterSpec(
+                    name="dielectric",
+                    label="Dielectric",
+                    data_type=ParameterDataType.ENUM,  # missing enum_values
+                ),
+            ],
+        )
+    # No partially created type is left behind.
+    assert cs.list_types(session) == []
+
+
+def test_create_type_with_parameters_rejects_duplicate_names(session: Session) -> None:
+    with pytest.raises(ValidationError):
+        cs.create_type_with_parameters(
+            session,
+            "resistor",
+            parameters=[
+                cs.ParameterSpec(
+                    name="resistance",
+                    label="Resistance",
+                    data_type=ParameterDataType.NUMBER,
+                ),
+                cs.ParameterSpec(
+                    name="resistance",
+                    label="Resistance (dup)",
+                    data_type=ParameterDataType.TEXT,
+                ),
+            ],
+        )
+    assert cs.list_types(session) == []
+
+
+def test_create_type_with_parameters_rejects_unknown_parent(session: Session) -> None:
+    with pytest.raises(NotFoundError):
+        cs.create_type_with_parameters(session, "mosfet", parent_id=999)
+
+
+def test_list_own_parameter_definitions_excludes_inherited(session: Session) -> None:
+    transistor = cs.create_type_with_parameters(
+        session,
+        "transistor",
+        parameters=[
+            cs.ParameterSpec(
+                name="package", label="Package", data_type=ParameterDataType.TEXT
+            )
+        ],
+    )
+    mosfet = cs.create_type_with_parameters(
+        session,
+        "mosfet",
+        parent_id=transistor.id,
+        parameters=[
+            cs.ParameterSpec(
+                name="rds_on", label="Rds(on)", data_type=ParameterDataType.NUMBER
+            )
+        ],
+    )
+
+    own = [d.name for d in cs.list_own_parameter_definitions(session, mosfet.id)]
+    assert own == ["rds_on"]
+    effective = [
+        d.name for d in cs.get_effective_parameter_definitions(session, mosfet.id)
+    ]
+    assert effective == ["package", "rds_on"]
+
+
 def test_parameter_inheritance_along_hierarchy(session: Session) -> None:
     transistor = cs.create_type(session, "transistor")
     mosfet = cs.create_type(session, "mosfet", parent_id=transistor.id)

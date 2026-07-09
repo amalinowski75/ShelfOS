@@ -11,6 +11,9 @@ Key rules implemented here:
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from typing import cast
+
 from sqlmodel import Session, col, select
 
 from app.models.component import (
@@ -28,6 +31,20 @@ from app.services.errors import ValidationError
 ParameterValue = float | int | str | bool
 
 
+@dataclass
+class ParameterSpec:
+    """One parameter definition to attach to a type (used for batch creation)."""
+
+    name: str
+    label: str
+    data_type: ParameterDataType
+    unit: str | None = None
+    is_filterable: bool = False
+    is_table_column: bool = False
+    sort_order: int = 0
+    enum_values: list[str] | None = field(default=None)
+
+
 def create_type(
     session: Session, name: str, *, parent_id: int | None = None
 ) -> ComponentType:
@@ -38,6 +55,43 @@ def create_type(
         require_entity(session, ComponentType, parent_id, "component type")
     ctype = ComponentType(name=name, parent_id=parent_id)
     session.add(ctype)
+    session.commit()
+    session.refresh(ctype)
+    return ctype
+
+
+def create_type_with_parameters(
+    session: Session,
+    name: str,
+    *,
+    parent_id: int | None = None,
+    parameters: list[ParameterSpec] | None = None,
+) -> ComponentType:
+    """Create a type and all its parameter definitions in one transaction (§13).
+
+    This is the convenient, atomic counterpart to calling :func:`create_type`
+    followed by repeated :func:`add_parameter_definition`. Every parameter spec
+    is validated *before* anything is written, so a bad spec leaves no partial
+    type behind. Parameter ``name`` values must be unique within the batch.
+    """
+    specs = parameters or []
+    if not name.strip():
+        raise ValidationError("component type name must not be empty")
+    if parent_id is not None:
+        require_entity(session, ComponentType, parent_id, "component type")
+
+    seen: set[str] = set()
+    for spec in specs:
+        _validate_parameter_spec(spec)
+        if spec.name in seen:
+            raise ValidationError(f"duplicate parameter name {spec.name!r}")
+        seen.add(spec.name)
+
+    ctype = ComponentType(name=name, parent_id=parent_id)
+    session.add(ctype)
+    session.flush()  # assign ctype.id for the parameter foreign keys
+    for spec in specs:
+        _create_parameter_definition(session, cast(int, ctype.id), spec)
     session.commit()
     session.refresh(ctype)
     return ctype
@@ -79,13 +133,7 @@ def add_parameter_definition(
 ) -> ParameterDefinition:
     """Define a parameter for a type (and its allowed enum values if any)."""
     require_entity(session, ComponentType, type_id, "component type")
-    if data_type is ParameterDataType.ENUM and not enum_values:
-        raise ValidationError("enum parameters require at least one allowed value")
-    if data_type is not ParameterDataType.ENUM and enum_values:
-        raise ValidationError("enum_values only apply to enum parameters")
-
-    definition = ParameterDefinition(
-        type_id=type_id,
+    spec = ParameterSpec(
         name=name,
         label=label,
         data_type=data_type,
@@ -93,12 +141,46 @@ def add_parameter_definition(
         is_filterable=is_filterable,
         is_table_column=is_table_column,
         sort_order=sort_order,
+        enum_values=enum_values,
     )
-    session.add(definition)
+    _validate_parameter_spec(spec)
+    definition = _create_parameter_definition(session, type_id, spec)
     session.commit()
     session.refresh(definition)
+    return definition
 
-    for order, value in enumerate(enum_values or []):
+
+def _validate_parameter_spec(spec: ParameterSpec) -> None:
+    """Check a parameter spec against the EAV/enum rules (decision D6)."""
+    if not spec.name.strip():
+        raise ValidationError("parameter name must not be empty")
+    if spec.data_type is ParameterDataType.ENUM and not spec.enum_values:
+        raise ValidationError("enum parameters require at least one allowed value")
+    if spec.data_type is not ParameterDataType.ENUM and spec.enum_values:
+        raise ValidationError("enum_values only apply to enum parameters")
+
+
+def _create_parameter_definition(
+    session: Session, type_id: int, spec: ParameterSpec
+) -> ParameterDefinition:
+    """Add a definition and its enum values to the session (no commit).
+
+    The spec must already be validated. The definition is flushed so its ``id``
+    is available for the enum-value foreign keys.
+    """
+    definition = ParameterDefinition(
+        type_id=type_id,
+        name=spec.name,
+        label=spec.label,
+        data_type=spec.data_type,
+        unit=spec.unit,
+        is_filterable=spec.is_filterable,
+        is_table_column=spec.is_table_column,
+        sort_order=spec.sort_order,
+    )
+    session.add(definition)
+    session.flush()
+    for order, value in enumerate(spec.enum_values or []):
         session.add(
             ParameterEnumValue(
                 parameter_definition_id=definition.id,
@@ -106,8 +188,25 @@ def add_parameter_definition(
                 sort_order=order,
             )
         )
-    session.commit()
     return definition
+
+
+def list_own_parameter_definitions(
+    session: Session, type_id: int
+) -> list[ParameterDefinition]:
+    """Return only the parameter definitions declared directly on a type.
+
+    Unlike :func:`get_effective_parameter_definitions`, this excludes inherited
+    definitions — useful for confirming what a freshly created type owns (§13).
+    """
+    require_entity(session, ComponentType, type_id, "component type")
+    return list(
+        session.exec(
+            select(ParameterDefinition)
+            .where(ParameterDefinition.type_id == type_id)
+            .order_by(ParameterDefinition.sort_order, ParameterDefinition.id)  # type: ignore[arg-type]
+        ).all()
+    )
 
 
 def get_effective_parameter_definitions(

@@ -51,6 +51,63 @@ def test_type_parameter_and_component_flow(client: TestClient) -> None:
     assert resp.json()["value_num"] == 0.05
 
 
+def test_create_type_with_parameters_in_one_call(client: TestClient) -> None:
+    # A single request creates the type and all its parameter definitions (§13).
+    response = client.post(
+        "/api/types",
+        json={
+            "name": "capacitor",
+            "parameters": [
+                {
+                    "name": "capacitance",
+                    "label": "Capacitance",
+                    "data_type": "number",
+                    "unit": "farad",
+                },
+                {
+                    "name": "dielectric",
+                    "label": "Dielectric",
+                    "data_type": "enum",
+                    "enum_values": ["X7R", "C0G"],
+                    "sort_order": 1,
+                },
+            ],
+        },
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert [p["name"] for p in body["parameters"]] == ["capacitance", "dielectric"]
+
+    # The returned definition ids are usable straight away on a component.
+    component = client.post("/api/components", json={"type_id": body["id"]}).json()
+    dielectric = next(p for p in body["parameters"] if p["name"] == "dielectric")
+    ok = client.put(
+        f"/api/components/{component['id']}/parameters",
+        json={"parameter_definition_id": dielectric["id"], "value": "X7R"},
+    )
+    assert ok.status_code == 200
+    bad = client.put(
+        f"/api/components/{component['id']}/parameters",
+        json={"parameter_definition_id": dielectric["id"], "value": "NP0"},
+    )
+    assert bad.status_code == 422
+
+
+def test_create_type_with_invalid_parameter_is_rejected(client: TestClient) -> None:
+    response = client.post(
+        "/api/types",
+        json={
+            "name": "capacitor",
+            "parameters": [
+                {"name": "dielectric", "label": "Dielectric", "data_type": "enum"}
+            ],
+        },
+    )
+    assert response.status_code == 422
+    # Nothing was created: the type list stays empty.
+    assert client.get("/api/types").json() == []
+
+
 def test_stock_add_and_insufficient_removal(client: TestClient) -> None:
     ctype = client.post("/api/types", json={"name": "resistor"}).json()
     component = client.post("/api/components", json={"type_id": ctype["id"]}).json()

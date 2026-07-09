@@ -2,22 +2,56 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from fastapi import APIRouter, Depends, status
 from sqlmodel import Session
 
 from app.api.deps import get_session
-from app.api.schemas import ParameterDefinitionCreate, TypeCreate
+from app.api.schemas import (
+    ParameterDefinitionCreate,
+    TypeCreate,
+    TypeWithParameters,
+)
 from app.models.component import ComponentType, ParameterDefinition
 from app.services import component_service as cs
 
 router = APIRouter(prefix="/api/types", tags=["types"])
 
 
-@router.post("", response_model=ComponentType, status_code=status.HTTP_201_CREATED)
+@router.get("", response_model=list[ComponentType])
+def list_types(session: Session = Depends(get_session)) -> list[ComponentType]:
+    """List all component types (e.g. to pick a parent when creating one, §13)."""
+    return cs.list_types(session)
+
+
+@router.post("", response_model=TypeWithParameters, status_code=status.HTTP_201_CREATED)
 def create_type(
     payload: TypeCreate, session: Session = Depends(get_session)
-) -> ComponentType:
-    return cs.create_type(session, payload.name, parent_id=payload.parent_id)
+) -> TypeWithParameters:
+    """Create a type and, optionally, its parameter definitions in one call (§13)."""
+    specs = [
+        cs.ParameterSpec(
+            name=p.name,
+            label=p.label,
+            data_type=p.data_type,
+            unit=p.unit,
+            is_filterable=p.is_filterable,
+            is_table_column=p.is_table_column,
+            sort_order=p.sort_order,
+            enum_values=p.enum_values,
+        )
+        for p in payload.parameters
+    ]
+    ctype = cs.create_type_with_parameters(
+        session, payload.name, parent_id=payload.parent_id, parameters=specs
+    )
+    return TypeWithParameters(
+        id=cast(int, ctype.id),
+        name=ctype.name,
+        parent_id=ctype.parent_id,
+        parameters=cs.list_own_parameter_definitions(session, cast(int, ctype.id)),
+    )
 
 
 @router.get("/{type_id}/parameters", response_model=list[ParameterDefinition])

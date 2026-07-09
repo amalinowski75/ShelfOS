@@ -9,8 +9,9 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.component import ParameterDefinition
 from app.models.enums import (
     ContainerType,
     LocationType,
@@ -24,11 +25,6 @@ from app.models.enums import (
 ParameterValue = bool | int | float | str
 
 
-class TypeCreate(BaseModel):
-    name: str
-    parent_id: int | None = None
-
-
 class ParameterDefinitionCreate(BaseModel):
     name: str
     label: str
@@ -38,6 +34,24 @@ class ParameterDefinitionCreate(BaseModel):
     is_table_column: bool = False
     sort_order: int = 0
     enum_values: list[str] | None = None
+
+
+class TypeCreate(BaseModel):
+    name: str
+    parent_id: int | None = None
+    # Optional parameter definitions created atomically with the type (§13).
+    parameters: list[ParameterDefinitionCreate] = Field(default_factory=list)
+
+
+class TypeWithParameters(BaseModel):
+    """A created type plus the parameter definitions it directly owns (§13)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    parent_id: int | None
+    parameters: list[ParameterDefinition]
 
 
 class ComponentCreate(BaseModel):
