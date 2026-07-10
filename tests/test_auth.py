@@ -2,11 +2,46 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 
 def _bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def test_production_refuses_default_secret(monkeypatch) -> None:
+    """Startup must abort on the public default secret in production (D11)."""
+    from app import config
+    from app.main import _check_insecure_defaults
+
+    monkeypatch.setattr(config, "ENV", "production")
+    monkeypatch.setattr(config, "SECRET_KEY", config._DEFAULT_SECRET)
+    with pytest.raises(RuntimeError, match="SHELFOS_SECRET_KEY"):
+        _check_insecure_defaults()
+
+
+def test_production_refuses_default_admin_password(monkeypatch) -> None:
+    """A real secret but the default admin password is still fatal in prod."""
+    from app import config
+    from app.main import _check_insecure_defaults
+
+    monkeypatch.setattr(config, "ENV", "production")
+    monkeypatch.setattr(config, "SECRET_KEY", "a-real-production-secret-value-32b")
+    monkeypatch.setattr(config, "ADMIN_PASSWORD", "admin")
+    with pytest.raises(RuntimeError, match="SHELFOS_ADMIN_PASSWORD"):
+        _check_insecure_defaults()
+
+
+def test_development_tolerates_defaults(monkeypatch) -> None:
+    """Insecure defaults are only warnings outside production."""
+    from app import config
+    from app.main import _check_insecure_defaults
+
+    monkeypatch.setattr(config, "ENV", "development")
+    monkeypatch.setattr(config, "SECRET_KEY", config._DEFAULT_SECRET)
+    monkeypatch.setattr(config, "ADMIN_PASSWORD", "admin")
+    _check_insecure_defaults()  # does not raise
 
 
 def _login(client: TestClient, username: str, password: str) -> str:

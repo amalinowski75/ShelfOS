@@ -8,6 +8,10 @@ from __future__ import annotations
 
 import os
 
+# Deployment environment. Anything other than "production" is treated as a
+# development/test context where the insecure defaults below are tolerated.
+ENV = os.environ.get("SHELFOS_ENV", "development").strip().lower()
+
 # Signs both session cookies and JWT API tokens. At least 32 bytes so HS256 is
 # happy; still insecure and must be overridden in production.
 _DEFAULT_SECRET = "shelfos-dev-insecure-secret-change-me-in-production"
@@ -19,6 +23,11 @@ ADMIN_PASSWORD = os.environ.get("SHELFOS_ADMIN_PASSWORD", "admin")
 
 # JWT access-token lifetime, in hours.
 TOKEN_EXPIRE_HOURS = int(os.environ.get("SHELFOS_TOKEN_EXPIRE_HOURS", "24"))
+
+
+def is_production() -> bool:
+    """True when running in a production deployment (D11)."""
+    return ENV == "production"
 
 
 def is_using_default_secret() -> bool:

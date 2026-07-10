@@ -43,6 +43,7 @@ _PROTECTED_ROUTERS = (types, components, locations, stock, invoices)
 
 def _bootstrap() -> None:
     """Create the schema and seed the system user and bootstrap admin (D11)."""
+    _check_insecure_defaults()
     init_db()
     with Session(engine) as session:
         ensure_system_user(session)
@@ -51,11 +52,31 @@ def _bootstrap() -> None:
             username=config.ADMIN_USERNAME,
             password=config.ADMIN_PASSWORD,
         )
+
+
+def _check_insecure_defaults() -> None:
+    """Refuse to start with insecure defaults in production; warn otherwise (D11).
+
+    The default secret signs both JWT API tokens and session cookies, so leaving
+    it in place lets anyone who knows the (public) default forge an admin token.
+    In production this is fatal; in development it is only a warning.
+    """
     if config.is_using_default_secret():
+        if config.is_production():
+            raise RuntimeError(
+                "Refusing to start: SHELFOS_SECRET_KEY must be set when "
+                "SHELFOS_ENV=production (the default secret is public and lets "
+                "anyone forge admin tokens)."
+            )
         _logger.warning(
             "Using the default SECRET_KEY; set SHELFOS_SECRET_KEY in production."
         )
     if config.is_using_default_admin_password():
+        if config.is_production():
+            raise RuntimeError(
+                "Refusing to start: SHELFOS_ADMIN_PASSWORD must be set when "
+                "SHELFOS_ENV=production (the default admin password is public)."
+            )
         _logger.warning(
             "Bootstrap admin uses the default password; "
             "set SHELFOS_ADMIN_PASSWORD and change it."
