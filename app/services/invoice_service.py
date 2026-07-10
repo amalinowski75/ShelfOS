@@ -10,7 +10,10 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from typing import cast
 
+from sqlalchemy import update
+from sqlalchemy.engine import CursorResult
 from sqlmodel import Session, col, func, select
 
 from app.models.component import Component
@@ -149,15 +152,31 @@ def finalize_invoice(
             "every invoice line must have a location before finalization"
         )
 
-    net = _recompute_net(session, invoice)
+    net = _net_total(session, invoice_id)
     if total_gross is not None:
         if total_gross < net:
             raise ValidationError("total_gross must not be less than total_net")
-        invoice.total_gross = total_gross
+        gross = total_gross
     else:
-        invoice.total_gross = net
+        gross = net
 
-    # Generate a purchase movement per line (stock_service keeps cache in sync).
+    # Claim finalization atomically: flip the flag only if the invoice is still a
+    # draft, in the same transaction as the stock movements below. A concurrent
+    # finalize (or a retry after a mid-loop failure) sees rowcount 0 and aborts,
+    # so movements are never generated twice (decision D1).
+    claimed = cast(
+        "CursorResult[object]",
+        session.execute(
+            update(Invoice)
+            .where(col(Invoice.id) == invoice_id, col(Invoice.is_finalized).is_(False))
+            .values(is_finalized=True, total_net=net, total_gross=gross)
+        ),
+    )
+    if claimed.rowcount != 1:
+        raise InvoiceFinalizedError(f"invoice {invoice_id} is finalized (read-only)")
+
+    # Generate a purchase movement per line without committing; the single
+    # commit below makes the flag flip and every movement succeed or fail as one.
     for line in lines:
         assert line.location_id is not None  # guarded above
         stock_service.add_stock(
@@ -168,10 +187,9 @@ def finalize_invoice(
             user_id=user_id,
             reason=StockReason.PURCHASE,
             invoice_id=invoice_id,
+            commit=False,
         )
 
-    invoice.is_finalized = True
-    session.add(invoice)
     session.commit()
     session.refresh(invoice)
     return invoice
@@ -201,14 +219,19 @@ def _require_draft(session: Session, invoice_id: int) -> Invoice:
     return invoice
 
 
-def _recompute_net(session: Session, invoice: Invoice) -> Decimal:
-    """Recalculate ``total_net`` as the sum of line totals and persist it."""
+def _net_total(session: Session, invoice_id: int | None) -> Decimal:
+    """Return the sum of an invoice's line totals (no persistence)."""
     total = session.exec(
         select(func.coalesce(func.sum(InvoiceLine.total_price), 0)).where(
-            InvoiceLine.invoice_id == invoice.id
+            InvoiceLine.invoice_id == invoice_id
         )
     ).one()
-    invoice.total_net = Decimal(total)
+    return Decimal(total)
+
+
+def _recompute_net(session: Session, invoice: Invoice) -> Decimal:
+    """Recalculate ``total_net`` as the sum of line totals and persist it."""
+    invoice.total_net = _net_total(session, invoice.id)
     session.add(invoice)
     session.commit()
     session.refresh(invoice)

@@ -30,8 +30,13 @@ def add_stock(
     container_type: ContainerType = ContainerType.LOOSE,
     note: str | None = None,
     invoice_id: int | None = None,
+    commit: bool = True,
 ) -> StockMovement:
-    """Add ``quantity`` units of a component to a location (spec §14)."""
+    """Add ``quantity`` units of a component to a location (spec §14).
+
+    Pass ``commit=False`` to keep the movement in the caller's open transaction
+    (used by invoice finalization so all lines commit atomically, D1).
+    """
     if quantity <= 0:
         raise ValidationError("add_stock quantity must be positive")
     return _record_movement(
@@ -44,6 +49,7 @@ def add_stock(
         container_type=container_type,
         note=note,
         invoice_id=invoice_id,
+        commit=commit,
     )
 
 
@@ -183,8 +189,13 @@ def _record_movement(
     container_type: ContainerType = ContainerType.LOOSE,
     note: str | None = None,
     invoice_id: int | None = None,
+    commit: bool = True,
 ) -> StockMovement:
-    """Write a movement and update the quantity cache atomically (decision D1)."""
+    """Write a movement and update the quantity cache atomically (decision D1).
+
+    With ``commit=False`` the movement and cache update are only flushed, so
+    they join the caller's transaction and commit (or roll back) together.
+    """
     require_entity(session, Component, component_id, "component")
     require_entity(session, Location, location_id, "location")
 
@@ -217,7 +228,10 @@ def _record_movement(
 
     session.add(cl)
     session.add(movement)
-    session.commit()
+    if commit:
+        session.commit()
+    else:
+        session.flush()
     session.refresh(movement)
     return movement
 

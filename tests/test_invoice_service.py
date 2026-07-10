@@ -128,6 +128,54 @@ def test_finalize_generates_stock_movements(setup, session: Session) -> None:
     assert ss.verify_cache_consistency(session)
 
 
+def test_finalize_is_atomic_when_a_movement_fails(
+    setup, session: Session, monkeypatch
+) -> None:
+    """A failure partway through finalization rolls back everything (D1).
+
+    Regression: movements used to commit per line before the finalized flag was
+    set, so a mid-loop failure left committed stock behind and a re-finalize
+    would double it. Now the flag flip and all movements share one transaction.
+    """
+    invoice_id = _new_invoice(session)
+    for _ in range(2):
+        inv.add_line(
+            session,
+            invoice_id,
+            component_id=setup["component_id"],
+            quantity=10,
+            unit_price=Decimal("1.00"),
+            location_id=setup["location_id"],
+        )
+
+    calls = {"n": 0}
+    real_add_stock = ss.add_stock
+
+    def flaky_add_stock(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:  # fail on the second line
+            raise RuntimeError("boom")
+        return real_add_stock(*args, **kwargs)
+
+    monkeypatch.setattr(inv.stock_service, "add_stock", flaky_add_stock)
+
+    with pytest.raises(RuntimeError):
+        inv.finalize_invoice(session, invoice_id, user_id=setup["user_id"])
+    session.rollback()
+
+    invoice = session.get(inv.Invoice, invoice_id)
+    assert invoice is not None
+    assert invoice.is_finalized is False  # still a draft, can be retried
+    # No stock leaked from the first (already-flushed) line.
+    assert ss.get_quantity(session, setup["component_id"], setup["location_id"]) == 0
+    assert (
+        ss.quantity_from_movements(
+            session, setup["component_id"], setup["location_id"]
+        )
+        == 0
+    )
+
+
 def test_finalize_requires_at_least_one_line(setup, session: Session) -> None:
     invoice_id = _new_invoice(session)
     with pytest.raises(ValidationError):
