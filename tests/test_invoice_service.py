@@ -248,10 +248,38 @@ def test_remove_line_updates_net(setup, session: Session) -> None:
         quantity=10,
         unit_price=Decimal("1.00"),
     )
-    inv.remove_line(session, line.id)
+    inv.remove_line(session, invoice_id, line.id)
     invoice = session.get(inv.Invoice, invoice_id)
     assert invoice is not None
     assert invoice.total_net == Decimal("0")
+
+
+def test_line_operations_reject_mismatched_invoice(setup, session: Session) -> None:
+    """A line can only be mutated through the invoice it belongs to (M5)."""
+    invoice_id = _new_invoice(session)
+    other_id = inv.create_invoice(
+        session,
+        supplier="Digikey",
+        invoice_number="INV-2",
+        invoice_date=date(2026, 7, 8),
+        currency="EUR",
+    ).id
+    line = inv.add_line(
+        session,
+        invoice_id,
+        component_id=setup["component_id"],
+        quantity=10,
+        unit_price=Decimal("1.00"),
+    )
+
+    with pytest.raises(NotFoundError):
+        inv.remove_line(session, other_id, line.id)
+    with pytest.raises(NotFoundError):
+        inv.set_line_location(session, other_id, line.id, setup["location_id"])
+
+    # The line is untouched and still operable through its real invoice.
+    assert session.get(inv.InvoiceLine, line.id) is not None
+    inv.set_line_location(session, invoice_id, line.id, setup["location_id"])
 
 
 def test_add_line_to_unknown_invoice_raises(setup, session: Session) -> None:

@@ -69,14 +69,14 @@ def set_line_location(
     payload: LineLocationSet,
     session: Session = Depends(get_session),
 ) -> InvoiceLine:
-    return inv.set_line_location(session, line_id, payload.location_id)
+    return inv.set_line_location(session, invoice_id, line_id, payload.location_id)
 
 
 @router.delete("/{invoice_id}/lines/{line_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_line(
     invoice_id: int, line_id: int, session: Session = Depends(get_session)
 ) -> None:
-    inv.remove_line(session, line_id)
+    inv.remove_line(session, invoice_id, line_id)
 
 
 @router.post("/{invoice_id}/finalize", response_model=Invoice)

@@ -24,6 +24,7 @@ from app.services import stock_service
 from app.services._common import require_entity
 from app.services.errors import (
     InvoiceFinalizedError,
+    NotFoundError,
     ValidationError,
 )
 
@@ -97,9 +98,11 @@ def add_line(
     return line
 
 
-def set_line_location(session: Session, line_id: int, location_id: int) -> InvoiceLine:
+def set_line_location(
+    session: Session, invoice_id: int, line_id: int, location_id: int
+) -> InvoiceLine:
     """Assign a destination stock location to a line (spec §16 step 6)."""
-    line = require_entity(session, InvoiceLine, line_id, "invoice line")
+    line = _require_line_of_invoice(session, invoice_id, line_id)
     _require_draft(session, line.invoice_id)
     require_entity(session, Location, location_id, "location")
     line.location_id = location_id
@@ -109,9 +112,9 @@ def set_line_location(session: Session, line_id: int, location_id: int) -> Invoi
     return line
 
 
-def remove_line(session: Session, line_id: int) -> None:
+def remove_line(session: Session, invoice_id: int, line_id: int) -> None:
     """Remove a line from a draft invoice and refresh totals."""
-    line = require_entity(session, InvoiceLine, line_id, "invoice line")
+    line = _require_line_of_invoice(session, invoice_id, line_id)
     invoice = _require_draft(session, line.invoice_id)
     session.delete(line)
     session.commit()
@@ -209,6 +212,23 @@ def list_purchase_history(
         .order_by(col(Invoice.invoice_date).desc(), col(Invoice.id).desc())
     ).all()
     return [(line, invoice) for line, invoice in rows]
+
+
+def _require_line_of_invoice(
+    session: Session, invoice_id: int, line_id: int
+) -> InvoiceLine:
+    """Fetch a line and ensure it actually belongs to ``invoice_id``.
+
+    The line-mutation routes carry both an ``{invoice_id}`` and a ``{line_id}``
+    in the URL; without this check the invoice id is ignored and a line can be
+    mutated through any invoice's path (a wrong-invoice / IDOR-style defect).
+    """
+    line = require_entity(session, InvoiceLine, line_id, "invoice line")
+    if line.invoice_id != invoice_id:
+        raise NotFoundError(
+            f"invoice line {line_id} does not belong to invoice {invoice_id}"
+        )
+    return line
 
 
 def _require_draft(session: Session, invoice_id: int) -> Invoice:
