@@ -14,9 +14,18 @@ from app.models.user import User
 from app.services._common import require_entity
 from app.services.errors import NotFoundError, ValidationError
 
+# bcrypt hashes only the first 72 bytes of a password and ignores the rest, so
+# two long passwords differing only past that point would collide. Reject them
+# up front instead of silently truncating.
+_MAX_PASSWORD_BYTES = 72
+
 
 def hash_password(password: str) -> str:
     """Return a bcrypt hash for a plaintext password."""
+    if len(password.encode()) > _MAX_PASSWORD_BYTES:
+        raise ValidationError(
+            f"password must be at most {_MAX_PASSWORD_BYTES} bytes"
+        )
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
@@ -79,6 +88,8 @@ def list_users(session: Session) -> list[User]:
 def set_role(session: Session, user_id: int, role: UserRole) -> User:
     """Change a user's role."""
     user = require_entity(session, User, user_id, "user")
+    if role is not UserRole.ADMIN and _is_last_login_admin(session, user):
+        raise ValidationError("cannot demote the last active admin")
     user.role = role
     session.add(user)
     session.commit()
@@ -89,11 +100,36 @@ def set_role(session: Session, user_id: int, role: UserRole) -> User:
 def set_active(session: Session, user_id: int, is_active: bool) -> User:
     """Enable or disable a user account."""
     user = require_entity(session, User, user_id, "user")
+    if not is_active and _is_last_login_admin(session, user):
+        raise ValidationError("cannot disable the last active admin")
     user.is_active = is_active
     session.add(user)
     session.commit()
     session.refresh(user)
     return user
+
+
+def _is_last_login_admin(session: Session, user: User) -> bool:
+    """True when ``user`` is the only remaining admin able to log in.
+
+    Guards against an admin locking every human admin out of the system by
+    demoting or disabling the last one (the passwordless system user does not
+    count, as it cannot log in).
+    """
+    if (
+        user.role is not UserRole.ADMIN
+        or not user.is_active
+        or user.password_hash is None
+    ):
+        return False
+    login_admins = session.exec(
+        select(User).where(
+            User.role == UserRole.ADMIN,
+            col(User.is_active).is_(True),
+            col(User.password_hash).is_not(None),
+        )
+    ).all()
+    return len(login_admins) <= 1
 
 
 def set_password(session: Session, user_id: int, password: str) -> User:

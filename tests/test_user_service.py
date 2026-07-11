@@ -72,6 +72,41 @@ def test_set_role_unknown_user_raises(session: Session) -> None:
         us.set_role(session, 999, UserRole.ADMIN)
 
 
+def test_password_over_72_bytes_rejected(session: Session) -> None:
+    """bcrypt ignores bytes past 72; reject instead of silently truncating (L2)."""
+    with pytest.raises(ValidationError):
+        us.create_user(session, username="mallory", password="a" * 73)
+    # Exactly 72 bytes is fine and round-trips.
+    user = us.create_user(session, username="trent", password="a" * 72)
+    assert us.authenticate(session, "trent", "a" * 72) is not None
+    with pytest.raises(ValidationError):
+        us.set_password(session, user.id, "a" * 73)
+
+
+def test_cannot_lock_out_last_admin(session: Session) -> None:
+    """The last login-capable admin can be neither demoted nor disabled (L3)."""
+    admin = us.create_user(
+        session, username="admin", password="pw", role=UserRole.ADMIN
+    )
+    # A passwordless system admin does not count as login-capable.
+    ensure_system_user(session)
+
+    with pytest.raises(ValidationError):
+        us.set_role(session, admin.id, UserRole.USER)
+    with pytest.raises(ValidationError):
+        us.set_active(session, admin.id, False)
+
+    # A second real admin lifts the restriction on the first.
+    other = us.create_user(
+        session, username="admin2", password="pw", role=UserRole.ADMIN
+    )
+    us.set_active(session, admin.id, False)
+    assert us.authenticate(session, "admin", "pw") is None
+    # Now `other` is the last one and is protected in turn.
+    with pytest.raises(ValidationError):
+        us.set_role(session, other.id, UserRole.USER)
+
+
 def test_ensure_admin_is_idempotent(session: Session) -> None:
     first = us.ensure_admin(session, username="admin", password="admin")
     second = us.ensure_admin(session, username="admin", password="admin")
