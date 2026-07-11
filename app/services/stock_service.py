@@ -20,6 +20,7 @@ from app.models.component import Component
 from app.models.enums import ContainerType, StockReason
 from app.models.location import ComponentLocation, Location
 from app.models.stock import StockMovement
+from app.services import audit_service
 from app.services._common import require_entity
 from app.services.errors import InsufficientStockError, ValidationError
 
@@ -207,6 +208,17 @@ def _record_movement(
     require_entity(session, Location, location_id, "location")
 
     _apply_delta(session, component_id, location_id, delta, container_type)
+
+    new_quantity = get_quantity(session, component_id, location_id)
+    audit_service.record_change(
+        session,
+        entity_type="component",
+        entity_id=component_id,
+        field=f"quantity@location:{location_id}",
+        old_value=new_quantity - delta,
+        new_value=new_quantity,
+        user_id=user_id,
+    )
 
     movement = StockMovement(
         component_id=component_id,

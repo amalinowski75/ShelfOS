@@ -25,6 +25,7 @@ from app.models.component import (
 )
 from app.models.enums import MountingType, ParameterDataType
 from app.models.location import ComponentLocation
+from app.services import audit_service
 from app.services._common import require_entity
 from app.services.errors import ValidationError
 
@@ -343,12 +344,15 @@ def set_parameter_value(
     component_id: int,
     parameter_definition_id: int,
     value: ParameterValue,
+    *,
+    user_id: int | None = None,
 ) -> ComponentParameter:
     """Set (or update) an EAV parameter value with type/enum validation.
 
     The definition must be part of the component type's effective set, enforcing
     parameter inheritance (decision D3). The value is routed to the column that
-    matches the definition's ``data_type`` (decision D6).
+    matches the definition's ``data_type`` (decision D6). When ``user_id`` is
+    given the change is recorded in the audit log (spec §19).
     """
     component = require_entity(session, Component, component_id, "component")
     definition = require_entity(
@@ -373,11 +377,31 @@ def set_parameter_value(
         parameter_definition_id=parameter_definition_id,
     )
 
+    old_value = _current_value(param)
     _assign_value(session, param, definition, value)
+    if user_id is not None:
+        audit_service.record_change(
+            session,
+            entity_type="component",
+            entity_id=component_id,
+            field=f"parameter:{definition.name}",
+            old_value=old_value,
+            new_value=value,
+            user_id=user_id,
+        )
     session.add(param)
     session.commit()
     session.refresh(param)
     return param
+
+
+def _current_value(param: ComponentParameter) -> ParameterValue | None:
+    """Return the currently populated EAV value of a parameter row, if any."""
+    if param.value_num is not None:
+        return param.value_num
+    if param.value_bool is not None:
+        return param.value_bool
+    return param.value_text
 
 
 def _assign_value(

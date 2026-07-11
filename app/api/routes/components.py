@@ -7,6 +7,7 @@ from sqlmodel import Session
 
 from app.api.deps import get_session
 from app.api.schemas import ComponentCreate, ParameterValueSet
+from app.auth.deps import current_user_id
 from app.models.component import Component, ComponentParameter
 from app.services import component_service as cs
 
@@ -40,7 +41,12 @@ def set_parameter_value(
     component_id: int,
     payload: ParameterValueSet,
     session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
 ) -> ComponentParameter:
     return cs.set_parameter_value(
-        session, component_id, payload.parameter_definition_id, payload.value
+        session,
+        component_id,
+        payload.parameter_definition_id,
+        payload.value,
+        user_id=user_id,
     )

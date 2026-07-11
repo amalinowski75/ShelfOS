@@ -6,12 +6,15 @@ mounted with an admin guard, so every route here requires an admin.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, ConfigDict
 from sqlmodel import Session
 
 from app.api.deps import get_session
 from app.models.enums import UserRole
+from app.services import audit_service
 from app.services import component_service as cs
 from app.services import user_service as us
 
@@ -45,6 +48,21 @@ class ActiveUpdate(BaseModel):
 
 class PasswordUpdate(BaseModel):
     password: str
+
+
+class AuditEntryRead(BaseModel):
+    """One field-level audit-log entry (spec §19)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    entity_type: str
+    entity_id: int
+    field: str
+    old_value: str | None
+    new_value: str | None
+    user_id: int
+    timestamp: datetime
 
 
 @router.delete("/components/{component_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -92,3 +110,17 @@ def set_password(
     user_id: int, payload: PasswordUpdate, session: Session = Depends(get_session)
 ) -> UserRead:
     return UserRead.model_validate(us.set_password(session, user_id, payload.password))
+
+
+@router.get("/audit", response_model=list[AuditEntryRead])
+def list_audit(
+    entity_type: str | None = None,
+    entity_id: int | None = None,
+    limit: int = 100,
+    session: Session = Depends(get_session),
+) -> list[AuditEntryRead]:
+    """Return audit-log entries, most recent first (spec §19)."""
+    entries = audit_service.list_entries(
+        session, entity_type=entity_type, entity_id=entity_id, limit=limit
+    )
+    return [AuditEntryRead.model_validate(e) for e in entries]

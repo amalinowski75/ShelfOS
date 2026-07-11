@@ -20,7 +20,7 @@ from app.models.component import Component
 from app.models.enums import StockReason
 from app.models.invoice import Invoice, InvoiceLine
 from app.models.location import Location
-from app.services import stock_service
+from app.services import audit_service, stock_service
 from app.services._common import require_entity
 from app.services.errors import (
     InvoiceFinalizedError,
@@ -109,13 +109,33 @@ def add_line(
 
 
 def set_line_location(
-    session: Session, invoice_id: int, line_id: int, location_id: int
+    session: Session,
+    invoice_id: int,
+    line_id: int,
+    location_id: int,
+    *,
+    user_id: int | None = None,
 ) -> InvoiceLine:
-    """Assign a destination stock location to a line (spec §16 step 6)."""
+    """Assign a destination stock location to a line (spec §16 step 6).
+
+    When ``user_id`` is given the location change is recorded in the audit log
+    (spec §19).
+    """
     line = _require_line_of_invoice(session, invoice_id, line_id)
     _require_draft(session, line.invoice_id)
     require_entity(session, Location, location_id, "location")
+    old_location_id = line.location_id
     line.location_id = location_id
+    if user_id is not None:
+        audit_service.record_change(
+            session,
+            entity_type="invoice_line",
+            entity_id=line_id,
+            field="location_id",
+            old_value=old_location_id,
+            new_value=location_id,
+            user_id=user_id,
+        )
     session.add(line)
     session.commit()
     session.refresh(line)
@@ -187,6 +207,25 @@ def finalize_invoice(
     )
     if claimed.rowcount != 1:
         raise InvoiceFinalizedError(f"invoice {invoice_id} is finalized (read-only)")
+
+    audit_service.record_change(
+        session,
+        entity_type="invoice",
+        entity_id=invoice_id,
+        field="is_finalized",
+        old_value=False,
+        new_value=True,
+        user_id=user_id,
+    )
+    audit_service.record_change(
+        session,
+        entity_type="invoice",
+        entity_id=invoice_id,
+        field="total_gross",
+        old_value=None,
+        new_value=gross,
+        user_id=user_id,
+    )
 
     # Generate a purchase movement per line without committing; the single
     # commit below makes the flag flip and every movement succeed or fail as one.
