@@ -32,15 +32,17 @@ def add_stock(
     quantity: int,
     user_id: int,
     reason: StockReason = StockReason.PURCHASE,
-    container_type: ContainerType = ContainerType.LOOSE,
+    container_type: ContainerType | None = None,
     note: str | None = None,
     invoice_id: int | None = None,
     commit: bool = True,
 ) -> StockMovement:
     """Add ``quantity`` units of a component to a location (spec §14).
 
-    Pass ``commit=False`` to keep the movement in the caller's open transaction
-    (used by invoice finalization so all lines commit atomically, D1).
+    ``container_type`` sets the slot's packaging; ``None`` leaves an existing
+    slot's type untouched and defaults new slots to ``LOOSE``. Pass
+    ``commit=False`` to keep the movement in the caller's open transaction (used
+    by invoice finalization so all lines commit atomically, D1).
     """
     if quantity <= 0:
         raise ValidationError("add_stock quantity must be positive")
@@ -191,7 +193,7 @@ def _record_movement(
     delta: int,
     reason: StockReason,
     user_id: int,
-    container_type: ContainerType = ContainerType.LOOSE,
+    container_type: ContainerType | None = None,
     note: str | None = None,
     invoice_id: int | None = None,
     commit: bool = True,
@@ -230,7 +232,7 @@ def _apply_delta(
     component_id: int,
     location_id: int,
     delta: int,
-    container_type: ContainerType,
+    container_type: ContainerType | None,
 ) -> None:
     """Move a slot's cached quantity by ``delta``, never below zero (D1).
 
@@ -239,7 +241,15 @@ def _apply_delta(
     slot serialize without a read-modify-write race (lost updates or a negative
     quantity) on any backend with row-level locking. The first movement into a
     slot inserts the cache row; a lost insert race is retried as an update.
+
+    A non-``None`` ``container_type`` is written to the slot (on both create and
+    update); ``None`` leaves an existing slot's type untouched and defaults a
+    new slot to ``LOOSE``.
     """
+    values: dict[str, object] = {"quantity": col(ComponentLocation.quantity) + delta}
+    if container_type is not None:
+        values["container_type"] = container_type
+
     for _ in range(2):
         result = cast(
             "CursorResult[object]",
@@ -250,7 +260,7 @@ def _apply_delta(
                     col(ComponentLocation.location_id) == location_id,
                     col(ComponentLocation.quantity) + delta >= 0,
                 )
-                .values(quantity=col(ComponentLocation.quantity) + delta)
+                .values(values)
             ),
         )
         if result.rowcount:
@@ -279,7 +289,7 @@ def _apply_delta(
                         component_id=component_id,
                         location_id=location_id,
                         quantity=delta,
-                        container_type=container_type,
+                        container_type=container_type or ContainerType.LOOSE,
                     )
                 )
             return

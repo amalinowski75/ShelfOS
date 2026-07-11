@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from app.models.enums import LocationType, StockReason
+from app.models.enums import ContainerType, LocationType, StockReason
 from app.seed import ensure_system_user
 from app.services import component_service as cs
 from app.services import location_service as ls
@@ -74,6 +74,64 @@ def test_remove_more_than_available_raises(fixture_ids, session: Session) -> Non
         )
     # Failed removal must not have changed the cache.
     assert ss.get_quantity(session, component_id, location_id) == 10
+
+
+def test_container_type_updates_existing_slot(fixture_ids, session: Session) -> None:
+    """An explicit container type is applied even when the slot already exists (M6)."""
+    component_id, location_id, user_id = fixture_ids
+
+    def slot_container() -> ContainerType:
+        cl = ss._find_component_location(session, component_id, location_id)
+        assert cl is not None
+        return cl.container_type
+
+    # New slot with an explicit type.
+    ss.add_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=10,
+        user_id=user_id,
+        container_type=ContainerType.REEL,
+    )
+    assert slot_container() is ContainerType.REEL
+
+    # A later add with a new type updates the existing slot (was silently ignored).
+    ss.add_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=5,
+        user_id=user_id,
+        container_type=ContainerType.BAG,
+    )
+    assert slot_container() is ContainerType.BAG
+    assert ss.get_quantity(session, component_id, location_id) == 15
+
+    # Omitting the type (default None) leaves the slot's type untouched.
+    ss.add_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=1,
+        user_id=user_id,
+    )
+    assert slot_container() is ContainerType.BAG
+
+
+def test_new_slot_defaults_to_loose(fixture_ids, session: Session) -> None:
+    """Without an explicit container type, a fresh slot is LOOSE (M6)."""
+    component_id, location_id, user_id = fixture_ids
+    ss.add_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=3,
+        user_id=user_id,
+    )
+    cl = ss._find_component_location(session, component_id, location_id)
+    assert cl is not None
+    assert cl.container_type is ContainerType.LOOSE
 
 
 def test_failed_removal_records_no_movement(fixture_ids, session: Session) -> None:

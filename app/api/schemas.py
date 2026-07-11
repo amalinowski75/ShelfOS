@@ -78,7 +78,9 @@ class StockAdd(BaseModel):
     component_id: int
     location_id: int
     quantity: int
-    container_type: ContainerType = ContainerType.LOOSE
+    # None leaves an existing slot's container type untouched (new slots default
+    # to LOOSE); a concrete value sets it on the slot.
+    container_type: ContainerType | None = None
     reason: StockReason = StockReason.PURCHASE
     note: str | None = None
 
