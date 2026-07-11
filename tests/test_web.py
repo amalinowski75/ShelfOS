@@ -89,6 +89,36 @@ def test_components_feed_type_specific_adds_parameter_columns(
     assert feed["data"][0][f"param_{definition['id']}"] == "4.7 kohm"
 
 
+def test_components_feed_maps_values_per_component(client: TestClient) -> None:
+    """Batched parameter loading keeps each row's value with its own component (L5)."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    client.post(
+        f"/api/types/{ctype['id']}/parameters",
+        json={
+            "name": "resistance",
+            "label": "Resistance",
+            "data_type": "number",
+            "unit": "ohm",
+            "is_table_column": True,
+        },
+    )
+    definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
+
+    ids = []
+    for value in (4700, 1000000):
+        comp = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+        ids.append(comp["id"])
+        client.put(
+            f"/api/components/{comp['id']}/parameters",
+            json={"parameter_definition_id": definition["id"], "value": value},
+        )
+
+    feed = client.get("/web/api/components", params={"type_id": ctype["id"]}).json()
+    by_id = {row["id"]: row[f"param_{definition['id']}"] for row in feed["data"]}
+    assert by_id[ids[0]] == "4.7 kohm"
+    assert by_id[ids[1]] == "1 Mohm"
+
+
 def test_component_detail_page(client: TestClient) -> None:
     ctype = client.post("/api/types", json={"name": "resistor"}).json()
     component = client.post(

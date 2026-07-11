@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from sqlmodel import Session
+from sqlmodel import Session, col, select
 
 from app.models.component import ComponentParameter, ComponentType, ParameterDefinition
 from app.models.enums import ParameterDataType
@@ -66,13 +66,21 @@ def build_component_table(
         columns += [{"title": d.label, "field": f"param_{d.id}"} for d in table_params]
 
     totals = ss.total_quantities_by_component(session)
+    components = cs.list_components(session, type_id=type_id)
+
+    # Preload type names and (when needed) parameter values in one query each,
+    # instead of a per-row lookup, so the table scales past demo size.
+    type_names = {t.id: t.name for t in session.exec(select(ComponentType)).all()}
+    values_by_component = _load_parameter_values(
+        session, [cast(int, c.id) for c in components] if table_params else []
+    )
+
     rows: list[dict[str, Any]] = []
-    for component in cs.list_components(session, type_id=type_id):
+    for component in components:
         component_id = cast(int, component.id)
-        ctype = session.get(ComponentType, component.type_id)
         row: dict[str, Any] = {
             "id": component_id,
-            "type": ctype.name if ctype else "",
+            "type": type_names.get(component.type_id, ""),
             "manufacturer": component.manufacturer or "",
             "mpn": component.mpn or "",
             "package": component.package or "",
@@ -80,10 +88,7 @@ def build_component_table(
             "quantity": totals.get(component_id, 0),
         }
         if table_params:
-            values = {
-                p.parameter_definition_id: p
-                for p in cs.list_parameter_values(session, component_id)
-            }
+            values = values_by_component.get(component_id, {})
             for definition in table_params:
                 row[f"param_{definition.id}"] = format_parameter_value(
                     definition, values.get(cast(int, definition.id))
@@ -91,3 +96,21 @@ def build_component_table(
         rows.append(row)
 
     return {"columns": columns, "data": rows}
+
+
+def _load_parameter_values(
+    session: Session, component_ids: list[int]
+) -> dict[int, dict[int, ComponentParameter]]:
+    """Return ``{component_id: {definition_id: value}}`` in a single query."""
+    if not component_ids:
+        return {}
+    grouped: dict[int, dict[int, ComponentParameter]] = {}
+    for param in session.exec(
+        select(ComponentParameter).where(
+            col(ComponentParameter.component_id).in_(component_ids)
+        )
+    ).all():
+        grouped.setdefault(param.component_id, {})[
+            param.parameter_definition_id
+        ] = param
+    return grouped
