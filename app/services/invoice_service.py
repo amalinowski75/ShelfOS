@@ -14,7 +14,7 @@ from typing import cast
 
 from sqlalchemy import update
 from sqlalchemy.engine import CursorResult
-from sqlmodel import Session, col, func, select
+from sqlmodel import Session, col, select
 
 from app.models.component import Component
 from app.models.enums import StockReason
@@ -250,13 +250,18 @@ def _require_draft(session: Session, invoice_id: int) -> Invoice:
 
 
 def _net_total(session: Session, invoice_id: int | None) -> Decimal:
-    """Return the sum of an invoice's line totals (no persistence)."""
-    total = session.exec(
-        select(func.coalesce(func.sum(InvoiceLine.total_price), 0)).where(
+    """Return the sum of an invoice's line totals (no persistence).
+
+    Summed in Python over the per-line ``Decimal`` values rather than via SQL
+    ``SUM``: SQLite's aggregate can round-trip through a float and reintroduce
+    binary rounding error into what must be exact money (D5).
+    """
+    totals = session.exec(
+        select(col(InvoiceLine.total_price)).where(
             InvoiceLine.invoice_id == invoice_id
         )
-    ).one()
-    return Decimal(total)
+    ).all()
+    return sum(totals, Decimal(0))
 
 
 def _recompute_net(session: Session, invoice: Invoice) -> Decimal:

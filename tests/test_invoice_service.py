@@ -113,6 +113,23 @@ def test_add_line_rejects_non_positive_quantity(setup, session: Session) -> None
         )
 
 
+def test_net_total_is_exact_decimal_sum(setup, session: Session) -> None:
+    """Net is summed as exact Decimal, not through a float SQL aggregate (L1)."""
+    invoice_id = _new_invoice(session)
+    for price in ("0.10", "0.20", "0.07"):
+        inv.add_line(
+            session,
+            invoice_id,
+            component_id=setup["component_id"],
+            quantity=1,
+            unit_price=Decimal(price),
+        )
+    # Summing the float result of SQL SUM would drift to 0.37000000000000005.
+    total = inv._net_total(session, invoice_id)
+    assert total == Decimal("0.37")
+    assert isinstance(total, Decimal)
+
+
 def test_net_recomputed_across_multiple_lines(setup, session: Session) -> None:
     invoice_id = _new_invoice(session)
     inv.add_line(
