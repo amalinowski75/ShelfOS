@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 from sqlmodel import Session
 
 from app.api.deps import get_session
-from app.auth.deps import get_optional_user
+from app.auth.deps import get_optional_user, issue_csrf_token
 from app.models.component import ComponentType
 from app.models.user import User
 from app.services import component_service as cs
@@ -80,6 +80,7 @@ def login_submit(
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
     request.session["user_id"] = user.id
+    issue_csrf_token(request)
     return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
 
 

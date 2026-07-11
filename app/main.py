@@ -28,7 +28,7 @@ from app.api.routes import (
     stock,
     types,
 )
-from app.auth.deps import require_access, require_admin
+from app.auth.deps import require_access, require_admin, require_csrf
 from app.db import engine, init_db
 from app.seed import ensure_system_user
 from app.services import user_service as us
@@ -99,19 +99,33 @@ def create_app(*, create_tables: bool = True) -> FastAPI:
         yield
 
     app = FastAPI(title="ShelfOS", version="1.0.0", lifespan=lifespan)
-    app.add_middleware(SessionMiddleware, secret_key=config.SECRET_KEY)
+    # The session cookie must never travel over plain HTTP in production; keep it
+    # SameSite=Lax so cross-site POSTs don't carry it (defence alongside the CSRF
+    # token enforced by require_csrf).
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=config.SECRET_KEY,
+        https_only=config.is_production(),
+        same_site="lax",
+    )
 
     register_error_handlers(app)
 
     # Public: authentication endpoints.
     app.include_router(auth.router)
 
-    # Authenticated business endpoints (read-only accounts blocked on writes).
+    # Authenticated business endpoints (read-only accounts blocked on writes,
+    # cookie-authenticated writes require a CSRF token).
     for module in _PROTECTED_ROUTERS:
-        app.include_router(module.router, dependencies=[Depends(require_access)])
+        app.include_router(
+            module.router,
+            dependencies=[Depends(require_access), Depends(require_csrf)],
+        )
 
     # Admin-only endpoints.
-    app.include_router(admin.router, dependencies=[Depends(require_admin)])
+    app.include_router(
+        admin.router, dependencies=[Depends(require_admin), Depends(require_csrf)]
+    )
 
     app.include_router(web_routes.router)
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")

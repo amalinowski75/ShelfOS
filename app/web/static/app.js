@@ -4,6 +4,11 @@
 const dialog = document.getElementById("stock-dialog");
 const typeFilter = document.getElementById("type-filter");
 
+// Echoed back on cookie-authenticated writes so the server can tell a real
+// same-origin request from a forged cross-site one (see require_csrf).
+const csrfToken =
+  document.querySelector('meta[name="csrf-token"]')?.content || "";
+
 const table = new Tabulator("#components-table", {
   layout: "fitColumns",
   placeholder: "No components",
@@ -123,7 +128,7 @@ document.getElementById("stock-form").addEventListener("submit", async (event) =
   const url = form.mode.value === "add" ? "/api/stock/add" : "/api/stock/remove";
   const resp = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
     body,
   });
   if (resp.ok) {

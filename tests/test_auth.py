@@ -2,12 +2,56 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
 
 def _bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def _seed_admin(session) -> None:  # type: ignore[no-untyped-def]
+    from app.models.enums import UserRole
+    from app.services import user_service as us
+
+    us.create_user(session, username="admin", password="admin", role=UserRole.ADMIN)
+
+
+def _csrf_from_page(html: str) -> str:
+    match = re.search(r'name="csrf-token" content="([^"]*)"', html)
+    assert match and match.group(1), "page did not expose a CSRF token"
+    return match.group(1)
+
+
+def test_cookie_write_requires_csrf_token(session, anon_client: TestClient) -> None:  # type: ignore[no-untyped-def]
+    """Session-cookie writes need a matching CSRF token; bearer writes don't (M4)."""
+    _seed_admin(session)
+    anon_client.post("/login", data={"username": "admin", "password": "admin"})
+
+    # Cookie-authenticated write without the token is rejected.
+    resp = anon_client.post("/api/types", json={"name": "resistor"})
+    assert resp.status_code == 403
+
+    # A stale/wrong token is also rejected.
+    resp = anon_client.post(
+        "/api/types", json={"name": "resistor"}, headers={"X-CSRF-Token": "nope"}
+    )
+    assert resp.status_code == 403
+
+    # The token rendered into the page authorizes the write.
+    token = _csrf_from_page(anon_client.get("/").text)
+    resp = anon_client.post(
+        "/api/types", json={"name": "resistor"}, headers={"X-CSRF-Token": token}
+    )
+    assert resp.status_code == 201
+
+
+def test_bearer_write_is_exempt_from_csrf(client: TestClient) -> None:
+    """API clients authenticate per-request with a bearer token, so no CSRF."""
+    resp = client.post("/api/types", json={"name": "resistor"})
+    assert resp.status_code == 201
 
 
 def test_production_refuses_default_secret(monkeypatch) -> None:
