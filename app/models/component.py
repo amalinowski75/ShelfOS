@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 from app.models.enums import (
@@ -21,6 +22,12 @@ from app.models.enums import (
 
 class ComponentType(SQLModel, table=True):
     __tablename__ = "component_types"
+    # Name unique within a parent (DATA_MODEL). NULL parents are not caught by
+    # this constraint (NULL != NULL in SQL), so root-level duplicates are guarded
+    # by a service-layer pre-check instead.
+    __table_args__ = (
+        UniqueConstraint("parent_id", "name", name="uq_component_type_name_per_parent"),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     name: str
@@ -29,6 +36,10 @@ class ComponentType(SQLModel, table=True):
 
 class ParameterDefinition(SQLModel, table=True):
     __tablename__ = "parameter_definitions"
+    # A parameter's technical key is unique within its type (DATA_MODEL).
+    __table_args__ = (
+        UniqueConstraint("type_id", "name", name="uq_parameter_name_per_type"),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     type_id: int = Field(foreign_key="component_types.id")

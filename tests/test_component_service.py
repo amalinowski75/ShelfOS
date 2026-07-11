@@ -19,6 +19,52 @@ def test_create_type_rejects_unknown_parent(session: Session) -> None:
         cs.create_type(session, "mosfet", parent_id=999)
 
 
+def test_create_type_rejects_duplicate_name_under_same_parent(
+    session: Session,
+) -> None:
+    """Type names are unique within a parent, including root level (M3)."""
+    cs.create_type(session, "resistor")
+    with pytest.raises(ValidationError):
+        cs.create_type(session, "resistor")  # duplicate root
+    with pytest.raises(ValidationError):
+        cs.create_type_with_parameters(session, "resistor")  # same, batch API
+
+    parent = cs.create_type(session, "semiconductor")
+    cs.create_type(session, "mosfet", parent_id=parent.id)
+    with pytest.raises(ValidationError):
+        cs.create_type(session, "mosfet", parent_id=parent.id)
+
+
+def test_same_type_name_allowed_under_different_parents(session: Session) -> None:
+    a = cs.create_type(session, "passive")
+    b = cs.create_type(session, "active")
+    # "generic" is fine under each distinct parent and at the root.
+    cs.create_type(session, "generic", parent_id=a.id)
+    cs.create_type(session, "generic", parent_id=b.id)
+    cs.create_type(session, "generic")
+
+
+def test_add_parameter_definition_rejects_duplicate_name(session: Session) -> None:
+    """A parameter's technical key is unique within its type (M3)."""
+    ctype = cs.create_type(session, "resistor")
+    cs.add_parameter_definition(
+        session,
+        ctype.id,
+        name="resistance",
+        label="Resistance",
+        data_type=ParameterDataType.NUMBER,
+        unit="ohm",
+    )
+    with pytest.raises(ValidationError):
+        cs.add_parameter_definition(
+            session,
+            ctype.id,
+            name="resistance",
+            label="Resistance (dup)",
+            data_type=ParameterDataType.TEXT,
+        )
+
+
 def test_create_type_with_parameters_creates_type_and_definitions(
     session: Session,
 ) -> None:

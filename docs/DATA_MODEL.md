@@ -20,7 +20,7 @@ root (see D3).
 |-----------------|--------|-------------------------------------------|
 | id              | int PK |                                           |
 | type_id         | int FK | → component_types.id                      |
-| name            | str    | technical key (e.g. "resistance")         |
+| name            | str    | technical key, unique within type         |
 | label           | str    | UI label (e.g. "Resistance")              |
 | data_type       | enum   | number / text / bool / enum (D6)          |
 | unit            | str?   | base unit (e.g. "ohm")                    |
@@ -99,7 +99,7 @@ Invariant: exactly one value column filled, matching `data_type`.
 |----------------|---------|--------------------------------|
 | id             | int PK  |                                |
 | supplier       | str     |                                |
-| invoice_number | str     |                                |
+| invoice_number | str     | unique per supplier            |
 | invoice_date   | date    |                                |
 | currency       | str     | one currency per invoice (D5)  |
 | total_net      | Decimal |                                |

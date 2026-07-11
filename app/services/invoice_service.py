@@ -46,6 +46,16 @@ def create_invoice(
         raise ValidationError("invoice number must not be empty")
     if not currency.strip():
         raise ValidationError("invoice currency must not be empty")
+    existing = session.exec(
+        select(Invoice.id).where(
+            Invoice.supplier == supplier,
+            Invoice.invoice_number == invoice_number,
+        )
+    ).first()
+    if existing is not None:
+        raise ValidationError(
+            f"invoice {invoice_number!r} already exists for supplier {supplier!r}"
+        )
 
     invoice = Invoice(
         supplier=supplier,

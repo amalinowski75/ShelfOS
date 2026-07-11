@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
+from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 # Monetary precision shared by all amount columns (decision D5).
@@ -18,6 +19,13 @@ _MONEY_PLACES = 6
 
 class Invoice(SQLModel, table=True):
     __tablename__ = "invoices"
+    # A supplier does not issue two invoices with the same number; different
+    # suppliers may reuse a number, so uniqueness is per (supplier, number).
+    __table_args__ = (
+        UniqueConstraint(
+            "supplier", "invoice_number", name="uq_invoice_supplier_number"
+        ),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     supplier: str

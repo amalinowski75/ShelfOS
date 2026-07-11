@@ -56,6 +56,35 @@ def test_create_invoice_validates_required_fields(session: Session) -> None:
         )
 
 
+def test_create_invoice_rejects_duplicate_number_per_supplier(
+    session: Session,
+) -> None:
+    """The same supplier cannot reuse an invoice number; others can (M3)."""
+    inv.create_invoice(
+        session,
+        supplier="Mouser",
+        invoice_number="INV-1",
+        invoice_date=date(2026, 7, 8),
+        currency="EUR",
+    )
+    with pytest.raises(ValidationError):
+        inv.create_invoice(
+            session,
+            supplier="Mouser",
+            invoice_number="INV-1",
+            invoice_date=date(2026, 7, 9),
+            currency="EUR",
+        )
+    # A different supplier may reuse the same number.
+    inv.create_invoice(
+        session,
+        supplier="Digikey",
+        invoice_number="INV-1",
+        invoice_date=date(2026, 7, 9),
+        currency="EUR",
+    )
+
+
 def test_add_line_computes_total_and_updates_net(setup, session: Session) -> None:
     invoice_id = _new_invoice(session)
     line = inv.add_line(

@@ -53,6 +53,7 @@ def create_type(
         raise ValidationError("component type name must not be empty")
     if parent_id is not None:
         require_entity(session, ComponentType, parent_id, "component type")
+    _require_unique_type_name(session, name, parent_id)
     ctype = ComponentType(name=name, parent_id=parent_id)
     session.add(ctype)
     session.commit()
@@ -79,6 +80,7 @@ def create_type_with_parameters(
         raise ValidationError("component type name must not be empty")
     if parent_id is not None:
         require_entity(session, ComponentType, parent_id, "component type")
+    _require_unique_type_name(session, name, parent_id)
 
     seen: set[str] = set()
     for spec in specs:
@@ -144,10 +146,45 @@ def add_parameter_definition(
         enum_values=enum_values,
     )
     _validate_parameter_spec(spec)
+    _require_unique_parameter_name(session, type_id, name)
     definition = _create_parameter_definition(session, type_id, spec)
     session.commit()
     session.refresh(definition)
     return definition
+
+
+def _require_unique_type_name(
+    session: Session, name: str, parent_id: int | None
+) -> None:
+    """Reject a type name already used among a parent's direct children."""
+    existing = session.exec(
+        select(ComponentType.id).where(
+            ComponentType.name == name,
+            col(ComponentType.parent_id).is_(parent_id)
+            if parent_id is None
+            else ComponentType.parent_id == parent_id,
+        )
+    ).first()
+    if existing is not None:
+        raise ValidationError(
+            f"a component type named {name!r} already exists under this parent"
+        )
+
+
+def _require_unique_parameter_name(
+    session: Session, type_id: int, name: str
+) -> None:
+    """Reject a parameter name already defined directly on the type."""
+    existing = session.exec(
+        select(ParameterDefinition.id).where(
+            ParameterDefinition.type_id == type_id,
+            ParameterDefinition.name == name,
+        )
+    ).first()
+    if existing is not None:
+        raise ValidationError(
+            f"parameter {name!r} is already defined on this type"
+        )
 
 
 def _validate_parameter_spec(spec: ParameterSpec) -> None:
