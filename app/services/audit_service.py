@@ -9,11 +9,44 @@ neither does.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Final
 
 from sqlmodel import Session, col, select
 
 from app.models.audit import AuditLog
+
+# Canonical ``field`` names, kept here so producers and consumers of the log
+# share one vocabulary instead of scattering literals across services (spec
+# §19). Some fields are parameterized (a parameter name, a location id); those
+# are built by the helpers below rather than hardcoded, and parsed back by their
+# ``*_of`` counterparts so no consumer has to reinvent the encoding.
+FIELD_DELETED: Final = "deleted"
+FIELD_LOCATION_ID: Final = "location_id"
+FIELD_IS_FINALIZED: Final = "is_finalized"
+FIELD_TOTAL_GROSS: Final = "total_gross"
+
+_PARAMETER_PREFIX: Final = "parameter:"
+_QUANTITY_PREFIX: Final = "quantity@location:"
+
+
+def parameter_field(definition_name: str) -> str:
+    """Field name for an EAV parameter change (``parameter:<name>``)."""
+    return f"{_PARAMETER_PREFIX}{definition_name}"
+
+
+def quantity_field(location_id: int) -> str:
+    """Field name for a stock change at a location (``quantity@location:<id>``)."""
+    return f"{_QUANTITY_PREFIX}{location_id}"
+
+
+def quantity_location_of(field: str) -> int | None:
+    """Extract the location id from a quantity field, or ``None`` if not one."""
+    if not field.startswith(_QUANTITY_PREFIX):
+        return None
+    try:
+        return int(field[len(_QUANTITY_PREFIX) :])
+    except ValueError:
+        return None
 
 
 def record_change(

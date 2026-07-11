@@ -8,11 +8,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, ConfigDict
 from sqlmodel import Session
 
 from app.api.deps import get_session
+from app.auth.deps import current_user_id
 from app.models.enums import UserRole
 from app.services import audit_service
 from app.services import component_service as cs
@@ -67,10 +68,12 @@ class AuditEntryRead(BaseModel):
 
 @router.delete("/components/{component_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_component(
-    component_id: int, session: Session = Depends(get_session)
+    component_id: int,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
 ) -> None:
     """Permanently delete a component (spec §20)."""
-    cs.hard_delete_component(session, component_id)
+    cs.hard_delete_component(session, component_id, user_id=user_id)
 
 
 @router.get("/users", response_model=list[UserRead])
@@ -116,7 +119,7 @@ def set_password(
 def list_audit(
     entity_type: str | None = None,
     entity_id: int | None = None,
-    limit: int = 100,
+    limit: int = Query(100, ge=1, le=1000),
     session: Session = Depends(get_session),
 ) -> list[AuditEntryRead]:
     """Return audit-log entries, most recent first (spec §19)."""

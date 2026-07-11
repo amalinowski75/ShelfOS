@@ -214,7 +214,7 @@ def _record_movement(
         session,
         entity_type="component",
         entity_id=component_id,
-        field=f"quantity@location:{location_id}",
+        field=audit_service.quantity_field(location_id),
         old_value=new_quantity - delta,
         new_value=new_quantity,
         user_id=user_id,

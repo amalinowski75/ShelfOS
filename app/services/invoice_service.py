@@ -131,7 +131,7 @@ def set_line_location(
             session,
             entity_type="invoice_line",
             entity_id=line_id,
-            field="location_id",
+            field=audit_service.FIELD_LOCATION_ID,
             old_value=old_location_id,
             new_value=location_id,
             user_id=user_id,
@@ -142,10 +142,30 @@ def set_line_location(
     return line
 
 
-def remove_line(session: Session, invoice_id: int, line_id: int) -> None:
-    """Remove a line from a draft invoice and refresh totals."""
+def remove_line(
+    session: Session,
+    invoice_id: int,
+    line_id: int,
+    *,
+    user_id: int | None = None,
+) -> None:
+    """Remove a line from a draft invoice and refresh totals.
+
+    When ``user_id`` is given the deletion is recorded in the audit log (spec
+    §19) within the same transaction as the delete.
+    """
     line = _require_line_of_invoice(session, invoice_id, line_id)
     invoice = _require_draft(session, line.invoice_id)
+    if user_id is not None:
+        audit_service.record_change(
+            session,
+            entity_type="invoice_line",
+            entity_id=line_id,
+            field=audit_service.FIELD_DELETED,
+            old_value=False,
+            new_value=True,
+            user_id=user_id,
+        )
     session.delete(line)
     session.commit()
     _recompute_net(session, invoice)
@@ -193,6 +213,11 @@ def finalize_invoice(
     else:
         gross = net
 
+    # Capture the pre-finalization values for the audit trail before the UPDATE
+    # below overwrites them (total_gross defaults to Decimal(0), not NULL).
+    old_finalized = invoice.is_finalized
+    old_gross = invoice.total_gross
+
     # Claim finalization atomically: flip the flag only if the invoice is still a
     # draft, in the same transaction as the stock movements below. A concurrent
     # finalize (or a retry after a mid-loop failure) sees rowcount 0 and aborts,
@@ -212,8 +237,8 @@ def finalize_invoice(
         session,
         entity_type="invoice",
         entity_id=invoice_id,
-        field="is_finalized",
-        old_value=False,
+        field=audit_service.FIELD_IS_FINALIZED,
+        old_value=old_finalized,
         new_value=True,
         user_id=user_id,
     )
@@ -221,8 +246,8 @@ def finalize_invoice(
         session,
         entity_type="invoice",
         entity_id=invoice_id,
-        field="total_gross",
-        old_value=None,
+        field=audit_service.FIELD_TOTAL_GROSS,
+        old_value=old_gross,
         new_value=gross,
         user_id=user_id,
     )

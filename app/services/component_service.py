@@ -321,14 +321,27 @@ def list_parameter_values(
     )
 
 
-def hard_delete_component(session: Session, component_id: int) -> None:
+def hard_delete_component(
+    session: Session, component_id: int, *, user_id: int | None = None
+) -> None:
     """Permanently delete a component and its EAV/stock rows (admin only, §20).
 
     This is the administrative delete exposed through the backend API; the normal
     UI never deletes components. Related stock movements and invoice lines are
-    left untouched as historical records.
+    left untouched as historical records. When ``user_id`` is given the deletion
+    is recorded in the audit log (spec §19) within the same transaction.
     """
     component = require_entity(session, Component, component_id, "component")
+    if user_id is not None:
+        audit_service.record_change(
+            session,
+            entity_type="component",
+            entity_id=component_id,
+            field=audit_service.FIELD_DELETED,
+            old_value=False,
+            new_value=True,
+            user_id=user_id,
+        )
     for param in list_parameter_values(session, component_id):
         session.delete(param)
     for cl in session.exec(
@@ -380,13 +393,16 @@ def set_parameter_value(
     old_value = _current_value(param)
     _assign_value(session, param, definition, value)
     if user_id is not None:
+        # Log the normalized stored value (e.g. int 4700 -> 4700.0), so a value
+        # renders identically whether it is read back as new_value here or as
+        # the next change's old_value via _current_value.
         audit_service.record_change(
             session,
             entity_type="component",
             entity_id=component_id,
-            field=f"parameter:{definition.name}",
+            field=audit_service.parameter_field(definition.name),
             old_value=old_value,
-            new_value=value,
+            new_value=_current_value(param),
             user_id=user_id,
         )
     session.add(param)

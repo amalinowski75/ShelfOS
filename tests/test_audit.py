@@ -136,6 +136,44 @@ def test_line_location_change_is_audited(ctx, session: Session) -> None:
     assert entries[0].new_value == str(ctx["location_id"])
 
 
+def test_component_deletion_is_audited(ctx, session: Session) -> None:
+    """A hard delete leaves an audit row even though the component is gone."""
+    cs.hard_delete_component(
+        session, ctx["component_id"], user_id=ctx["user_id"]
+    )
+    entries = audit.list_entries(
+        session, entity_type="component", entity_id=ctx["component_id"]
+    )
+    assert len(entries) == 1
+    assert entries[0].field == "deleted"
+    assert entries[0].new_value == "true"
+    assert entries[0].user_id == ctx["user_id"]
+
+
+def test_line_removal_is_audited(ctx, session: Session) -> None:
+    invoice = inv.create_invoice(
+        session,
+        supplier="Mouser",
+        invoice_number="INV-1",
+        invoice_date=date(2026, 7, 8),
+        currency="EUR",
+    )
+    line = inv.add_line(
+        session,
+        invoice.id,
+        component_id=ctx["component_id"],
+        quantity=10,
+        unit_price=Decimal("1.00"),
+    )
+    inv.remove_line(session, invoice.id, line.id, user_id=ctx["user_id"])
+    entries = audit.list_entries(
+        session, entity_type="invoice_line", entity_id=line.id
+    )
+    assert len(entries) == 1
+    assert entries[0].field == "deleted"
+    assert entries[0].new_value == "true"
+
+
 def test_finalization_is_audited(ctx, session: Session) -> None:
     invoice = inv.create_invoice(
         session,
@@ -158,7 +196,10 @@ def test_finalization_is_audited(ctx, session: Session) -> None:
         session, entity_type="invoice", entity_id=invoice.id
     )
     fields = {e.field: e for e in entries}
+    assert fields["is_finalized"].old_value == "false"
     assert fields["is_finalized"].new_value == "true"
+    # The prior gross is the real stored zero, not a placeholder ``None``.
+    assert fields["total_gross"].old_value == "0.000000"
     assert fields["total_gross"].new_value == "15.000000"
 
 
@@ -185,3 +226,29 @@ def test_audit_endpoint_is_admin_only(client: TestClient) -> None:
 
 def test_audit_endpoint_requires_auth(anon_client: TestClient) -> None:
     assert anon_client.get("/api/admin/audit").status_code == 401
+
+
+def test_audit_endpoint_forbidden_for_non_admin(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    """A normal (non-admin) user is rejected with 403 by the router guard."""
+    client.post(
+        "/api/admin/users",
+        json={"username": "worker", "password": "pw", "role": "user"},
+    )
+    token = anon_client.post(
+        "/api/auth/token", json={"username": "worker", "password": "pw"}
+    ).json()["access_token"]
+
+    resp = anon_client.get(
+        "/api/admin/audit", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert resp.status_code == 403
+
+
+def test_audit_endpoint_rejects_out_of_range_limit(client: TestClient) -> None:
+    """``limit`` is bounded so a negative/huge value cannot dump the whole log."""
+    assert client.get("/api/admin/audit", params={"limit": -1}).status_code == 422
+    assert client.get("/api/admin/audit", params={"limit": 0}).status_code == 422
+    assert client.get("/api/admin/audit", params={"limit": 5000}).status_code == 422
+    assert client.get("/api/admin/audit", params={"limit": 100}).status_code == 200
