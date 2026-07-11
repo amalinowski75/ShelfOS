@@ -54,6 +54,18 @@ def test_bearer_write_is_exempt_from_csrf(client: TestClient) -> None:
     assert resp.status_code == 201
 
 
+def test_bearer_with_non_numeric_subject_is_unauthenticated(
+    anon_client: TestClient,
+) -> None:
+    """A validly-signed token with a non-numeric subject is a 401, not a 500 (L4)."""
+    import jwt
+    from app import config
+
+    token = jwt.encode({"sub": "not-a-number"}, config.SECRET_KEY, algorithm="HS256")
+    resp = anon_client.get("/api/locations", headers=_bearer(token))
+    assert resp.status_code == 401
+
+
 def test_production_refuses_default_secret(monkeypatch) -> None:
     """Startup must abort on the public default secret in production (D11)."""
     from app import config

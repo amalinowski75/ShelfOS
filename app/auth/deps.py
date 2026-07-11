@@ -40,9 +40,15 @@ def get_optional_user(
     header = request.headers.get("Authorization", "")
     if header.lower().startswith("bearer "):
         claims = decode_token(header[7:].strip())
-        if claims and claims.get("sub"):
-            user_id = int(claims["sub"])
-            auth_via = "bearer"
+        sub = claims.get("sub") if claims else None
+        if sub is not None:
+            try:
+                user_id = int(sub)
+                auth_via = "bearer"
+            except (TypeError, ValueError):
+                # A validly-signed token with a non-numeric subject is malformed,
+                # not authenticated -- treat it as anonymous instead of a 500.
+                user_id = None
 
     if user_id is None:
         session_scope = request.scope.get("session")
