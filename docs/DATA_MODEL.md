@@ -75,9 +75,9 @@ Invariant: exactly one value column filled, matching `data_type`.
 | field          | type   | notes                       |
 |----------------|--------|-----------------------------|
 | id             | int PK |                             |
-| component_id   | int FK |                             |
-| location_id    | int FK |                             |
-| quantity       | int    | cache = Σ delta_quantity    |
+| component_id   | int FK | unique together with location_id |
+| location_id    | int FK | one cache row per slot       |
+| quantity       | int    | cache = Σ delta_quantity, ≥ 0 |
 | container_type | enum   | reel/bag/feeder/loose/box   |
 | note           | str?   |                             |
 

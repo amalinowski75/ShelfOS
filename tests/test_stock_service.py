@@ -76,6 +76,85 @@ def test_remove_more_than_available_raises(fixture_ids, session: Session) -> Non
     assert ss.get_quantity(session, component_id, location_id) == 10
 
 
+def test_failed_removal_records_no_movement(fixture_ids, session: Session) -> None:
+    """A rejected removal leaves neither a phantom movement nor a cache change."""
+    component_id, location_id, user_id = fixture_ids
+    ss.add_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=10,
+        user_id=user_id,
+    )
+    with pytest.raises(InsufficientStockError):
+        ss.remove_stock(
+            session,
+            component_id=component_id,
+            location_id=location_id,
+            quantity=11,
+            user_id=user_id,
+        )
+    # Only the initial add survived; the guarded update rolled nothing forward.
+    assert len(ss.list_movements(session, component_id)) == 1
+    assert ss.get_quantity(session, component_id, location_id) == 10
+    assert ss.verify_cache_consistency(session)
+
+
+def test_removal_to_exactly_zero_succeeds(fixture_ids, session: Session) -> None:
+    """The non-negative guard permits draining a slot to exactly zero."""
+    component_id, location_id, user_id = fixture_ids
+    ss.add_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=7,
+        user_id=user_id,
+    )
+    ss.remove_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=7,
+        user_id=user_id,
+    )
+    assert ss.get_quantity(session, component_id, location_id) == 0
+    assert ss.verify_cache_consistency(session)
+
+
+def test_removal_from_empty_slot_raises(fixture_ids, session: Session) -> None:
+    """Removing from a slot that was never stocked is insufficient stock, not 500."""
+    component_id, location_id, user_id = fixture_ids
+    with pytest.raises(InsufficientStockError):
+        ss.remove_stock(
+            session,
+            component_id=component_id,
+            location_id=location_id,
+            quantity=1,
+            user_id=user_id,
+        )
+
+
+def test_duplicate_slot_is_rejected(fixture_ids, session: Session) -> None:
+    """The (component, location) natural key forbids a second cache row (M2)."""
+    from app.models.location import ComponentLocation
+    from sqlalchemy.exc import IntegrityError
+
+    component_id, location_id, _ = fixture_ids
+    session.add(
+        ComponentLocation(
+            component_id=component_id, location_id=location_id, quantity=1
+        )
+    )
+    session.add(
+        ComponentLocation(
+            component_id=component_id, location_id=location_id, quantity=2
+        )
+    )
+    with pytest.raises(IntegrityError):
+        session.commit()
+    session.rollback()
+
+
 def test_non_positive_quantities_rejected(fixture_ids, session: Session) -> None:
     component_id, location_id, user_id = fixture_ids
     with pytest.raises(ValidationError):

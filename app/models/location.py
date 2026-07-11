@@ -6,6 +6,7 @@ the stock-movement ledger (decision D1).
 
 from __future__ import annotations
 
+from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 from app.models.enums import ContainerType, LocationType, enum_column
@@ -22,6 +23,13 @@ class Location(SQLModel, table=True):
 
 class ComponentLocation(SQLModel, table=True):
     __tablename__ = "component_locations"
+    # One cache row per (component, location) slot -- the natural key. Prevents a
+    # concurrent first movement from splitting a slot's quantity across two rows.
+    __table_args__ = (
+        UniqueConstraint(
+            "component_id", "location_id", name="uq_component_location_slot"
+        ),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     component_id: int = Field(foreign_key="components.id")

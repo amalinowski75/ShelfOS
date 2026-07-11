@@ -9,6 +9,11 @@ lets a location's quantity drop below zero.
 
 from __future__ import annotations
 
+from typing import cast
+
+from sqlalchemy import update
+from sqlalchemy.engine import CursorResult
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, func, select
 
 from app.models.component import Component
@@ -199,22 +204,7 @@ def _record_movement(
     require_entity(session, Component, component_id, "component")
     require_entity(session, Location, location_id, "location")
 
-    cl = _find_component_location(session, component_id, location_id)
-    if cl is None:
-        cl = ComponentLocation(
-            component_id=component_id,
-            location_id=location_id,
-            quantity=0,
-            container_type=container_type,
-        )
-
-    new_quantity = cl.quantity + delta
-    if new_quantity < 0:
-        raise InsufficientStockError(
-            f"cannot remove {-delta}: only {cl.quantity} in stock at "
-            f"location {location_id}"
-        )
-    cl.quantity = new_quantity
+    _apply_delta(session, component_id, location_id, delta, container_type)
 
     movement = StockMovement(
         component_id=component_id,
@@ -226,7 +216,6 @@ def _record_movement(
         invoice_id=invoice_id,
     )
 
-    session.add(cl)
     session.add(movement)
     if commit:
         session.commit()
@@ -234,6 +223,68 @@ def _record_movement(
         session.flush()
     session.refresh(movement)
     return movement
+
+
+def _apply_delta(
+    session: Session,
+    component_id: int,
+    location_id: int,
+    delta: int,
+    container_type: ContainerType,
+) -> None:
+    """Move a slot's cached quantity by ``delta``, never below zero (D1).
+
+    The change is a single guarded ``UPDATE`` whose ``WHERE`` clause also
+    enforces the non-negative invariant, so concurrent movements on the same
+    slot serialize without a read-modify-write race (lost updates or a negative
+    quantity) on any backend with row-level locking. The first movement into a
+    slot inserts the cache row; a lost insert race is retried as an update.
+    """
+    for _ in range(2):
+        result = cast(
+            "CursorResult[object]",
+            session.execute(
+                update(ComponentLocation)
+                .where(
+                    col(ComponentLocation.component_id) == component_id,
+                    col(ComponentLocation.location_id) == location_id,
+                    col(ComponentLocation.quantity) + delta >= 0,
+                )
+                .values(quantity=col(ComponentLocation.quantity) + delta)
+            ),
+        )
+        if result.rowcount:
+            return
+
+        cl = _find_component_location(session, component_id, location_id)
+        if cl is not None:
+            # The slot exists but the guard rejected the update: it would go
+            # negative.
+            raise InsufficientStockError(
+                f"cannot remove {-delta}: only {cl.quantity} in stock at "
+                f"location {location_id}"
+            )
+        if delta < 0:
+            raise InsufficientStockError(
+                f"cannot remove {-delta}: nothing in stock at location {location_id}"
+            )
+
+        # First movement into this slot: create the cache row. If a concurrent
+        # movement created it first, the unique key raises and we loop to take
+        # the update path instead of writing a duplicate.
+        try:
+            with session.begin_nested():
+                session.add(
+                    ComponentLocation(
+                        component_id=component_id,
+                        location_id=location_id,
+                        quantity=delta,
+                        container_type=container_type,
+                    )
+                )
+            return
+        except IntegrityError:
+            continue
 
 
 def _find_component_location(
