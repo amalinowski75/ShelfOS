@@ -18,7 +18,7 @@ from sqlmodel import Session
 from app.api.deps import get_session
 from app.auth.deps import get_optional_user, issue_csrf_token
 from app.models.component import ComponentType
-from app.models.enums import ParameterDataType
+from app.models.enums import MountingType, ParameterDataType
 from app.models.user import User
 from app.services import component_service as cs
 from app.services import invoice_service as inv
@@ -123,6 +123,7 @@ def index(
             "types": cs.list_types(session),
             "locations": ls.list_all(session),
             "data_types": [dt.value for dt in ParameterDataType],
+            "mounting_types": [mt.value for mt in MountingType],
             "current_user": user,
         },
     )

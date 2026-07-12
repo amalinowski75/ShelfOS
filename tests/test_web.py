@@ -59,6 +59,29 @@ def test_index_shows_new_type_control_for_writer(client: TestClient) -> None:
     assert 'id="inherited-list"' in html
 
 
+def test_index_shows_new_component_control_for_writer(client: TestClient) -> None:
+    """A writer sees the §16.5 create-component dialog with its base fields."""
+    html = client.get("/").text
+    assert 'id="new-component-btn"' in html
+    assert 'id="component-dialog"' in html
+    assert 'id="component-type"' in html
+    assert 'id="component-params"' in html
+    # The mounting select offers the enum values.
+    assert 'value="THT"' in html
+
+
+def test_new_component_control_hidden_for_read_only(client: TestClient) -> None:
+    client.post(
+        "/api/admin/users",
+        json={"username": "viewer", "password": "pw", "role": "read-only"},
+    )
+    token = client.post(
+        "/api/auth/token", json={"username": "viewer", "password": "pw"}
+    ).json()["access_token"]
+    html = client.get("/", headers={"Authorization": f"Bearer {token}"}).text
+    assert 'id="new-component-btn"' not in html
+
+
 def test_require_web_user_heals_missing_csrf_token(session) -> None:  # type: ignore[no-untyped-def]
     """An authenticated session without a CSRF token gets one issued on render.
 

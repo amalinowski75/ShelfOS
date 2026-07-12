@@ -274,6 +274,14 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 
 .error { color: var(--danger); font-size: 13.5px; margin: 0; }
 
+/* ---------- new-component dialog (§16.5) ---------- */
+/* A single-column form that can grow with a type's parameter list, so cap the
+   height and let the form scroll while the header stays put. */
+#component-dialog { width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 48px); }
+#component-dialog > article { display: flex; flex-direction: column; max-height: calc(100vh - 48px); }
+#component-dialog article > header { flex: none; }
+#component-dialog form { overflow-y: auto; }
+
 /* ---------- new-type dialog (§13) ---------- */
 /* Widen the dialog itself (the base rule caps it at 440px); it holds a
    two-column parameter builder plus an inherited-parameters side panel. */

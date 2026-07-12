@@ -51,6 +51,15 @@ export function loadPage(bodyHtml, scripts, { fetchImpl } = {}) {
   // jsdom does not implement <dialog> modality; the scripts only open/close.
   window.HTMLDialogElement.prototype.showModal = vi.fn();
   window.HTMLDialogElement.prototype.close = vi.fn();
+  // app.js constructs a Tabulator at load; stub the few methods it calls so the
+  // component-table code can run without the real (CDN) library.
+  window.Tabulator = class {
+    setColumns() {}
+    setData() {
+      return Promise.resolve();
+    }
+    on() {}
+  };
 
   // Browsers expose form controls as named properties on the form
   // (``form.supplier``), which the scripts rely on; jsdom only implements
@@ -171,6 +180,36 @@ export function detailFixture({
       <button type="submit"></button>
     </form></dialog>
     ${finalize}`;
+}
+
+// The components page body app.js touches at load, plus the New Component
+// dialog. Only the elements the script reads are included.
+export function componentPageFixture(types = [{ id: 1, name: "resistor" }]) {
+  const options = types
+    .map((t) => `<option value="${t.id}">${t.name}</option>`)
+    .join("");
+  return `
+    <select id="type-filter"><option value="">All types</option>${options}</select>
+    <button id="new-component-btn"></button>
+    <div id="components-table"></div>
+    <dialog id="stock-dialog"><form id="stock-form"></form></dialog>
+    <dialog id="component-dialog"><form id="component-form">
+      <select name="type_id" id="component-type">
+        <option value="">Select a type…</option>${options}
+      </select>
+      <input name="manufacturer" />
+      <input name="mpn" />
+      <input name="package" />
+      <select name="mounting_type">
+        <option value="SMT">SMT</option>
+        <option value="THT">THT</option>
+      </select>
+      <input name="notes" />
+      <p id="component-params-hint"></p>
+      <div id="component-params"></div>
+      <p id="component-error" hidden></p>
+      <button type="submit"></button>
+    </form></dialog>`;
 }
 
 // Parse the JSON body of the Nth fetch call.
