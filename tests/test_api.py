@@ -6,6 +6,7 @@ dependency, so requests exercise the real services against an isolated database.
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -453,3 +454,176 @@ def test_invoice_detail_survives_deleted_component(client: TestClient) -> None:
     line = detail.json()["lines"][0]
     assert line["component_id"] == component["id"]
     assert line["component"] is None
+
+
+def test_update_invoice_and_line_via_api(client: TestClient) -> None:
+    from decimal import Decimal
+
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    invoice = client.post(
+        "/api/invoices",
+        json={
+            "supplier": "Mouser",
+            "invoice_number": "INV-1",
+            "invoice_date": "2026-07-08",
+            "currency": "EUR",
+        },
+    ).json()
+    line = client.post(
+        f"/api/invoices/{invoice['id']}/lines",
+        json={"component_id": component["id"], "quantity": 10, "unit_price": "1.00"},
+    ).json()
+
+    # PATCH metadata (partial: number/date/currency untouched).
+    patched = client.patch(
+        f"/api/invoices/{invoice['id']}",
+        json={"supplier": "Digikey", "notes": "rush"},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["supplier"] == "Digikey"
+    assert patched.json()["invoice_number"] == "INV-1"
+
+    # PUT line edit recomputes total and net.
+    put = client.put(
+        f"/api/invoices/{invoice['id']}/lines/{line['id']}",
+        json={"quantity": 5, "unit_price": "2.00"},
+    )
+    assert put.status_code == 200
+
+    detail = client.get(f"/api/invoices/{invoice['id']}").json()
+    assert detail["supplier"] == "Digikey"
+    assert detail["notes"] == "rush"
+    assert Decimal(str(detail["total_net"])) == Decimal("10")
+    edited = detail["lines"][0]
+    assert edited["quantity"] == 5
+    assert Decimal(str(edited["unit_price"])) == Decimal("2")
+
+
+def test_edit_finalized_invoice_is_conflict(client: TestClient) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    location = client.post(
+        "/api/locations", json={"type": "drawer", "name": "D1"}
+    ).json()
+    invoice = client.post(
+        "/api/invoices",
+        json={
+            "supplier": "Mouser",
+            "invoice_number": "INV-1",
+            "invoice_date": "2026-07-08",
+            "currency": "EUR",
+        },
+    ).json()
+    line = client.post(
+        f"/api/invoices/{invoice['id']}/lines",
+        json={
+            "component_id": component["id"],
+            "quantity": 1,
+            "unit_price": "1.00",
+            "location_id": location["id"],
+        },
+    ).json()
+    client.post(f"/api/invoices/{invoice['id']}/finalize", json={})
+
+    # A finalized invoice is read-only -> 409 from InvoiceFinalizedError.
+    assert (
+        client.patch(
+            f"/api/invoices/{invoice['id']}", json={"supplier": "X"}
+        ).status_code
+        == 409
+    )
+    assert (
+        client.put(
+            f"/api/invoices/{invoice['id']}/lines/{line['id']}",
+            json={"quantity": 2},
+        ).status_code
+        == 409
+    )
+
+
+def test_invoice_edit_endpoints_forbidden_for_read_only(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    invoice = client.post(
+        "/api/invoices",
+        json={
+            "supplier": "Mouser",
+            "invoice_number": "INV-1",
+            "invoice_date": "2026-07-08",
+            "currency": "EUR",
+        },
+    ).json()
+    line = client.post(
+        f"/api/invoices/{invoice['id']}/lines",
+        json={"component_id": component["id"], "quantity": 1, "unit_price": "1.00"},
+    ).json()
+
+    client.post(
+        "/api/admin/users",
+        json={"username": "viewer", "password": "pw", "role": "read-only"},
+    )
+    token = client.post(
+        "/api/auth/token", json={"username": "viewer", "password": "pw"}
+    ).json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Read-only accounts are blocked from writes by the router guard.
+    assert (
+        anon_client.patch(
+            f"/api/invoices/{invoice['id']}",
+            json={"supplier": "X"},
+            headers=headers,
+        ).status_code
+        == 403
+    )
+    assert (
+        anon_client.put(
+            f"/api/invoices/{invoice['id']}/lines/{line['id']}",
+            json={"quantity": 2},
+            headers=headers,
+        ).status_code
+        == 403
+    )
+
+
+def test_update_invoice_db_constraint_maps_to_conflict(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``(supplier, number)`` collision that slips past the app-level check must
+    surface as 409, not a raw 500 from the ``uq_invoice_supplier_number`` violation.
+
+    Disabling the pre-check simulates the race the handler exists for (two writes
+    passing the check before either commits), so the DB constraint is what fires.
+    """
+    from app.services import invoice_service
+
+    first = client.post(
+        "/api/invoices",
+        json={
+            "supplier": "Mouser",
+            "invoice_number": "INV-1",
+            "invoice_date": "2026-07-08",
+            "currency": "EUR",
+        },
+    ).json()
+    second = client.post(
+        "/api/invoices",
+        json={
+            "supplier": "Mouser",
+            "invoice_number": "INV-2",
+            "invoice_date": "2026-07-08",
+            "currency": "EUR",
+        },
+    ).json()
+
+    # Bypass the app-level guard so the rename reaches the database untouched.
+    monkeypatch.setattr(invoice_service, "_number_conflicts", lambda *a, **k: False)
+
+    conflict = client.patch(
+        f"/api/invoices/{second['id']}",
+        json={"invoice_number": first["invoice_number"]},
+    )
+    assert conflict.status_code == 409

@@ -415,3 +415,204 @@ def test_get_invoice_detail_tolerates_deleted_component(
     line, component = pairs[0]
     assert line.component_id == setup["component_id"]
     assert component is None
+
+
+def test_update_invoice_edits_metadata_and_audits(setup, session: Session) -> None:
+    from app.services import audit_service as audit
+
+    invoice_id = _new_invoice(session)  # Mouser / INV-1
+    inv.update_invoice(
+        session, invoice_id, supplier="Digikey", notes="rush", user_id=setup["user_id"]
+    )
+    updated = session.get(inv.Invoice, invoice_id)
+    assert updated is not None
+    assert updated.supplier == "Digikey"
+    assert updated.notes == "rush"
+    assert updated.invoice_number == "INV-1"  # untouched
+
+    fields = {
+        e.field
+        for e in audit.list_entries(
+            session, entity_type="invoice", entity_id=invoice_id
+        )
+    }
+    assert {"supplier", "notes"} <= fields
+    assert "invoice_number" not in fields  # unchanged -> not audited
+
+
+def test_update_invoice_rejects_when_finalized(setup, session: Session) -> None:
+    invoice_id = _new_invoice(session)
+    inv.add_line(
+        session,
+        invoice_id,
+        component_id=setup["component_id"],
+        quantity=1,
+        unit_price=Decimal("1.00"),
+        location_id=setup["location_id"],
+    )
+    inv.finalize_invoice(session, invoice_id, user_id=setup["user_id"])
+    with pytest.raises(InvoiceFinalizedError):
+        inv.update_invoice(session, invoice_id, supplier="Digikey")
+
+
+def test_update_invoice_rejects_duplicate_number(setup, session: Session) -> None:
+    _new_invoice(session)  # Mouser / INV-1
+    other = inv.create_invoice(
+        session,
+        supplier="Mouser",
+        invoice_number="INV-2",
+        invoice_date=date(2026, 7, 8),
+        currency="EUR",
+    )
+    with pytest.raises(ValidationError):
+        inv.update_invoice(session, other.id, invoice_number="INV-1")
+
+
+def test_update_invoice_rejects_empty_required(setup, session: Session) -> None:
+    invoice_id = _new_invoice(session)
+    with pytest.raises(ValidationError):
+        inv.update_invoice(session, invoice_id, supplier="   ")
+
+
+def test_update_line_recomputes_total_and_net_and_audits(
+    setup, session: Session
+) -> None:
+    from app.services import audit_service as audit
+
+    invoice_id = _new_invoice(session)
+    line = inv.add_line(
+        session,
+        invoice_id,
+        component_id=setup["component_id"],
+        quantity=10,
+        unit_price=Decimal("1.00"),
+    )
+    inv.update_line(
+        session,
+        invoice_id,
+        line.id,
+        quantity=5,
+        unit_price=Decimal("3.00"),
+        user_id=setup["user_id"],
+    )
+    updated = session.get(inv.InvoiceLine, line.id)
+    assert updated is not None
+    assert updated.quantity == 5
+    assert updated.unit_price == Decimal("3.00")
+    assert updated.total_price == Decimal("15.00")  # 10*1.00 -> 5*3.00
+
+    invoice = session.get(inv.Invoice, invoice_id)
+    assert invoice is not None
+    assert invoice.total_net == Decimal("15.00")
+
+    fields = {
+        e.field
+        for e in audit.list_entries(
+            session, entity_type="invoice_line", entity_id=line.id
+        )
+    }
+    assert {"quantity", "unit_price", "total_price"} <= fields
+
+
+def test_update_line_validates_quantity_and_price(setup, session: Session) -> None:
+    invoice_id = _new_invoice(session)
+    line = inv.add_line(
+        session,
+        invoice_id,
+        component_id=setup["component_id"],
+        quantity=10,
+        unit_price=Decimal("1.00"),
+    )
+    with pytest.raises(ValidationError):
+        inv.update_line(session, invoice_id, line.id, quantity=0)
+    with pytest.raises(ValidationError):
+        inv.update_line(session, invoice_id, line.id, unit_price=Decimal("-1"))
+
+
+def test_update_line_rejects_when_finalized(setup, session: Session) -> None:
+    invoice_id = _new_invoice(session)
+    line = inv.add_line(
+        session,
+        invoice_id,
+        component_id=setup["component_id"],
+        quantity=1,
+        unit_price=Decimal("1.00"),
+        location_id=setup["location_id"],
+    )
+    inv.finalize_invoice(session, invoice_id, user_id=setup["user_id"])
+    with pytest.raises(InvoiceFinalizedError):
+        inv.update_line(session, invoice_id, line.id, quantity=2)
+
+
+def test_update_line_rejects_mismatched_invoice(setup, session: Session) -> None:
+    invoice_id = _new_invoice(session)
+    other = inv.create_invoice(
+        session,
+        supplier="Digikey",
+        invoice_number="INV-2",
+        invoice_date=date(2026, 7, 8),
+        currency="EUR",
+    )
+    line = inv.add_line(
+        session,
+        invoice_id,
+        component_id=setup["component_id"],
+        quantity=10,
+        unit_price=Decimal("1.00"),
+    )
+    with pytest.raises(NotFoundError):
+        inv.update_line(session, other.id, line.id, quantity=2)
+
+
+def test_update_invoice_no_op_writes_no_audit(setup, session: Session) -> None:
+    from app.services import audit_service as audit
+
+    invoice_id = _new_invoice(session)  # Mouser / INV-1 / EUR
+    # Re-sending the current values changes nothing, so nothing is audited.
+    inv.update_invoice(
+        session, invoice_id, supplier="Mouser", currency="EUR", user_id=setup["user_id"]
+    )
+    assert (
+        audit.list_entries(session, entity_type="invoice", entity_id=invoice_id) == []
+    )
+
+
+def test_update_line_no_op_writes_no_audit(setup, session: Session) -> None:
+    from app.services import audit_service as audit
+
+    invoice_id = _new_invoice(session)
+    line = inv.add_line(
+        session,
+        invoice_id,
+        component_id=setup["component_id"],
+        quantity=4,
+        unit_price=Decimal("1.00"),
+    )
+    inv.update_line(
+        session,
+        invoice_id,
+        line.id,
+        quantity=4,
+        unit_price=Decimal("1.00"),
+        user_id=setup["user_id"],
+    )
+    assert (
+        audit.list_entries(session, entity_type="invoice_line", entity_id=line.id) == []
+    )
+
+
+def test_update_line_accepts_zero_unit_price(setup, session: Session) -> None:
+    invoice_id = _new_invoice(session)
+    line = inv.add_line(
+        session,
+        invoice_id,
+        component_id=setup["component_id"],
+        quantity=4,
+        unit_price=Decimal("1.00"),
+    )
+    updated = inv.update_line(session, invoice_id, line.id, unit_price=Decimal("0"))
+    assert updated.unit_price == Decimal("0")
+    assert updated.total_price == Decimal("0")
+    invoice = session.get(inv.Invoice, invoice_id)
+    assert invoice is not None
+    assert invoice.total_net == Decimal("0")
