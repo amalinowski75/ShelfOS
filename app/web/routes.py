@@ -197,6 +197,9 @@ def invoice_detail(
         for line, component in pairs
     ]
 
+    # The "New component" dialog only renders for a writer on a draft, so only
+    # fetch its data then (avoids a types query on read-only/finalized views).
+    can_edit = user.role.value != "read-only" and not invoice.is_finalized
     return templates.TemplateResponse(
         request,
         "invoice_detail.html",
@@ -204,6 +207,9 @@ def invoice_detail(
             "invoice": invoice,
             "lines": lines,
             "locations": ls.list_all(session),
+            # For the shared "New component" dialog reachable from the picker.
+            "types": cs.list_types(session) if can_edit else [],
+            "mounting_types": [mt.value for mt in MountingType],
             "current_user": user,
         },
     )

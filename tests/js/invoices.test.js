@@ -1,10 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   loadPage,
   tick,
   CSRF,
   newInvoiceFixture,
   detailFixture,
+  componentDialogFixture,
   fetchBody,
 } from "./harness.js";
 
@@ -268,5 +269,71 @@ describe("invoices.js — error surfacing and add-line", () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("invoices.js — new component from the add-line flow", () => {
+  const SHARED = ["shared.js", "component_dialog.js", "invoices.js"];
+
+  it("creates a component in the picker and selects it, without new backend", async () => {
+    // The picker feed deliberately never includes the new component, proving the
+    // new option is inserted directly from the create response, not via a reload.
+    const fetchImpl = (url, opts) => {
+      if (url === "/web/api/components") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            columns: [],
+            data: [{ id: 5, mpn: "OLD", manufacturer: null, type: "resistor" }],
+          }),
+        });
+      }
+      if (url.startsWith("/api/types/") && url.endsWith("/parameters")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url === "/api/components" && opts?.method === "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ id: 99, type_id: 1, mpn: "NEW", manufacturer: "Acme" }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    };
+
+    const { document } = loadPage(
+      detailFixture() + componentDialogFixture(),
+      SHARED,
+      { fetchImpl },
+    );
+
+    // Per-instance close spies so we can prove only the inner dialog closes.
+    const lineClose = vi.fn();
+    const componentClose = vi.fn();
+    document.getElementById("invoice-line-dialog").close = lineClose;
+    document.getElementById("component-dialog").close = componentClose;
+
+    document.getElementById("invoice-addline-btn").click();
+    await tick(); // picker populated with the existing component (#5)
+
+    document.getElementById("invoice-add-component-btn").click(); // open shared dialog
+    const typeSelect = document.getElementById("component-type");
+    typeSelect.value = "1";
+    typeSelect.dispatchEvent(
+      new document.defaultView.Event("change", { bubbles: true }),
+    );
+    await tick();
+    submit(document, "component-form"); // create the component
+    await tick();
+
+    // The new component is now an option in the line picker, and selected,
+    // even though the reload feed never contained it.
+    const picker = document.querySelector('[name="component_id"]');
+    expect([...picker.options].map((o) => o.value)).toContain("99");
+    expect(picker.value).toBe("99");
+    const newOption = picker.querySelector('option[value="99"]');
+    expect(newOption.textContent).toBe("NEW · Acme");
+    // Only the stacked component dialog closes; the line dialog stays open.
+    expect(componentClose).toHaveBeenCalled();
+    expect(lineClose).not.toHaveBeenCalled();
   });
 });
