@@ -104,7 +104,9 @@ h1 { font-size: 26px; margin: 0; }
 h2 { font-size: 18px; margin: 0; }
 a { color: var(--accent-strong); text-underline-offset: 2px; }
 
-.page { max-width: 1120px; margin: 0 auto; padding: 26px 24px 72px; }
+/* Use the full viewport width with a small, even gutter — a wide component
+   table needs the room so columns stop truncating (was capped at 1120px). */
+.page { padding: 26px 25px 72px; }
 .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .muted { color: var(--muted); }
 
@@ -122,7 +124,7 @@ a { color: var(--accent-strong); text-underline-offset: 2px; }
   border-bottom: 1px solid var(--border);
 }
 .appbar-inner {
-  max-width: 1120px; margin: 0 auto; padding: 12px 24px;
+  padding: 12px 25px;
   display: flex; align-items: center; gap: 16px;
 }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: -.01em; }
@@ -337,7 +339,10 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
   font-weight: 650; color: var(--muted);
 }
 .tabulator .tabulator-header .tabulator-col.tabulator-sortable:hover {
-  background: var(--row-hover);
+  /* The header sits on --surface-2, which --row-hover barely differs from;
+     use the stronger token so the hover reads. !important is needed to beat
+     the CDN theme's own near-white header hover (same as the row rule below). */
+  background: var(--border-strong) !important;
 }
 .tabulator .tabulator-row { background: var(--surface); border-bottom: 1px solid var(--border); color: var(--text); }
 .tabulator .tabulator-row.tabulator-row-even { background: var(--surface); }
