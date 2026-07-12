@@ -705,3 +705,42 @@ def test_location_path_endpoint(client: TestClient) -> None:
     path = client.get(f"/api/locations/{child['id']}/path")
     assert path.status_code == 200
     assert [loc["name"] for loc in path.json()] == ["Lab", "D1"]
+
+
+def test_set_number_parameter_accepts_engineering_string(client: TestClient) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    client.post(
+        f"/api/types/{ctype['id']}/parameters",
+        json={
+            "name": "resistance",
+            "label": "Resistance",
+            "data_type": "number",
+            "unit": "Ω",
+        },
+    )
+    definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+
+    ok = client.put(
+        f"/api/components/{component['id']}/parameters",
+        json={"parameter_definition_id": definition["id"], "value": "4k7"},
+    )
+    assert ok.status_code == 200
+    assert ok.json()["value_num"] == 4700.0
+
+    # An unparseable value is a clean 422, not a silently-wrong number.
+    bad = client.put(
+        f"/api/components/{component['id']}/parameters",
+        json={"parameter_definition_id": definition["id"], "value": "not a number"},
+    )
+    assert bad.status_code == 422
+
+    # JSON `Infinity` is accepted by the parser/Pydantic but must not be stored.
+    inf = client.put(
+        f"/api/components/{component['id']}/parameters",
+        content=(
+            f'{{"parameter_definition_id": {definition["id"]}, "value": Infinity}}'
+        ),
+        headers={"Content-Type": "application/json"},
+    )
+    assert inf.status_code == 422

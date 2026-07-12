@@ -11,6 +11,7 @@ Key rules implemented here:
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import cast
@@ -29,8 +30,38 @@ from app.models.location import ComponentLocation
 from app.services import audit_service
 from app.services._common import require_entity
 from app.services.errors import ValidationError
+from app.units import UnitParseError, parse_engineering
 
 ParameterValue = float | int | str | bool
+
+
+def _coerce_number(value: ParameterValue, definition: ParameterDefinition) -> float:
+    """Return a base-unit float for a NUMBER parameter value.
+
+    A string is read as engineering notation (so ``"4k7"`` and ``"100 nF"``
+    work); a raw int/float is taken as-is. ``bool`` is a subclass of ``int`` and
+    is rejected explicitly. A non-finite value (``inf``/``nan``, which Pydantic
+    accepts by default) is rejected so it never reaches storage or JSON.
+    """
+    if isinstance(value, bool):
+        raise ValidationError(f"expected a number for {definition.name!r}")
+    if isinstance(value, str):
+        try:
+            result = parse_engineering(value)
+        except UnitParseError as exc:
+            raise ValidationError(
+                f"could not read {value!r} as a number for {definition.name!r}"
+            ) from exc
+    elif isinstance(value, int | float):
+        result = float(value)
+    else:
+        raise ValidationError(f"expected a number for {definition.name!r}")
+
+    if not math.isfinite(result):
+        raise ValidationError(
+            f"{value!r} is not a finite number for {definition.name!r}"
+        )
+    return result
 
 
 @dataclass
@@ -489,10 +520,7 @@ def _assign_value(
 
     match definition.data_type:
         case ParameterDataType.NUMBER:
-            # bool is a subclass of int, so reject it explicitly.
-            if isinstance(value, bool) or not isinstance(value, int | float):
-                raise ValidationError(f"expected a number for {definition.name!r}")
-            param.value_num = float(value)
+            param.value_num = _coerce_number(value, definition)
         case ParameterDataType.BOOL:
             if not isinstance(value, bool):
                 raise ValidationError(f"expected a bool for {definition.name!r}")
