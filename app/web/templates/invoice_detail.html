@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_location_picker.html" import location_picker %}
 {% block title %}{{ invoice.invoice_number }} — ShelfOS{% endblock %}
 
 {% set can_edit = current_user.role.value != "read-only" and not invoice.is_finalized %}
@@ -171,12 +172,7 @@
       </div>
       <div class="field">
         <label>Location</label>
-        <select class="control" name="location_id">
-          <option value="">— none —</option>
-          {% for loc in locations %}
-          <option value="{{ loc.id }}">{{ loc.name }} ({{ loc.type.value }})</option>
-          {% endfor %}
-        </select>
+        {{ location_picker(location_tree, name="location_id", optional=true) }}
       </div>
       <p id="invoice-line-error" class="error" hidden></p>
       <footer>

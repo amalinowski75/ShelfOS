@@ -615,6 +615,10 @@ def test_invoice_detail_draft_shows_write_controls(client: TestClient) -> None:
     assert 'id="invoice-add-component-btn"' in html
     assert 'id="component-dialog"' in html
     assert "/static/component_dialog.js" in html
+    # The line's location field is the (optional) tree-picker.
+    assert 'class="loc-picker"' in html
+    assert 'data-loc-path="D1"' in html  # the seeded location
+    assert "— none —" in html
 
 
 def test_invoice_detail_finalized_is_read_only(client: TestClient) -> None:
