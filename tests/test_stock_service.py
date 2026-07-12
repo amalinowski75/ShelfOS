@@ -293,3 +293,42 @@ def test_unknown_component_raises(session: Session) -> None:
             quantity=1,
             user_id=user.id,
         )
+
+
+def test_apply_correction_rejects_zero_delta(
+    fixture_ids, session: Session
+) -> None:
+    component_id, location_id, user_id = fixture_ids
+    with pytest.raises(ValidationError):
+        ss.apply_correction(
+            session,
+            component_id=component_id,
+            location_id=location_id,
+            delta=0,
+            user_id=user_id,
+        )
+
+
+def test_verify_cache_consistency_detects_drift(
+    fixture_ids, session: Session
+) -> None:
+    """A cached quantity that no longer matches the movement ledger is caught."""
+    from app.models.location import ComponentLocation
+    from sqlmodel import select
+
+    component_id, location_id, user_id = fixture_ids
+    ss.add_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=5,
+        user_id=user_id,
+    )
+    assert ss.verify_cache_consistency(session)
+
+    # Corrupt the cache behind the ledger's back.
+    cl = session.exec(select(ComponentLocation)).one()
+    cl.quantity = 999
+    session.add(cl)
+    session.commit()
+    assert ss.verify_cache_consistency(session) is False

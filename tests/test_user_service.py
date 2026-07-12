@@ -132,3 +132,15 @@ def test_list_users_ordered(session: Session) -> None:
     us.create_user(session, username="zoe", password="pw")
     us.create_user(session, username="amy", password="pw")
     assert [u.name for u in us.list_users(session)] == ["amy", "zoe"]
+
+
+def test_verify_password_tolerates_malformed_hash() -> None:
+    """A stored value that isn't a bcrypt hash makes ``checkpw`` raise; the
+    helper must report "not verified" rather than propagate the ValueError."""
+    assert us.verify_password("pw", "not-a-bcrypt-hash") is False
+
+
+def test_set_password_rejects_empty(session: Session) -> None:
+    user = us.create_user(session, username="carol", password="pw")
+    with pytest.raises(ValidationError):
+        us.set_password(session, user.id, "")

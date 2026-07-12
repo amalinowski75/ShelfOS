@@ -29,6 +29,7 @@ def test_format_parameter_value_variants() -> None:
     boolean = _definition(ParameterDataType.BOOL)
     assert format_parameter_value(boolean, ComponentParameter(value_bool=True)) == "yes"
     assert format_parameter_value(boolean, ComponentParameter(value_bool=False)) == "no"
+    assert format_parameter_value(boolean, ComponentParameter(value_bool=None)) == ""
 
     text = _definition(ParameterDataType.TEXT)
     assert format_parameter_value(text, ComponentParameter(value_text="red")) == "red"
