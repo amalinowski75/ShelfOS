@@ -224,6 +224,18 @@ def test_audit_endpoint_is_admin_only(client: TestClient) -> None:
     assert any(e["field"].startswith("quantity@location:") for e in body)
 
 
+def test_field_name_helpers_round_trip() -> None:
+    """Parameterized field names build and parse back symmetrically."""
+    assert audit.quantity_location_of(audit.quantity_field(42)) == 42
+    assert audit.parameter_name_of(audit.parameter_field("resistance")) == "resistance"
+
+    # Non-matching or malformed fields yield None, never a bogus value.
+    assert audit.parameter_name_of("location_id") is None
+    assert audit.parameter_name_of("parameter:") is None  # empty name is invalid
+    assert audit.quantity_location_of("quantity@location:") is None
+    assert audit.quantity_location_of("parameter:x") is None
+
+
 def test_audit_endpoint_requires_auth(anon_client: TestClient) -> None:
     assert anon_client.get("/api/admin/audit").status_code == 401
 

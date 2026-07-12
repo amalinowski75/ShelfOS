@@ -50,10 +50,14 @@ def quantity_location_of(field: str) -> int | None:
 
 
 def parameter_name_of(field: str) -> str | None:
-    """Extract the definition name from a parameter field, or ``None`` if not one."""
+    """Extract the definition name from a parameter field, or ``None`` if not one.
+
+    A bare ``"parameter:"`` with no name is not a valid parameter field and
+    yields ``None`` (mirroring ``quantity_location_of`` on an empty id).
+    """
     if not field.startswith(_PARAMETER_PREFIX):
         return None
-    return field[len(_PARAMETER_PREFIX) :]
+    return field[len(_PARAMETER_PREFIX) :] or None
 
 
 def record_change(
