@@ -15,6 +15,8 @@ from app.api.schemas import (
     InvoiceLineComponentRead,
     InvoiceLineCreate,
     InvoiceLineRead,
+    InvoiceLineUpdate,
+    InvoiceUpdate,
     LineLocationSet,
 )
 from app.auth.deps import current_user_id
@@ -95,6 +97,27 @@ def get_invoice(
     )
 
 
+@router.patch("/{invoice_id}", response_model=Invoice)
+def update_invoice(
+    invoice_id: int,
+    payload: InvoiceUpdate,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> Invoice:
+    """Edit a draft invoice's metadata; omitted fields are left unchanged."""
+    return inv.update_invoice(
+        session,
+        invoice_id,
+        supplier=payload.supplier,
+        invoice_number=payload.invoice_number,
+        invoice_date=payload.invoice_date,
+        currency=payload.currency,
+        notes=payload.notes,
+        file_path=payload.file_path,
+        user_id=user_id,
+    )
+
+
 @router.get("/{invoice_id}/lines", response_model=list[InvoiceLine])
 def list_lines(
     invoice_id: int, session: Session = Depends(get_session)
@@ -120,6 +143,26 @@ def add_line(
         unit_price=payload.unit_price,
         supplier_part_number=payload.supplier_part_number,
         location_id=payload.location_id,
+    )
+
+
+@router.put("/{invoice_id}/lines/{line_id}", response_model=InvoiceLine)
+def update_line(
+    invoice_id: int,
+    line_id: int,
+    payload: InvoiceLineUpdate,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> InvoiceLine:
+    """Edit a draft line's quantity, unit price or supplier part number."""
+    return inv.update_line(
+        session,
+        invoice_id,
+        line_id,
+        quantity=payload.quantity,
+        unit_price=payload.unit_price,
+        supplier_part_number=payload.supplier_part_number,
+        user_id=user_id,
     )
 
 

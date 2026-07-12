@@ -138,6 +138,25 @@ class InvoiceLineCreate(BaseModel):
     location_id: int | None = None
 
 
+class InvoiceUpdate(BaseModel):
+    """Partial edit of a draft invoice's metadata; omitted fields stay unchanged."""
+
+    supplier: str | None = None
+    invoice_number: str | None = None
+    invoice_date: date | None = None
+    currency: str | None = None
+    notes: str | None = None
+    file_path: str | None = None
+
+
+class InvoiceLineUpdate(BaseModel):
+    """Partial edit of a draft invoice line; omitted fields stay unchanged."""
+
+    quantity: int | None = None
+    unit_price: Decimal | None = None
+    supplier_part_number: str | None = None
+
+
 class InvoiceLineComponentRead(BaseModel):
     """Identity of the component a line refers to (invoice → component nav, §9)."""
 

@@ -46,13 +46,7 @@ def create_invoice(
         raise ValidationError("invoice number must not be empty")
     if not currency.strip():
         raise ValidationError("invoice currency must not be empty")
-    existing = session.exec(
-        select(Invoice.id).where(
-            Invoice.supplier == supplier,
-            Invoice.invoice_number == invoice_number,
-        )
-    ).first()
-    if existing is not None:
+    if _number_conflicts(session, supplier, invoice_number):
         raise ValidationError(
             f"invoice {invoice_number!r} already exists for supplier {supplier!r}"
         )
@@ -65,6 +59,82 @@ def create_invoice(
         notes=notes,
         file_path=file_path,
     )
+    session.add(invoice)
+    session.commit()
+    session.refresh(invoice)
+    return invoice
+
+
+def update_invoice(
+    session: Session,
+    invoice_id: int,
+    *,
+    supplier: str | None = None,
+    invoice_number: str | None = None,
+    invoice_date: date | None = None,
+    currency: str | None = None,
+    notes: str | None = None,
+    file_path: str | None = None,
+    user_id: int | None = None,
+) -> Invoice:
+    """Edit a draft invoice's metadata (spec §16).
+
+    A ``None`` argument leaves that field unchanged (so this is a partial update;
+    clearing an optional field to null is not expressed here). Each changed field
+    is recorded in the audit log (§19) when a ``user_id`` is given. A finalized
+    invoice is read-only and cannot be edited.
+    """
+    invoice = _require_draft(session, invoice_id)
+
+    if supplier is not None and not supplier.strip():
+        raise ValidationError("invoice supplier must not be empty")
+    if invoice_number is not None and not invoice_number.strip():
+        raise ValidationError("invoice number must not be empty")
+    if currency is not None and not currency.strip():
+        raise ValidationError("invoice currency must not be empty")
+
+    new_supplier = supplier if supplier is not None else invoice.supplier
+    new_number = (
+        invoice_number if invoice_number is not None else invoice.invoice_number
+    )
+    number_changed = (new_supplier, new_number) != (
+        invoice.supplier,
+        invoice.invoice_number,
+    )
+    if number_changed and _number_conflicts(
+        session, new_supplier, new_number, exclude_id=invoice_id
+    ):
+        raise ValidationError(
+            f"invoice {new_number!r} already exists for supplier {new_supplier!r}"
+        )
+
+    new_date = invoice_date if invoice_date is not None else invoice.invoice_date
+    new_currency = currency if currency is not None else invoice.currency
+    new_notes = notes if notes is not None else invoice.notes
+    new_file_path = file_path if file_path is not None else invoice.file_path
+    updates: dict[str, object] = {
+        "supplier": new_supplier,
+        "invoice_number": new_number,
+        "invoice_date": new_date,
+        "currency": new_currency,
+        "notes": new_notes,
+        "file_path": new_file_path,
+    }
+    for field, new_value in updates.items():
+        old_value = getattr(invoice, field)
+        if new_value != old_value:
+            if user_id is not None:
+                audit_service.record_change(
+                    session,
+                    entity_type="invoice",
+                    entity_id=invoice_id,
+                    field=field,
+                    old_value=old_value,
+                    new_value=new_value,
+                    user_id=user_id,
+                )
+            setattr(invoice, field, new_value)
+
     session.add(invoice)
     session.commit()
     session.refresh(invoice)
@@ -171,6 +241,72 @@ def remove_line(
     session.delete(line)
     session.commit()
     _recompute_net(session, invoice)
+
+
+def update_line(
+    session: Session,
+    invoice_id: int,
+    line_id: int,
+    *,
+    quantity: int | None = None,
+    unit_price: Decimal | None = None,
+    supplier_part_number: str | None = None,
+    user_id: int | None = None,
+) -> InvoiceLine:
+    """Edit a draft line's quantity, unit price or supplier part number (§16).
+
+    ``total_price`` and the invoice net are recomputed. A ``None`` argument leaves
+    that field unchanged; each changed field is audited (§19) when a ``user_id``
+    is given. A finalized invoice is read-only.
+    """
+    line = _require_line_of_invoice(session, invoice_id, line_id)
+    invoice = _require_draft(session, line.invoice_id)
+
+    if quantity is not None and quantity <= 0:
+        raise ValidationError("invoice line quantity must be positive")
+    if unit_price is not None and unit_price < 0:
+        raise ValidationError("invoice line unit price must not be negative")
+
+    new_quantity = quantity if quantity is not None else line.quantity
+    new_price = unit_price if unit_price is not None else line.unit_price
+    new_part = (
+        supplier_part_number
+        if supplier_part_number is not None
+        else line.supplier_part_number
+    )
+    updates: dict[str, object] = {
+        "quantity": new_quantity,
+        "unit_price": new_price,
+        "supplier_part_number": new_part,
+        "total_price": new_price * new_quantity,
+    }
+    total_changed = updates["total_price"] != line.total_price
+    for field, new_value in updates.items():
+        old_value = getattr(line, field)
+        if new_value != old_value:
+            if user_id is not None:
+                audit_service.record_change(
+                    session,
+                    entity_type="invoice_line",
+                    entity_id=line_id,
+                    field=field,
+                    old_value=old_value,
+                    new_value=new_value,
+                    user_id=user_id,
+                )
+            setattr(line, field, new_value)
+
+    session.add(line)
+    if total_changed:
+        # Fold the net into the same commit as the line change (and its audit
+        # rows), so a failure can never leave the header total inconsistent with
+        # its lines. Skipped entirely when the line total did not move.
+        session.flush()
+        invoice.total_net = _net_total(session, invoice_id)
+        session.add(invoice)
+    session.commit()
+    session.refresh(line)
+    return line
 
 
 def get_lines(session: Session, invoice_id: int) -> list[InvoiceLine]:
@@ -380,6 +516,28 @@ def _require_draft(session: Session, invoice_id: int) -> Invoice:
     if invoice.is_finalized:
         raise InvoiceFinalizedError(f"invoice {invoice_id} is finalized (read-only)")
     return invoice
+
+
+def _number_conflicts(
+    session: Session,
+    supplier: str,
+    invoice_number: str,
+    *,
+    exclude_id: int | None = None,
+) -> bool:
+    """Report whether ``(supplier, invoice_number)`` is already taken.
+
+    Mirrors the ``uq_invoice_supplier_number`` DB constraint at the app level so
+    a collision surfaces as a 422 rather than a raw driver error; ``exclude_id``
+    ignores the row being edited so a no-op rename does not clash with itself.
+    """
+    statement = select(Invoice.id).where(
+        Invoice.supplier == supplier,
+        Invoice.invoice_number == invoice_number,
+    )
+    if exclude_id is not None:
+        statement = statement.where(col(Invoice.id) != exclude_id)
+    return session.exec(statement).first() is not None
 
 
 def _net_total(session: Session, invoice_id: int | None) -> Decimal:

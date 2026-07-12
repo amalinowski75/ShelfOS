@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 
 from app.services.errors import (
     InsufficientStockError,
@@ -36,3 +37,14 @@ def register_error_handlers(app: FastAPI) -> None:
 
     for error_type, status_code in _STATUS_BY_ERROR:
         app.add_exception_handler(error_type, make_handler(status_code))
+
+    async def integrity_handler(_request: Request, _exc: Exception) -> JSONResponse:
+        # A DB constraint violation that slipped past an app-level check — e.g.
+        # two concurrent writes racing on the same unique key. Surface a clean
+        # conflict instead of leaking the driver error as a 500.
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": "the change conflicts with an existing record"},
+        )
+
+    app.add_exception_handler(IntegrityError, integrity_handler)
