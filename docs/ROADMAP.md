@@ -50,18 +50,25 @@ Priorities set by the user on 2026-07-08.
    **Next up.**
 3. **Invoices — expanded workflow (§16).** Deepen invoice handling; considered
    clearly more important than CSV import or DB migration.
-4. **CSV import / export (§21).** Low priority for now.
-5. **Attachments upload (§10).** Actual file upload/serving; today only metadata.
-6. **Alembic migrations + PostgreSQL.** Near-last; may never be needed — revisit
+4. **Startup / bootstrap test coverage.** Cover the currently-untested wiring
+   (`app/db.py`, `app/main.py` startup, seeding) so the ~96% Python coverage is
+   not propped up by skipping bootstrap paths. Low priority.
+5. **JavaScript test harness.** The browser code (`app.js`, `invoices.js`,
+   `shared.js`) has no runtime test coverage today — only `node --check` for
+   syntax. Add a lightweight harness (e.g. Vitest + jsdom) for the dialog/payload
+   logic and wire it into CI. Low priority.
+6. **CSV import / export (§21).** Low priority for now.
+7. **Attachments upload (§10).** Actual file upload/serving; today only metadata.
+8. **Alembic migrations + PostgreSQL.** Near-last; may never be needed — revisit
    only if required.
-7. **User management window (UI).** Simple admin screen to manage user accounts
+9. **User management window (UI).** Simple admin screen to manage user accounts
    from the web UI (auth/roles already work via API). Very low priority.
 
 Deferred / unscheduled: BOM & KiCad integration (§22), Playwright UI tests.
 
 ### Schema changes without migrations
 
-Until Alembic lands (backlog #6), `SQLModel.metadata.create_all` only creates
+Until Alembic lands (backlog #8), `SQLModel.metadata.create_all` only creates
 missing tables — it does **not** add columns to existing ones. After changing a
 model, the running SQLite file drifts and the app fails on the missing columns.
 Recreate it (destroys all local data):
