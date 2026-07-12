@@ -562,3 +562,113 @@ def test_set_number_parameter_rejects_unreadable_value(session: Session) -> None
     # A non-finite raw number (Pydantic accepts inf/nan by default) is rejected.
     with pytest.raises(ValidationError):
         cs.set_parameter_value(session, component.id, definition.id, float("inf"))
+
+
+def test_create_component_with_values_applies_own_and_inherited(
+    session: Session,
+) -> None:
+    parent = cs.create_type(session, "passive")
+    cs.add_parameter_definition(
+        session, parent.id, name="tolerance", label="Tol",
+        data_type=ParameterDataType.TEXT,
+    )
+    ctype = cs.create_type(session, "resistor", parent_id=parent.id)
+    resistance = cs.add_parameter_definition(
+        session, ctype.id, name="resistance", label="Resistance",
+        data_type=ParameterDataType.NUMBER, unit="Ω",
+    )
+    tolerance = next(
+        d
+        for d in cs.get_effective_parameter_definitions(session, ctype.id)
+        if d.name == "tolerance"
+    )
+
+    component = cs.create_component_with_values(
+        session, ctype.id, mpn="R-100",
+        # Engineering-notation number plus an inherited text parameter.
+        values=[(resistance.id, "4k7"), (tolerance.id, "1%")],
+    )
+    values = {
+        v.parameter_definition_id: v
+        for v in cs.list_parameter_values(session, component.id)
+    }
+    assert values[resistance.id].value_num == 4700.0
+    assert values[tolerance.id].value_text == "1%"
+
+
+def test_create_component_with_values_is_atomic_on_bad_value(
+    session: Session,
+) -> None:
+    ctype = cs.create_type(session, "resistor")
+    other = cs.create_type(session, "capacitor")
+    foreign = cs.add_parameter_definition(
+        session, other.id, name="capacitance", label="C",
+        data_type=ParameterDataType.NUMBER, unit="F",
+    )
+    # A definition from another type must abort the whole create.
+    with pytest.raises(ValidationError):
+        cs.create_component_with_values(
+            session, ctype.id, values=[(foreign.id, "1n")]
+        )
+    assert cs.list_components(session, type_id=ctype.id) == []
+
+
+def test_create_component_with_values_rejects_duplicate_definition(
+    session: Session,
+) -> None:
+    ctype = cs.create_type(session, "resistor")
+    definition = cs.add_parameter_definition(
+        session, ctype.id, name="resistance", label="R",
+        data_type=ParameterDataType.NUMBER, unit="Ω",
+    )
+    with pytest.raises(ValidationError):
+        cs.create_component_with_values(
+            session, ctype.id, values=[(definition.id, "1k"), (definition.id, "2k")]
+        )
+    assert cs.list_components(session, type_id=ctype.id) == []
+
+
+def test_create_component_with_no_values(session: Session) -> None:
+    ctype = cs.create_type(session, "resistor")
+    component = cs.create_component_with_values(session, ctype.id, mpn="R-1")
+    assert component.id is not None
+    assert cs.list_parameter_values(session, component.id) == []
+
+
+def test_create_component_with_values_audits_initial_values(session: Session) -> None:
+    from app.seed import ensure_system_user
+    from app.services import audit_service as audit
+
+    user = ensure_system_user(session)
+    ctype = cs.create_type(session, "resistor")
+    definition = cs.add_parameter_definition(
+        session, ctype.id, name="resistance", label="R",
+        data_type=ParameterDataType.NUMBER, unit="Ω",
+    )
+    component = cs.create_component_with_values(
+        session, ctype.id, values=[(definition.id, "4k7")], user_id=user.id
+    )
+    entries = audit.list_entries(
+        session, entity_type="component", entity_id=component.id
+    )
+    assert len(entries) == 1
+    assert entries[0].old_value is None
+
+
+def test_create_component_with_values_skips_audit_without_user(
+    session: Session,
+) -> None:
+    from app.services import audit_service as audit
+
+    ctype = cs.create_type(session, "resistor")
+    definition = cs.add_parameter_definition(
+        session, ctype.id, name="resistance", label="R",
+        data_type=ParameterDataType.NUMBER, unit="Ω",
+    )
+    component = cs.create_component_with_values(
+        session, ctype.id, values=[(definition.id, "4k7")]
+    )
+    assert (
+        audit.list_entries(session, entity_type="component", entity_id=component.id)
+        == []
+    )

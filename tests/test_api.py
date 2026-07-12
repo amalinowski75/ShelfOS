@@ -744,3 +744,79 @@ def test_set_number_parameter_accepts_engineering_string(client: TestClient) -> 
         headers={"Content-Type": "application/json"},
     )
     assert inf.status_code == 422
+
+
+def test_create_component_with_nested_parameters(client: TestClient) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    client.post(
+        f"/api/types/{ctype['id']}/parameters",
+        json={
+            "name": "resistance",
+            "label": "Resistance",
+            "data_type": "number",
+            "unit": "Ω",
+        },
+    )
+    definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
+
+    resp = client.post(
+        "/api/components",
+        json={
+            "type_id": ctype["id"],
+            "mpn": "R-100",
+            "parameters": [
+                {"parameter_definition_id": definition["id"], "value": "4k7"}
+            ],
+        },
+    )
+    assert resp.status_code == 201
+    component_id = resp.json()["id"]
+
+    params = client.get(f"/api/components/{component_id}/parameters").json()
+    assert params[0]["value_num"] == 4700.0
+
+
+def test_create_component_with_bad_parameter_is_atomic(client: TestClient) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    before = len(client.get("/web/api/components").json()["data"])
+
+    resp = client.post(
+        "/api/components",
+        json={
+            "type_id": ctype["id"],
+            "parameters": [{"parameter_definition_id": 9999, "value": "1k"}],
+        },
+    )
+    assert resp.status_code == 422
+    # The whole create was rolled back — no component landed.
+    after = len(client.get("/web/api/components").json()["data"])
+    assert after == before
+
+
+def test_create_component_with_wrong_typed_value_is_atomic(client: TestClient) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    client.post(
+        f"/api/types/{ctype['id']}/parameters",
+        json={
+            "name": "resistance",
+            "label": "Resistance",
+            "data_type": "number",
+            "unit": "Ω",
+        },
+    )
+    definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
+    before = len(client.get("/web/api/components").json()["data"])
+
+    # A value that fails _assign_value (unparseable number) aborts the create.
+    resp = client.post(
+        "/api/components",
+        json={
+            "type_id": ctype["id"],
+            "parameters": [
+                {"parameter_definition_id": definition["id"], "value": "not a number"}
+            ],
+        },
+    )
+    assert resp.status_code == 422
+    after = len(client.get("/web/api/components").json()["data"])
+    assert after == before

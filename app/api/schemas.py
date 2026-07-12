@@ -75,6 +75,11 @@ class TypeWithParameters(BaseModel):
     parameters: list[ParameterDefinitionRead]
 
 
+class ParameterValueSet(BaseModel):
+    parameter_definition_id: int
+    value: ParameterValue
+
+
 class ComponentCreate(BaseModel):
     type_id: int
     manufacturer: str | None = None
@@ -82,11 +87,9 @@ class ComponentCreate(BaseModel):
     package: str | None = None
     mounting_type: MountingType = MountingType.OTHER
     notes: str | None = None
-
-
-class ParameterValueSet(BaseModel):
-    parameter_definition_id: int
-    value: ParameterValue
+    # Optional initial parameter values, applied atomically with the component
+    # (§16.5). Each definition must belong to the type's effective set.
+    parameters: list[ParameterValueSet] = Field(default_factory=list)
 
 
 class LocationCreate(BaseModel):

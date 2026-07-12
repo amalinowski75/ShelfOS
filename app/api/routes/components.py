@@ -16,9 +16,11 @@ router = APIRouter(prefix="/api/components", tags=["components"])
 
 @router.post("", response_model=Component, status_code=status.HTTP_201_CREATED)
 def create_component(
-    payload: ComponentCreate, session: Session = Depends(get_session)
+    payload: ComponentCreate,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
 ) -> Component:
-    return cs.create_component(
+    return cs.create_component_with_values(
         session,
         payload.type_id,
         manufacturer=payload.manufacturer,
@@ -26,6 +28,8 @@ def create_component(
         package=payload.package,
         mounting_type=payload.mounting_type,
         notes=payload.notes,
+        values=[(p.parameter_definition_id, p.value) for p in payload.parameters],
+        user_id=user_id,
     )
 
 
