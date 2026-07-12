@@ -40,6 +40,34 @@ def test_index_page_renders(client: TestClient) -> None:
     assert "/static/app.js" in response.text
 
 
+def test_index_shows_new_type_control_for_writer(client: TestClient) -> None:
+    """An account that can write sees the §13 create-type dialog and builder."""
+    html = client.get("/").text
+    assert 'id="new-type-btn"' in html
+    assert 'id="type-dialog"' in html
+    assert 'id="param-row-template"' in html
+    # The parameter builder offers every data type, enum included.
+    assert 'value="enum"' in html
+    # An inherited-parameters panel lets the user see what a parent already
+    # defines before adding duplicates (spec §13, D3).
+    assert 'id="inherited-list"' in html
+
+
+def test_new_type_control_hidden_for_read_only(client: TestClient) -> None:
+    """A read-only account cannot write, so the create-type control is absent."""
+    client.post(
+        "/api/admin/users",
+        json={"username": "viewer", "password": "pw", "role": "read-only"},
+    )
+    token = client.post(
+        "/api/auth/token", json={"username": "viewer", "password": "pw"}
+    ).json()["access_token"]
+
+    html = client.get("/", headers={"Authorization": f"Bearer {token}"}).text
+    assert "New Type" not in html
+    assert 'id="new-type-btn"' not in html
+
+
 def test_components_feed_generic_view(client: TestClient) -> None:
     ctype = client.post("/api/types", json={"name": "resistor"}).json()
     client.post(
