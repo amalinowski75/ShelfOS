@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import pytest
 from app.models.component import ComponentParameter, ParameterDefinition
 from app.models.enums import ParameterDataType
-from app.web.presenter import build_component_table, format_parameter_value
+from app.web.presenter import (
+    build_component_table,
+    format_money,
+    format_parameter_value,
+)
 from fastapi.testclient import TestClient
 
 
@@ -333,3 +338,185 @@ def test_logout_clears_session(session, anon_client: TestClient) -> None:  # typ
     anon_client.post("/login", data={"username": "admin", "password": "admin"})
     anon_client.post("/logout", follow_redirects=False)
     assert anon_client.get("/", follow_redirects=False).status_code == 303
+
+
+def _invoice_with_line(client: TestClient) -> dict[str, object]:
+    """Create a type, component, location and a one-line invoice; return handles."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "R-100"}
+    ).json()
+    location = client.post(
+        "/api/locations", json={"type": "drawer", "name": "D1"}
+    ).json()
+    invoice = client.post(
+        "/api/invoices",
+        json={
+            "supplier": "Mouser",
+            "invoice_number": "INV-1",
+            "invoice_date": "2026-07-08",
+            "currency": "EUR",
+        },
+    ).json()
+    client.post(
+        f"/api/invoices/{invoice['id']}/lines",
+        json={
+            "component_id": component["id"],
+            "quantity": 5,
+            "unit_price": "1.50",
+            "supplier_part_number": "SPN-9",
+            "location_id": location["id"],
+        },
+    )
+    return {"invoice": invoice, "component": component}
+
+
+def test_invoices_list_page_renders(client: TestClient) -> None:
+    _invoice_with_line(client)
+    # A second, later invoice to confirm ordering (newest invoice_date first).
+    client.post(
+        "/api/invoices",
+        json={
+            "supplier": "Digikey",
+            "invoice_number": "INV-2",
+            "invoice_date": "2026-07-10",
+            "currency": "USD",
+        },
+    )
+    html = client.get("/invoices").text
+    assert "Invoices" in html
+    assert 'href="/invoices/' in html
+    # Newest invoice_date first: INV-2 appears before INV-1 in the markup.
+    assert html.index("INV-2") < html.index("INV-1")
+
+
+def test_invoices_list_page_empty(client: TestClient) -> None:
+    html = client.get("/invoices").text
+    assert "No invoices yet." in html
+
+
+def test_invoice_detail_page_links_to_components(client: TestClient) -> None:
+    handles = _invoice_with_line(client)
+    invoice = handles["invoice"]
+    component = handles["component"]
+    html = client.get(f"/invoices/{invoice['id']}").text  # type: ignore[index]
+    # Header and line data are present.
+    assert "INV-1" in html
+    assert "Mouser" in html
+    assert "SPN-9" in html
+    assert "D1" in html  # the line's location path
+    # Each line links to its component (invoice -> component navigation, §9).
+    assert f'href="/components/{component["id"]}"' in html  # type: ignore[index]
+    assert "R-100" in html
+
+
+def test_invoice_detail_unknown_returns_404(client: TestClient) -> None:
+    assert client.get("/invoices/9999").status_code == 404
+
+
+def test_component_detail_links_to_invoices(client: TestClient) -> None:
+    """Purchase history links back to each invoice (component -> invoice, §9)."""
+    handles = _invoice_with_line(client)
+    invoice = handles["invoice"]
+    component = handles["component"]
+    # Finalize so the line shows up as purchase history.
+    client.post(f"/api/invoices/{invoice['id']}/finalize", json={})  # type: ignore[index]
+    html = client.get(f"/components/{component['id']}").text  # type: ignore[index]
+    assert f'href="/invoices/{invoice["id"]}"' in html  # type: ignore[index]
+
+
+def test_invoice_detail_money_has_no_trailing_zeros(client: TestClient) -> None:
+    """Amounts render as ``1.50``, not the stored six-place ``1.500000``."""
+    handles = _invoice_with_line(client)
+    invoice = handles["invoice"]
+    html = client.get(f"/invoices/{invoice['id']}").text  # type: ignore[index]
+    assert "1.50 EUR" in html
+    assert "1.500000" not in html
+    # A draft's gross is not shown as a computed 0 (it is set on finalize).
+    assert "set on finalize" in html
+
+
+def test_invoice_detail_handles_deleted_component(
+    client: TestClient,
+    session,  # type: ignore[no-untyped-def]
+) -> None:
+    """A line whose component was hard-deleted degrades to a muted label, not 500."""
+    handles = _invoice_with_line(client)
+    invoice = handles["invoice"]
+    component = handles["component"]
+
+    # Hard-delete the component directly; §20 keeps the invoice line as history.
+    from app.models.component import Component
+
+    obj = session.get(Component, component["id"])  # type: ignore[index]
+    session.delete(obj)
+    session.commit()
+
+    resp = client.get(f"/invoices/{invoice['id']}")  # type: ignore[index]
+    assert resp.status_code == 200
+    assert "(deleted)" in resp.text
+
+
+def test_invoice_detail_empty_and_unlocated_line(client: TestClient) -> None:
+    """A draft with a line but no location renders the em-dash placeholder."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    invoice = client.post(
+        "/api/invoices",
+        json={
+            "supplier": "Mouser",
+            "invoice_number": "INV-Z",
+            "invoice_date": "2026-07-08",
+            "currency": "EUR",
+        },
+    ).json()
+
+    # No lines yet.
+    assert "This invoice has no lines." in client.get(
+        f"/invoices/{invoice['id']}"
+    ).text
+
+    # A line without a location shows the placeholder rather than crashing.
+    client.post(
+        f"/api/invoices/{invoice['id']}/lines",
+        json={"component_id": component["id"], "quantity": 1, "unit_price": "2"},
+    )
+    assert client.get(f"/invoices/{invoice['id']}").status_code == 200
+
+
+def test_invoice_list_hint_when_truncated(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the list hits its cap, the page says so instead of dropping rows."""
+    from app.web import routes
+
+    monkeypatch.setattr(routes, "_INVOICE_LIST_LIMIT", 1)
+    for n in range(2):
+        client.post(
+            "/api/invoices",
+            json={
+                "supplier": "Mouser",
+                "invoice_number": f"INV-{n}",
+                "invoice_date": "2026-07-08",
+                "currency": "EUR",
+            },
+        )
+    assert "1 most recent invoices" in client.get("/invoices").text
+
+
+def test_invoice_pages_require_login(anon_client: TestClient) -> None:
+    """Both new invoice pages redirect an anonymous visitor to login."""
+    for path in ("/invoices", "/invoices/1"):
+        resp = anon_client.get(path, follow_redirects=False)
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/login"
+
+
+def test_format_money_strips_trailing_zeros() -> None:
+    from decimal import Decimal
+
+    assert format_money(Decimal("1.500000")) == "1.50"
+    assert format_money(Decimal("7.500000")) == "7.50"
+    assert format_money(Decimal("0.000000")) == "0.00"
+    assert format_money(Decimal("0.001234")) == "0.001234"
+    assert format_money(Decimal("100")) == "100.00"

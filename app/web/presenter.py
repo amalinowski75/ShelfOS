@@ -7,6 +7,7 @@ formats EAV values for display, including engineering-notation numbers
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any, cast
 
 from sqlmodel import Session, col, select
@@ -26,6 +27,24 @@ _BASE_COLUMNS: list[dict[str, str]] = [
     {"title": "Mounting", "field": "mounting_type"},
     {"title": "Qty", "field": "quantity"},
 ]
+
+
+def format_money(amount: Decimal) -> str:
+    """Render a money ``Decimal`` for display without noisy trailing zeros.
+
+    Amounts are stored at six decimal places (D5), so a plain ``str`` prints
+    ``"1.500000"``. Drop insignificant trailing zeros but keep at least two
+    decimals — money always reads with cents (``"1.50"``, ``"0.00"``) while a
+    genuinely finer price (``"0.001234"``) stays exact.
+    """
+    # ``normalize`` can yield exponent notation (Decimal('1E+2')), but the ``f``
+    # format expands it back to plain fixed-point ("100"), so no reinflation is
+    # needed here.
+    text = f"{amount.normalize():f}"
+    integer, _, fraction = text.partition(".")
+    if len(fraction) < 2:
+        fraction = fraction.ljust(2, "0")
+    return f"{integer}.{fraction}"
 
 
 def format_parameter_value(

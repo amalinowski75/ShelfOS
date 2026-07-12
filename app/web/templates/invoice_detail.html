@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}{{ invoice.invoice_number }} — ShelfOS{% endblock %}
+
+{% macro state_badge(finalized) -%}
+  {% if finalized %}
+  <span class="badge b-ok"><span class="dot"></span>finalized</span>
+  {% else %}
+  <span class="badge b-neutral"><span class="dot"></span>draft</span>
+  {% endif %}
+{%- endmacro %}
+
+{% block content %}
+<p class="crumb"><a href="/invoices">&larr; Back to invoices</a></p>
+
+<div class="head">
+  <div>
+    <h1>{{ invoice.invoice_number }}</h1>
+    <p>{{ invoice.supplier }} · {{ invoice.invoice_date.isoformat() }} · {{ state_badge(invoice.is_finalized) }}</p>
+  </div>
+</div>
+
+<div class="card card-pad">
+  <h2>Overview</h2>
+  <table class="kv">
+    <tbody>
+      <tr><th>Supplier</th><td>{{ invoice.supplier }}</td></tr>
+      <tr><th>Invoice number</th><td class="mono">{{ invoice.invoice_number }}</td></tr>
+      <tr><th>Date</th><td class="mono">{{ invoice.invoice_date.isoformat() }}</td></tr>
+      <tr><th>Currency</th><td>{{ invoice.currency }}</td></tr>
+      <tr><th>Total net</th><td class="mono">{{ format_money(invoice.total_net) }} {{ invoice.currency }}</td></tr>
+      <tr><th>Total gross</th><td class="mono">{% if invoice.is_finalized %}{{ format_money(invoice.total_gross) }} {{ invoice.currency }}{% else %}<span class="muted">— (set on finalize)</span>{% endif %}</td></tr>
+      <tr><th>Status</th><td>{{ state_badge(invoice.is_finalized) }}</td></tr>
+      {% if invoice.file_path %}<tr><th>Attachment</th><td class="mono">{{ invoice.file_path }}</td></tr>{% endif %}
+    </tbody>
+  </table>
+  {% if invoice.notes %}<p class="muted" style="margin: 14px 0 0">{{ invoice.notes }}</p>{% endif %}
+</div>
+
+<div class="card card-pad" style="margin-top: 20px">
+  <h2>Lines</h2>
+  {% if lines %}
+  <div class="table-wrap">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>Component</th>
+          <th>Supplier part #</th>
+          <th>Location</th>
+          <th style="text-align:right">Qty</th>
+          <th style="text-align:right">Unit price</th>
+          <th style="text-align:right">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for l in lines %}
+        <tr>
+          <td>
+            {% if l.component %}
+            <a href="/components/{{ l.component.id }}">{{ l.component.mpn or ("Component #" ~ l.component.id) }}</a>
+            {% if l.component.manufacturer %}<span class="muted"> · {{ l.component.manufacturer }}</span>{% endif %}
+            {% else %}
+            <span class="muted">Component #{{ l.component_id }} (deleted)</span>
+            {% endif %}
+          </td>
+          <td class="mono">{{ l.supplier_part_number or "—" }}</td>
+          <td>{{ l.location or "—" }}</td>
+          <td class="num">{{ l.quantity }}</td>
+          <td class="num">{{ format_money(l.unit_price) }} {{ invoice.currency }}</td>
+          <td class="num">{{ format_money(l.total_price) }} {{ invoice.currency }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">This invoice has no lines.</p>
+  {% endif %}
+</div>
+{% endblock %}

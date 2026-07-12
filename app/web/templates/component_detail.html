@@ -89,7 +89,7 @@
           {% for h in history %}
           <tr>
             <td class="mono">{{ h.date }}</td>
-            <td class="mono">{{ h.invoice_number }}</td>
+            <td class="mono"><a href="/invoices/{{ h.invoice_id }}">{{ h.invoice_number }}</a></td>
             <td>{{ h.supplier }}</td>
             <td class="num">{{ h.quantity }}</td>
             <td class="num">{{ h.unit_price }} {{ h.currency }}</td>
