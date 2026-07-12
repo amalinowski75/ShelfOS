@@ -310,3 +310,146 @@ def test_not_found_and_validation_mapping(client: TestClient) -> None:
 
     # Empty type name -> 422 from ValidationError.
     assert client.post("/api/types", json={"name": "  "}).status_code == 422
+
+
+def test_invoice_list_and_detail_read(client: TestClient) -> None:
+    from decimal import Decimal
+
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "R-100"}
+    ).json()
+    location = client.post(
+        "/api/locations", json={"type": "drawer", "name": "D1"}
+    ).json()
+
+    older = client.post(
+        "/api/invoices",
+        json={
+            "supplier": "Mouser",
+            "invoice_number": "INV-1",
+            "invoice_date": "2026-07-01",
+            "currency": "EUR",
+        },
+    ).json()
+    newer = client.post(
+        "/api/invoices",
+        json={
+            "supplier": "Mouser",
+            "invoice_number": "INV-2",
+            "invoice_date": "2026-07-08",
+            "currency": "EUR",
+        },
+    ).json()
+    client.post(
+        f"/api/invoices/{newer['id']}/lines",
+        json={
+            "component_id": component["id"],
+            "quantity": 5,
+            "unit_price": "1.50",
+            "location_id": location["id"],
+        },
+    )
+    client.post(f"/api/invoices/{newer['id']}/finalize", json={})
+
+    # List: newest invoice_date first.
+    listing = client.get("/api/invoices").json()
+    assert [i["invoice_number"] for i in listing] == ["INV-2", "INV-1"]
+
+    # Filter by finalization state.
+    finalized = client.get("/api/invoices", params={"finalized": "true"}).json()
+    assert [i["invoice_number"] for i in finalized] == ["INV-2"]
+    drafts = client.get("/api/invoices", params={"finalized": "false"}).json()
+    assert [i["invoice_number"] for i in drafts] == ["INV-1"]
+
+    # Detail: header, totals and lines resolved to their component.
+    detail = client.get(f"/api/invoices/{newer['id']}").json()
+    assert detail["is_finalized"] is True
+    assert Decimal(str(detail["total_net"])) == Decimal("7.5")
+    assert len(detail["lines"]) == 1
+    line = detail["lines"][0]
+    assert line["quantity"] == 5
+    assert Decimal(str(line["unit_price"])) == Decimal("1.5")
+    assert line["location_id"] == location["id"]
+    assert line["component"]["id"] == component["id"]
+    assert line["component"]["mpn"] == "R-100"
+
+    # An empty draft still returns a header with no lines.
+    empty = client.get(f"/api/invoices/{older['id']}").json()
+    assert empty["lines"] == []
+
+
+def test_get_unknown_invoice_returns_404(client: TestClient) -> None:
+    assert client.get("/api/invoices/9999").status_code == 404
+
+
+def test_list_invoices_empty_and_requires_auth(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    # Empty database -> empty list, not an error.
+    assert client.get("/api/invoices").json() == []
+    # Both read endpoints are behind auth.
+    assert anon_client.get("/api/invoices").status_code == 401
+    assert anon_client.get("/api/invoices/1").status_code == 401
+
+
+def test_list_invoices_tie_break_by_id_desc(client: TestClient) -> None:
+    """Two invoices on the same date fall back to id (newest first)."""
+    first = client.post(
+        "/api/invoices",
+        json={
+            "supplier": "Mouser",
+            "invoice_number": "A",
+            "invoice_date": "2026-07-08",
+            "currency": "EUR",
+        },
+    ).json()
+    second = client.post(
+        "/api/invoices",
+        json={
+            "supplier": "Mouser",
+            "invoice_number": "B",
+            "invoice_date": "2026-07-08",
+            "currency": "EUR",
+        },
+    ).json()
+    ids = [i["id"] for i in client.get("/api/invoices").json()]
+    assert ids == [second["id"], first["id"]]
+
+
+def test_invoice_detail_survives_deleted_component(client: TestClient) -> None:
+    """Hard-deleting a component leaves its invoice line readable (component null)."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"]}
+    ).json()
+    location = client.post(
+        "/api/locations", json={"type": "drawer", "name": "D1"}
+    ).json()
+    invoice = client.post(
+        "/api/invoices",
+        json={
+            "supplier": "Mouser",
+            "invoice_number": "INV-1",
+            "invoice_date": "2026-07-08",
+            "currency": "EUR",
+        },
+    ).json()
+    client.post(
+        f"/api/invoices/{invoice['id']}/lines",
+        json={
+            "component_id": component["id"],
+            "quantity": 2,
+            "unit_price": "1.00",
+            "location_id": location["id"],
+        },
+    )
+    client.post(f"/api/invoices/{invoice['id']}/finalize", json={})
+
+    assert client.delete(f"/api/admin/components/{component['id']}").status_code == 204
+
+    detail = client.get(f"/api/invoices/{invoice['id']}")
+    assert detail.status_code == 200
+    line = detail.json()["lines"][0]
+    assert line["component_id"] == component["id"]
+    assert line["component"] is None
