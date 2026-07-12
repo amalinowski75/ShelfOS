@@ -304,3 +304,163 @@ if (typeDialog && newTypeBtn) {
     }
   });
 }
+
+// ---- New Component dialog (spec §16.5) -------------------------------------
+// Present only for accounts allowed to write, so the controls may be absent.
+const componentDialog = document.getElementById("component-dialog");
+const newComponentBtn = document.getElementById("new-component-btn");
+
+if (componentDialog && newComponentBtn) {
+  const componentForm = document.getElementById("component-form");
+  const componentTypeSelect = document.getElementById("component-type");
+  const componentParamsBox = document.getElementById("component-params");
+  const componentParamsHint = document.getElementById("component-params-hint");
+  const componentError = document.getElementById("component-error");
+
+  // Monotonic id so overlapping type-select changes can't render stale fields:
+  // only the newest request is allowed to touch the DOM.
+  let paramsRequestId = 0;
+
+  // Build a value input for one effective parameter definition, keyed by its id
+  // and data type so the payload can be assembled without another lookup.
+  function buildParamField(definition) {
+    const field = document.createElement("div");
+    field.className = "field";
+    const label = document.createElement("label");
+    label.textContent = definition.unit
+      ? `${definition.label} (${definition.unit})`
+      : definition.label;
+    field.appendChild(label);
+
+    let input;
+    if (definition.data_type === "enum") {
+      input = document.createElement("select");
+      input.className = "control";
+      input.appendChild(new Option("—", ""));
+      for (const value of definition.enum_values) {
+        input.appendChild(new Option(value, value));
+      }
+    } else if (definition.data_type === "bool") {
+      input = document.createElement("select");
+      input.className = "control";
+      input.appendChild(new Option("—", ""));
+      input.appendChild(new Option("yes", "true"));
+      input.appendChild(new Option("no", "false"));
+    } else {
+      input = document.createElement("input");
+      input.className = "control";
+      input.type = "text";
+      if (definition.data_type === "number") input.placeholder = "e.g. 4k7";
+    }
+    input.dataset.definitionId = definition.id;
+    input.dataset.dataType = definition.data_type;
+    field.appendChild(input);
+    return field;
+  }
+
+  async function loadComponentParams(typeId) {
+    const requestId = ++paramsRequestId;
+    componentParamsBox.replaceChildren();
+    if (!typeId) {
+      componentParamsHint.textContent = "Select a type to enter its parameters.";
+      componentParamsHint.hidden = false;
+      return;
+    }
+    // Show a placeholder synchronously so a stale hint from the previous type
+    // is never visible while the new type's parameters are loading.
+    componentParamsHint.textContent = "Loading…";
+    componentParamsHint.hidden = false;
+    let definitions;
+    try {
+      const resp = await fetch(`/api/types/${typeId}/parameters`);
+      if (!resp.ok) throw new Error();
+      definitions = await resp.json();
+    } catch {
+      if (requestId !== paramsRequestId) return; // superseded by a newer pick
+      componentParamsHint.textContent = "Could not load this type's parameters.";
+      componentParamsHint.hidden = false;
+      return;
+    }
+    if (requestId !== paramsRequestId) return; // a newer selection is in flight
+    if (!definitions.length) {
+      componentParamsHint.textContent = "This type has no parameters.";
+      componentParamsHint.hidden = false;
+      return;
+    }
+    componentParamsHint.hidden = true;
+    for (const definition of definitions) {
+      componentParamsBox.appendChild(buildParamField(definition));
+    }
+  }
+
+  // Collect only the filled fields; a bool select maps to a real boolean, and a
+  // number is sent as its raw string so the server parses the engineering value.
+  function collectComponentParameters() {
+    const params = [];
+    for (const input of componentParamsBox.querySelectorAll("[data-definition-id]")) {
+      const raw = input.value.trim();
+      if (!raw) continue;
+      const value = input.dataset.dataType === "bool" ? raw === "true" : raw;
+      params.push({
+        parameter_definition_id: Number(input.dataset.definitionId),
+        value,
+      });
+    }
+    return params;
+  }
+
+  newComponentBtn.addEventListener("click", () => {
+    componentForm.reset();
+    componentError.hidden = true;
+    loadComponentParams(""); // clears the fields and shows the hint
+    componentDialog.showModal();
+  });
+
+  componentTypeSelect.addEventListener("change", (event) =>
+    loadComponentParams(event.target.value),
+  );
+
+  componentForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const value = (name) =>
+      componentForm.querySelector(`[name="${name}"]`).value.trim();
+    const body = JSON.stringify({
+      // Guard the empty selection (Number("") is 0, not null); the server then
+      // rejects a missing type cleanly rather than looking up type 0.
+      type_id: componentTypeSelect.value
+        ? Number(componentTypeSelect.value)
+        : null,
+      manufacturer: value("manufacturer") || null,
+      mpn: value("mpn") || null,
+      package: value("package") || null,
+      mounting_type: componentForm.querySelector('[name="mounting_type"]').value,
+      notes: value("notes") || null,
+      parameters: collectComponentParameters(),
+    });
+    componentError.hidden = true;
+    let created;
+    try {
+      const resp = await fetch("/api/components", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body,
+      });
+      if (!resp.ok) {
+        componentError.textContent = await errorMessage(resp);
+        componentError.hidden = false;
+        return;
+      }
+      created = await resp.json();
+    } catch {
+      // A network failure (or an unreadable body) must surface, not vanish as an
+      // unhandled rejection with the dialog silently stuck open.
+      componentError.textContent = "Could not reach the server. Please try again.";
+      componentError.hidden = false;
+      return;
+    }
+    componentDialog.close();
+    // Filter the table to the new component's type so it is visible.
+    typeFilter.value = String(created.type_id);
+    await loadTable();
+  });
+}
