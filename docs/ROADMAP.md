@@ -45,26 +45,29 @@ Priorities set by the user on 2026-07-08.
    the "system user" stub: bcrypt passwords, session-cookie login for the UI +
    JWT bearer tokens for the API, roles admin / user / read-only (read-only = GET
    only), admin-managed accounts, bootstrap admin seeded on startup.
-2. **Type & parameter creation (§13).** Convenient API + flow to create component
-   types and their parameter definitions (currently only low-level endpoints).
-   **Next up.**
-3. **Invoices — expanded workflow (§16).** Deepen invoice handling; considered
-   clearly more important than CSV import or DB migration.
-4. **Startup / bootstrap test coverage.** Cover the currently-untested wiring
-   (`app/db.py`, `app/main.py` startup, seeding) so the ~96% Python coverage is
-   not propped up by skipping bootstrap paths. Low priority.
-5. **JavaScript test harness.** The browser code (`app.js`, `invoices.js`,
-   `shared.js`) has no runtime test coverage today — only `node --check` for
-   syntax. Add a lightweight harness (e.g. Vitest + jsdom) for the dialog/payload
-   logic and wire it into CI. Low priority.
+2. **Type & parameter creation (§13).** ✅ **Done** (PRs #2, #3). Convenient API +
+   web flow to create component types and their parameter definitions.
+3. **Invoices — expanded workflow (§16).** ✅ **Done** (PRs #4, #6, #7, #8).
+   Read/edit service + API, and the web UI: list/detail with component
+   navigation (§9) and the create/edit/finalize workflow.
+4. **Startup / bootstrap test coverage.** ✅ **Done** (PR #12). `app/db.py` and
+   `app/main.py` now covered; overall Python coverage at 99%.
+5. **JavaScript test harness.** ✅ **Done** (PR #11). Vitest + jsdom covering
+   `shared.js` and `invoices.js`; `app.js` coverage remains a fast-follow.
 6. **CSV import / export (§21).** Low priority for now.
 7. **Attachments upload (§10).** Actual file upload/serving; today only metadata.
 8. **Alembic migrations + PostgreSQL.** Near-last; may never be needed — revisit
    only if required.
 9. **User management window (UI).** Simple admin screen to manage user accounts
    from the web UI (auth/roles already work via API). Very low priority.
+10. **Split CI into parallel jobs.** `pytest` and `npm test` (Vitest) run
+    sequentially in the single required `checks` job. Split them into two
+    parallel jobs to cut CI wall-clock; requires adding the second job as a
+    required status check in branch protection. Low priority.
 
-Deferred / unscheduled: BOM & KiCad integration (§22), Playwright UI tests.
+Deferred / unscheduled: BOM & KiCad integration (§22), Playwright UI tests,
+`app.js` JS test coverage (stock dialogs + New Type builder — needs a
+`window.Tabulator` stub).
 
 ### Schema changes without migrations
 
