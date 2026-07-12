@@ -53,6 +53,60 @@ def test_index_shows_new_type_control_for_writer(client: TestClient) -> None:
     assert 'id="inherited-list"' in html
 
 
+def test_require_web_user_heals_missing_csrf_token(session) -> None:  # type: ignore[no-untyped-def]
+    """An authenticated session without a CSRF token gets one issued on render.
+
+    Guards the regression where a pre-CSRF (or older-build) session cookie kept
+    authenticating but left the meta token empty, so every browser write 403'd.
+    """
+    from app.models.enums import UserRole
+    from app.services import user_service as us
+    from app.web.routes import require_web_user
+    from starlette.requests import Request
+
+    user = us.create_user(
+        session, username="stale", password="pw", role=UserRole.USER
+    )
+    # A session that authenticates (user_id) but predates CSRF (no token).
+    sess: dict[str, object] = {"user_id": user.id}
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "headers": [],
+        "session": sess,
+        "state": {},
+    }
+    result = require_web_user(Request(scope), session)
+    assert result.id == user.id
+    assert sess.get("csrf_token")  # a fresh token was healed into the session
+
+
+def test_create_type_via_web_session_requires_csrf(
+    session,  # type: ignore[no-untyped-def]
+    anon_client: TestClient,
+) -> None:
+    """End-to-end browser path: form login, then a create-type write with CSRF."""
+    import re
+
+    from app.models.enums import UserRole
+    from app.services import user_service as us
+
+    us.create_user(session, username="admin", password="admin", role=UserRole.ADMIN)
+    anon_client.post("/login", data={"username": "admin", "password": "admin"})
+
+    html = anon_client.get("/").text
+    token = re.search(r'name="csrf-token" content="([^"]*)"', html).group(1)  # type: ignore[union-attr]
+    assert token  # the page exposes a usable token
+
+    ok = anon_client.post(
+        "/api/types", json={"name": "resistor"}, headers={"X-CSRF-Token": token}
+    )
+    assert ok.status_code == 201
+    # The same write without the token is rejected by the CSRF guard.
+    missing = anon_client.post("/api/types", json={"name": "capacitor"})
+    assert missing.status_code == 403
+
+
 def test_new_type_control_hidden_for_read_only(client: TestClient) -> None:
     """A read-only account cannot write, so the create-type control is absent."""
     client.post(

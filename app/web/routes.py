@@ -51,12 +51,21 @@ router = APIRouter(tags=["web"])
 
 
 def require_web_user(request: Request, session: Session = Depends(get_session)) -> User:
-    """Return the logged-in user or redirect to the login page (session, D11)."""
+    """Return the logged-in user or redirect to the login page (session, D11).
+
+    Also heals a session that carries a user but no CSRF token: the signing
+    secret is stable across restarts, so a cookie minted before CSRF existed (or
+    by an older build) keeps authenticating yet leaves the ``<meta csrf-token>``
+    empty, which makes every browser write fail the CSRF check. Issuing the
+    token here on render keeps such sessions able to write without a re-login.
+    """
     user = get_optional_user(request, session)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_303_SEE_OTHER, headers={"Location": "/login"}
         )
+    if not request.session.get("csrf_token"):
+        issue_csrf_token(request)
     return user
 
 
