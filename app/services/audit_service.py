@@ -49,6 +49,13 @@ def quantity_location_of(field: str) -> int | None:
         return None
 
 
+def parameter_name_of(field: str) -> str | None:
+    """Extract the definition name from a parameter field, or ``None`` if not one."""
+    if not field.startswith(_PARAMETER_PREFIX):
+        return None
+    return field[len(_PARAMETER_PREFIX) :]
+
+
 def record_change(
     session: Session,
     *,
