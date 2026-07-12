@@ -20,6 +20,7 @@ from app.models.component import Component
 from app.models.enums import ContainerType, StockReason
 from app.models.location import ComponentLocation, Location
 from app.models.stock import StockMovement
+from app.services import audit_service
 from app.services._common import require_entity
 from app.services.errors import InsufficientStockError, ValidationError
 
@@ -206,7 +207,19 @@ def _record_movement(
     require_entity(session, Component, component_id, "component")
     require_entity(session, Location, location_id, "location")
 
-    _apply_delta(session, component_id, location_id, delta, container_type)
+    new_quantity = _apply_delta(
+        session, component_id, location_id, delta, container_type
+    )
+
+    audit_service.record_change(
+        session,
+        entity_type="component",
+        entity_id=component_id,
+        field=audit_service.quantity_field(location_id),
+        old_value=new_quantity - delta,
+        new_value=new_quantity,
+        user_id=user_id,
+    )
 
     movement = StockMovement(
         component_id=component_id,
@@ -233,14 +246,16 @@ def _apply_delta(
     location_id: int,
     delta: int,
     container_type: ContainerType | None,
-) -> None:
-    """Move a slot's cached quantity by ``delta``, never below zero (D1).
+) -> int:
+    """Move a slot's cached quantity by ``delta`` and return the new quantity.
 
-    The change is a single guarded ``UPDATE`` whose ``WHERE`` clause also
-    enforces the non-negative invariant, so concurrent movements on the same
-    slot serialize without a read-modify-write race (lost updates or a negative
-    quantity) on any backend with row-level locking. The first movement into a
-    slot inserts the cache row; a lost insert race is retried as an update.
+    The change is a single guarded ``UPDATE ... RETURNING`` whose ``WHERE``
+    clause also enforces the non-negative invariant, so concurrent movements on
+    the same slot serialize without a read-modify-write race (lost updates or a
+    negative quantity) on any backend with row-level locking, and the post-update
+    quantity comes back in the same round-trip (no extra ``SELECT``). The first
+    movement into a slot inserts the cache row; a lost insert race is retried as
+    an update.
 
     A non-``None`` ``container_type`` is written to the slot (on both create and
     update); ``None`` leaves an existing slot's type untouched and defaults a
@@ -252,7 +267,7 @@ def _apply_delta(
 
     for _ in range(2):
         result = cast(
-            "CursorResult[object]",
+            "CursorResult[int]",
             session.execute(
                 update(ComponentLocation)
                 .where(
@@ -261,10 +276,12 @@ def _apply_delta(
                     col(ComponentLocation.quantity) + delta >= 0,
                 )
                 .values(values)
+                .returning(col(ComponentLocation.quantity))
             ),
         )
-        if result.rowcount:
-            return
+        new_quantity = result.scalar()
+        if new_quantity is not None:
+            return int(new_quantity)
 
         cl = _find_component_location(session, component_id, location_id)
         if cl is not None:
@@ -292,9 +309,15 @@ def _apply_delta(
                         container_type=container_type or ContainerType.LOOSE,
                     )
                 )
-            return
+            return delta
         except IntegrityError:
             continue
+
+    # Both attempts lost the insert race without the row then satisfying the
+    # update guard; a caller retry is the safe response.
+    raise InsufficientStockError(
+        f"could not apply stock change at location {location_id}; please retry"
+    )
 
 
 def _find_component_location(

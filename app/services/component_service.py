@@ -25,6 +25,7 @@ from app.models.component import (
 )
 from app.models.enums import MountingType, ParameterDataType
 from app.models.location import ComponentLocation
+from app.services import audit_service
 from app.services._common import require_entity
 from app.services.errors import ValidationError
 
@@ -320,14 +321,27 @@ def list_parameter_values(
     )
 
 
-def hard_delete_component(session: Session, component_id: int) -> None:
+def hard_delete_component(
+    session: Session, component_id: int, *, user_id: int | None = None
+) -> None:
     """Permanently delete a component and its EAV/stock rows (admin only, §20).
 
     This is the administrative delete exposed through the backend API; the normal
     UI never deletes components. Related stock movements and invoice lines are
-    left untouched as historical records.
+    left untouched as historical records. When ``user_id`` is given the deletion
+    is recorded in the audit log (spec §19) within the same transaction.
     """
     component = require_entity(session, Component, component_id, "component")
+    if user_id is not None:
+        audit_service.record_change(
+            session,
+            entity_type="component",
+            entity_id=component_id,
+            field=audit_service.FIELD_DELETED,
+            old_value=False,
+            new_value=True,
+            user_id=user_id,
+        )
     for param in list_parameter_values(session, component_id):
         session.delete(param)
     for cl in session.exec(
@@ -343,12 +357,15 @@ def set_parameter_value(
     component_id: int,
     parameter_definition_id: int,
     value: ParameterValue,
+    *,
+    user_id: int | None = None,
 ) -> ComponentParameter:
     """Set (or update) an EAV parameter value with type/enum validation.
 
     The definition must be part of the component type's effective set, enforcing
     parameter inheritance (decision D3). The value is routed to the column that
-    matches the definition's ``data_type`` (decision D6).
+    matches the definition's ``data_type`` (decision D6). When ``user_id`` is
+    given the change is recorded in the audit log (spec §19).
     """
     component = require_entity(session, Component, component_id, "component")
     definition = require_entity(
@@ -373,11 +390,36 @@ def set_parameter_value(
         parameter_definition_id=parameter_definition_id,
     )
 
+    old_value = _current_value(param)
     _assign_value(session, param, definition, value)
+    new_value = _current_value(param)
+    # Log the normalized stored value (e.g. int 4700 -> 4700.0), so a value
+    # renders identically whether it is read back as new_value here or as the
+    # next change's old_value via _current_value. Skip no-op updates (the same
+    # value set again) so they do not clutter the log with phantom changes.
+    if user_id is not None and new_value != old_value:
+        audit_service.record_change(
+            session,
+            entity_type="component",
+            entity_id=component_id,
+            field=audit_service.parameter_field(definition.name),
+            old_value=old_value,
+            new_value=new_value,
+            user_id=user_id,
+        )
     session.add(param)
     session.commit()
     session.refresh(param)
     return param
+
+
+def _current_value(param: ComponentParameter) -> ParameterValue | None:
+    """Return the currently populated EAV value of a parameter row, if any."""
+    if param.value_num is not None:
+        return param.value_num
+    if param.value_bool is not None:
+        return param.value_bool
+    return param.value_text
 
 
 def _assign_value(

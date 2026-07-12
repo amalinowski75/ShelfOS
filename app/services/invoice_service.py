@@ -20,7 +20,7 @@ from app.models.component import Component
 from app.models.enums import StockReason
 from app.models.invoice import Invoice, InvoiceLine
 from app.models.location import Location
-from app.services import stock_service
+from app.services import audit_service, stock_service
 from app.services._common import require_entity
 from app.services.errors import (
     InvoiceFinalizedError,
@@ -109,23 +109,65 @@ def add_line(
 
 
 def set_line_location(
-    session: Session, invoice_id: int, line_id: int, location_id: int
+    session: Session,
+    invoice_id: int,
+    line_id: int,
+    location_id: int,
+    *,
+    user_id: int | None = None,
 ) -> InvoiceLine:
-    """Assign a destination stock location to a line (spec §16 step 6)."""
+    """Assign a destination stock location to a line (spec §16 step 6).
+
+    When ``user_id`` is given the location change is recorded in the audit log
+    (spec §19).
+    """
     line = _require_line_of_invoice(session, invoice_id, line_id)
     _require_draft(session, line.invoice_id)
     require_entity(session, Location, location_id, "location")
+    old_location_id = line.location_id
     line.location_id = location_id
+    # Skip the audit row on an idempotent set (same location, e.g. a retry) so
+    # the log does not show a "change" that did not happen.
+    if user_id is not None and location_id != old_location_id:
+        audit_service.record_change(
+            session,
+            entity_type="invoice_line",
+            entity_id=line_id,
+            field=audit_service.FIELD_LOCATION_ID,
+            old_value=old_location_id,
+            new_value=location_id,
+            user_id=user_id,
+        )
     session.add(line)
     session.commit()
     session.refresh(line)
     return line
 
 
-def remove_line(session: Session, invoice_id: int, line_id: int) -> None:
-    """Remove a line from a draft invoice and refresh totals."""
+def remove_line(
+    session: Session,
+    invoice_id: int,
+    line_id: int,
+    *,
+    user_id: int | None = None,
+) -> None:
+    """Remove a line from a draft invoice and refresh totals.
+
+    When ``user_id`` is given the deletion is recorded in the audit log (spec
+    §19) within the same transaction as the delete.
+    """
     line = _require_line_of_invoice(session, invoice_id, line_id)
     invoice = _require_draft(session, line.invoice_id)
+    if user_id is not None:
+        audit_service.record_change(
+            session,
+            entity_type="invoice_line",
+            entity_id=line_id,
+            field=audit_service.FIELD_DELETED,
+            old_value=False,
+            new_value=True,
+            user_id=user_id,
+        )
     session.delete(line)
     session.commit()
     _recompute_net(session, invoice)
@@ -173,6 +215,11 @@ def finalize_invoice(
     else:
         gross = net
 
+    # Capture the pre-finalization values for the audit trail before the UPDATE
+    # below overwrites them (total_gross defaults to Decimal(0), not NULL).
+    old_finalized = invoice.is_finalized
+    old_gross = invoice.total_gross
+
     # Claim finalization atomically: flip the flag only if the invoice is still a
     # draft, in the same transaction as the stock movements below. A concurrent
     # finalize (or a retry after a mid-loop failure) sees rowcount 0 and aborts,
@@ -187,6 +234,25 @@ def finalize_invoice(
     )
     if claimed.rowcount != 1:
         raise InvoiceFinalizedError(f"invoice {invoice_id} is finalized (read-only)")
+
+    audit_service.record_change(
+        session,
+        entity_type="invoice",
+        entity_id=invoice_id,
+        field=audit_service.FIELD_IS_FINALIZED,
+        old_value=old_finalized,
+        new_value=True,
+        user_id=user_id,
+    )
+    audit_service.record_change(
+        session,
+        entity_type="invoice",
+        entity_id=invoice_id,
+        field=audit_service.FIELD_TOTAL_GROSS,
+        old_value=old_gross,
+        new_value=gross,
+        user_id=user_id,
+    )
 
     # Generate a purchase movement per line without committing; the single
     # commit below makes the flag flip and every movement succeed or fail as one.
