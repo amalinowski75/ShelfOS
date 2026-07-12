@@ -16,8 +16,10 @@ function showError(el, message) {
   el.hidden = false;
 }
 
-// A single in-flight write at a time: only one dialog is ever open, so one flag
-// is enough to stop a fast double-click sending a duplicate POST/PUT/DELETE.
+// A single in-flight write at a time for this script's own forms, enough to stop
+// a fast double-click sending a duplicate POST/PUT/DELETE. The shared component
+// dialog (which can open stacked on top of the line dialog) runs its own submit
+// with its own error handling and does not share this flag.
 let inFlight = false;
 async function guard(run) {
   if (inFlight) return;
@@ -134,6 +136,17 @@ if (detail && lineDialog) {
     return componentOptions;
   }
 
+  function fillComponentSelect(options, selectedId) {
+    componentSelect.replaceChildren();
+    for (const opt of options) {
+      const o = document.createElement("option");
+      o.value = opt.id;
+      o.textContent = opt.label;
+      componentSelect.appendChild(o);
+    }
+    if (selectedId != null) componentSelect.value = String(selectedId);
+  }
+
   async function openAddLine() {
     lineForm.reset();
     lineError.hidden = true;
@@ -144,17 +157,34 @@ if (detail && lineDialog) {
     componentField.hidden = false;
     componentSelect.required = true;
     const options = await loadComponentOptions();
-    componentSelect.replaceChildren();
     if (!options.length) {
-      showError(lineError, "Create a component first, then add it to the invoice.");
+      showError(lineError, "No components yet — use “New component” to add one.");
     }
-    for (const opt of options) {
-      const o = document.createElement("option");
-      o.value = opt.id;
-      o.textContent = opt.label;
-      componentSelect.appendChild(o);
-    }
+    fillComponentSelect(options);
     lineDialog.showModal();
+  }
+
+  // Create a component without leaving the add-line flow: the shared dialog
+  // opens on top, and on success the new component is loaded into the picker
+  // and pre-selected.
+  const addComponentBtn = document.getElementById("invoice-add-component-btn");
+  if (addComponentBtn && window.openComponentDialog) {
+    addComponentBtn.addEventListener("click", () => {
+      openComponentDialog((created) => {
+        // Insert the new component directly and select it — don't depend on a
+        // reload that might not yet include it (and could reject). Invalidate
+        // the cache so a later re-open re-fetches the canonical, fuller list.
+        componentOptions = null;
+        const label =
+          (created.mpn || `#${created.id}`) +
+          (created.manufacturer ? ` · ${created.manufacturer}` : "");
+        if (!componentSelect.querySelector(`option[value="${created.id}"]`)) {
+          componentSelect.appendChild(new Option(label, created.id));
+        }
+        componentSelect.value = String(created.id);
+        lineError.hidden = true;
+      });
+    });
   }
 
   function openEditLine(row) {

@@ -155,6 +155,7 @@
       <div class="field" id="line-component-field">
         <label>Component</label>
         <select class="control" name="component_id" required></select>
+        <button type="button" class="btn btn-ghost btn-sm" id="invoice-add-component-btn">+ New component</button>
       </div>
       <div class="field">
         <label>Quantity</label>
@@ -185,6 +186,9 @@
     </form>
   </article>
 </dialog>
+
+{# The shared "New component" dialog, reachable from the add-line picker. #}
+{% include "_component_dialog.html" %}
 
 {% if lines %}
 <dialog id="invoice-finalize-dialog">

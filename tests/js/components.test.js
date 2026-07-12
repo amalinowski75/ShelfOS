@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { loadPage, tick, CSRF, componentPageFixture } from "./harness.js";
 
-const SCRIPTS = ["shared.js", "app.js"];
+// The dialog logic lives in component_dialog.js; app.js only wires the button.
+const SCRIPTS = ["shared.js", "component_dialog.js", "app.js"];
 
 const DEFS = [
   { id: 10, label: "Resistance", data_type: "number", unit: "Ω", enum_values: [] },

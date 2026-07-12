@@ -166,6 +166,7 @@ export function detailFixture({
       <input type="hidden" name="line_id" />
       <div id="line-component-field">
         <select name="component_id"></select>
+        <button type="button" id="invoice-add-component-btn"></button>
       </div>
       <input name="quantity" type="number" />
       <input name="unit_price" type="number" />
@@ -204,6 +205,29 @@ export function componentPageFixture(types = [{ id: 1, name: "resistor" }]) {
         <option value="SMT">SMT</option>
         <option value="THT">THT</option>
       </select>
+      <input name="notes" />
+      <p id="component-params-hint"></p>
+      <div id="component-params"></div>
+      <p id="component-error" hidden></p>
+      <button type="submit"></button>
+    </form></dialog>`;
+}
+
+// The shared "New component" dialog markup (mirrors _component_dialog.html),
+// for pages that reuse it (e.g. the invoice add-line flow).
+export function componentDialogFixture(types = [{ id: 1, name: "resistor" }]) {
+  const options = types
+    .map((t) => `<option value="${t.id}">${t.name}</option>`)
+    .join("");
+  return `
+    <dialog id="component-dialog"><form id="component-form">
+      <select name="type_id" id="component-type">
+        <option value="">Select a type…</option>${options}
+      </select>
+      <input name="manufacturer" />
+      <input name="mpn" />
+      <input name="package" />
+      <select name="mounting_type"><option value="Other" selected>Other</option></select>
       <input name="notes" />
       <p id="component-params-hint"></p>
       <div id="component-params"></div>

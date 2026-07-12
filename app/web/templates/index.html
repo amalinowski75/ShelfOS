@@ -142,59 +142,9 @@
   </div>
 </template>
 
-<dialog id="component-dialog">
-  <article>
-    <header>
-      <strong>New component</strong>
-      <button class="close" aria-label="Close" data-close></button>
-    </header>
-    <form id="component-form">
-      <div class="field">
-        <label>Type</label>
-        <select class="control" name="type_id" id="component-type" required>
-          <option value="">Select a type…</option>
-          {% for t in types %}
-          <option value="{{ t.id }}">{{ t.name }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="field">
-        <label>Manufacturer</label>
-        <input class="control" name="manufacturer" placeholder="optional" />
-      </div>
-      <div class="field">
-        <label>MPN</label>
-        <input class="control" name="mpn" placeholder="optional" />
-      </div>
-      <div class="field">
-        <label>Package</label>
-        <input class="control" name="package" placeholder="optional" />
-      </div>
-      <div class="field">
-        <label>Mounting</label>
-        <select class="control" name="mounting_type">
-          {% for mt in mounting_types %}
-          <option value="{{ mt }}"{% if mt == "Other" %} selected{% endif %}>{{ mt }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="field">
-        <label>Notes</label>
-        <input class="control" name="notes" placeholder="optional" />
-      </div>
-
-      <div class="params-head"><label>Parameters</label></div>
-      <p class="params-empty" id="component-params-hint">Select a type to enter its parameters.</p>
-      <div class="params" id="component-params"></div>
-
-      <p id="component-error" class="error" hidden></p>
-      <footer>
-        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
-        <button type="submit" class="btn btn-primary">Create component</button>
-      </footer>
-    </form>
-  </article>
-</dialog>
+{% if current_user.role.value != "read-only" %}
+{% include "_component_dialog.html" %}
+{% endif %}
 {% endblock %}
 
 {% block scripts %}

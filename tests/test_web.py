@@ -80,6 +80,8 @@ def test_new_component_control_hidden_for_read_only(client: TestClient) -> None:
     ).json()["access_token"]
     html = client.get("/", headers={"Authorization": f"Bearer {token}"}).text
     assert 'id="new-component-btn"' not in html
+    # The dialog markup itself is gated too, not just the button.
+    assert 'id="component-dialog"' not in html
 
 
 def test_require_web_user_heals_missing_csrf_token(session) -> None:  # type: ignore[no-untyped-def]
@@ -593,6 +595,10 @@ def test_invoice_detail_draft_shows_write_controls(client: TestClient) -> None:
     # The row carries the data the edit dialog prefills from.
     assert 'data-line-id="' in html
     assert 'data-unit-price="1.50"' in html
+    # The add-line picker can create a component inline via the shared dialog.
+    assert 'id="invoice-add-component-btn"' in html
+    assert 'id="component-dialog"' in html
+    assert "/static/component_dialog.js" in html
 
 
 def test_invoice_detail_finalized_is_read_only(client: TestClient) -> None:
@@ -607,6 +613,8 @@ def test_invoice_detail_finalized_is_read_only(client: TestClient) -> None:
         'id="invoice-meta-dialog"',
         'id="invoice-line-dialog"',
         'id="invoice-finalize-dialog"',
+        'id="component-dialog"',
+        'id="invoice-add-component-btn"',
         'data-act="edit-line"',
         'data-act="remove-line"',
     ):
