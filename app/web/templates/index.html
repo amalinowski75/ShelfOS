@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_location_picker.html" import location_picker %}
 {% block title %}Components — ShelfOS{% endblock %}
 
 {% block content %}
@@ -41,11 +42,7 @@
       </div>
       <div class="field">
         <label>Location</label>
-        <select class="control" name="location_id" required>
-          {% for loc in locations %}
-          <option value="{{ loc.id }}">{{ loc.name }} ({{ loc.type.value }})</option>
-          {% endfor %}
-        </select>
+        {{ location_picker(location_tree, name="location_id") }}
       </div>
       <div class="field">
         <label>Note</label>

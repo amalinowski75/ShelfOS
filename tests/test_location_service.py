@@ -59,3 +59,30 @@ def test_create_location_caps_nesting_depth(session: Session) -> None:
         ls.create_location(
             session, type=LocationType.BOX, name="too deep", parent_id=parent_id
         )
+
+
+def test_location_tree_structure_and_paths(session: Session) -> None:
+    lab = ls.create_location(session, type=LocationType.ROOM, name="Lab")
+    rack = ls.create_location(
+        session, type=LocationType.RACK, name="Rack A", parent_id=lab.id
+    )
+    ls.create_location(
+        session, type=LocationType.SHELF, name="Shelf 1", parent_id=rack.id
+    )
+    ls.create_location(session, type=LocationType.ROOM, name="Bench")  # second root
+
+    tree = ls.location_tree(session)
+    # Roots sorted by name: Bench before Lab.
+    assert [n.location.name for n in tree] == ["Bench", "Lab"]
+    lab_node = tree[1]
+    assert lab_node.path == "Lab"
+    assert lab_node.children[0].path == "Lab / Rack A"
+    assert lab_node.children[0].children[0].path == "Lab / Rack A / Shelf 1"
+
+    # flatten_tree is pre-order (parents before their children).
+    assert [n.location.name for n in ls.flatten_tree(tree)] == [
+        "Bench",
+        "Lab",
+        "Rack A",
+        "Shelf 1",
+    ]

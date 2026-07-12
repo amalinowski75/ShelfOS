@@ -1,0 +1,48 @@
+{# Expandable location tree-picker (§7). Usage:
+     {% from "_location_picker.html" import location_picker %}
+     {{ location_picker(location_tree, name="location_id", optional=false) }}
+   Backed by a hidden <input name=...> so form-read code is unchanged; behaviour
+   lives in location_tree.js. #}
+
+{% macro _nodes(nodes) %}
+<ul class="loc-picker-list">
+  {% for node in nodes %}
+  <li>
+    <div class="loc-picker-row">
+      {% if node.children %}
+      <button type="button" class="loc-picker-caret" aria-expanded="false" aria-label="Expand"></button>
+      {% else %}
+      <span class="loc-picker-caret-spacer"></span>
+      {% endif %}
+      <button type="button" class="loc-picker-node"
+              data-loc-id="{{ node.location.id }}" data-loc-path="{{ node.path }}">
+        {{ node.location.name }}
+        <span class="loc-picker-type">{{ node.location.type.value }}</span>
+      </button>
+    </div>
+    {% if node.children %}
+    <div class="loc-picker-children" hidden>{{ _nodes(node.children) }}</div>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endmacro %}
+
+{% macro location_picker(tree, name="location_id", optional=false) %}
+<div class="loc-picker"{% if optional %} data-optional="true"{% endif %}>
+  <input type="hidden" name="{{ name }}" value="" />
+  <button type="button" class="control loc-picker-toggle">
+    <span class="loc-picker-label">Select a location…</span>
+  </button>
+  <div class="loc-picker-menu" hidden>
+    {% if optional %}
+    <button type="button" class="loc-picker-node loc-picker-none" data-loc-id="" data-loc-path="">— none —</button>
+    {% endif %}
+    {% if tree %}
+    {{ _nodes(tree) }}
+    {% else %}
+    <p class="loc-picker-empty">No locations yet — add one on the Locations page.</p>
+    {% endif %}
+  </div>
+</div>
+{% endmacro %}

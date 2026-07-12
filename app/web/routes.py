@@ -19,7 +19,6 @@ from app.api.deps import get_session
 from app.auth.deps import get_optional_user, issue_csrf_token
 from app.models.component import ComponentType
 from app.models.enums import LocationType, MountingType, ParameterDataType
-from app.models.location import Location
 from app.models.user import User
 from app.services import component_service as cs
 from app.services import invoice_service as inv
@@ -58,6 +57,16 @@ templates.env.globals["static_version"] = _static_version
 templates.env.globals["format_money"] = format_money
 
 router = APIRouter(tags=["web"])
+
+
+def _location_options(tree: list[ls.LocationNode]) -> list[dict[str, Any]]:
+    """Flat, path-sorted location options for a parent/location ``<select>``."""
+    options = [
+        {"id": node.location.id, "path": node.path}
+        for node in ls.flatten_tree(tree)
+    ]
+    options.sort(key=lambda option: str(option["path"]).lower())
+    return options
 
 
 def require_web_user(request: Request, session: Session = Depends(get_session)) -> User:
@@ -122,7 +131,7 @@ def index(
         "index.html",
         {
             "types": cs.list_types(session),
-            "locations": ls.list_all(session),
+            "location_tree": ls.location_tree(session),
             "data_types": [dt.value for dt in ParameterDataType],
             "mounting_types": [mt.value for mt in MountingType],
             "current_user": user,
@@ -147,47 +156,14 @@ def locations_page(
     user: User = Depends(require_web_user),
 ) -> HTMLResponse:
     """Storage-location tree with a create dialog (spec §7)."""
-    locations = ls.list_all(session)
-    by_id = {loc.id: loc for loc in locations}
-    children: dict[int | None, list[Location]] = {}
-    for loc in locations:
-        children.setdefault(loc.parent_id, []).append(loc)
-    for group in children.values():
-        group.sort(key=lambda loc: loc.name.lower())
-
-    # ``build`` descends only from the None-rooted forest, so a cyclic component
-    # (whose every node has a non-null parent) is simply never reached — no
-    # infinite recursion. ``path_of`` walks *up*, which a cycle could loop, so it
-    # carries its own visited-set guard (mirroring location_service.get_path);
-    # both are defensive since there is no re-parent endpoint today.
-    def build(parent_id: int | None) -> list[dict[str, Any]]:
-        return [
-            {"location": loc, "children": build(cast(int, loc.id))}
-            for loc in children.get(parent_id, [])
-        ]
-
-    def path_of(loc: Location) -> str:
-        # Walk parents in memory (no per-location query) for the parent picker.
-        parts: list[str] = []
-        seen: set[int] = set()
-        current: Location | None = loc
-        while current is not None and current.id not in seen:
-            seen.add(cast(int, current.id))
-            parts.append(current.name)
-            current = by_id.get(current.parent_id)
-        return " / ".join(reversed(parts))
-
-    options: list[dict[str, Any]] = [
-        {"id": loc.id, "path": path_of(loc)} for loc in locations
-    ]
-    options.sort(key=lambda option: str(option["path"]).lower())
+    tree = ls.location_tree(session)
     return templates.TemplateResponse(
         request,
         "locations.html",
         {
-            "tree": build(None),
+            "location_tree": tree,
             "location_types": [lt.value for lt in LocationType],
-            "location_options": options,
+            "location_options": _location_options(tree),
             "current_user": user,
         },
     )

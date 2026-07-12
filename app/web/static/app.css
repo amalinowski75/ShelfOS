@@ -241,6 +241,38 @@ table.kv tr:last-child th, table.kv tr:last-child td { border-bottom: none; }
 .loc-tree .loc-tree { margin: 4px 0 0 10px; padding-left: 14px; border-left: 1px solid var(--border); }
 .loc-tree .loc-name { font-weight: 550; margin-right: 8px; }
 
+/* ---------- location tree-picker (§7) ---------- */
+.loc-picker { position: relative; }
+.loc-picker-toggle { display: flex; align-items: center; text-align: left; cursor: pointer; }
+.loc-picker-toggle::after { content: "▾"; margin-left: auto; padding-left: 8px; color: var(--muted); }
+.loc-picker-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loc-picker-menu {
+  position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; right: 0;
+  max-height: 260px; overflow-y: auto; padding: 6px;
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow-md);
+}
+.loc-picker-list { list-style: none; margin: 0; padding: 0; }
+.loc-picker-children { padding-left: 16px; }
+.loc-picker-row { display: flex; align-items: center; gap: 2px; }
+.loc-picker-caret, .loc-picker-caret-spacer { width: 20px; height: 26px; flex: none; }
+.loc-picker-caret {
+  border: none; background: transparent; color: var(--muted);
+  cursor: pointer; border-radius: 5px; padding: 0;
+}
+.loc-picker-caret::before { content: "▸"; }
+.loc-picker-caret[aria-expanded="true"]::before { content: "▾"; }
+.loc-picker-caret:hover { background: var(--surface-2); color: var(--text); }
+.loc-picker-node {
+  flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0;
+  text-align: left; border: none; background: transparent; color: var(--text);
+  cursor: pointer; padding: 5px 8px; border-radius: 6px; font: inherit;
+}
+.loc-picker-node:hover { background: var(--row-hover); }
+.loc-picker-type { color: var(--muted); font-size: 12px; }
+.loc-picker-none { color: var(--muted); }
+.loc-picker-empty { color: var(--muted); font-size: 13px; margin: 4px 8px; }
+
 /* ---------- badges ---------- */
 .badge {
   display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600;

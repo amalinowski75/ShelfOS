@@ -46,6 +46,22 @@ def test_index_page_renders(client: TestClient) -> None:
     assert "/static/app.js" in response.text
 
 
+def test_stock_dialog_uses_location_tree_picker(client: TestClient) -> None:
+    """The stock dialog's location field is the expandable tree-picker (§7)."""
+    room = client.post(
+        "/api/locations", json={"type": "room", "name": "Lab"}
+    ).json()
+    client.post(
+        "/api/locations",
+        json={"type": "rack", "name": "Rack A", "parent_id": room["id"]},
+    )
+    html = client.get("/").text
+    assert 'class="loc-picker"' in html
+    # Nodes carry the id and full path the widget selects/labels with.
+    assert 'data-loc-path="Lab / Rack A"' in html
+    assert "/static/location_tree.js" in html
+
+
 def test_index_shows_new_type_control_for_writer(client: TestClient) -> None:
     """An account that can write sees the §13 create-type dialog and builder."""
     html = client.get("/").text
@@ -690,6 +706,16 @@ def test_locations_page_renders_tree(client: TestClient) -> None:
 
 def test_locations_page_empty(client: TestClient) -> None:
     assert "No locations yet." in client.get("/locations").text
+
+
+def test_location_name_is_html_escaped(client: TestClient) -> None:
+    """A location name with HTML metacharacters renders escaped (no injection)."""
+    client.post(
+        "/api/locations", json={"type": "box", "name": 'Evil"><script>x</script>'}
+    )
+    html = client.get("/locations").text
+    assert "<script>x</script>" not in html
+    assert "&lt;script&gt;" in html
 
 
 def test_new_location_control_hidden_for_read_only(client: TestClient) -> None:

@@ -98,6 +98,7 @@ function openStockDialog(mode, row) {
     mode === "add" ? "Add stock" : "Take from stock";
   document.getElementById("stock-error").hidden = true;
   form.quantity.value = 1;
+  form.querySelector(".loc-picker")?.reset();
   dialog.showModal();
 }
 
@@ -106,6 +107,14 @@ function openStockDialog(mode, row) {
 document.getElementById("stock-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.target;
+  // The tree-picker is backed by a hidden input, so enforce the required
+  // location here (there's no native `required` to lean on).
+  if (form.location_id.value === "") {
+    const el = document.getElementById("stock-error");
+    el.textContent = "Choose a location.";
+    el.hidden = false;
+    return;
+  }
   const body = JSON.stringify({
     component_id: Number(form.component_id.value),
     location_id: Number(form.location_id.value),
