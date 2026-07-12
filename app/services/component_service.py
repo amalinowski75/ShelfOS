@@ -392,17 +392,19 @@ def set_parameter_value(
 
     old_value = _current_value(param)
     _assign_value(session, param, definition, value)
-    if user_id is not None:
-        # Log the normalized stored value (e.g. int 4700 -> 4700.0), so a value
-        # renders identically whether it is read back as new_value here or as
-        # the next change's old_value via _current_value.
+    new_value = _current_value(param)
+    # Log the normalized stored value (e.g. int 4700 -> 4700.0), so a value
+    # renders identically whether it is read back as new_value here or as the
+    # next change's old_value via _current_value. Skip no-op updates (the same
+    # value set again) so they do not clutter the log with phantom changes.
+    if user_id is not None and new_value != old_value:
         audit_service.record_change(
             session,
             entity_type="component",
             entity_id=component_id,
             field=audit_service.parameter_field(definition.name),
             old_value=old_value,
-            new_value=_current_value(param),
+            new_value=new_value,
             user_id=user_id,
         )
     session.add(param)

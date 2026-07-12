@@ -126,7 +126,9 @@ def set_line_location(
     require_entity(session, Location, location_id, "location")
     old_location_id = line.location_id
     line.location_id = location_id
-    if user_id is not None:
+    # Skip the audit row on an idempotent set (same location, e.g. a retry) so
+    # the log does not show a "change" that did not happen.
+    if user_id is not None and location_id != old_location_id:
         audit_service.record_change(
             session,
             entity_type="invoice_line",

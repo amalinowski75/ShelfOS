@@ -90,8 +90,8 @@ def test_parameter_change_is_audited_only_with_user(ctx, session: Session) -> No
     )
     assert audit.list_entries(session, entity_type="component") == []
 
-    # With a user, both the first set and a later update are recorded.
-    for value in (4700.0, 2200.0):
+    # With a user, each real change is recorded old -> new.
+    for value in (2200.0, 1000.0):
         cs.set_parameter_value(
             session,
             ctx["component_id"],
@@ -104,9 +104,23 @@ def test_parameter_change_is_audited_only_with_user(ctx, session: Session) -> No
         "parameter:resistance",
         "parameter:resistance",
     ]
-    # Most recent first: the update from 4700 -> 2200.
-    assert entries[0].old_value == "4700.0"
-    assert entries[0].new_value == "2200.0"
+    # Most recent first: the update from 2200 -> 1000.
+    assert entries[0].old_value == "2200.0"
+    assert entries[0].new_value == "1000.0"
+
+
+def test_parameter_no_op_is_not_audited(ctx, session: Session) -> None:
+    """Setting the same normalized value again writes no phantom audit row."""
+    cs.set_parameter_value(
+        session, ctx["component_id"], ctx["definition_id"], 4700.0,
+        user_id=ctx["user_id"],
+    )
+    # int 4700 normalizes to the stored float 4700.0 -> no change, no new row.
+    cs.set_parameter_value(
+        session, ctx["component_id"], ctx["definition_id"], 4700,
+        user_id=ctx["user_id"],
+    )
+    assert len(audit.list_entries(session, entity_type="component")) == 1
 
 
 def test_line_location_change_is_audited(ctx, session: Session) -> None:
@@ -134,6 +148,15 @@ def test_line_location_change_is_audited(ctx, session: Session) -> None:
     assert entries[0].field == "location_id"
     assert entries[0].old_value is None
     assert entries[0].new_value == str(ctx["location_id"])
+
+    # Re-assigning the same location is idempotent: no second audit row.
+    inv.set_line_location(
+        session, invoice.id, line.id, ctx["location_id"], user_id=ctx["user_id"]
+    )
+    entries = audit.list_entries(
+        session, entity_type="invoice_line", entity_id=line.id
+    )
+    assert len(entries) == 1
 
 
 def test_component_deletion_is_audited(ctx, session: Session) -> None:
