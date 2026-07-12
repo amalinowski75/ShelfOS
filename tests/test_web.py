@@ -657,3 +657,73 @@ def test_invoice_detail_read_only_account_has_no_controls(
     assert 'id="invoice-edit-btn"' not in html
     assert 'data-act="edit-line"' not in html
     assert 'id="invoice-line-dialog"' not in html
+
+
+def test_locations_page_renders_tree(client: TestClient) -> None:
+    """The Locations page shows the hierarchy and the create dialog (§7)."""
+    room = client.post(
+        "/api/locations", json={"type": "room", "name": "Lab"}
+    ).json()
+    rack = client.post(
+        "/api/locations",
+        json={"type": "rack", "name": "Rack A", "parent_id": room["id"]},
+    ).json()
+    # A third level so the recursive tree macro is actually exercised.
+    client.post(
+        "/api/locations",
+        json={"type": "shelf", "name": "Shelf 1", "parent_id": rack["id"]},
+    )
+    html = client.get("/locations").text
+    assert "Locations" in html
+    assert "Lab" in html
+    assert "Rack A" in html
+    assert "Shelf 1" in html
+    # Writer controls and the shared dialog are wired up.
+    assert 'id="new-location-btn"' in html
+    assert 'id="location-dialog"' in html
+    assert "/static/location_dialog.js" in html
+    # The parent picker lists existing locations by their full (nested) path.
+    assert "Lab / Rack A / Shelf 1" in html
+    # The nav links to the page.
+    assert 'href="/locations"' in html
+
+
+def test_locations_page_empty(client: TestClient) -> None:
+    assert "No locations yet." in client.get("/locations").text
+
+
+def test_new_location_control_hidden_for_read_only(client: TestClient) -> None:
+    html = client.get("/locations", headers=_read_only_headers(client)).text
+    assert 'id="new-location-btn"' not in html
+    # The dialog markup itself is gated too, not just the button.
+    assert 'id="location-dialog"' not in html
+    # The nav entry is still there (browsing is allowed).
+    assert 'href="/locations"' in html
+
+
+def test_locations_page_survives_a_cyclic_hierarchy(
+    client: TestClient,
+    session,  # type: ignore[no-untyped-def]
+) -> None:
+    """A cycle (unreachable via the API) must not hang the render (§7)."""
+    from app.models.location import Location
+
+    a = client.post("/api/locations", json={"type": "room", "name": "A"}).json()
+    b = client.post(
+        "/api/locations",
+        json={"type": "room", "name": "B", "parent_id": a["id"]},
+    ).json()
+    # Force A -> B -> A directly, bypassing create_location's guards.
+    loc_a = session.get(Location, a["id"])
+    loc_a.parent_id = b["id"]
+    session.add(loc_a)
+    session.commit()
+
+    # path_of's visited-set guard keeps the walk finite.
+    assert client.get("/locations").status_code == 200
+
+
+def test_locations_page_requires_login(anon_client: TestClient) -> None:
+    resp = anon_client.get("/locations", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/login"

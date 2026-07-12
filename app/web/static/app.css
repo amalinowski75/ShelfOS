@@ -235,6 +235,12 @@ table.kv tr:last-child th, table.kv tr:last-child td { border-bottom: none; }
 
 .empty { color: var(--muted); font-size: 14px; margin: 0; }
 
+/* ---------- location tree (§7) ---------- */
+.loc-tree { list-style: none; margin: 0; padding: 0; }
+.loc-tree li { padding: 5px 0; }
+.loc-tree .loc-tree { margin: 4px 0 0 10px; padding-left: 14px; border-left: 1px solid var(--border); }
+.loc-tree .loc-name { font-weight: 550; margin-right: 8px; }
+
 /* ---------- badges ---------- */
 .badge {
   display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600;

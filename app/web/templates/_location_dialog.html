@@ -1,0 +1,39 @@
+{# Shared "New location" dialog (§7). Include on any page whose context provides
+   `location_types` and `location_options`; behaviour lives in location_dialog.js,
+   which exposes `openLocationDialog(onCreated)`. #}
+<dialog id="location-dialog">
+  <article>
+    <header>
+      <strong>New location</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <form id="location-form">
+      <div class="field">
+        <label>Type</label>
+        <select class="control" name="type" required>
+          {% for lt in location_types %}
+          <option value="{{ lt }}">{{ lt }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label>Name</label>
+        <input class="control" name="name" placeholder="e.g. Rack A" required />
+      </div>
+      <div class="field">
+        <label>Parent</label>
+        <select class="control" name="parent_id">
+          <option value="">None (top level)</option>
+          {% for loc in location_options %}
+          <option value="{{ loc.id }}">{{ loc.path }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <p id="location-error" class="error" hidden></p>
+      <footer>
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" class="btn btn-primary">Create location</button>
+      </footer>
+    </form>
+  </article>
+</dialog>

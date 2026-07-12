@@ -13,6 +13,10 @@ from app.models.location import Location
 from app.services._common import require_entity
 from app.services.errors import ValidationError
 
+# A physical storage hierarchy is never remotely this deep; the cap keeps the
+# recursive tree render (and any client walk) from a pathological chain.
+_MAX_DEPTH = 32
+
 
 def list_all(session: Session) -> list[Location]:
     """Return every location ordered by name (for selection dropdowns)."""
@@ -31,6 +35,10 @@ def create_location(
         raise ValidationError("location name must not be empty")
     if parent_id is not None:
         require_entity(session, Location, parent_id, "location")
+        if len(get_path(session, parent_id)) >= _MAX_DEPTH:
+            raise ValidationError(
+                f"location hierarchy may not be deeper than {_MAX_DEPTH} levels"
+            )
     location = Location(type=type, name=name, parent_id=parent_id)
     session.add(location)
     session.commit()

@@ -45,3 +45,17 @@ def test_get_children(session: Session) -> None:
     # Ordered by name.
     assert [c.name for c in children] == ["A", "B"]
     assert ls.get_children(session, None) == [room]
+
+
+def test_create_location_caps_nesting_depth(session: Session) -> None:
+    """A pathologically deep chain is rejected so the tree render can't blow up."""
+    parent_id: int | None = None
+    for i in range(ls._MAX_DEPTH):
+        loc = ls.create_location(
+            session, type=LocationType.BOX, name=f"L{i}", parent_id=parent_id
+        )
+        parent_id = loc.id
+    with pytest.raises(ValidationError, match="deeper than"):
+        ls.create_location(
+            session, type=LocationType.BOX, name="too deep", parent_id=parent_id
+        )
