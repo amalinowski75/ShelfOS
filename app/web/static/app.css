@@ -220,6 +220,8 @@ table.data tbody td { padding: 11px 14px; border-bottom: 1px solid var(--border)
 table.data tbody tr:last-child td { border-bottom: none; }
 table.data tbody tr:hover { background: var(--row-hover); }
 table.data td.num { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+table.data td.line-actions { text-align: right; white-space: nowrap; }
+table.data td.line-actions .btn { margin-left: 4px; }
 
 /* key/value table (overview, parameters) */
 table.kv { width: 100%; border-collapse: collapse; font-size: 14px; }

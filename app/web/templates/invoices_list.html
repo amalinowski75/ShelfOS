@@ -15,6 +15,11 @@
     <h1>Invoices</h1>
     <p>Supplier invoices and their line items.</p>
   </div>
+  {% if current_user.role.value != "read-only" %}
+  <div class="head-actions">
+    <button type="button" class="btn btn-secondary" id="invoice-new-btn">New invoice</button>
+  </div>
+  {% endif %}
 </div>
 
 {% if invoices %}
@@ -54,4 +59,46 @@
   <p class="empty">No invoices yet.</p>
 </div>
 {% endif %}
+
+{% if current_user.role.value != "read-only" %}
+<dialog id="invoice-new-dialog">
+  <article>
+    <header>
+      <strong>New invoice</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <form id="invoice-new-form">
+      <div class="field">
+        <label>Supplier</label>
+        <input class="control" name="supplier" required />
+      </div>
+      <div class="field">
+        <label>Invoice number</label>
+        <input class="control" name="invoice_number" required />
+      </div>
+      <div class="field">
+        <label>Invoice date</label>
+        <input class="control" type="date" name="invoice_date" required />
+      </div>
+      <div class="field">
+        <label>Currency</label>
+        <input class="control" name="currency" placeholder="EUR" required />
+      </div>
+      <div class="field">
+        <label>Notes</label>
+        <input class="control" name="notes" placeholder="optional" />
+      </div>
+      <p id="invoice-new-error" class="error" hidden></p>
+      <footer>
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" class="btn btn-primary">Create</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/invoices.js?v={{ static_version() }}"></script>
 {% endblock %}

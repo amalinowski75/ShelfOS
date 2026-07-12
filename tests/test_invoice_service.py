@@ -616,3 +616,44 @@ def test_update_line_accepts_zero_unit_price(setup, session: Session) -> None:
     invoice = session.get(inv.Invoice, invoice_id)
     assert invoice is not None
     assert invoice.total_net == Decimal("0")
+
+
+def test_update_invoice_empty_string_clears_notes(setup, session: Session) -> None:
+    """An empty string blanks notes; only ``None`` means "leave unchanged".
+
+    The web edit form relies on this to distinguish a cleared field from an
+    untouched one.
+    """
+    invoice_id = _new_invoice(session)
+    inv.update_invoice(session, invoice_id, notes="rush")
+    inv.update_invoice(session, invoice_id, notes="")
+    invoice = session.get(inv.Invoice, invoice_id)
+    assert invoice is not None and invoice.notes == ""
+
+    # None leaves the (now empty) value untouched.
+    inv.update_invoice(session, invoice_id, supplier="Digikey")
+    invoice = session.get(inv.Invoice, invoice_id)
+    assert invoice is not None and invoice.notes == ""
+
+
+def test_update_line_empty_string_clears_part_number(
+    setup, session: Session
+) -> None:
+    """Same contract for a line's supplier part number (cleared vs unchanged)."""
+    invoice_id = _new_invoice(session)
+    line = inv.add_line(
+        session,
+        invoice_id,
+        component_id=setup["component_id"],
+        quantity=1,
+        unit_price=Decimal("1.00"),
+        supplier_part_number="SPN-9",
+    )
+    inv.update_line(session, invoice_id, line.id, supplier_part_number="")
+    cleared = session.get(inv.InvoiceLine, line.id)
+    assert cleared is not None and cleared.supplier_part_number == ""
+
+    # None leaves it as-is.
+    inv.update_line(session, invoice_id, line.id, quantity=2)
+    kept = session.get(inv.InvoiceLine, line.id)
+    assert kept is not None and kept.supplier_part_number == ""

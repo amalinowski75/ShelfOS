@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% block title %}{{ invoice.invoice_number }} — ShelfOS{% endblock %}
 
+{% set can_edit = current_user.role.value != "read-only" and not invoice.is_finalized %}
+
 {% macro state_badge(finalized) -%}
   {% if finalized %}
   <span class="badge b-ok"><span class="dot"></span>finalized</span>
@@ -12,11 +14,26 @@
 {% block content %}
 <p class="crumb"><a href="/invoices">&larr; Back to invoices</a></p>
 
+<div id="invoice-detail"
+     data-invoice-id="{{ invoice.id }}"
+     data-currency="{{ invoice.currency }}"
+     data-supplier="{{ invoice.supplier }}"
+     data-invoice-number="{{ invoice.invoice_number }}"
+     data-invoice-date="{{ invoice.invoice_date.isoformat() }}"
+     data-notes="{{ invoice.notes or '' }}">
+
 <div class="head">
   <div>
     <h1>{{ invoice.invoice_number }}</h1>
     <p>{{ invoice.supplier }} · {{ invoice.invoice_date.isoformat() }} · {{ state_badge(invoice.is_finalized) }}</p>
   </div>
+  {% if can_edit %}
+  <div class="head-actions">
+    <button type="button" class="btn btn-ghost" id="invoice-edit-btn">Edit</button>
+    <button type="button" class="btn btn-secondary" id="invoice-addline-btn">Add line</button>
+    {% if lines %}<button type="button" class="btn btn-primary" id="invoice-finalize-btn">Finalize</button>{% endif %}
+  </div>
+  {% endif %}
 </div>
 
 <div class="card card-pad">
@@ -49,11 +66,16 @@
           <th style="text-align:right">Qty</th>
           <th style="text-align:right">Unit price</th>
           <th style="text-align:right">Total</th>
+          {% if can_edit %}<th></th>{% endif %}
         </tr>
       </thead>
       <tbody>
         {% for l in lines %}
-        <tr>
+        <tr data-line-id="{{ l.line_id }}"
+            data-quantity="{{ l.quantity }}"
+            data-unit-price="{{ format_money(l.unit_price) }}"
+            data-spn="{{ l.supplier_part_number or '' }}"
+            data-location-id="{{ l.location_id if l.location_id is not none else '' }}">
           <td>
             {% if l.component %}
             <a href="/components/{{ l.component.id }}">{{ l.component.mpn or ("Component #" ~ l.component.id) }}</a>
@@ -67,13 +89,128 @@
           <td class="num">{{ l.quantity }}</td>
           <td class="num">{{ format_money(l.unit_price) }} {{ invoice.currency }}</td>
           <td class="num">{{ format_money(l.total_price) }} {{ invoice.currency }}</td>
+          {% if can_edit %}
+          <td class="line-actions">
+            <button type="button" class="btn btn-secondary btn-sm" data-act="edit-line">Edit</button>
+            <button type="button" class="btn btn-danger btn-sm" data-act="remove-line">Remove</button>
+          </td>
+          {% endif %}
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
   {% else %}
-  <p class="empty">This invoice has no lines.</p>
+  <p class="empty">This invoice has no lines.{% if can_edit %} Use “Add line” to start.{% endif %}</p>
   {% endif %}
 </div>
+
+</div>{# /#invoice-detail #}
+
+{% if can_edit %}
+<dialog id="invoice-meta-dialog">
+  <article>
+    <header>
+      <strong>Edit invoice</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <form id="invoice-meta-form">
+      <div class="field">
+        <label>Supplier</label>
+        <input class="control" name="supplier" required />
+      </div>
+      <div class="field">
+        <label>Invoice number</label>
+        <input class="control" name="invoice_number" required />
+      </div>
+      <div class="field">
+        <label>Invoice date</label>
+        <input class="control" type="date" name="invoice_date" required />
+      </div>
+      <div class="field">
+        <label>Currency</label>
+        <input class="control" name="currency" required />
+      </div>
+      <div class="field">
+        <label>Notes</label>
+        <input class="control" name="notes" placeholder="optional" />
+      </div>
+      <p id="invoice-meta-error" class="error" hidden></p>
+      <footer>
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+
+<dialog id="invoice-line-dialog">
+  <article>
+    <header>
+      <strong id="invoice-line-title">Add line</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <form id="invoice-line-form">
+      <input type="hidden" name="line_id" />
+      <div class="field" id="line-component-field">
+        <label>Component</label>
+        <select class="control" name="component_id" required></select>
+      </div>
+      <div class="field">
+        <label>Quantity</label>
+        <input class="control mono" type="number" name="quantity" min="1" value="1" required />
+      </div>
+      <div class="field">
+        <label>Unit price</label>
+        <input class="control mono" type="number" name="unit_price" min="0" step="0.000001" value="0" required />
+      </div>
+      <div class="field">
+        <label>Supplier part #</label>
+        <input class="control" name="supplier_part_number" placeholder="optional" />
+      </div>
+      <div class="field">
+        <label>Location</label>
+        <select class="control" name="location_id">
+          <option value="">— none —</option>
+          {% for loc in locations %}
+          <option value="{{ loc.id }}">{{ loc.name }} ({{ loc.type.value }})</option>
+          {% endfor %}
+        </select>
+      </div>
+      <p id="invoice-line-error" class="error" hidden></p>
+      <footer>
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+
+{% if lines %}
+<dialog id="invoice-finalize-dialog">
+  <article>
+    <header>
+      <strong>Finalize invoice</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <form id="invoice-finalize-form">
+      <p class="muted">Finalizing locks the invoice (read-only), records purchase history and generates stock movements. This cannot be undone.</p>
+      <div class="field">
+        <label>Total gross</label>
+        <input class="control mono" type="number" name="total_gross" min="0" step="0.000001" placeholder="optional — defaults to net" />
+      </div>
+      <p id="invoice-finalize-error" class="error" hidden></p>
+      <footer>
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" class="btn btn-primary">Finalize</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+{% endif %}{# lines #}
+{% endif %}{# can_edit #}
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/invoices.js?v={{ static_version() }}"></script>
 {% endblock %}
