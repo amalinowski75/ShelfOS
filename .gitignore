@@ -18,6 +18,9 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
+# Node / JS tests (Vitest harness for the web UI scripts)
+node_modules/
+
 # Database and runtime data
 *.db
 *.sqlite

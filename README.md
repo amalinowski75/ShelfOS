@@ -36,6 +36,14 @@ mypy app
 pytest --cov
 ```
 
+The server-rendered web UI's browser scripts have their own test suite
+([Vitest](https://vitest.dev) + jsdom). It needs Node 18+; install once with
+`npm ci`, then:
+
+```bash
+npm test
+```
+
 Run the API locally (interactive docs at `/docs`):
 
 ```bash
