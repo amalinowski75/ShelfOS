@@ -274,6 +274,57 @@ def finalize_invoice(
     return invoice
 
 
+def list_invoices(
+    session: Session,
+    *,
+    finalized: bool | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[Invoice]:
+    """Return invoices newest first, optionally filtered and paged.
+
+    ``finalized`` filters by finalization state; ``limit``/``offset`` bound the
+    page so the response never grows with the whole table.
+    """
+    statement = select(Invoice)
+    if finalized is not None:
+        statement = statement.where(col(Invoice.is_finalized).is_(finalized))
+    statement = (
+        statement.order_by(col(Invoice.invoice_date).desc(), col(Invoice.id).desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return list(session.exec(statement).all())
+
+
+def get_invoice(session: Session, invoice_id: int) -> Invoice:
+    """Return a single invoice header, or raise ``NotFoundError``."""
+    return require_entity(session, Invoice, invoice_id, "invoice")
+
+
+def get_lines_with_components(
+    session: Session, invoice_id: int
+) -> list[tuple[InvoiceLine, Component | None]]:
+    """Return an invoice's lines paired with their components (invoice → component).
+
+    The components are fetched in a single query rather than one per line, so a
+    long invoice does not fan out into an N+1. A line whose component was
+    hard-deleted (§20 keeps the line as a historical record) pairs with ``None``
+    rather than raising, so the invoice still reads.
+    """
+    lines = get_lines(session, invoice_id)
+    if not lines:
+        return []
+    component_ids = {line.component_id for line in lines}
+    components = {
+        cast(int, component.id): component
+        for component in session.exec(
+            select(Component).where(col(Component.id).in_(component_ids))
+        ).all()
+    }
+    return [(line, components.get(line.component_id)) for line in lines]
+
+
 def list_purchase_history(
     session: Session, component_id: int
 ) -> list[tuple[InvoiceLine, Invoice]]:

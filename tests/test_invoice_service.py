@@ -337,3 +337,81 @@ def test_add_line_to_unknown_invoice_raises(setup, session: Session) -> None:
             quantity=1,
             unit_price=Decimal("1.00"),
         )
+
+
+def test_list_invoices_orders_newest_first_and_filters(
+    setup, session: Session
+) -> None:
+    older = inv.create_invoice(
+        session,
+        supplier="Mouser",
+        invoice_number="INV-OLD",
+        invoice_date=date(2026, 7, 1),
+        currency="EUR",
+    )
+    newer = inv.create_invoice(
+        session,
+        supplier="Mouser",
+        invoice_number="INV-NEW",
+        invoice_date=date(2026, 7, 8),
+        currency="EUR",
+    )
+    inv.add_line(
+        session,
+        newer.id,
+        component_id=setup["component_id"],
+        quantity=5,
+        unit_price=Decimal("1.00"),
+        location_id=setup["location_id"],
+    )
+    inv.finalize_invoice(session, newer.id, user_id=setup["user_id"])
+
+    # Newest invoice_date first.
+    assert [i.id for i in inv.list_invoices(session)] == [newer.id, older.id]
+    # Filtered by finalization state.
+    assert [i.id for i in inv.list_invoices(session, finalized=True)] == [newer.id]
+    assert [i.id for i in inv.list_invoices(session, finalized=False)] == [older.id]
+
+
+def test_get_lines_with_components_pairs_each_line(
+    setup, session: Session
+) -> None:
+    invoice_id = _new_invoice(session)
+    inv.add_line(
+        session,
+        invoice_id,
+        component_id=setup["component_id"],
+        quantity=3,
+        unit_price=Decimal("2.00"),
+    )
+    pairs = inv.get_lines_with_components(session, invoice_id)
+    assert len(pairs) == 1
+    line, component = pairs[0]
+    assert line.component_id == setup["component_id"]
+    assert component.id == setup["component_id"]
+
+    # Inherits get_lines' existence check.
+    with pytest.raises(NotFoundError):
+        inv.get_lines_with_components(session, 9999)
+
+
+def test_get_lines_with_components_tolerates_deleted_component(
+    setup, session: Session
+) -> None:
+    """A line whose component was hard-deleted still reads, paired with None."""
+    invoice_id = _new_invoice(session)
+    inv.add_line(
+        session,
+        invoice_id,
+        component_id=setup["component_id"],
+        quantity=1,
+        unit_price=Decimal("1.00"),
+    )
+    # §20 hard delete removes the component but keeps the line as history.
+    cs.hard_delete_component(session, setup["component_id"])
+
+    pairs = inv.get_lines_with_components(session, invoice_id)
+    assert len(pairs) == 1
+    line, component = pairs[0]
+    assert line.component_id == setup["component_id"]
+    assert component is None

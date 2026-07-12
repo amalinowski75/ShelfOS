@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from typing import cast
+
+from fastapi import APIRouter, Depends, Query, status
 from sqlmodel import Session
 
 from app.api.deps import get_session
 from app.api.schemas import (
     InvoiceCreate,
+    InvoiceDetailRead,
     InvoiceFinalize,
+    InvoiceLineComponentRead,
     InvoiceLineCreate,
+    InvoiceLineRead,
     LineLocationSet,
 )
 from app.auth.deps import current_user_id
@@ -31,6 +36,63 @@ def create_invoice(
         currency=payload.currency,
         notes=payload.notes,
         file_path=payload.file_path,
+    )
+
+
+@router.get("", response_model=list[Invoice])
+def list_invoices(
+    finalized: bool | None = None,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    session: Session = Depends(get_session),
+) -> list[Invoice]:
+    """List invoices newest first, optionally filtered by finalization state."""
+    return inv.list_invoices(
+        session, finalized=finalized, limit=limit, offset=offset
+    )
+
+
+@router.get("/{invoice_id}", response_model=InvoiceDetailRead)
+def get_invoice(
+    invoice_id: int, session: Session = Depends(get_session)
+) -> InvoiceDetailRead:
+    """Return an invoice header, its totals and its lines with component identity."""
+    invoice = inv.get_invoice(session, invoice_id)
+    lines = inv.get_lines_with_components(session, invoice_id)
+    return InvoiceDetailRead(
+        id=cast(int, invoice.id),
+        supplier=invoice.supplier,
+        invoice_number=invoice.invoice_number,
+        invoice_date=invoice.invoice_date,
+        currency=invoice.currency,
+        total_net=invoice.total_net,
+        total_gross=invoice.total_gross,
+        file_path=invoice.file_path,
+        notes=invoice.notes,
+        is_finalized=invoice.is_finalized,
+        lines=[
+            InvoiceLineRead(
+                id=cast(int, line.id),
+                invoice_id=line.invoice_id,
+                component_id=line.component_id,
+                supplier_part_number=line.supplier_part_number,
+                quantity=line.quantity,
+                unit_price=line.unit_price,
+                total_price=line.total_price,
+                location_id=line.location_id,
+                component=(
+                    InvoiceLineComponentRead(
+                        id=cast(int, component.id),
+                        manufacturer=component.manufacturer,
+                        mpn=component.mpn,
+                        type_id=component.type_id,
+                    )
+                    if component is not None
+                    else None
+                ),
+            )
+            for line, component in lines
+        ],
     )
 
 

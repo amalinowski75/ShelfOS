@@ -138,6 +138,53 @@ class InvoiceLineCreate(BaseModel):
     location_id: int | None = None
 
 
+class InvoiceLineComponentRead(BaseModel):
+    """Identity of the component a line refers to (invoice → component nav, §9)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    manufacturer: str | None
+    mpn: str | None
+    type_id: int
+
+
+class InvoiceLineRead(BaseModel):
+    """An invoice line with its referenced component resolved."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    invoice_id: int
+    component_id: int
+    supplier_part_number: str | None
+    quantity: int
+    unit_price: Decimal
+    total_price: Decimal
+    location_id: int | None
+    # ``None`` when the referenced component was hard-deleted (§20 keeps the
+    # line as history); ``component_id`` above still records the original id.
+    component: InvoiceLineComponentRead | None
+
+
+class InvoiceDetailRead(BaseModel):
+    """An invoice header, its totals and its lines (spec §16)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    supplier: str
+    invoice_number: str
+    invoice_date: date
+    currency: str
+    total_net: Decimal
+    total_gross: Decimal
+    file_path: str | None
+    notes: str | None
+    is_finalized: bool
+    lines: list[InvoiceLineRead]
+
+
 class LineLocationSet(BaseModel):
     location_id: int
 
