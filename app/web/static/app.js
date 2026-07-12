@@ -212,9 +212,14 @@ if (typeDialog && newTypeBtn) {
     loadInheritedParams("");
   }
 
+  // Monotonic id so overlapping parent-select changes can't render a stale
+  // response: only the newest request is allowed to touch the DOM.
+  let inheritedRequestId = 0;
+
   // Show the effective parameter set of the chosen parent so the user can see
   // what this type will already inherit and avoid redefining it (spec §13, D3).
   async function loadInheritedParams(parentId) {
+    const requestId = ++inheritedRequestId;
     const hint = document.getElementById("inherited-hint");
     const list = document.getElementById("inherited-list");
     list.replaceChildren();
@@ -230,12 +235,14 @@ if (typeDialog && newTypeBtn) {
       if (!resp.ok) throw new Error();
       params = await resp.json();
     } catch {
+      if (requestId !== inheritedRequestId) return; // superseded by a newer pick
       // Distinct from an empty parent: surface the failure instead of implying
       // the parent simply has no parameters.
       hint.textContent = "Could not load inherited parameters.";
       hint.hidden = false;
       return;
     }
+    if (requestId !== inheritedRequestId) return; // a newer selection is in flight
     if (!params.length) {
       hint.textContent = "This parent type defines no parameters.";
       hint.hidden = false;

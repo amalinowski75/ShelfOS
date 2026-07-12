@@ -275,7 +275,7 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
    two-column parameter builder plus an inherited-parameters side panel. */
 #type-dialog { width: min(880px, calc(100vw - 32px)); max-height: calc(100vh - 48px); }
 #type-dialog > article { display: flex; flex-direction: column; max-height: calc(100vh - 48px); }
-#type-dialog > header, #type-dialog article > header { flex: none; }
+#type-dialog article > header { flex: none; }
 .type-body { display: flex; align-items: stretch; min-height: 0; flex: 1; overflow: hidden; }
 .type-main { flex: 1 1 auto; min-width: 0; overflow-y: auto; }
 /* The inherited list runs the full height of the dialog and scrolls on its own. */
