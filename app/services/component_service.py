@@ -361,7 +361,39 @@ def create_component(
     mounting_type: MountingType = MountingType.OTHER,
     notes: str | None = None,
 ) -> Component:
-    """Create a component of the given type."""
+    """Create a component of the given type (no initial parameter values)."""
+    return create_component_with_values(
+        session,
+        type_id,
+        manufacturer=manufacturer,
+        mpn=mpn,
+        package=package,
+        mounting_type=mounting_type,
+        notes=notes,
+    )
+
+
+def create_component_with_values(
+    session: Session,
+    type_id: int,
+    *,
+    manufacturer: str | None = None,
+    mpn: str | None = None,
+    package: str | None = None,
+    mounting_type: MountingType = MountingType.OTHER,
+    notes: str | None = None,
+    values: Iterable[tuple[int, ParameterValue]] = (),
+    user_id: int | None = None,
+) -> Component:
+    """Create a component and its initial parameter values in one transaction (§16.5).
+
+    Each ``(parameter_definition_id, value)`` must reference a definition in the
+    type's effective set (own + inherited, D3); a value that fails validation
+    (unknown/duplicate definition, wrong type, unparseable number) aborts the
+    whole create, so a component is never left half-populated. When ``user_id``
+    is given each initial value is recorded in the audit log (§19), matching the
+    later ``set_parameter_value`` path.
+    """
     require_entity(session, ComponentType, type_id, "component type")
     component = Component(
         type_id=type_id,
@@ -371,8 +403,54 @@ def create_component(
         mounting_type=mounting_type,
         notes=notes,
     )
+    pairs = list(values)
     session.add(component)
-    session.commit()
+    try:
+        session.flush()  # assign component.id without ending the transaction
+
+        # Only resolve the effective parameter set when there is something to
+        # apply, so the common no-parameters create adds no extra queries.
+        definitions = (
+            {d.id: d for d in get_effective_parameter_definitions(session, type_id)}
+            if pairs
+            else {}
+        )
+        seen: set[int] = set()
+        for definition_id, value in pairs:
+            if definition_id in seen:
+                raise ValidationError(
+                    f"parameter definition {definition_id} given more than once"
+                )
+            seen.add(definition_id)
+            definition = definitions.get(definition_id)
+            if definition is None:
+                raise ValidationError(
+                    "parameter definition does not apply to this component's type"
+                )
+            param = ComponentParameter(
+                component_id=cast(int, component.id),
+                parameter_definition_id=definition_id,
+            )
+            _assign_value(session, param, definition, value)
+            session.add(param)
+            if user_id is not None:
+                audit_service.record_change(
+                    session,
+                    entity_type="component",
+                    entity_id=cast(int, component.id),
+                    field=audit_service.parameter_field(definition.name),
+                    old_value=None,
+                    new_value=_current_value(param),
+                    user_id=user_id,
+                )
+
+        session.commit()
+    except Exception:
+        # Roll back the flushed component so a bad value never leaves a
+        # half-populated row behind, regardless of the caller's own handling.
+        session.rollback()
+        raise
+
     session.refresh(component)
     return component
 
