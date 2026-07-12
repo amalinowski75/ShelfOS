@@ -217,6 +217,45 @@ def test_enum_parameter_requires_values(session: Session) -> None:
         )
 
 
+def test_enum_parameter_rejects_blank_or_duplicate_values(session: Session) -> None:
+    """Enum tokens are client-facing picker choices: no blanks, no duplicates."""
+    ctype = cs.create_type(session, "capacitor")
+    with pytest.raises(ValidationError):
+        cs.add_parameter_definition(
+            session,
+            ctype.id,
+            name="dielectric",
+            label="Dielectric",
+            data_type=ParameterDataType.ENUM,
+            enum_values=["X7R", "  "],
+        )
+    with pytest.raises(ValidationError):
+        cs.add_parameter_definition(
+            session,
+            ctype.id,
+            name="package",
+            label="Package",
+            data_type=ParameterDataType.ENUM,
+            enum_values=["0402", "0402"],
+        )
+    # The batch (create-type) path validates before writing anything, too.
+    with pytest.raises(ValidationError):
+        cs.create_type_with_parameters(
+            session,
+            "resistor",
+            parameters=[
+                cs.ParameterSpec(
+                    name="tolerance",
+                    label="Tolerance",
+                    data_type=ParameterDataType.ENUM,
+                    enum_values=["1%", "1%"],
+                )
+            ],
+        )
+    # Nothing partial was created by the rejected batch.
+    assert [t.name for t in cs.list_types(session)] == ["capacitor"]
+
+
 def test_set_number_parameter_routes_to_value_num(session: Session) -> None:
     ctype = cs.create_type(session, "resistor")
     definition = cs.add_parameter_definition(
@@ -266,6 +305,68 @@ def test_set_enum_parameter_validates_allowed_values(session: Session) -> None:
 
     with pytest.raises(ValidationError):
         cs.set_parameter_value(session, component.id, definition.id, "NP0")
+
+
+def test_enum_values_of_returns_tokens_in_sort_order(session: Session) -> None:
+    ctype = cs.create_type(session, "capacitor")
+    definition = cs.add_parameter_definition(
+        session,
+        ctype.id,
+        name="dielectric",
+        label="Dielectric",
+        data_type=ParameterDataType.ENUM,
+        enum_values=["X7R", "C0G", "Y5V"],
+    )
+    # Insertion order is the display order (decision D6).
+    assert cs.enum_values_of(session, definition.id) == ["X7R", "C0G", "Y5V"]
+
+    # A non-enum parameter simply has no allowed values.
+    resistance = cs.add_parameter_definition(
+        session,
+        ctype.id,
+        name="resistance",
+        label="Resistance",
+        data_type=ParameterDataType.NUMBER,
+    )
+    assert cs.enum_values_of(session, resistance.id) == []
+
+
+def test_enum_values_by_definition_batches_multiple(session: Session) -> None:
+    ctype = cs.create_type(session, "capacitor")
+    dielectric = cs.add_parameter_definition(
+        session,
+        ctype.id,
+        name="dielectric",
+        label="Dielectric",
+        data_type=ParameterDataType.ENUM,
+        enum_values=["X7R", "C0G"],
+    )
+    package = cs.add_parameter_definition(
+        session,
+        ctype.id,
+        name="package",
+        label="Package",
+        data_type=ParameterDataType.ENUM,
+        enum_values=["0402", "0603"],
+    )
+    plain = cs.add_parameter_definition(
+        session,
+        ctype.id,
+        name="capacitance",
+        label="Capacitance",
+        data_type=ParameterDataType.NUMBER,
+    )
+
+    grouped = cs.enum_values_by_definition(
+        session, [dielectric.id, package.id, plain.id]
+    )
+    assert grouped == {
+        dielectric.id: ["X7R", "C0G"],
+        package.id: ["0402", "0603"],
+    }
+    # Non-enum definitions never appear as keys; an empty request is a no-op.
+    assert plain.id not in grouped
+    assert cs.enum_values_by_definition(session, []) == {}
 
 
 def test_set_text_and_bool_parameters(session: Session) -> None:

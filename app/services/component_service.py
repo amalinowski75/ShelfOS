@@ -11,6 +11,7 @@ Key rules implemented here:
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import cast
 
@@ -192,10 +193,17 @@ def _validate_parameter_spec(spec: ParameterSpec) -> None:
     """Check a parameter spec against the EAV/enum rules (decision D6)."""
     if not spec.name.strip():
         raise ValidationError("parameter name must not be empty")
-    if spec.data_type is ParameterDataType.ENUM and not spec.enum_values:
-        raise ValidationError("enum parameters require at least one allowed value")
     if spec.data_type is not ParameterDataType.ENUM and spec.enum_values:
         raise ValidationError("enum_values only apply to enum parameters")
+    if spec.data_type is ParameterDataType.ENUM:
+        if not spec.enum_values:
+            raise ValidationError("enum parameters require at least one allowed value")
+        # These values are surfaced to clients as selectable tokens, so reject
+        # blanks and duplicates rather than presenting an unusable picker.
+        if any(not value.strip() for value in spec.enum_values):
+            raise ValidationError("enum values must not be blank")
+        if len(set(spec.enum_values)) != len(spec.enum_values):
+            raise ValidationError("enum values must be unique")
 
 
 def _create_parameter_definition(
@@ -264,6 +272,52 @@ def get_effective_parameter_definitions(
         ).all()
         definitions.extend(rows)
     return definitions
+
+
+def enum_values_of(session: Session, definition_id: int) -> list[str]:
+    """Return an enum parameter's allowed tokens in display order (decision D6).
+
+    Non-enum definitions simply have none, so this returns an empty list.
+    """
+    return list(
+        session.exec(
+            select(col(ParameterEnumValue.value))
+            .where(ParameterEnumValue.parameter_definition_id == definition_id)
+            .order_by(
+                ParameterEnumValue.sort_order,  # type: ignore[arg-type]
+                ParameterEnumValue.id,  # type: ignore[arg-type]
+            )
+        ).all()
+    )
+
+
+def enum_values_by_definition(
+    session: Session, definition_ids: Iterable[int]
+) -> dict[int, list[str]]:
+    """Batch-load allowed enum tokens for many definitions in one query.
+
+    Returns ``{definition_id: [values in display order]}`` with only enum
+    definitions present. Fetching every definition's values at once avoids an
+    N+1 when rendering a whole parameter set (e.g. the effective set for a type).
+    """
+    ids = list(definition_ids)
+    if not ids:
+        return {}
+    rows = session.exec(
+        select(
+            col(ParameterEnumValue.parameter_definition_id),
+            col(ParameterEnumValue.value),
+        )
+        .where(col(ParameterEnumValue.parameter_definition_id).in_(ids))
+        .order_by(
+            ParameterEnumValue.sort_order,  # type: ignore[arg-type]
+            ParameterEnumValue.id,  # type: ignore[arg-type]
+        )
+    ).all()
+    grouped: dict[int, list[str]] = {}
+    for definition_id, value in rows:
+        grouped.setdefault(definition_id, []).append(value)
+    return grouped
 
 
 def create_component(
@@ -450,14 +504,7 @@ def _assign_value(
         case ParameterDataType.ENUM:
             if not isinstance(value, str):
                 raise ValidationError(f"expected an enum token for {definition.name!r}")
-            allowed = {
-                v.value
-                for v in session.exec(
-                    select(ParameterEnumValue).where(
-                        ParameterEnumValue.parameter_definition_id == definition.id
-                    )
-                ).all()
-            }
+            allowed = set(enum_values_of(session, cast(int, definition.id)))
             if value not in allowed:
                 raise ValidationError(
                     f"{value!r} is not an allowed value for {definition.name!r}"

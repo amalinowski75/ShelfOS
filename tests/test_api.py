@@ -93,6 +93,105 @@ def test_create_type_with_parameters_in_one_call(client: TestClient) -> None:
     assert bad.status_code == 422
 
 
+def test_effective_parameters_expose_enum_values(client: TestClient) -> None:
+    # Enum choices come back on the read path so a client can render a picker
+    # without a second call (spec §13); non-enum parameters carry an empty list.
+    body = client.post(
+        "/api/types",
+        json={
+            "name": "capacitor",
+            "parameters": [
+                {
+                    "name": "dielectric",
+                    "label": "Dielectric",
+                    "data_type": "enum",
+                    "enum_values": ["X7R", "C0G", "Y5V"],
+                },
+                {
+                    "name": "capacitance",
+                    "label": "Capacitance",
+                    "data_type": "number",
+                    "unit": "farad",
+                    "sort_order": 1,
+                },
+            ],
+        },
+    ).json()
+    by_name = {p["name"]: p for p in body["parameters"]}
+    # The create response already carries the choices in declaration order.
+    assert by_name["dielectric"]["enum_values"] == ["X7R", "C0G", "Y5V"]
+    assert by_name["capacitance"]["enum_values"] == []
+
+    # The GET effective-parameters path exposes the same shape.
+    params = client.get(f"/api/types/{body['id']}/parameters").json()
+    fetched = {p["name"]: p for p in params}
+    assert fetched["dielectric"]["enum_values"] == ["X7R", "C0G", "Y5V"]
+    assert fetched["capacitance"]["enum_values"] == []
+
+
+def test_effective_parameters_expose_inherited_enum_values(
+    client: TestClient,
+) -> None:
+    # The batched loader must resolve enum tokens across the inherited set, not
+    # just a type's own parameters (decision D3): an enum defined on the parent
+    # comes back with its choices when fetched via the child's effective set.
+    parent = client.post(
+        "/api/types",
+        json={
+            "name": "capacitor",
+            "parameters": [
+                {
+                    "name": "dielectric",
+                    "label": "Dielectric",
+                    "data_type": "enum",
+                    "enum_values": ["X7R", "C0G"],
+                }
+            ],
+        },
+    ).json()
+    child = client.post(
+        "/api/types",
+        json={
+            "name": "mlcc",
+            "parent_id": parent["id"],
+            "parameters": [
+                {
+                    "name": "package",
+                    "label": "Package",
+                    "data_type": "enum",
+                    "enum_values": ["0402", "0603"],
+                    "sort_order": 1,
+                }
+            ],
+        },
+    ).json()
+
+    params = client.get(f"/api/types/{child['id']}/parameters").json()
+    by_name = {p["name"]: p for p in params}
+    # Inherited-first ordering, and both the ancestor's and child's enum tokens
+    # are present with the correct owners.
+    assert [p["name"] for p in params] == ["dielectric", "package"]
+    assert by_name["dielectric"]["type_id"] == parent["id"]
+    assert by_name["dielectric"]["enum_values"] == ["X7R", "C0G"]
+    assert by_name["package"]["type_id"] == child["id"]
+    assert by_name["package"]["enum_values"] == ["0402", "0603"]
+
+
+def test_add_parameter_definition_returns_enum_values(client: TestClient) -> None:
+    ctype = client.post("/api/types", json={"name": "led"}).json()
+    resp = client.post(
+        f"/api/types/{ctype['id']}/parameters",
+        json={
+            "name": "color",
+            "label": "Color",
+            "data_type": "enum",
+            "enum_values": ["red", "green", "blue"],
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["enum_values"] == ["red", "green", "blue"]
+
+
 def test_create_type_with_invalid_parameter_is_rejected(client: TestClient) -> None:
     response = client.post(
         "/api/types",

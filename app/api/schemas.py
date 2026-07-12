@@ -11,7 +11,6 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.component import ParameterDefinition
 from app.models.enums import (
     ContainerType,
     LocationType,
@@ -36,6 +35,28 @@ class ParameterDefinitionCreate(BaseModel):
     enum_values: list[str] | None = None
 
 
+class ParameterDefinitionRead(BaseModel):
+    """A parameter definition plus its allowed enum tokens (spec §6, §13).
+
+    ``enum_values`` lists the choices for an ``enum`` parameter in display order
+    so a client can render a picker without a second call; it is an empty list
+    for every non-enum ``data_type``.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    type_id: int
+    name: str
+    label: str
+    data_type: ParameterDataType
+    unit: str | None
+    is_filterable: bool
+    is_table_column: bool
+    sort_order: int
+    enum_values: list[str] = Field(default_factory=list)
+
+
 class TypeCreate(BaseModel):
     name: str
     parent_id: int | None = None
@@ -51,7 +72,7 @@ class TypeWithParameters(BaseModel):
     id: int
     name: str
     parent_id: int | None
-    parameters: list[ParameterDefinition]
+    parameters: list[ParameterDefinitionRead]
 
 
 class ComponentCreate(BaseModel):
