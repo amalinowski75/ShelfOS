@@ -28,8 +28,10 @@
           </a>
         </div>
         {% if current_user %}
+        {% set path = request.url.path %}
         <nav>
-          <a href="/" aria-current="page">Components</a>
+          <a href="/"{% if path == "/" or path.startswith("/components") %} aria-current="page"{% endif %}>Components</a>
+          <a href="/invoices"{% if path == "/invoices" or path.startswith("/invoices/") %} aria-current="page"{% endif %}>Invoices</a>
           <a href="/docs">API</a>
         </nav>
         <span class="spacer"></span>

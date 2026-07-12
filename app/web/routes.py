@@ -26,7 +26,15 @@ from app.services import location_service as ls
 from app.services import stock_service as ss
 from app.services import user_service as us
 from app.services._common import require_entity
-from app.web.presenter import build_component_table, format_parameter_value
+from app.web.presenter import (
+    build_component_table,
+    format_money,
+    format_parameter_value,
+)
+
+# Cap the invoice list until real pagination lands; the template shows a hint
+# when the cap is hit so older invoices are not dropped silently.
+_INVOICE_LIST_LIMIT = 200
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -46,6 +54,7 @@ def _static_version() -> str:
 
 
 templates.env.globals["static_version"] = _static_version
+templates.env.globals["format_money"] = format_money
 
 router = APIRouter(tags=["web"])
 
@@ -129,6 +138,73 @@ def components_feed(
     return build_component_table(session, type_id)
 
 
+@router.get("/invoices", response_class=HTMLResponse)
+def invoices_list(
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_web_user),
+) -> HTMLResponse:
+    """Invoice list, newest first (spec §16)."""
+    invoices = inv.list_invoices(session, limit=_INVOICE_LIST_LIMIT)
+    return templates.TemplateResponse(
+        request,
+        "invoices_list.html",
+        {
+            "invoices": invoices,
+            # True when the list was capped, so the page can say so rather than
+            # silently omitting older invoices.
+            "truncated": len(invoices) == _INVOICE_LIST_LIMIT,
+            "list_limit": _INVOICE_LIST_LIMIT,
+            "current_user": user,
+        },
+    )
+
+
+@router.get("/invoices/{invoice_id}", response_class=HTMLResponse)
+def invoice_detail(
+    invoice_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_web_user),
+) -> HTMLResponse:
+    """Invoice header, totals and lines, each line linking to its component (§9)."""
+    invoice, pairs = inv.get_invoice_detail(session, invoice_id)
+
+    # Resolve each line's location path once per distinct location so a long
+    # invoice does not re-walk the location tree for every repeated slot.
+    path_cache: dict[int, str] = {}
+
+    def _location_path(location_id: int | None) -> str:
+        if location_id is None:
+            return ""
+        if location_id not in path_cache:
+            path_cache[location_id] = ls.format_path(session, location_id)
+        return path_cache[location_id]
+
+    lines = [
+        {
+            "supplier_part_number": line.supplier_part_number,
+            "quantity": line.quantity,
+            "unit_price": line.unit_price,
+            "total_price": line.total_price,
+            "location": _location_path(line.location_id),
+            "component_id": line.component_id,
+            "component": component,
+        }
+        for line, component in pairs
+    ]
+
+    return templates.TemplateResponse(
+        request,
+        "invoice_detail.html",
+        {
+            "invoice": invoice,
+            "lines": lines,
+            "current_user": user,
+        },
+    )
+
+
 @router.get("/components/{component_id}", response_class=HTMLResponse)
 def component_detail(
     component_id: int,
@@ -169,11 +245,12 @@ def component_detail(
 
     history = [
         {
+            "invoice_id": invoice.id,
             "invoice_number": invoice.invoice_number,
             "supplier": invoice.supplier,
             "date": invoice.invoice_date.isoformat(),
             "quantity": line.quantity,
-            "unit_price": str(line.unit_price),
+            "unit_price": format_money(line.unit_price),
             "currency": invoice.currency,
         }
         for line, invoice in inv.list_purchase_history(session, component_id)
