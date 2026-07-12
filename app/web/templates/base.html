@@ -31,6 +31,7 @@
         {% set path = request.url.path %}
         <nav>
           <a href="/"{% if path == "/" or path.startswith("/components") %} aria-current="page"{% endif %}>Components</a>
+          <a href="/locations"{% if path.startswith("/locations") %} aria-current="page"{% endif %}>Locations</a>
           <a href="/invoices"{% if path == "/invoices" or path.startswith("/invoices/") %} aria-current="page"{% endif %}>Invoices</a>
           <a href="/docs">API</a>
         </nav>
@@ -54,6 +55,7 @@
     {% if current_user %}
     <script src="/static/shared.js?v={{ static_version() }}"></script>
     <script src="/static/component_dialog.js?v={{ static_version() }}"></script>
+    <script src="/static/location_dialog.js?v={{ static_version() }}"></script>
     {% endif %}
     {% block scripts %}{% endblock %}
   </body>

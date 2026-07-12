@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Locations — ShelfOS{% endblock %}
+
+{% macro location_node(node) %}
+<li>
+  <span class="loc-name">{{ node.location.name }}</span>
+  <span class="badge b-neutral"><span class="dot"></span>{{ node.location.type.value }}</span>
+  {% if node.children %}
+  <ul class="loc-tree">
+    {% for child in node.children %}{{ location_node(child) }}{% endfor %}
+  </ul>
+  {% endif %}
+</li>
+{% endmacro %}
+
+{% block content %}
+<div class="head">
+  <div>
+    <h1>Locations</h1>
+    <p>Storage hierarchy for stock (spec §7).</p>
+  </div>
+  {% if current_user.role.value != "read-only" %}
+  <div class="head-actions">
+    <button type="button" class="btn btn-primary" id="new-location-btn">New Location</button>
+  </div>
+  {% endif %}
+</div>
+
+{% if tree %}
+<div class="card card-pad">
+  <ul class="loc-tree loc-tree-root">
+    {% for node in tree %}{{ location_node(node) }}{% endfor %}
+  </ul>
+</div>
+{% else %}
+<div class="card card-pad">
+  <p class="empty">No locations yet.{% if current_user.role.value != "read-only" %} Use “New Location” to add one.{% endif %}</p>
+</div>
+{% endif %}
+
+{% if current_user.role.value != "read-only" %}
+{% include "_location_dialog.html" %}
+{% endif %}
+{% endblock %}
