@@ -26,10 +26,10 @@
   {% endif %}
 </div>
 
-{% if tree %}
+{% if location_tree %}
 <div class="card card-pad">
   <ul class="loc-tree loc-tree-root">
-    {% for node in tree %}{{ location_node(node) }}{% endfor %}
+    {% for node in location_tree %}{{ location_node(node) }}{% endfor %}
   </ul>
 </div>
 {% else %}
