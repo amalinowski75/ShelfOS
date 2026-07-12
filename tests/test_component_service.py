@@ -462,3 +462,54 @@ def test_set_parameter_rejects_definition_from_other_type(session: Session) -> N
     component = cs.create_component(session, resistor.id)
     with pytest.raises(ValidationError):
         cs.set_parameter_value(session, component.id, foreign.id, 1e-6)
+
+
+def test_add_parameter_definition_rejects_blank_name(session: Session) -> None:
+    ctype = cs.create_type(session, "resistor")
+    with pytest.raises(ValidationError):
+        cs.add_parameter_definition(
+            session,
+            ctype.id,
+            name="  ",
+            label="X",
+            data_type=ParameterDataType.TEXT,
+        )
+
+
+def test_set_enum_parameter_rejects_non_string(session: Session) -> None:
+    ctype = cs.create_type(session, "capacitor")
+    definition = cs.add_parameter_definition(
+        session,
+        ctype.id,
+        name="dielectric",
+        label="Dielectric",
+        data_type=ParameterDataType.ENUM,
+        enum_values=["X7R", "C0G"],
+    )
+    component = cs.create_component(session, ctype.id)
+    with pytest.raises(ValidationError):
+        cs.set_parameter_value(session, component.id, definition.id, 123)
+
+
+def test_hard_delete_component_removes_parameters_and_stock(
+    session: Session,
+) -> None:
+    """Deleting a component with EAV/stock rows cascades to those rows (§20)."""
+    from app.models.component import Component
+
+    ctype = cs.create_type(session, "resistor")
+    definition = cs.add_parameter_definition(
+        session,
+        ctype.id,
+        name="tolerance",
+        label="Tolerance",
+        data_type=ParameterDataType.TEXT,
+    )
+    component = cs.create_component(session, ctype.id)
+    cs.set_parameter_value(session, component.id, definition.id, "1%")
+
+    cs.hard_delete_component(session, component.id)
+    # The component and its EAV rows are gone; re-fetching the component raises.
+    assert session.get(Component, component.id) is None
+    with pytest.raises(NotFoundError):
+        cs.list_parameter_values(session, component.id)

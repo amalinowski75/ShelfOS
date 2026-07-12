@@ -66,6 +66,14 @@ def test_bearer_with_non_numeric_subject_is_unauthenticated(
     assert resp.status_code == 401
 
 
+def test_malformed_bearer_token_is_unauthenticated(
+    anon_client: TestClient,
+) -> None:
+    """A token that isn't a valid JWT decodes to ``None`` and yields a 401."""
+    resp = anon_client.get("/api/locations", headers=_bearer("not.a.jwt"))
+    assert resp.status_code == 401
+
+
 def test_production_refuses_default_secret(monkeypatch) -> None:
     """Startup must abort on the public default secret in production (D11)."""
     from app import config

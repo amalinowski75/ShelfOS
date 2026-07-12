@@ -657,3 +657,65 @@ def test_update_line_empty_string_clears_part_number(
     inv.update_line(session, invoice_id, line.id, quantity=2)
     kept = session.get(inv.InvoiceLine, line.id)
     assert kept is not None and kept.supplier_part_number == ""
+
+
+def test_create_invoice_rejects_empty_number_or_currency(session: Session) -> None:
+    with pytest.raises(ValidationError):
+        inv.create_invoice(
+            session,
+            supplier="Mouser",
+            invoice_number="  ",
+            invoice_date=date(2026, 7, 8),
+            currency="EUR",
+        )
+    with pytest.raises(ValidationError):
+        inv.create_invoice(
+            session,
+            supplier="Mouser",
+            invoice_number="INV-1",
+            invoice_date=date(2026, 7, 8),
+            currency="  ",
+        )
+
+
+def test_update_invoice_rejects_empty_number_or_currency(
+    setup, session: Session
+) -> None:
+    invoice_id = _new_invoice(session)
+    with pytest.raises(ValidationError):
+        inv.update_invoice(session, invoice_id, invoice_number="  ")
+    with pytest.raises(ValidationError):
+        inv.update_invoice(session, invoice_id, currency="  ")
+
+
+def test_add_line_rejects_negative_unit_price(setup, session: Session) -> None:
+    invoice_id = _new_invoice(session)
+    with pytest.raises(ValidationError):
+        inv.add_line(
+            session,
+            invoice_id,
+            component_id=setup["component_id"],
+            quantity=1,
+            unit_price=Decimal("-1.00"),
+        )
+
+
+def test_finalize_with_explicit_gross_above_net(setup, session: Session) -> None:
+    """An explicit ``total_gross`` at or above net is stored as-is (e.g. tax)."""
+    invoice_id = _new_invoice(session)
+    inv.add_line(
+        session,
+        invoice_id,
+        component_id=setup["component_id"],
+        quantity=2,
+        unit_price=Decimal("3.00"),
+        location_id=setup["location_id"],
+    )
+    finalized = inv.finalize_invoice(
+        session,
+        invoice_id,
+        user_id=setup["user_id"],
+        total_gross=Decimal("7.38"),
+    )
+    assert finalized.total_net == Decimal("6.00")
+    assert finalized.total_gross == Decimal("7.38")

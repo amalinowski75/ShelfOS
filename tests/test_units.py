@@ -73,3 +73,8 @@ def test_parse_format_roundtrip() -> None:
         value = parse_engineering(text)
         formatted = format_engineering(value)
         assert math.isclose(parse_engineering(formatted), value, rel_tol=1e-12)
+
+
+def test_format_below_smallest_prefix_falls_back_to_femto() -> None:
+    """A magnitude smaller than every SI prefix uses the smallest one (femto)."""
+    assert format_engineering(1e-18, "F").endswith("fF")

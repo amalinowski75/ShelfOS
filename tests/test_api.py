@@ -627,3 +627,81 @@ def test_update_invoice_db_constraint_maps_to_conflict(
         json={"invoice_number": first["invoice_number"]},
     )
     assert conflict.status_code == 409
+
+
+def test_invoice_line_subresource_endpoints(client: TestClient) -> None:
+    """Exercise the list-lines, set-location and delete-line line endpoints."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    location = client.post(
+        "/api/locations", json={"type": "drawer", "name": "D1"}
+    ).json()
+    invoice = client.post(
+        "/api/invoices",
+        json={
+            "supplier": "Mouser",
+            "invoice_number": "INV-1",
+            "invoice_date": "2026-07-08",
+            "currency": "EUR",
+        },
+    ).json()
+    line = client.post(
+        f"/api/invoices/{invoice['id']}/lines",
+        json={"component_id": component["id"], "quantity": 2, "unit_price": "1.00"},
+    ).json()
+
+    listed = client.get(f"/api/invoices/{invoice['id']}/lines")
+    assert listed.status_code == 200
+    assert [row["id"] for row in listed.json()] == [line["id"]]
+
+    located = client.put(
+        f"/api/invoices/{invoice['id']}/lines/{line['id']}/location",
+        json={"location_id": location["id"]},
+    )
+    assert located.status_code == 200
+    assert located.json()["location_id"] == location["id"]
+
+    assert (
+        client.delete(
+            f"/api/invoices/{invoice['id']}/lines/{line['id']}"
+        ).status_code
+        == 204
+    )
+    assert client.get(f"/api/invoices/{invoice['id']}/lines").json() == []
+
+
+def test_stock_correction_and_total_endpoints(client: TestClient) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    location = client.post(
+        "/api/locations", json={"type": "drawer", "name": "D1"}
+    ).json()
+
+    correction = client.post(
+        "/api/stock/correct",
+        json={
+            "component_id": component["id"],
+            "location_id": location["id"],
+            "delta": 7,
+            "note": "stock take",
+        },
+    )
+    assert correction.status_code == 201
+
+    total = client.get("/api/stock/total", params={"component_id": component["id"]})
+    assert total.status_code == 200
+    assert total.json() == {"component_id": component["id"], "quantity": 7}
+
+
+def test_location_path_endpoint(client: TestClient) -> None:
+    parent = client.post(
+        "/api/locations", json={"type": "room", "name": "Lab"}
+    ).json()
+    child = client.post(
+        "/api/locations",
+        json={"type": "drawer", "name": "D1", "parent_id": parent["id"]},
+    ).json()
+
+    path = client.get(f"/api/locations/{child['id']}/path")
+    assert path.status_code == 200
+    assert [loc["name"] for loc in path.json()] == ["Lab", "D1"]
