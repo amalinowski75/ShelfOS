@@ -107,6 +107,62 @@ def test_create_type_via_web_session_requires_csrf(
     assert missing.status_code == 403
 
 
+def test_create_type_accepts_builder_shaped_payload(
+    session,  # type: ignore[no-untyped-def]
+    anon_client: TestClient,
+) -> None:
+    """The exact JSON the dialog's builder emits round-trips through the API.
+
+    Mirrors ``collectParameters()`` in app.js (unit ``None``, per-row
+    ``sort_order``, ``enum_values`` only on the enum row) so a schema drift
+    between the builder and ``TypeCreate`` would fail here.
+    """
+    import re
+
+    from app.models.enums import UserRole
+    from app.services import user_service as us
+
+    us.create_user(session, username="admin", password="admin", role=UserRole.ADMIN)
+    anon_client.post("/login", data={"username": "admin", "password": "admin"})
+    token = re.search(  # type: ignore[union-attr]
+        r'name="csrf-token" content="([^"]*)"', anon_client.get("/").text
+    ).group(1)
+
+    payload = {
+        "name": "capacitor",
+        "parent_id": None,
+        "parameters": [
+            {
+                "name": "capacitance",
+                "label": "Capacitance",
+                "data_type": "number",
+                "unit": "farad",
+                "is_table_column": True,
+                "is_filterable": False,
+                "sort_order": 0,
+            },
+            {
+                "name": "dielectric",
+                "label": "Dielectric",
+                "data_type": "enum",
+                "unit": None,
+                "is_table_column": False,
+                "is_filterable": True,
+                "sort_order": 1,
+                "enum_values": ["X7R", "C0G"],
+            },
+        ],
+    }
+    resp = anon_client.post(
+        "/api/types", json=payload, headers={"X-CSRF-Token": token}
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert [p["name"] for p in body["parameters"]] == ["capacitance", "dielectric"]
+    dielectric = next(p for p in body["parameters"] if p["name"] == "dielectric")
+    assert dielectric["enum_values"] == ["X7R", "C0G"]
+
+
 def test_new_type_control_hidden_for_read_only(client: TestClient) -> None:
     """A read-only account cannot write, so the create-type control is absent."""
     client.post(

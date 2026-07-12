@@ -21,6 +21,28 @@ const esc = (value) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
   );
 
+// A readable message from a failed JSON API response. Tolerates a non-JSON body
+// (proxy/500 HTML, network error) and FastAPI's list-shaped 422 `detail` so the
+// user never sees an unhandled rejection or "[object Object]".
+async function errorMessage(resp, fallback = "Request failed") {
+  let body;
+  try {
+    body = await resp.json();
+  } catch {
+    return fallback;
+  }
+  const detail = body?.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const joined = detail
+      .map((item) => item?.msg)
+      .filter(Boolean)
+      .join("; ");
+    if (joined) return joined;
+  }
+  return fallback;
+}
+
 // Fields the presenter always emits get bespoke formatting; anything else
 // (type, manufacturer, per-type parameter columns) renders as plain text.
 function columnDef(column) {
@@ -137,9 +159,8 @@ document.getElementById("stock-form").addEventListener("submit", async (event) =
     dialog.close();
     await loadTable();
   } else {
-    const error = await resp.json();
     const el = document.getElementById("stock-error");
-    el.textContent = error.detail || "Request failed";
+    el.textContent = await errorMessage(resp);
     el.hidden = false;
   }
 });
@@ -166,10 +187,14 @@ if (typeDialog && newTypeBtn) {
     const row = rowTemplate.content.firstElementChild.cloneNode(true);
     const dataType = row.querySelector('[name="p-data-type"]');
     const enumField = row.querySelector(".param-enum");
-    // Allowed values only make sense for an enum parameter.
-    dataType.addEventListener("change", () => {
+    // Allowed values only make sense for an enum parameter. Sync from the
+    // current value too, not just on change, so the field is correct even if
+    // "enum" is ever the default-selected data type.
+    const syncEnumField = () => {
       enumField.hidden = dataType.value !== "enum";
-    });
+    };
+    dataType.addEventListener("change", syncEnumField);
+    syncEnumField();
     row.querySelector(".param-remove").addEventListener("click", () => {
       row.remove();
       refreshEmptyHint();
@@ -201,11 +226,15 @@ if (typeDialog && newTypeBtn) {
     }
     let params;
     try {
-      params = await fetch(`/api/types/${parentId}/parameters`).then((r) =>
-        r.ok ? r.json() : [],
-      );
+      const resp = await fetch(`/api/types/${parentId}/parameters`);
+      if (!resp.ok) throw new Error();
+      params = await resp.json();
     } catch {
-      params = [];
+      // Distinct from an empty parent: surface the failure instead of implying
+      // the parent simply has no parameters.
+      hint.textContent = "Could not load inherited parameters.";
+      hint.hidden = false;
+      return;
     }
     if (!params.length) {
       hint.textContent = "This parent type defines no parameters.";
@@ -299,9 +328,8 @@ if (typeDialog && newTypeBtn) {
       typeDialog.close();
       await loadTable();
     } else {
-      const error = await resp.json();
       const el = document.getElementById("type-error");
-      el.textContent = error.detail || "Request failed";
+      el.textContent = await errorMessage(resp);
       el.hidden = false;
     }
   });
