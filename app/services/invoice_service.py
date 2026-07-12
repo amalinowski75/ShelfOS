@@ -176,6 +176,15 @@ def remove_line(
 def get_lines(session: Session, invoice_id: int) -> list[InvoiceLine]:
     """Return all lines of an invoice ordered by id."""
     require_entity(session, Invoice, invoice_id, "invoice")
+    return _lines_of(session, invoice_id)
+
+
+def _lines_of(session: Session, invoice_id: int) -> list[InvoiceLine]:
+    """Lines of an invoice ordered by id, without re-checking the invoice exists.
+
+    For callers that have already validated the invoice (e.g. loaded its header),
+    so a detail read does not repeat the existence query.
+    """
     return list(
         session.exec(
             select(InvoiceLine)
@@ -302,17 +311,24 @@ def get_invoice(session: Session, invoice_id: int) -> Invoice:
     return require_entity(session, Invoice, invoice_id, "invoice")
 
 
-def get_lines_with_components(
+def get_invoice_detail(
     session: Session, invoice_id: int
-) -> list[tuple[InvoiceLine, Component | None]]:
-    """Return an invoice's lines paired with their components (invoice → component).
+) -> tuple[Invoice, list[tuple[InvoiceLine, Component | None]]]:
+    """Return an invoice header and its component-resolved lines in one read.
 
-    The components are fetched in a single query rather than one per line, so a
-    long invoice does not fan out into an N+1. A line whose component was
-    hard-deleted (§20 keeps the line as a historical record) pairs with ``None``
-    rather than raising, so the invoice still reads.
+    The invoice existence is checked once (not per sub-query), the components are
+    fetched in a single query rather than one per line (no N+1), and a line whose
+    component was hard-deleted (§20 keeps the line as a historical record) pairs
+    with ``None`` rather than raising, so the invoice still reads.
     """
-    lines = get_lines(session, invoice_id)
+    invoice = get_invoice(session, invoice_id)
+    return invoice, _pair_with_components(session, _lines_of(session, invoice_id))
+
+
+def _pair_with_components(
+    session: Session, lines: list[InvoiceLine]
+) -> list[tuple[InvoiceLine, Component | None]]:
+    """Pair each line with its component, loading them all in one query."""
     if not lines:
         return []
     component_ids = {line.component_id for line in lines}

@@ -57,8 +57,7 @@ def get_invoice(
     invoice_id: int, session: Session = Depends(get_session)
 ) -> InvoiceDetailRead:
     """Return an invoice header, its totals and its lines with component identity."""
-    invoice = inv.get_invoice(session, invoice_id)
-    lines = inv.get_lines_with_components(session, invoice_id)
+    invoice, lines = inv.get_invoice_detail(session, invoice_id)
     return InvoiceDetailRead(
         id=cast(int, invoice.id),
         supplier=invoice.supplier,

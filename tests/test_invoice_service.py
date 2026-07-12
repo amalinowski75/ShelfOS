@@ -373,9 +373,7 @@ def test_list_invoices_orders_newest_first_and_filters(
     assert [i.id for i in inv.list_invoices(session, finalized=False)] == [older.id]
 
 
-def test_get_lines_with_components_pairs_each_line(
-    setup, session: Session
-) -> None:
+def test_get_invoice_detail_pairs_each_line(setup, session: Session) -> None:
     invoice_id = _new_invoice(session)
     inv.add_line(
         session,
@@ -384,18 +382,20 @@ def test_get_lines_with_components_pairs_each_line(
         quantity=3,
         unit_price=Decimal("2.00"),
     )
-    pairs = inv.get_lines_with_components(session, invoice_id)
+    invoice, pairs = inv.get_invoice_detail(session, invoice_id)
+    assert invoice.id == invoice_id
     assert len(pairs) == 1
     line, component = pairs[0]
     assert line.component_id == setup["component_id"]
+    assert component is not None
     assert component.id == setup["component_id"]
 
-    # Inherits get_lines' existence check.
+    # Existence is checked (once).
     with pytest.raises(NotFoundError):
-        inv.get_lines_with_components(session, 9999)
+        inv.get_invoice_detail(session, 9999)
 
 
-def test_get_lines_with_components_tolerates_deleted_component(
+def test_get_invoice_detail_tolerates_deleted_component(
     setup, session: Session
 ) -> None:
     """A line whose component was hard-deleted still reads, paired with None."""
@@ -410,7 +410,7 @@ def test_get_lines_with_components_tolerates_deleted_component(
     # §20 hard delete removes the component but keeps the line as history.
     cs.hard_delete_component(session, setup["component_id"])
 
-    pairs = inv.get_lines_with_components(session, invoice_id)
+    _invoice, pairs = inv.get_invoice_detail(session, invoice_id)
     assert len(pairs) == 1
     line, component = pairs[0]
     assert line.component_id == setup["component_id"]
