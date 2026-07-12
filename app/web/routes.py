@@ -188,6 +188,8 @@ def invoice_detail(
             "unit_price": line.unit_price,
             "total_price": line.total_price,
             "location": _location_path(line.location_id),
+            "location_id": line.location_id,
+            "line_id": line.id,
             "component_id": line.component_id,
             "component": component,
         }
@@ -200,6 +202,7 @@ def invoice_detail(
         {
             "invoice": invoice,
             "lines": lines,
+            "locations": ls.list_all(session),
             "current_user": user,
         },
     )

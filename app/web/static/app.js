@@ -1,47 +1,14 @@
 // Component table + stock dialogs (spec §11, §14-15).
 // Data mutations reuse the JSON API via fetch.
+// `csrfToken`, `esc` and `errorMessage` come from shared.js.
 
 const dialog = document.getElementById("stock-dialog");
 const typeFilter = document.getElementById("type-filter");
-
-// Echoed back on cookie-authenticated writes so the server can tell a real
-// same-origin request from a forged cross-site one (see require_csrf).
-const csrfToken =
-  document.querySelector('meta[name="csrf-token"]')?.content || "";
 
 const table = new Tabulator("#components-table", {
   layout: "fitColumns",
   placeholder: "No components",
 });
-
-const esc = (value) =>
-  String(value ?? "").replace(
-    /[&<>"']/g,
-    (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
-  );
-
-// A readable message from a failed JSON API response. Tolerates a non-JSON body
-// (proxy/500 HTML, network error) and FastAPI's list-shaped 422 `detail` so the
-// user never sees an unhandled rejection or "[object Object]".
-async function errorMessage(resp, fallback = "Request failed") {
-  let body;
-  try {
-    body = await resp.json();
-  } catch {
-    return fallback;
-  }
-  const detail = body?.detail;
-  if (typeof detail === "string") return detail;
-  if (Array.isArray(detail)) {
-    const joined = detail
-      .map((item) => item?.msg)
-      .filter(Boolean)
-      .join("; ");
-    if (joined) return joined;
-  }
-  return fallback;
-}
 
 // Fields the presenter always emits get bespoke formatting; anything else
 // (type, manufacturer, per-type parameter columns) renders as plain text.
@@ -134,11 +101,7 @@ function openStockDialog(mode, row) {
   dialog.showModal();
 }
 
-document
-  .querySelectorAll("[data-close]")
-  .forEach((btn) =>
-    btn.addEventListener("click", () => btn.closest("dialog")?.close()),
-  );
+// [data-close] buttons are wired once in shared.js.
 
 document.getElementById("stock-form").addEventListener("submit", async (event) => {
   event.preventDefault();

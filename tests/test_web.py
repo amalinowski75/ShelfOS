@@ -520,3 +520,108 @@ def test_format_money_strips_trailing_zeros() -> None:
     assert format_money(Decimal("0.000000")) == "0.00"
     assert format_money(Decimal("0.001234")) == "0.001234"
     assert format_money(Decimal("100")) == "100.00"
+
+
+def _read_only_headers(client: TestClient) -> dict[str, str]:
+    """Create a read-only account and return its bearer auth header."""
+    client.post(
+        "/api/admin/users",
+        json={"username": "viewer", "password": "pw", "role": "read-only"},
+    )
+    token = client.post(
+        "/api/auth/token", json={"username": "viewer", "password": "pw"}
+    ).json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_authenticated_pages_load_shared_js(client: TestClient) -> None:
+    """The shared JS helpers are served ahead of each page's own script."""
+    invoice = _invoice_with_line(client)["invoice"]
+    assert "/static/shared.js" in client.get("/").text
+    assert "/static/shared.js" in client.get("/invoices").text
+    assert "/static/shared.js" in client.get(
+        f"/invoices/{invoice['id']}"  # type: ignore[index]
+    ).text
+
+
+def test_invoice_list_new_button_writer_only(client: TestClient) -> None:
+    """A writer sees the create-invoice control; a read-only account does not."""
+    writer_html = client.get("/invoices").text
+    assert 'id="invoice-new-btn"' in writer_html
+    assert 'id="invoice-new-dialog"' in writer_html
+    assert "/static/invoices.js" in writer_html
+
+    reader_html = client.get("/invoices", headers=_read_only_headers(client)).text
+    assert 'id="invoice-new-btn"' not in reader_html
+    assert 'id="invoice-new-dialog"' not in reader_html
+
+
+def test_invoice_detail_draft_shows_write_controls(client: TestClient) -> None:
+    """A draft offers metadata edit, line add/edit/remove and finalize (§16)."""
+    invoice = _invoice_with_line(client)["invoice"]
+    html = client.get(f"/invoices/{invoice['id']}").text  # type: ignore[index]
+    assert 'id="invoice-edit-btn"' in html
+    assert 'id="invoice-addline-btn"' in html
+    assert 'id="invoice-finalize-btn"' in html
+    assert 'id="invoice-line-dialog"' in html
+    assert 'data-act="edit-line"' in html
+    assert 'data-act="remove-line"' in html
+    # The row carries the data the edit dialog prefills from.
+    assert 'data-line-id="' in html
+    assert 'data-unit-price="1.50"' in html
+
+
+def test_invoice_detail_finalized_is_read_only(client: TestClient) -> None:
+    """Once finalized, the page drops every write control and its dialogs."""
+    invoice = _invoice_with_line(client)["invoice"]
+    client.post(f"/api/invoices/{invoice['id']}/finalize", json={})  # type: ignore[index]
+    html = client.get(f"/invoices/{invoice['id']}").text  # type: ignore[index]
+    for marker in (
+        'id="invoice-edit-btn"',
+        'id="invoice-addline-btn"',
+        'id="invoice-finalize-btn"',
+        'id="invoice-meta-dialog"',
+        'id="invoice-line-dialog"',
+        'id="invoice-finalize-dialog"',
+        'data-act="edit-line"',
+        'data-act="remove-line"',
+    ):
+        assert marker not in html, marker
+
+
+def test_invoice_detail_finalize_hidden_without_lines(client: TestClient) -> None:
+    """Finalize is offered only once the draft has a line (it is else rejected)."""
+    invoice = client.post(
+        "/api/invoices",
+        json={
+            "supplier": "Mouser",
+            "invoice_number": "INV-EMPTY",
+            "invoice_date": "2026-07-08",
+            "currency": "EUR",
+        },
+    ).json()
+    empty_html = client.get(f"/invoices/{invoice['id']}").text
+    assert 'id="invoice-finalize-btn"' not in empty_html
+    assert 'id="invoice-finalize-dialog"' not in empty_html
+    # Adding a line brings the control back.
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    client.post(
+        f"/api/invoices/{invoice['id']}/lines",
+        json={"component_id": component["id"], "quantity": 1, "unit_price": "1"},
+    )
+    assert 'id="invoice-finalize-btn"' in client.get(f"/invoices/{invoice['id']}").text
+
+
+def test_invoice_detail_read_only_account_has_no_controls(
+    client: TestClient,
+) -> None:
+    """A read-only account viewing a draft still sees no write controls."""
+    invoice = _invoice_with_line(client)["invoice"]
+    html = client.get(
+        f"/invoices/{invoice['id']}",  # type: ignore[index]
+        headers=_read_only_headers(client),
+    ).text
+    assert 'id="invoice-edit-btn"' not in html
+    assert 'data-act="edit-line"' not in html
+    assert 'id="invoice-line-dialog"' not in html
