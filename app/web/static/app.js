@@ -21,6 +21,28 @@ const esc = (value) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
   );
 
+// A readable message from a failed JSON API response. Tolerates a non-JSON body
+// (proxy/500 HTML, network error) and FastAPI's list-shaped 422 `detail` so the
+// user never sees an unhandled rejection or "[object Object]".
+async function errorMessage(resp, fallback = "Request failed") {
+  let body;
+  try {
+    body = await resp.json();
+  } catch {
+    return fallback;
+  }
+  const detail = body?.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const joined = detail
+      .map((item) => item?.msg)
+      .filter(Boolean)
+      .join("; ");
+    if (joined) return joined;
+  }
+  return fallback;
+}
+
 // Fields the presenter always emits get bespoke formatting; anything else
 // (type, manufacturer, per-type parameter columns) renders as plain text.
 function columnDef(column) {
@@ -114,7 +136,9 @@ function openStockDialog(mode, row) {
 
 document
   .querySelectorAll("[data-close]")
-  .forEach((btn) => btn.addEventListener("click", () => dialog.close()));
+  .forEach((btn) =>
+    btn.addEventListener("click", () => btn.closest("dialog")?.close()),
+  );
 
 document.getElementById("stock-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -135,12 +159,185 @@ document.getElementById("stock-form").addEventListener("submit", async (event) =
     dialog.close();
     await loadTable();
   } else {
-    const error = await resp.json();
     const el = document.getElementById("stock-error");
-    el.textContent = error.detail || "Request failed";
+    el.textContent = await errorMessage(resp);
     el.hidden = false;
   }
 });
 
 typeFilter.addEventListener("change", loadTable);
 table.on("tableBuilt", loadTable);
+
+// ---- New Type dialog (spec §13) --------------------------------------------
+// Present only for accounts allowed to write, so the controls may be absent.
+const typeDialog = document.getElementById("type-dialog");
+const newTypeBtn = document.getElementById("new-type-btn");
+
+if (typeDialog && newTypeBtn) {
+  const typeForm = document.getElementById("type-form");
+  const paramsBox = document.getElementById("params");
+  const paramsEmpty = document.getElementById("params-empty");
+  const rowTemplate = document.getElementById("param-row-template");
+
+  const refreshEmptyHint = () => {
+    paramsEmpty.hidden = paramsBox.children.length > 0;
+  };
+
+  function addParamRow() {
+    const row = rowTemplate.content.firstElementChild.cloneNode(true);
+    const dataType = row.querySelector('[name="p-data-type"]');
+    const enumField = row.querySelector(".param-enum");
+    // Allowed values only make sense for an enum parameter. Sync from the
+    // current value too, not just on change, so the field is correct even if
+    // "enum" is ever the default-selected data type.
+    const syncEnumField = () => {
+      enumField.hidden = dataType.value !== "enum";
+    };
+    dataType.addEventListener("change", syncEnumField);
+    syncEnumField();
+    row.querySelector(".param-remove").addEventListener("click", () => {
+      row.remove();
+      refreshEmptyHint();
+    });
+    paramsBox.appendChild(row);
+    refreshEmptyHint();
+    row.querySelector('[name="p-name"]').focus();
+  }
+
+  function resetTypeForm() {
+    typeForm.reset();
+    paramsBox.replaceChildren();
+    document.getElementById("type-error").hidden = true;
+    refreshEmptyHint();
+    loadInheritedParams("");
+  }
+
+  // Monotonic id so overlapping parent-select changes can't render a stale
+  // response: only the newest request is allowed to touch the DOM.
+  let inheritedRequestId = 0;
+
+  // Show the effective parameter set of the chosen parent so the user can see
+  // what this type will already inherit and avoid redefining it (spec §13, D3).
+  async function loadInheritedParams(parentId) {
+    const requestId = ++inheritedRequestId;
+    const hint = document.getElementById("inherited-hint");
+    const list = document.getElementById("inherited-list");
+    list.replaceChildren();
+    if (!parentId) {
+      hint.textContent =
+        "Select a parent type to see the parameters this type will inherit.";
+      hint.hidden = false;
+      return;
+    }
+    let params;
+    try {
+      const resp = await fetch(`/api/types/${parentId}/parameters`);
+      if (!resp.ok) throw new Error();
+      params = await resp.json();
+    } catch {
+      if (requestId !== inheritedRequestId) return; // superseded by a newer pick
+      // Distinct from an empty parent: surface the failure instead of implying
+      // the parent simply has no parameters.
+      hint.textContent = "Could not load inherited parameters.";
+      hint.hidden = false;
+      return;
+    }
+    if (requestId !== inheritedRequestId) return; // a newer selection is in flight
+    if (!params.length) {
+      hint.textContent = "This parent type defines no parameters.";
+      hint.hidden = false;
+      return;
+    }
+    hint.hidden = true;
+    for (const p of params) {
+      const meta = [p.label, p.data_type];
+      if (p.unit) meta.push(p.unit);
+      let metaText = meta.map(esc).join(" · ");
+      if (p.data_type === "enum" && p.enum_values?.length) {
+        metaText += ` (${p.enum_values.map(esc).join(", ")})`;
+      }
+      const li = document.createElement("li");
+      li.className = "inherited-item";
+      li.innerHTML =
+        `<span class="ip-name">${esc(p.name)}</span>` +
+        `<span class="ip-meta">${metaText}</span>`;
+      list.appendChild(li);
+    }
+  }
+
+  function collectParameters() {
+    return [...paramsBox.querySelectorAll(".param-row")].map((row, index) => {
+      const get = (name) => row.querySelector(`[name="${name}"]`);
+      const dataType = get("p-data-type").value;
+      const param = {
+        name: get("p-name").value.trim(),
+        label: get("p-label").value.trim(),
+        data_type: dataType,
+        unit: get("p-unit").value.trim() || null,
+        is_table_column: get("p-table").checked,
+        is_filterable: get("p-filter").checked,
+        sort_order: index,
+      };
+      // Only enum parameters carry allowed values; the API rejects them on
+      // other data types, so leave the key off entirely otherwise.
+      if (dataType === "enum") {
+        param.enum_values = get("p-enum")
+          .value.split(",")
+          .map((token) => token.trim())
+          .filter(Boolean);
+      }
+      return param;
+    });
+  }
+
+  function upsertTypeOption(select, type, selected) {
+    let option = [...select.options].find((o) => o.value === String(type.id));
+    if (!option) {
+      option = document.createElement("option");
+      option.value = type.id;
+      option.textContent = type.name;
+      select.appendChild(option);
+    }
+    if (selected) select.value = String(type.id);
+  }
+
+  newTypeBtn.addEventListener("click", () => {
+    resetTypeForm();
+    typeDialog.showModal();
+  });
+  document.getElementById("add-param").addEventListener("click", addParamRow);
+  typeForm
+    .querySelector('[name="parent-id"]')
+    .addEventListener("change", (event) =>
+      loadInheritedParams(event.target.value),
+    );
+
+  typeForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const body = JSON.stringify({
+      name: typeForm.querySelector('[name="type-name"]').value.trim(),
+      parent_id: typeForm.querySelector('[name="parent-id"]').value
+        ? Number(typeForm.querySelector('[name="parent-id"]').value)
+        : null,
+      parameters: collectParameters(),
+    });
+    const resp = await fetch("/api/types", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+      body,
+    });
+    if (resp.ok) {
+      const created = await resp.json();
+      // The new type becomes the active filter (spec §13, step 4) and a valid
+      // parent for the next one.
+      upsertTypeOption(typeFilter, created, true);
+      upsertTypeOption(typeForm.querySelector('[name="parent-id"]'), created, false);
+      typeDialog.close();
+      await loadTable();
+    } else {
+      const el = document.getElementById("type-error");
+      el.textContent = await errorMessage(resp);
+      el.hidden = false;
+    }
+  });
+}

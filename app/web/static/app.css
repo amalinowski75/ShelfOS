@@ -270,6 +270,41 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 
 .error { color: var(--danger); font-size: 13.5px; margin: 0; }
 
+/* ---------- new-type dialog (§13) ---------- */
+/* Widen the dialog itself (the base rule caps it at 440px); it holds a
+   two-column parameter builder plus an inherited-parameters side panel. */
+#type-dialog { width: min(880px, calc(100vw - 32px)); max-height: calc(100vh - 48px); }
+#type-dialog > article { display: flex; flex-direction: column; max-height: calc(100vh - 48px); }
+#type-dialog article > header { flex: none; }
+.type-body { display: flex; align-items: stretch; min-height: 0; flex: 1; overflow: hidden; }
+.type-main { flex: 1 1 auto; min-width: 0; overflow-y: auto; }
+/* The inherited list runs the full height of the dialog and scrolls on its own. */
+.type-inherited {
+  flex: 0 0 250px; overflow-y: auto;
+  border-left: 1px solid var(--border); background: var(--surface-2);
+  padding: 16px 18px; display: flex; flex-direction: column; gap: 10px;
+}
+.inherited-head { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .01em; }
+.inherited-hint { color: var(--muted); font-size: 13px; margin: 0; }
+.inherited-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.inherited-item { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.inherited-item .ip-name { font-weight: 600; color: var(--text); }
+.inherited-item .ip-meta { color: var(--muted); font-size: 12px; }
+.params-head { display: flex; align-items: center; justify-content: space-between; }
+.params-head label { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .01em; }
+.params-empty { color: var(--muted); font-size: 13px; margin: 0; }
+.params { display: flex; flex-direction: column; gap: 12px; }
+.param-row {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 12px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.param-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.param-flags { display: flex; align-items: center; gap: 16px; }
+.param-flags .param-remove { margin-left: auto; }
+.check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.check input { accent-color: var(--accent); }
+
 /* ---------- login ---------- */
 .login { max-width: 380px; margin: 8vh auto 0; }
 .login .card-pad { padding: 30px 28px; display: flex; flex-direction: column; gap: 18px; }

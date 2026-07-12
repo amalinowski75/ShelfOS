@@ -40,6 +40,144 @@ def test_index_page_renders(client: TestClient) -> None:
     assert "/static/app.js" in response.text
 
 
+def test_index_shows_new_type_control_for_writer(client: TestClient) -> None:
+    """An account that can write sees the §13 create-type dialog and builder."""
+    html = client.get("/").text
+    assert 'id="new-type-btn"' in html
+    assert 'id="type-dialog"' in html
+    assert 'id="param-row-template"' in html
+    # The parameter builder offers every data type, enum included.
+    assert 'value="enum"' in html
+    # An inherited-parameters panel lets the user see what a parent already
+    # defines before adding duplicates (spec §13, D3).
+    assert 'id="inherited-list"' in html
+
+
+def test_require_web_user_heals_missing_csrf_token(session) -> None:  # type: ignore[no-untyped-def]
+    """An authenticated session without a CSRF token gets one issued on render.
+
+    Guards the regression where a pre-CSRF (or older-build) session cookie kept
+    authenticating but left the meta token empty, so every browser write 403'd.
+    """
+    from app.models.enums import UserRole
+    from app.services import user_service as us
+    from app.web.routes import require_web_user
+    from starlette.requests import Request
+
+    user = us.create_user(
+        session, username="stale", password="pw", role=UserRole.USER
+    )
+    # A session that authenticates (user_id) but predates CSRF (no token).
+    sess: dict[str, object] = {"user_id": user.id}
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "headers": [],
+        "session": sess,
+        "state": {},
+    }
+    result = require_web_user(Request(scope), session)
+    assert result.id == user.id
+    assert sess.get("csrf_token")  # a fresh token was healed into the session
+
+
+def test_create_type_via_web_session_requires_csrf(
+    session,  # type: ignore[no-untyped-def]
+    anon_client: TestClient,
+) -> None:
+    """End-to-end browser path: form login, then a create-type write with CSRF."""
+    import re
+
+    from app.models.enums import UserRole
+    from app.services import user_service as us
+
+    us.create_user(session, username="admin", password="admin", role=UserRole.ADMIN)
+    anon_client.post("/login", data={"username": "admin", "password": "admin"})
+
+    html = anon_client.get("/").text
+    token = re.search(r'name="csrf-token" content="([^"]*)"', html).group(1)  # type: ignore[union-attr]
+    assert token  # the page exposes a usable token
+
+    ok = anon_client.post(
+        "/api/types", json={"name": "resistor"}, headers={"X-CSRF-Token": token}
+    )
+    assert ok.status_code == 201
+    # The same write without the token is rejected by the CSRF guard.
+    missing = anon_client.post("/api/types", json={"name": "capacitor"})
+    assert missing.status_code == 403
+
+
+def test_create_type_accepts_builder_shaped_payload(
+    session,  # type: ignore[no-untyped-def]
+    anon_client: TestClient,
+) -> None:
+    """The exact JSON the dialog's builder emits round-trips through the API.
+
+    Mirrors ``collectParameters()`` in app.js (unit ``None``, per-row
+    ``sort_order``, ``enum_values`` only on the enum row) so a schema drift
+    between the builder and ``TypeCreate`` would fail here.
+    """
+    import re
+
+    from app.models.enums import UserRole
+    from app.services import user_service as us
+
+    us.create_user(session, username="admin", password="admin", role=UserRole.ADMIN)
+    anon_client.post("/login", data={"username": "admin", "password": "admin"})
+    token = re.search(  # type: ignore[union-attr]
+        r'name="csrf-token" content="([^"]*)"', anon_client.get("/").text
+    ).group(1)
+
+    payload = {
+        "name": "capacitor",
+        "parent_id": None,
+        "parameters": [
+            {
+                "name": "capacitance",
+                "label": "Capacitance",
+                "data_type": "number",
+                "unit": "farad",
+                "is_table_column": True,
+                "is_filterable": False,
+                "sort_order": 0,
+            },
+            {
+                "name": "dielectric",
+                "label": "Dielectric",
+                "data_type": "enum",
+                "unit": None,
+                "is_table_column": False,
+                "is_filterable": True,
+                "sort_order": 1,
+                "enum_values": ["X7R", "C0G"],
+            },
+        ],
+    }
+    resp = anon_client.post(
+        "/api/types", json=payload, headers={"X-CSRF-Token": token}
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert [p["name"] for p in body["parameters"]] == ["capacitance", "dielectric"]
+    dielectric = next(p for p in body["parameters"] if p["name"] == "dielectric")
+    assert dielectric["enum_values"] == ["X7R", "C0G"]
+
+
+def test_new_type_control_hidden_for_read_only(client: TestClient) -> None:
+    """A read-only account cannot write, so the create-type control is absent."""
+    client.post(
+        "/api/admin/users",
+        json={"username": "viewer", "password": "pw", "role": "read-only"},
+    )
+    token = client.post(
+        "/api/auth/token", json={"username": "viewer", "password": "pw"}
+    ).json()["access_token"]
+
+    html = client.get("/", headers={"Authorization": f"Bearer {token}"}).text
+    assert "New Type" not in html
+    assert 'id="new-type-btn"' not in html
+
+
 def test_components_feed_generic_view(client: TestClient) -> None:
     ctype = client.post("/api/types", json={"name": "resistor"}).json()
     client.post(
