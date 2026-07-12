@@ -17,6 +17,7 @@ Two input styles are supported:
 
 from __future__ import annotations
 
+import math
 import re
 from decimal import Decimal, InvalidOperation
 
@@ -27,13 +28,27 @@ class UnitParseError(ValueError):
     """Raised when a value cannot be parsed as an engineering-notation number."""
 
 
-# Parsing is lenient: it accepts both ``k``/``K`` for kilo and ``r``/``R`` as the
-# unity (ohm) marker. ``m`` is always milli and ``M`` always mega.
+# Multiplier for each accepted prefix letter, plus ``r``/``R`` as the RKM
+# ohm-unity marker. Uppercase aliases are added only where the uppercase letter
+# is not another *prefix* in this set, so entering values stays forgiving without
+# guessing across a real prefix collision:
+#   * ``N`` = nano, ``U`` = micro, ``P`` = pico — no other prefix uses these
+#     letters (peta is unsupported), so folding is unambiguous.
+#   * ``m``/``M`` stay milli/mega — both are real, distinct prefixes.
+#   * ``f``/``g``/``t`` are NOT folded: ``F`` is the far more common farad unit,
+#     ``G``/``T`` already mean giga/tera and ``g``/``t`` read as gram/tonne.
+#     ``k``/``K`` both mean kilo (kept from earlier behaviour).
+# The trailing unit symbol is ignored, not checked against the parameter's unit,
+# so e.g. ``"100N"`` is taken as 100 nano even though N is also newton — accepted
+# in this electronic-component domain where these letters are prefixes in practice.
 _PARSE_PREFIXES: dict[str, Decimal] = {
     "f": Decimal("1e-15"),
     "p": Decimal("1e-12"),
+    "P": Decimal("1e-12"),
     "n": Decimal("1e-9"),
+    "N": Decimal("1e-9"),
     "u": Decimal("1e-6"),
+    "U": Decimal("1e-6"),
     "µ": Decimal("1e-6"),
     "m": Decimal("1e-3"),
     "r": Decimal(1),
@@ -60,26 +75,37 @@ _FORMAT_PREFIXES: list[tuple[Decimal, str]] = [
     (Decimal("1e-15"), "f"),
 ]
 
-_PREFIX_CHARS = "fpnuµmrRkKMGT"
+# Every accepted prefix letter, for the regex character classes below.
+_PREFIX_CHARS = "".join(sorted(symbol for symbol in _PARSE_PREFIXES if symbol))
 
-# "4k7", "2M2", "4R7", "1k0": digits, prefix letter, more digits.
-_RKM_RE = re.compile(rf"^([+-]?\d*)\.?(\d*)?([{_PREFIX_CHARS}])(\d+)$")
+# Characters allowed in a trailing unit symbol (ignored when parsing). Both the
+# Greek capital omega (U+03A9) and the legacy ohm sign (U+2126) are accepted.
+_UNIT_TAIL = "a-zA-ZΩΩμµ%°/"
+
+# "4k7", "2M2", "4R7", "1k0": digits, prefix letter, more digits, optional unit.
+_RKM_RE = re.compile(
+    rf"^([+-]?\d*)\.?(\d*)?([{_PREFIX_CHARS}])(\d+)\s*[{_UNIT_TAIL}]*$"
+)
 
 # "4.7k", "100n", "4700", "10kΩ": number, optional prefix, optional unit tail.
-_SUFFIX_RE = re.compile(rf"^([+-]?\d*\.?\d+)\s*([{_PREFIX_CHARS}]?)\s*[a-zA-ZΩμµ%°/]*$")
+_SUFFIX_RE = re.compile(
+    rf"^([+-]?\d*\.?\d+)\s*([{_PREFIX_CHARS}]?)\s*[{_UNIT_TAIL}]*$"
+)
 
 
 def parse_engineering(text: str) -> float:
     """Parse an engineering-notation string into a base-unit float.
 
-    Args:
-        text: e.g. ``"10k"``, ``"4k7"``, ``"100nF"``, ``"2.2e-3"``.
-
-    Returns:
-        The value expressed in base units.
+    Accepts suffix (``"4.7k"``) and RKM/BS-1852 infix (``"4k7"``) notation, plain
+    or scientific numbers, and a trailing unit symbol in any case — the unit
+    itself is ignored, values are returned in base units. The suffix form also
+    tolerates a space before the prefix (``"4.7 k"``). Uppercase prefixes are
+    folded where unambiguous (``"100NF"`` and ``"100PF"`` read as nano/pico), but
+    ``m``/``M`` stay milli/mega.
 
     Raises:
-        UnitParseError: If the string is empty or not recognized.
+        UnitParseError: If the string is empty, unrecognized, or out of the
+            representable ``float`` range (e.g. ``"1e400"``).
     """
     raw = text.strip()
     if not raw:
@@ -92,7 +118,7 @@ def parse_engineering(text: str) -> float:
         pass
     else:
         if direct.is_finite():
-            return float(direct)
+            return _finite(text, float(direct))
 
     rkm = _RKM_RE.match(raw)
     if rkm and rkm.group(3) in _PARSE_PREFIXES:
@@ -122,7 +148,18 @@ def _apply(mantissa_text: str, prefix: str) -> float:
         mantissa = Decimal(mantissa_text)
     except InvalidOperation as exc:
         raise UnitParseError(f"invalid number: {mantissa_text!r}") from exc
-    return float(mantissa * _PARSE_PREFIXES[prefix])
+    return _finite(mantissa_text, float(mantissa * _PARSE_PREFIXES[prefix]))
+
+
+def _finite(text: str, result: float) -> float:
+    """Guard against a magnitude that overflows ``float`` to ``inf``/``nan``.
+
+    ``Decimal`` happily holds ``1e400``, but ``float(...)`` of it is ``inf``; a
+    non-finite value must never reach storage or JSON.
+    """
+    if not math.isfinite(result):
+        raise UnitParseError(f"value out of range: {text!r}")
+    return result
 
 
 def format_engineering(

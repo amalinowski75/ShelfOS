@@ -513,3 +513,52 @@ def test_hard_delete_component_removes_parameters_and_stock(
     assert session.get(Component, component.id) is None
     with pytest.raises(NotFoundError):
         cs.list_parameter_values(session, component.id)
+
+
+def _number_component(session: Session, unit: str):  # type: ignore[no-untyped-def]
+    """A component whose type has one NUMBER parameter with the given unit."""
+    ctype = cs.create_type(session, "part")
+    definition = cs.add_parameter_definition(
+        session,
+        ctype.id,
+        name="value",
+        label="Value",
+        data_type=ParameterDataType.NUMBER,
+        unit=unit,
+    )
+    component = cs.create_component(session, ctype.id)
+    return component, definition
+
+
+def test_set_number_parameter_accepts_engineering_notation(session: Session) -> None:
+    component, definition = _number_component(session, unit="Ω")
+    assert (
+        cs.set_parameter_value(session, component.id, definition.id, "4k7").value_num
+        == 4700.0
+    )
+    # A raw number is still stored as-is.
+    assert (
+        cs.set_parameter_value(session, component.id, definition.id, 330).value_num
+        == 330.0
+    )
+
+
+def test_set_number_parameter_ignores_trailing_unit(session: Session) -> None:
+    component, definition = _number_component(session, unit="F")
+    assert (
+        cs.set_parameter_value(
+            session, component.id, definition.id, "100 nF"
+        ).value_num
+        == 1e-7
+    )
+
+
+def test_set_number_parameter_rejects_unreadable_value(session: Session) -> None:
+    component, definition = _number_component(session, unit="F")
+    with pytest.raises(ValidationError):
+        cs.set_parameter_value(session, component.id, definition.id, "not a number")
+    with pytest.raises(ValidationError):
+        cs.set_parameter_value(session, component.id, definition.id, True)
+    # A non-finite raw number (Pydantic accepts inf/nan by default) is rejected.
+    with pytest.raises(ValidationError):
+        cs.set_parameter_value(session, component.id, definition.id, float("inf"))
