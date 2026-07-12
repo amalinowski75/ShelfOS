@@ -10,6 +10,7 @@ from sqlmodel import Session
 from app.api.deps import get_session
 from app.api.schemas import (
     ParameterDefinitionCreate,
+    ParameterDefinitionRead,
     TypeCreate,
     TypeWithParameters,
 )
@@ -17,6 +18,21 @@ from app.models.component import ComponentType, ParameterDefinition
 from app.services import component_service as cs
 
 router = APIRouter(prefix="/api/types", tags=["types"])
+
+
+def _read_definitions(
+    session: Session, definitions: list[ParameterDefinition]
+) -> list[ParameterDefinitionRead]:
+    """Enrich definitions with their allowed enum tokens (batched, no N+1)."""
+    enums = cs.enum_values_by_definition(
+        session, [cast(int, d.id) for d in definitions]
+    )
+    reads: list[ParameterDefinitionRead] = []
+    for d in definitions:
+        read = ParameterDefinitionRead.model_validate(d)
+        read.enum_values = enums.get(cast(int, d.id), [])
+        reads.append(read)
+    return reads
 
 
 @router.get("", response_model=list[ComponentType])
@@ -46,33 +62,39 @@ def create_type(
     ctype = cs.create_type_with_parameters(
         session, payload.name, parent_id=payload.parent_id, parameters=specs
     )
+    own = cs.list_own_parameter_definitions(session, cast(int, ctype.id))
     return TypeWithParameters(
         id=cast(int, ctype.id),
         name=ctype.name,
         parent_id=ctype.parent_id,
-        parameters=cs.list_own_parameter_definitions(session, cast(int, ctype.id)),
+        parameters=_read_definitions(session, own),
     )
 
 
-@router.get("/{type_id}/parameters", response_model=list[ParameterDefinition])
+@router.get("/{type_id}/parameters", response_model=list[ParameterDefinitionRead])
 def list_effective_parameters(
     type_id: int, session: Session = Depends(get_session)
-) -> list[ParameterDefinition]:
-    """Return the effective parameter set (own + inherited, decision D3)."""
-    return cs.get_effective_parameter_definitions(session, type_id)
+) -> list[ParameterDefinitionRead]:
+    """Return the effective parameter set (own + inherited, decision D3).
+
+    Each entry carries its allowed enum tokens so a client can render a value
+    picker for enum parameters without a follow-up request (spec §13).
+    """
+    definitions = cs.get_effective_parameter_definitions(session, type_id)
+    return _read_definitions(session, definitions)
 
 
 @router.post(
     "/{type_id}/parameters",
-    response_model=ParameterDefinition,
+    response_model=ParameterDefinitionRead,
     status_code=status.HTTP_201_CREATED,
 )
 def add_parameter_definition(
     type_id: int,
     payload: ParameterDefinitionCreate,
     session: Session = Depends(get_session),
-) -> ParameterDefinition:
-    return cs.add_parameter_definition(
+) -> ParameterDefinitionRead:
+    definition = cs.add_parameter_definition(
         session,
         type_id,
         name=payload.name,
@@ -84,3 +106,4 @@ def add_parameter_definition(
         sort_order=payload.sort_order,
         enum_values=payload.enum_values,
     )
+    return _read_definitions(session, [definition])[0]
