@@ -108,6 +108,17 @@ def test_development_tolerates_defaults(monkeypatch) -> None:
     _check_insecure_defaults()  # does not raise
 
 
+def test_secure_config_passes_without_warning(monkeypatch) -> None:
+    """With a real secret and admin password, neither branch fires."""
+    from app import config
+    from app.main import _check_insecure_defaults
+
+    monkeypatch.setattr(config, "ENV", "production")
+    monkeypatch.setattr(config, "SECRET_KEY", "a-real-production-secret-value-32b")
+    monkeypatch.setattr(config, "ADMIN_PASSWORD", "a-real-admin-password")
+    _check_insecure_defaults()  # neither default is in use -> no raise
+
+
 def _login(client: TestClient, username: str, password: str) -> str:
     resp = client.post(
         "/api/auth/token", json={"username": username, "password": password}
