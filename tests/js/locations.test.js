@@ -96,6 +96,31 @@ describe("location_dialog.js", () => {
     expect(document.getElementById("location-error").hidden).toBe(false);
   });
 
+  it("adds the created location to the parent select for immediate nesting", async () => {
+    const { window, document } = loadPage(
+      locationDialogFixture([{ id: 1, path: "Lab" }]),
+      SCRIPTS,
+      {
+        fetchImpl: () =>
+          Promise.resolve({
+            ok: true,
+            json: async () => ({ id: 9, name: "Rack A", type: "rack", parent_id: 1 }),
+          }),
+      },
+    );
+    window.openLocationDialog();
+    document.querySelector('[name="name"]').value = "Rack A";
+    document.querySelector('[name="parent_id"]').value = "1"; // under Lab
+    submit(document);
+    await tick();
+
+    // The new location is now selectable as a parent, pathed under Lab.
+    const parentSelect = document.querySelector('[name="parent_id"]');
+    const added = [...parentSelect.options].find((o) => o.value === "9");
+    expect(added).toBeTruthy();
+    expect(added.text).toBe("Lab / Rack A");
+  });
+
   it("ignores a re-entrant submit while a create is in flight", async () => {
     let resolveFetch;
     const pending = new Promise((resolve) => {

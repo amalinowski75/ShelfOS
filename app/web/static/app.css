@@ -279,6 +279,10 @@ table.kv tr:last-child th, table.kv tr:last-child td { border-bottom: none; }
   border: none; padding: 5px 8px; border-radius: 6px;
   border-bottom: 1px solid var(--border); margin-bottom: 4px;
 }
+/* The app has no global [hidden] rule, so this author `display` would otherwise
+   beat the UA `[hidden] { display: none }` and show the button regardless of the
+   attribute location_tree.js toggles. */
+.loc-picker-new[hidden] { display: none; }
 .loc-picker-new:hover { background: var(--row-hover); }
 
 /* ---------- badges ---------- */

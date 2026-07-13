@@ -21,10 +21,12 @@
     submitting = true;
     try {
       const field = (name) => form.querySelector(`[name="${name}"]`);
-      const parent = field("parent_id").value;
+      const parentSelect = field("parent_id");
+      const parent = parentSelect.value;
+      const name = field("name").value.trim();
       const body = JSON.stringify({
         type: field("type").value,
-        name: field("name").value.trim(),
+        name,
         parent_id: parent ? Number(parent) : null,
       });
 
@@ -47,8 +49,24 @@
         errorEl.hidden = false;
         return;
       }
+      // Keep the parent <select> current so a just-created location can be a
+      // parent right away — building Room → Rack → Bin without a page reload.
+      // reset() (on the next open) clears the selection, not appended options.
+      if (!parentSelect.querySelector(`option[value="${created.id}"]`)) {
+        const parentPath = parent ? parentSelect.selectedOptions[0].text : "";
+        const path = parentPath ? `${parentPath} / ${name}` : name;
+        parentSelect.appendChild(new Option(path, created.id));
+      }
       dialog.close();
-      if (onCreated) onCreated(created);
+      // A caller's DOM update must not turn into an unhandled rejection (or leave
+      // the create looking failed): the location is already persisted.
+      if (onCreated) {
+        try {
+          onCreated(created);
+        } catch {
+          /* swallow — the location was created; only the caller's hook failed */
+        }
+      }
     } finally {
       submitting = false;
     }
