@@ -108,42 +108,60 @@
 
   typeSelect.addEventListener("change", (event) => loadParams(event.target.value));
 
+  // Ignore a re-entrant submit while a create is in flight, so a fast
+  // double-click can't POST two components.
+  let submitting = false;
+
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const value = (name) => form.querySelector(`[name="${name}"]`).value.trim();
-    const body = JSON.stringify({
-      // Guard the empty selection (Number("") is 0, not null); the server then
-      // rejects a missing type cleanly rather than looking up type 0.
-      type_id: typeSelect.value ? Number(typeSelect.value) : null,
-      manufacturer: value("manufacturer") || null,
-      mpn: value("mpn") || null,
-      package: value("package") || null,
-      mounting_type: form.querySelector('[name="mounting_type"]').value,
-      notes: value("notes") || null,
-      parameters: collectParameters(),
-    });
-
-    errorEl.hidden = true;
-    let created;
+    if (submitting) return;
+    submitting = true;
     try {
-      const resp = await fetch("/api/components", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-        body,
+      const value = (name) => form.querySelector(`[name="${name}"]`).value.trim();
+      const body = JSON.stringify({
+        // Guard the empty selection (Number("") is 0, not null); the server then
+        // rejects a missing type cleanly rather than looking up type 0.
+        type_id: typeSelect.value ? Number(typeSelect.value) : null,
+        manufacturer: value("manufacturer") || null,
+        mpn: value("mpn") || null,
+        package: value("package") || null,
+        mounting_type: form.querySelector('[name="mounting_type"]').value,
+        notes: value("notes") || null,
+        parameters: collectParameters(),
       });
-      if (!resp.ok) {
-        errorEl.textContent = await errorMessage(resp);
+
+      errorEl.hidden = true;
+      let created;
+      try {
+        const resp = await fetch("/api/components", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+          body,
+        });
+        if (!resp.ok) {
+          errorEl.textContent = await errorMessage(resp);
+          errorEl.hidden = false;
+          return;
+        }
+        created = await resp.json();
+      } catch {
+        errorEl.textContent = "Could not reach the server. Please try again.";
         errorEl.hidden = false;
         return;
       }
-      created = await resp.json();
-    } catch {
-      errorEl.textContent = "Could not reach the server. Please try again.";
-      errorEl.hidden = false;
-      return;
+      dialog.close();
+      // A caller's DOM update must not become an unhandled rejection: the
+      // component is already persisted (mirrors location_dialog.js).
+      if (onCreated) {
+        try {
+          onCreated(created);
+        } catch {
+          /* swallow — the component was created; only the caller's hook failed */
+        }
+      }
+    } finally {
+      submitting = false;
     }
-    dialog.close();
-    if (onCreated) onCreated(created);
   });
 
   // Open the dialog; `callback(created)` runs after a successful create.

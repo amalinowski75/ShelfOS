@@ -104,37 +104,57 @@ function openStockDialog(mode, row) {
 
 // [data-close] buttons are wired once in shared.js.
 
-document.getElementById("stock-form").addEventListener("submit", async (event) => {
+// Ignore a re-entrant submit while that form's write is in flight, enough to
+// stop a fast double-click sending a duplicate POST. Each form gets its OWN
+// flag: the stock and New Type dialogs are independent, so an in-flight (or
+// post-success loadTable) on one must never swallow the other's submit.
+function makeGuard() {
+  let inFlight = false;
+  return async (run) => {
+    if (inFlight) return;
+    inFlight = true;
+    try {
+      await run();
+    } finally {
+      inFlight = false;
+    }
+  };
+}
+
+const guardStock = makeGuard();
+document.getElementById("stock-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const form = event.target;
-  // The tree-picker is backed by a hidden input, so enforce the required
-  // location here (there's no native `required` to lean on).
-  if (form.location_id.value === "") {
-    const el = document.getElementById("stock-error");
-    el.textContent = "Choose a location.";
-    el.hidden = false;
-    return;
-  }
-  const body = JSON.stringify({
-    component_id: Number(form.component_id.value),
-    location_id: Number(form.location_id.value),
-    quantity: Number(form.quantity.value),
-    note: form.note.value || null,
+  guardStock(async () => {
+    // The tree-picker is backed by a hidden input, so enforce the required
+    // location here (there's no native `required` to lean on).
+    if (form.location_id.value === "") {
+      const el = document.getElementById("stock-error");
+      el.textContent = "Choose a location.";
+      el.hidden = false;
+      return;
+    }
+    const body = JSON.stringify({
+      component_id: Number(form.component_id.value),
+      location_id: Number(form.location_id.value),
+      quantity: Number(form.quantity.value),
+      note: form.note.value || null,
+    });
+    const url = form.mode.value === "add" ? "/api/stock/add" : "/api/stock/remove";
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+      body,
+    });
+    if (resp.ok) {
+      dialog.close();
+      await loadTable();
+    } else {
+      const el = document.getElementById("stock-error");
+      el.textContent = await errorMessage(resp);
+      el.hidden = false;
+    }
   });
-  const url = form.mode.value === "add" ? "/api/stock/add" : "/api/stock/remove";
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-    body,
-  });
-  if (resp.ok) {
-    dialog.close();
-    await loadTable();
-  } else {
-    const el = document.getElementById("stock-error");
-    el.textContent = await errorMessage(resp);
-    el.hidden = false;
-  }
 });
 
 typeFilter.addEventListener("change", loadTable);
@@ -284,33 +304,36 @@ if (typeDialog && newTypeBtn) {
       loadInheritedParams(event.target.value),
     );
 
-  typeForm.addEventListener("submit", async (event) => {
+  const guardType = makeGuard();
+  typeForm.addEventListener("submit", (event) => {
     event.preventDefault();
-    const body = JSON.stringify({
-      name: typeForm.querySelector('[name="type-name"]').value.trim(),
-      parent_id: typeForm.querySelector('[name="parent-id"]').value
-        ? Number(typeForm.querySelector('[name="parent-id"]').value)
-        : null,
-      parameters: collectParameters(),
+    guardType(async () => {
+      const body = JSON.stringify({
+        name: typeForm.querySelector('[name="type-name"]').value.trim(),
+        parent_id: typeForm.querySelector('[name="parent-id"]').value
+          ? Number(typeForm.querySelector('[name="parent-id"]').value)
+          : null,
+        parameters: collectParameters(),
+      });
+      const resp = await fetch("/api/types", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body,
+      });
+      if (resp.ok) {
+        const created = await resp.json();
+        // The new type becomes the active filter (spec §13, step 4) and a valid
+        // parent for the next one.
+        upsertTypeOption(typeFilter, created, true);
+        upsertTypeOption(typeForm.querySelector('[name="parent-id"]'), created, false);
+        typeDialog.close();
+        await loadTable();
+      } else {
+        const el = document.getElementById("type-error");
+        el.textContent = await errorMessage(resp);
+        el.hidden = false;
+      }
     });
-    const resp = await fetch("/api/types", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-      body,
-    });
-    if (resp.ok) {
-      const created = await resp.json();
-      // The new type becomes the active filter (spec §13, step 4) and a valid
-      // parent for the next one.
-      upsertTypeOption(typeFilter, created, true);
-      upsertTypeOption(typeForm.querySelector('[name="parent-id"]'), created, false);
-      typeDialog.close();
-      await loadTable();
-    } else {
-      const el = document.getElementById("type-error");
-      el.textContent = await errorMessage(resp);
-      el.hidden = false;
-    }
   });
 }
 

@@ -276,6 +276,55 @@ describe("app.js — New Type dialog", () => {
     ).toBe(true);
   });
 
+  it("keeps per-form guards: an in-flight stock POST does not block a type submit", async () => {
+    let resolveStock;
+    const pendingStock = new Promise((resolve) => {
+      resolveStock = resolve;
+    });
+    const fetchImpl = (url) => {
+      if (url === "/api/stock/add") return pendingStock;
+      if (url === "/api/types")
+        return Promise.resolve({ ok: true, json: async () => ({ id: 9, name: "cap" }) });
+      return Promise.resolve({ ok: true, json: async () => ({ columns: [], data: [] }) });
+    };
+    const { window, document, fetchMock } = loadPage(typePageFixture(), SCRIPTS, {
+      fetchImpl,
+    });
+    // Leave a stock POST in flight (set the picker's hidden input directly since
+    // this fixture's stock picker has no selectable node).
+    window.openStockDialog("add", { id: 7 });
+    document.querySelector("#stock-form [name='location_id']").value = "5";
+    fire(document.getElementById("stock-form"), "submit");
+
+    // A New Type submit must still go through — it has its own guard.
+    document.getElementById("new-type-btn").click();
+    document.querySelector('[name="type-name"]').value = "cap";
+    fire(document.getElementById("type-form"), "submit");
+    expect(fetchMock.mock.calls.some(([u]) => u === "/api/types")).toBe(true);
+
+    resolveStock({ ok: true, json: async () => ({}) });
+    await tick();
+  });
+
+  it("ignores a second submit while the type create is in flight", async () => {
+    let resolveFetch;
+    const pending = new Promise((resolve) => {
+      resolveFetch = resolve;
+    });
+    const fetchImpl = (url) =>
+      url === "/api/types"
+        ? pending
+        : Promise.resolve({ ok: true, json: async () => ({ columns: [], data: [] }) });
+    const { document, fetchMock } = loadPage(typePageFixture(), SCRIPTS, { fetchImpl });
+    openBuilder({ document });
+    document.querySelector('[name="type-name"]').value = "cap";
+    fire(document.getElementById("type-form"), "submit"); // POST in flight
+    fire(document.getElementById("type-form"), "submit"); // must be ignored
+    expect(fetchMock.mock.calls.filter(([u]) => u === "/api/types").length).toBe(1);
+    resolveFetch({ ok: true, json: async () => ({ id: 9, name: "cap" }) });
+    await tick();
+  });
+
   it("surfaces the server error on a failed create", async () => {
     const fetchImpl = (url, opts) =>
       url === "/api/types" && opts?.method === "POST"

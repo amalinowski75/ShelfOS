@@ -87,6 +87,46 @@ describe("app.js — stock dialog with the location tree-picker", () => {
     });
   });
 
+  it("releases the guard after a validation error so a corrected resubmit posts", async () => {
+    const fetchImpl = (url) =>
+      url === "/api/stock/add"
+        ? Promise.resolve({ ok: true, json: async () => ({}) })
+        : Promise.resolve({ ok: true, json: async () => ({ columns: [], data: [] }) });
+    const { window, document, fetchMock } = loadPage(stockPageFixture(), SCRIPTS, {
+      fetchImpl,
+    });
+    window.openStockDialog("add", { id: 7 });
+    submitStock(document); // no location -> validation error, no POST, guard released
+    await tick();
+    expect(fetchMock.mock.calls.filter(([u]) => u === "/api/stock/add").length).toBe(0);
+
+    document.querySelector(".loc-picker-node").click(); // fix the location
+    submitStock(document);
+    await tick();
+    expect(fetchMock.mock.calls.filter(([u]) => u === "/api/stock/add").length).toBe(1);
+  });
+
+  it("ignores a second submit while the stock POST is in flight", async () => {
+    let resolveFetch;
+    const pending = new Promise((resolve) => {
+      resolveFetch = resolve;
+    });
+    const fetchImpl = (url) =>
+      url === "/api/stock/add"
+        ? pending
+        : Promise.resolve({ ok: true, json: async () => ({ columns: [], data: [] }) });
+    const { window, document, fetchMock } = loadPage(stockPageFixture(), SCRIPTS, {
+      fetchImpl,
+    });
+    window.openStockDialog("add", { id: 7 });
+    document.querySelector(".loc-picker-node").click(); // satisfy the location check
+    submitStock(document); // POST now in flight
+    submitStock(document); // a fast double-click must be ignored
+    expect(fetchMock.mock.calls.filter(([u]) => u === "/api/stock/add").length).toBe(1);
+    resolveFetch({ ok: true, json: async () => ({}) });
+    await tick();
+  });
+
   it("reset clears a prior selection between opens", () => {
     const { window, document } = loadPage(stockPageFixture(), SCRIPTS);
     window.openStockDialog("add", { id: 7 });
