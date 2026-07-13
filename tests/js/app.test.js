@@ -63,9 +63,12 @@ describe("app.js — table formatting", () => {
       field: "quantity",
       title: "Qty",
     });
-    // Cell shows "1,234"; typing either form should match.
+    // The cell shows the grouped form (locale-dependent); typing either the raw
+    // digits or exactly what is shown should match. Derive the shown form from
+    // the same toLocaleString the formatter uses, so this is not locale-brittle.
+    const shown = (1234).toLocaleString();
     expect(headerFilterFunc("1234", 1234)).toBe(true);
-    expect(headerFilterFunc("1,234", 1234)).toBe(true);
+    expect(headerFilterFunc(shown, 1234)).toBe(true);
     expect(headerFilterFunc("99", 1234)).toBe(false);
   });
 

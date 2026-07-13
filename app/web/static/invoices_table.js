@@ -5,14 +5,20 @@
 // `esc` comes from shared.js.
 
 // Parse the leading number out of a formatted money cell ("12.50 EUR"). A blank
-// gross ("—" for a draft) has no amount, so it sorts below every real value.
+// gross ("—" for a draft) has no amount, so it sorts to one end (before every
+// real amount when ascending).
 function invoiceMoneyValue(text) {
   const n = parseFloat(String(text).replace(/[^0-9.-]/g, ""));
   return Number.isNaN(n) ? -Infinity : n;
 }
 
 function invoiceMoneySorter(a, b) {
-  return invoiceMoneyValue(a) - invoiceMoneyValue(b);
+  const av = invoiceMoneyValue(a);
+  const bv = invoiceMoneyValue(b);
+  // Compare equal first so two blanks (both -Infinity) return 0 rather than
+  // NaN (-Infinity - -Infinity), which would make Array.sort's order undefined.
+  if (av === bv) return 0;
+  return av - bv;
 }
 
 function invoiceStatusBadge(value) {
@@ -72,6 +78,7 @@ async function loadInvoices(table, hint) {
     await table.setData(feed.data);
     if (hint && feed.truncated) {
       hint.textContent = `Showing the ${feed.limit} most recent invoices.`;
+      hint.className = "muted"; // clear a stale error style from a prior load
       hint.hidden = false;
     }
   } catch {

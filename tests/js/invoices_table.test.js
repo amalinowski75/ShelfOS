@@ -52,6 +52,9 @@ describe("invoices_table columns", () => {
     expect(sorter("2000.00 EUR", "1000.00 EUR")).toBeGreaterThan(0);
     // "—" (a draft's gross) is treated as less than any real amount.
     expect(sorter("—", "0.00 EUR")).toBeLessThan(0);
+    // Two blank grosses compare equal (0), never NaN — several drafts at once
+    // is common, and a NaN comparator leaves Array.sort's order undefined.
+    expect(sorter("—", "—")).toBe(0);
   });
 });
 
