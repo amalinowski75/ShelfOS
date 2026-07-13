@@ -12,8 +12,23 @@ const table = new Tabulator("#components-table", {
 
 // Fields the presenter always emits get bespoke formatting; anything else
 // (type, manufacturer, per-type parameter columns) renders as plain text.
+//
+// Every column also carries a live text header filter. Tabulator's default
+// "input" filter uses the "like" function — a case-insensitive substring match
+// applied as you type — and ANDs the active filters across columns, which is
+// exactly the "simple, additive per-column filtering" we want (spec §11).
 function columnDef(column) {
-  const base = { title: column.title, field: column.field };
+  const base = {
+    title: column.title,
+    field: column.field,
+    headerFilter: "input",
+    // Name each filter after its column so the placeholder and the screen-reader
+    // label distinguish otherwise-identical inputs.
+    headerFilterPlaceholder: `Filter ${column.title}…`,
+    headerFilterParams: {
+      elementAttributes: { "aria-label": `Filter ${column.title}` },
+    },
+  };
   switch (column.field) {
     case "mpn":
       return {
@@ -38,6 +53,16 @@ function columnDef(column) {
       return {
         ...base,
         hozAlign: "right",
+        // The cell shows a thousands-separated number ("1,234") but the default
+        // "like" filter only matches the raw value ("1234"); accept either so
+        // typing what you see filters as expected.
+        headerFilterFunc: (term, value) => {
+          const needle = String(term);
+          return (
+            String(value).includes(needle) ||
+            Number(value).toLocaleString().includes(needle)
+          );
+        },
         formatter: (cell) => {
           const value = Number(cell.getValue()) || 0;
           const zero = value === 0 ? " is-zero" : "";

@@ -410,6 +410,22 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
   font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em;
   font-weight: 650; color: var(--muted);
 }
+/* per-column live text filter (app.js headerFilter). The whole header cell is
+   sortable, so keep the input from triggering a sort when it is clicked. */
+.tabulator .tabulator-header .tabulator-col .tabulator-header-filter { padding: 0 12px 8px; }
+.tabulator .tabulator-header .tabulator-col .tabulator-header-filter input {
+  appearance: none; font: inherit; font-size: 13px; text-transform: none;
+  letter-spacing: normal; width: 100%; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); padding: 5px 9px; min-height: 30px;
+  transition: border-color .15s, box-shadow .15s;
+}
+.tabulator .tabulator-header .tabulator-col .tabulator-header-filter input:focus {
+  outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring);
+}
+.tabulator .tabulator-header .tabulator-col .tabulator-header-filter input::placeholder {
+  color: var(--faint); text-transform: none;
+}
 .tabulator .tabulator-header .tabulator-col.tabulator-sortable:hover {
   /* The header sits on --surface-2, which --row-hover barely differs from;
      use the stronger token so the hover reads. !important is needed to beat

@@ -419,7 +419,15 @@ def _invoice_with_line(client: TestClient) -> dict[str, object]:
 
 
 def test_invoices_list_page_renders(client: TestClient) -> None:
-    _invoice_with_line(client)
+    # The list is a Tabulator fed by JSON; the page renders the mount + loader.
+    html = client.get("/invoices").text
+    assert "Invoices" in html
+    assert 'id="invoices-table"' in html
+    assert "invoices_table.js" in html
+
+
+def test_invoices_feed_orders_and_formats(client: TestClient) -> None:
+    _invoice_with_line(client)  # draft INV-1 (Mouser), 2026-07-08
     # A second, later invoice to confirm ordering (newest invoice_date first).
     client.post(
         "/api/invoices",
@@ -430,16 +438,22 @@ def test_invoices_list_page_renders(client: TestClient) -> None:
             "currency": "USD",
         },
     )
-    html = client.get("/invoices").text
-    assert "Invoices" in html
-    assert 'href="/invoices/' in html
-    # Newest invoice_date first: INV-2 appears before INV-1 in the markup.
-    assert html.index("INV-2") < html.index("INV-1")
+    feed = client.get("/web/api/invoices").json()
+    numbers = [row["invoice_number"] for row in feed["data"]]
+    assert numbers.index("INV-2") < numbers.index("INV-1")
+
+    row = next(r for r in feed["data"] if r["invoice_number"] == "INV-2")
+    assert "id" in row  # the client links each row to /invoices/<id>
+    assert row["status"] == "draft"
+    assert row["gross"] == "—"  # a draft has no gross yet
+    assert row["net"].endswith("USD")  # money pre-formatted with its currency
+    assert feed["truncated"] is False
 
 
 def test_invoices_list_page_empty(client: TestClient) -> None:
-    html = client.get("/invoices").text
-    assert "No invoices yet." in html
+    # The page renders even with no invoices; the (empty) feed drives the table.
+    assert client.get("/invoices").status_code == 200
+    assert client.get("/web/api/invoices").json()["data"] == []
 
 
 def test_invoice_detail_page_links_to_components(client: TestClient) -> None:
@@ -534,7 +548,8 @@ def test_invoice_detail_empty_and_unlocated_line(client: TestClient) -> None:
 def test_invoice_list_hint_when_truncated(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When the list hits its cap, the page says so instead of dropping rows."""
+    """When the list hits its cap, the feed flags it so the UI can say so
+    instead of silently dropping rows."""
     from app.web import routes
 
     monkeypatch.setattr(routes, "_INVOICE_LIST_LIMIT", 1)
@@ -548,12 +563,15 @@ def test_invoice_list_hint_when_truncated(
                 "currency": "EUR",
             },
         )
-    assert "1 most recent invoices" in client.get("/invoices").text
+    feed = client.get("/web/api/invoices").json()
+    assert feed["truncated"] is True
+    assert feed["limit"] == 1
+    assert len(feed["data"]) == 1
 
 
 def test_invoice_pages_require_login(anon_client: TestClient) -> None:
-    """Both new invoice pages redirect an anonymous visitor to login."""
-    for path in ("/invoices", "/invoices/1"):
+    """The invoice pages and the list feed redirect an anonymous visitor."""
+    for path in ("/invoices", "/invoices/1", "/web/api/invoices"):
         resp = anon_client.get(path, follow_redirects=False)
         assert resp.status_code == 303
         assert resp.headers["location"] == "/login"

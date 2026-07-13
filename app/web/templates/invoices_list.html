@@ -1,14 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Invoices — ShelfOS{% endblock %}
 
-{% macro state_badge(finalized) -%}
-  {% if finalized %}
-  <span class="badge b-ok"><span class="dot"></span>finalized</span>
-  {% else %}
-  <span class="badge b-neutral"><span class="dot"></span>draft</span>
-  {% endif %}
-{%- endmacro %}
-
 {% block content %}
 <div class="head">
   <div>
@@ -22,43 +14,8 @@
   {% endif %}
 </div>
 
-{% if invoices %}
-<div class="card card-pad">
-  <div class="table-wrap">
-    <table class="data">
-      <thead>
-        <tr>
-          <th>Invoice</th>
-          <th>Supplier</th>
-          <th>Date</th>
-          <th style="text-align:right">Net</th>
-          <th style="text-align:right">Gross</th>
-          <th>Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for i in invoices %}
-        <tr>
-          <td class="mono"><a href="/invoices/{{ i.id }}">{{ i.invoice_number }}</a></td>
-          <td>{{ i.supplier }}</td>
-          <td class="mono">{{ i.invoice_date.isoformat() }}</td>
-          <td class="num">{{ format_money(i.total_net) }} {{ i.currency }}</td>
-          <td class="num">{% if i.is_finalized %}{{ format_money(i.total_gross) }} {{ i.currency }}{% else %}—{% endif %}</td>
-          <td>{{ state_badge(i.is_finalized) }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% if truncated %}
-  <p class="muted" style="margin: 12px 0 0">Showing the {{ list_limit }} most recent invoices.</p>
-  {% endif %}
-</div>
-{% else %}
-<div class="card card-pad">
-  <p class="empty">No invoices yet.</p>
-</div>
-{% endif %}
+<div id="invoices-table"></div>
+<p id="invoice-list-hint" class="muted" style="margin: 12px 0 0" hidden></p>
 
 {% if current_user.role.value != "read-only" %}
 <dialog id="invoice-new-dialog">
@@ -100,5 +57,6 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/invoices_table.js?v={{ static_version() }}"></script>
 <script src="/static/invoices.js?v={{ static_version() }}"></script>
 {% endblock %}
