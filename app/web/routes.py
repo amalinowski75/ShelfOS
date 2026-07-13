@@ -126,12 +126,16 @@ def index(
     user: User = Depends(require_web_user),
 ) -> HTMLResponse:
     """Main page: component table with a type filter (spec §11)."""
+    tree = ls.location_tree(session)
     return templates.TemplateResponse(
         request,
         "index.html",
         {
             "types": cs.list_types(session),
-            "location_tree": ls.location_tree(session),
+            "location_tree": tree,
+            # For the "New location" dialog reachable inline from the stock picker.
+            "location_types": [lt.value for lt in LocationType],
+            "location_options": _location_options(tree),
             "data_types": [dt.value for dt in ParameterDataType],
             "mounting_types": [mt.value for mt in MountingType],
             "current_user": user,
@@ -230,6 +234,7 @@ def invoice_detail(
     # The "New component" dialog only renders for a writer on a draft, so only
     # fetch its data then (avoids a types query on read-only/finalized views).
     can_edit = user.role.value != "read-only" and not invoice.is_finalized
+    tree = ls.location_tree(session) if can_edit else []
     return templates.TemplateResponse(
         request,
         "invoice_detail.html",
@@ -238,7 +243,10 @@ def invoice_detail(
             "lines": lines,
             # The line dialog (location tree-picker + "New component") only renders
             # for a writer on a draft, so only fetch its data then.
-            "location_tree": ls.location_tree(session) if can_edit else [],
+            "location_tree": tree,
+            # For the "New location" dialog reachable inline from the line picker.
+            "location_types": [lt.value for lt in LocationType] if can_edit else [],
+            "location_options": _location_options(tree) if can_edit else [],
             "types": cs.list_types(session) if can_edit else [],
             "mounting_types": [mt.value for mt in MountingType],
             "current_user": user,

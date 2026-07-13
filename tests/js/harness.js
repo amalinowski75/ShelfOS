@@ -112,6 +112,22 @@ export function newInvoiceFixture() {
     </form></dialog>`;
 }
 
+// The shared "New location" dialog markup (mirrors _location_dialog.html);
+// append to a page fixture to exercise the inline-create flow end to end.
+export function locationDialogFixture() {
+  return `
+    <dialog id="location-dialog"><form id="location-form">
+      <select name="type"><option value="rack">rack</option></select>
+      <input name="name" />
+      <select name="parent_id">
+        <option value="">None (top level)</option>
+        <option value="5">D1</option>
+      </select>
+      <p id="location-error" hidden></p>
+      <button type="submit"></button>
+    </form></dialog>`;
+}
+
 // The body of an editable (draft) invoice detail page, with one line.
 export function detailFixture({
   notes = "",
@@ -188,6 +204,7 @@ export function detailFixture({
           <span class="loc-picker-label">— none —</span>
         </button>
         <div class="loc-picker-menu" hidden>
+          <button type="button" class="loc-picker-new" hidden>+ New location</button>
           <button type="button" class="loc-picker-node loc-picker-none" data-loc-id="" data-loc-path="">— none —</button>
           <ul class="loc-picker-list">
             <li><div class="loc-picker-row"><span class="loc-picker-caret-spacer"></span>

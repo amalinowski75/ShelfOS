@@ -28,13 +28,17 @@
 </ul>
 {% endmacro %}
 
-{% macro location_picker(tree, name="location_id", optional=false) %}
+{% macro location_picker(tree, name="location_id", optional=false, creatable=true) %}
 <div class="loc-picker"{% if optional %} data-optional="true"{% endif %}>
   <input type="hidden" name="{{ name }}" value="" />
   <button type="button" class="control loc-picker-toggle">
     <span class="loc-picker-label">{% if optional %}— none —{% else %}Select a location…{% endif %}</span>
   </button>
   <div class="loc-picker-menu" hidden>
+    {% if creatable %}
+    {# Enhanced by location_tree.js; hidden when the New Location dialog is absent. #}
+    <button type="button" class="loc-picker-new" hidden>+ New location</button>
+    {% endif %}
     {% if optional %}
     <button type="button" class="loc-picker-node loc-picker-none" data-loc-id="" data-loc-path="">— none —</button>
     {% endif %}

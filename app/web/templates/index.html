@@ -141,6 +141,8 @@
 
 {% if current_user.role.value != "read-only" %}
 {% include "_component_dialog.html" %}
+{# "New location" dialog, reachable inline from the stock picker. #}
+{% include "_location_dialog.html" %}
 {% endif %}
 {% endblock %}
 

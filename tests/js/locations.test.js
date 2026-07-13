@@ -96,6 +96,26 @@ describe("location_dialog.js", () => {
     expect(document.getElementById("location-error").hidden).toBe(false);
   });
 
+  it("ignores a re-entrant submit while a create is in flight", async () => {
+    let resolveFetch;
+    const pending = new Promise((resolve) => {
+      resolveFetch = resolve;
+    });
+    const { window, document, fetchMock } = loadPage(locationDialogFixture(), SCRIPTS, {
+      fetchImpl: () => pending,
+    });
+    window.openLocationDialog();
+    document.querySelector('[name="name"]').value = "Rack A";
+    submit(document); // first submit — fetch is now in flight
+    submit(document); // a fast double-click must be ignored, not POST again
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    resolveFetch({
+      ok: true,
+      json: async () => ({ id: 9, name: "Rack A", type: "rack" }),
+    });
+    await tick();
+  });
+
   it("the standalone New Location button opens the dialog", () => {
     const { document } = loadPage(locationDialogFixture(), SCRIPTS);
     const showModal = vi.fn();

@@ -6,11 +6,20 @@ import {
   newInvoiceFixture,
   detailFixture,
   componentDialogFixture,
+  locationDialogFixture,
   fetchBody,
 } from "./harness.js";
 
 // location_tree.js enhances the line dialog's location picker (§7).
 const SCRIPTS = ["shared.js", "location_tree.js", "invoices.js"];
+// With the inline "+ New location" dialog wired in. location_dialog.js must load
+// before location_tree.js so window.openLocationDialog exists at enhance time.
+const SCRIPTS_INLINE_LOCATION = [
+  "shared.js",
+  "location_dialog.js",
+  "location_tree.js",
+  "invoices.js",
+];
 
 function submit(document, formId) {
   document
@@ -135,6 +144,48 @@ describe("invoices.js — edit line", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("/api/invoices/7/lines/3");
     expect(fetchMock.mock.calls[1][0]).toBe("/api/invoices/7/lines/3/location");
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ location_id: 9 });
+  });
+
+  // The real call site for the inline flow: the New Location dialog opens on top
+  // of the (already modal) line dialog, and its result selects into the picker.
+  it("creates a location inline from the add-line picker and selects it", async () => {
+    const fetchImpl = (url, opts) => {
+      if (url === "/web/api/components") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ data: [{ id: 11, mpn: "R-1", type: "resistor" }] }),
+        });
+      }
+      if (url === "/api/locations" && opts?.method === "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ id: 12, name: "Bin 3", type: "box", parent_id: 5 }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    };
+    const { document } = loadPage(
+      detailFixture() + locationDialogFixture(),
+      SCRIPTS_INLINE_LOCATION,
+      { fetchImpl },
+    );
+
+    document.getElementById("invoice-addline-btn").click();
+    await tick();
+    document.querySelector("#invoice-line-dialog .loc-picker-toggle").click();
+    document.querySelector("#invoice-line-dialog .loc-picker-new").click();
+    document.querySelector('#location-form [name="name"]').value = "Bin 3";
+    document.querySelector('#location-form [name="parent_id"]').value = "5";
+    submit(document, "location-form");
+    await tick();
+
+    // Parent D1 (id 5) is in the picker, so the new location is pathed under it.
+    expect(document.querySelector("#invoice-line-dialog [name='location_id']").value).toBe(
+      "12",
+    );
+    expect(
+      document.querySelector("#invoice-line-dialog .loc-picker-label").textContent.trim(),
+    ).toBe("D1 / Bin 3");
   });
 });
 

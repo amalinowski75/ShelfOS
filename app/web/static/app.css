@@ -273,6 +273,13 @@ table.kv tr:last-child th, table.kv tr:last-child td { border-bottom: none; }
 .loc-picker-type { color: var(--muted); font-size: 12px; }
 .loc-picker-none { color: var(--muted); }
 .loc-picker-empty { color: var(--muted); font-size: 13px; margin: 4px 8px; }
+.loc-picker-new {
+  display: block; width: 100%; text-align: left; font: inherit;
+  color: var(--accent); background: transparent; cursor: pointer;
+  border: none; padding: 5px 8px; border-radius: 6px;
+  border-bottom: 1px solid var(--border); margin-bottom: 4px;
+}
+.loc-picker-new:hover { background: var(--row-hover); }
 
 /* ---------- badges ---------- */
 .badge {

@@ -60,6 +60,9 @@ def test_stock_dialog_uses_location_tree_picker(client: TestClient) -> None:
     # Nodes carry the id and full path the widget selects/labels with.
     assert 'data-loc-path="Lab / Rack A"' in html
     assert "/static/location_tree.js" in html
+    # The picker offers inline location creation via the shared New Location dialog.
+    assert 'class="loc-picker-new"' in html
+    assert 'id="location-dialog"' in html
 
 
 def test_index_shows_new_type_control_for_writer(client: TestClient) -> None:
@@ -98,6 +101,8 @@ def test_new_component_control_hidden_for_read_only(client: TestClient) -> None:
     assert 'id="new-component-btn"' not in html
     # The dialog markup itself is gated too, not just the button.
     assert 'id="component-dialog"' not in html
+    # The stock dialog (and so its inline New Location dialog) is gated as well.
+    assert 'id="location-dialog"' not in html
 
 
 def test_require_web_user_heals_missing_csrf_token(session) -> None:  # type: ignore[no-untyped-def]
@@ -619,6 +624,9 @@ def test_invoice_detail_draft_shows_write_controls(client: TestClient) -> None:
     assert 'class="loc-picker"' in html
     assert 'data-loc-path="D1"' in html  # the seeded location
     assert "— none —" in html
+    # …and it can create a location inline via the shared New Location dialog.
+    assert 'class="loc-picker-new"' in html
+    assert 'id="location-dialog"' in html
 
 
 def test_invoice_detail_finalized_is_read_only(client: TestClient) -> None:
@@ -634,6 +642,7 @@ def test_invoice_detail_finalized_is_read_only(client: TestClient) -> None:
         'id="invoice-line-dialog"',
         'id="invoice-finalize-dialog"',
         'id="component-dialog"',
+        'id="location-dialog"',
         'id="invoice-add-component-btn"',
         'data-act="edit-line"',
         'data-act="remove-line"',
@@ -677,6 +686,7 @@ def test_invoice_detail_read_only_account_has_no_controls(
     assert 'id="invoice-edit-btn"' not in html
     assert 'data-act="edit-line"' not in html
     assert 'id="invoice-line-dialog"' not in html
+    assert 'id="location-dialog"' not in html
 
 
 def test_locations_page_renders_tree(client: TestClient) -> None:
