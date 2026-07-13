@@ -39,6 +39,36 @@ describe("app.js — table formatting", () => {
     expect(window.columnDef({ field: "type", title: "Type" }).formatter).toBeUndefined();
   });
 
+  it("gives every data column a live text header filter, but not the actions column", () => {
+    const { window } = loadPage(typePageFixture(), SCRIPTS);
+    for (const field of ["mpn", "package", "mounting_type", "quantity", "type"]) {
+      const col = window.columnDef({ field, title: `Col ${field}` });
+      // "input" + Tabulator's default "like" func = case-insensitive substring
+      // filter applied live; multiple active filters AND together. That runtime
+      // behaviour is Tabulator's own (the harness stubs it), so here we only
+      // assert the wiring: filter present and labelled per column.
+      expect(col.headerFilter).toBe("input");
+      expect(col.headerFilterPlaceholder).toBe(`Filter Col ${field}…`);
+      expect(col.headerFilterParams.elementAttributes["aria-label"]).toBe(
+        `Filter Col ${field}`,
+      );
+    }
+    // The row-action buttons column is not filterable.
+    expect(window.actionColumn().headerFilter).toBeUndefined();
+  });
+
+  it("quantity filter matches both the raw and thousands-separated number", () => {
+    const { window } = loadPage(typePageFixture(), SCRIPTS);
+    const { headerFilterFunc } = window.columnDef({
+      field: "quantity",
+      title: "Qty",
+    });
+    // Cell shows "1,234"; typing either form should match.
+    expect(headerFilterFunc("1234", 1234)).toBe(true);
+    expect(headerFilterFunc("1,234", 1234)).toBe(true);
+    expect(headerFilterFunc("99", 1234)).toBe(false);
+  });
+
   it("builds the type-filter query string", () => {
     const { window, document } = loadPage(typePageFixture(), SCRIPTS);
     expect(window.currentTypeQuery()).toBe("");
