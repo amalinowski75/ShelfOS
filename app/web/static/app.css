@@ -242,7 +242,6 @@ table.kv tr:last-child th, table.kv tr:last-child td { border-bottom: none; }
 .loc-tree .loc-name { font-weight: 550; margin-right: 8px; }
 
 /* ---------- location tree-picker (§7) ---------- */
-.loc-picker { position: relative; }
 .loc-picker-toggle { display: flex; align-items: center; text-align: left; cursor: pointer; }
 .loc-picker-toggle::after { content: "▾"; margin-left: auto; padding-left: 8px; color: var(--muted); }
 .loc-picker-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

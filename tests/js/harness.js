@@ -118,7 +118,17 @@ export function detailFixture({
   lineSpn = "",
   lineLocationId = "",
   withFinalize = false,
+  secondLine = false,
 } = {}) {
+  const extraRow = secondLine
+    ? `<tr data-line-id="4" data-quantity="2" data-unit-price="2.00"
+           data-spn="" data-location-id="">
+         <td>
+           <button type="button" data-act="edit-line"></button>
+           <button type="button" data-act="remove-line"></button>
+         </td>
+       </tr>`
+    : "";
   const finalize = withFinalize
     ? `<button id="invoice-finalize-btn"></button>
        <dialog id="invoice-finalize-dialog"><form id="invoice-finalize-form">
@@ -149,6 +159,7 @@ export function detailFixture({
             <button type="button" data-act="remove-line"></button>
           </td>
         </tr>
+        ${extraRow}
       </tbody></table>
     </div>
 

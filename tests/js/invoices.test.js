@@ -307,6 +307,50 @@ describe("invoices.js — error surfacing and add-line", () => {
     );
   });
 
+  it("does not leak a location between lines when switching edits", () => {
+    const { document } = loadPage(
+      detailFixture({ lineLocationId: "5", secondLine: true }),
+      SCRIPTS,
+    );
+    const editButtons = document.querySelectorAll('[data-act="edit-line"]');
+    editButtons[0].click(); // line 3 has D1
+    expect(document.querySelector(".loc-picker-label").textContent.trim()).toBe(
+      "D1",
+    );
+    editButtons[1].click(); // line 4 has no location -> reset() clears the prior pick
+    expect(document.querySelector('[name="location_id"]').value).toBe("");
+    expect(document.querySelector(".loc-picker-label").textContent.trim()).toBe(
+      "— none —",
+    );
+  });
+
+  it("restores the placeholder when the add-line dialog is reopened", async () => {
+    const fetchImpl = (url) =>
+      url === "/web/api/components"
+        ? Promise.resolve({
+            ok: true,
+            json: async () => ({
+              data: [{ id: 11, mpn: "R", manufacturer: null, type: "resistor" }],
+            }),
+          })
+        : Promise.resolve({ ok: true, json: async () => ({}) });
+    const { document } = loadPage(detailFixture(), SCRIPTS, { fetchImpl });
+
+    document.getElementById("invoice-addline-btn").click();
+    await tick();
+    document.querySelector('.loc-picker-node[data-loc-id="5"]').click(); // pick D1
+    expect(document.querySelector(".loc-picker-label").textContent.trim()).toBe(
+      "D1",
+    );
+
+    document.getElementById("invoice-addline-btn").click(); // reopen -> reset
+    await tick();
+    expect(document.querySelector('[name="location_id"]').value).toBe("");
+    expect(document.querySelector(".loc-picker-label").textContent.trim()).toBe(
+      "— none —",
+    );
+  });
+
   it("guards against a double submit while a write is in flight", async () => {
     const { document, fetchMock } = loadPage(newInvoiceFixture(), SCRIPTS, {
       fetchImpl: () =>
