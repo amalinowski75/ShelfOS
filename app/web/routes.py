@@ -28,6 +28,7 @@ from app.services import user_service as us
 from app.services._common import require_entity
 from app.web.presenter import (
     build_component_table,
+    build_invoice_table,
     format_money,
     format_parameter_value,
 )
@@ -173,25 +174,23 @@ def locations_page(
     )
 
 
+@router.get("/web/api/invoices")
+def invoices_feed(
+    session: Session = Depends(get_session),
+    user: User = Depends(require_web_user),
+) -> dict[str, Any]:
+    """JSON feed for the Tabulator invoice list (newest first, §16)."""
+    return build_invoice_table(session, _INVOICE_LIST_LIMIT)
+
+
 @router.get("/invoices", response_class=HTMLResponse)
 def invoices_list(
     request: Request,
-    session: Session = Depends(get_session),
     user: User = Depends(require_web_user),
 ) -> HTMLResponse:
-    """Invoice list, newest first (spec §16)."""
-    invoices = inv.list_invoices(session, limit=_INVOICE_LIST_LIMIT)
+    """Invoice list shell; rows load from /web/api/invoices (spec §16)."""
     return templates.TemplateResponse(
-        request,
-        "invoices_list.html",
-        {
-            "invoices": invoices,
-            # True when the list was capped, so the page can say so rather than
-            # silently omitting older invoices.
-            "truncated": len(invoices) == _INVOICE_LIST_LIMIT,
-            "list_limit": _INVOICE_LIST_LIMIT,
-            "current_user": user,
-        },
+        request, "invoices_list.html", {"current_user": user}
     )
 
 

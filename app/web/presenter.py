@@ -15,6 +15,7 @@ from sqlmodel import Session, col, select
 from app.models.component import ComponentParameter, ComponentType, ParameterDefinition
 from app.models.enums import ParameterDataType
 from app.services import component_service as cs
+from app.services import invoice_service as inv
 from app.services import stock_service as ss
 from app.units import format_engineering
 
@@ -64,6 +65,40 @@ def format_parameter_value(
             return "yes" if param.value_bool else "no"
         case _:  # TEXT and ENUM both live in value_text.
             return param.value_text or ""
+
+
+def build_invoice_table(session: Session, limit: int) -> dict[str, Any]:
+    """Return ``{"data": [...], "truncated": bool, "limit": int}`` for the
+    Tabulator invoice list (newest first, §16).
+
+    Money is pre-formatted here so the exact ``Decimal`` amounts (D5) never round
+    through JavaScript; the client only sorts, filters and renders the strings.
+    A draft has no gross yet, so its gross reads ``"—"``. ``truncated`` says the
+    list hit ``limit`` and older invoices are hidden.
+    """
+    # Fetch one past the cap so we can tell "exactly `limit` rows exist" (nothing
+    # hidden) from "more than `limit` exist" (older ones dropped), then show only
+    # the first `limit`.
+    invoices = inv.list_invoices(session, limit=limit + 1)
+    truncated = len(invoices) > limit
+    invoices = invoices[:limit]
+    data = [
+        {
+            "id": invoice.id,
+            "invoice_number": invoice.invoice_number,
+            "supplier": invoice.supplier,
+            "invoice_date": invoice.invoice_date.isoformat(),
+            "net": f"{format_money(invoice.total_net)} {invoice.currency}",
+            "gross": (
+                f"{format_money(invoice.total_gross)} {invoice.currency}"
+                if invoice.is_finalized
+                else "—"
+            ),
+            "status": "finalized" if invoice.is_finalized else "draft",
+        }
+        for invoice in invoices
+    ]
+    return {"data": data, "truncated": truncated, "limit": limit}
 
 
 def build_component_table(

@@ -112,6 +112,14 @@ export function newInvoiceFixture() {
     </form></dialog>`;
 }
 
+// The invoice-list page shell (mirrors invoices_list.html): the Tabulator mount
+// and the truncation hint. Rows come from the /web/api/invoices feed.
+export function invoicesPageFixture() {
+  return `
+    <div id="invoices-table"></div>
+    <p id="invoice-list-hint" hidden></p>`;
+}
+
 // The shared "New location" dialog markup (mirrors _location_dialog.html);
 // append to a page fixture to exercise the inline-create flow end to end.
 export function locationDialogFixture() {
