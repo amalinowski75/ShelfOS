@@ -103,6 +103,27 @@ describe("app.js — new component", () => {
     expect(error.textContent).toBe("duplicate");
   });
 
+  it("ignores a second submit while the create is in flight", async () => {
+    let resolveFetch;
+    const pending = new Promise((resolve) => {
+      resolveFetch = resolve;
+    });
+    const impl = (url, opts) =>
+      url === "/api/components" && opts?.method === "POST"
+        ? pending
+        : fetchImpl(url, opts);
+    const { document, fetchMock } = await openWithType(impl);
+    document.getElementById("component-form").mpn.value = "R-100";
+    fire(document.getElementById("component-form"), "submit"); // POST in flight
+    fire(document.getElementById("component-form"), "submit"); // must be ignored
+    const posts = fetchMock.mock.calls.filter(
+      ([url, opts]) => url === "/api/components" && opts.method === "POST",
+    );
+    expect(posts.length).toBe(1);
+    resolveFetch({ ok: true, json: async () => ({ id: 99, type_id: 1 }) });
+    await tick();
+  });
+
   it("keeps explicit falsy values (bool 'no', number '0')", async () => {
     const { document, fetchMock } = await openWithType();
     document.querySelector('[data-definition-id="10"]').value = "0"; // number zero
