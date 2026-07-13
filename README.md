@@ -47,7 +47,7 @@ npm test
 Run the API locally (interactive docs at `/docs`):
 
 ```bash
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 9000
 ```
 
 ### Authentication
