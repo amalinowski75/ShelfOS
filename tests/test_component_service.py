@@ -331,6 +331,110 @@ def test_enum_values_of_returns_tokens_in_sort_order(session: Session) -> None:
     assert cs.enum_values_of(session, resistance.id) == []
 
 
+def test_create_component_with_values_batches_enum_validation(
+    session: Session,
+) -> None:
+    from sqlalchemy import event
+
+    ctype = cs.create_type(session, "capacitor")
+    dielectric = cs.add_parameter_definition(
+        session,
+        ctype.id,
+        name="dielectric",
+        label="Dielectric",
+        data_type=ParameterDataType.ENUM,
+        enum_values=["X7R", "C0G"],
+    )
+    package = cs.add_parameter_definition(
+        session,
+        ctype.id,
+        name="package",
+        label="Package",
+        data_type=ParameterDataType.ENUM,
+        enum_values=["0402", "0603"],
+    )
+
+    enum_selects = 0
+
+    def count(conn, cursor, statement, parameters, context, executemany):  # type: ignore[no-untyped-def]
+        nonlocal enum_selects
+        normalized = statement.lstrip().lower()
+        if normalized.startswith("select") and "parameter_enum_values" in normalized:
+            enum_selects += 1
+
+    bind = session.get_bind()
+    event.listen(bind, "before_cursor_execute", count)
+    try:
+        component = cs.create_component_with_values(
+            session,
+            ctype.id,
+            values=[(dielectric.id, "X7R"), (package.id, "0603")],
+        )
+    finally:
+        event.remove(bind, "before_cursor_execute", count)
+
+    # One batched lookup for both enum parameters, not one query per value.
+    assert enum_selects == 1
+    values = {
+        v.parameter_definition_id: v.value_text
+        for v in cs.list_parameter_values(session, component.id)
+    }
+    assert values == {dielectric.id: "X7R", package.id: "0603"}
+
+
+def test_create_component_with_values_skips_enum_query_when_no_enums(
+    session: Session,
+) -> None:
+    from sqlalchemy import event
+
+    ctype = cs.create_type(session, "resistor")
+    resistance = cs.add_parameter_definition(
+        session,
+        ctype.id,
+        name="resistance",
+        label="Resistance",
+        data_type=ParameterDataType.NUMBER,
+    )
+
+    enum_selects = 0
+
+    def count(conn, cursor, statement, parameters, context, executemany):  # type: ignore[no-untyped-def]
+        nonlocal enum_selects
+        normalized = statement.lstrip().lower()
+        if normalized.startswith("select") and "parameter_enum_values" in normalized:
+            enum_selects += 1
+
+    bind = session.get_bind()
+    event.listen(bind, "before_cursor_execute", count)
+    try:
+        cs.create_component_with_values(
+            session, ctype.id, values=[(resistance.id, "4k7")]
+        )
+    finally:
+        event.remove(bind, "before_cursor_execute", count)
+
+    # A create with no enum parameters must not touch parameter_enum_values.
+    assert enum_selects == 0
+
+
+def test_create_component_with_values_rejects_bad_enum_token(session: Session) -> None:
+    ctype = cs.create_type(session, "capacitor")
+    dielectric = cs.add_parameter_definition(
+        session,
+        ctype.id,
+        name="dielectric",
+        label="Dielectric",
+        data_type=ParameterDataType.ENUM,
+        enum_values=["X7R", "C0G"],
+    )
+    # The batched allowed-set path still rejects an out-of-set token, atomically.
+    with pytest.raises(ValidationError):
+        cs.create_component_with_values(
+            session, ctype.id, values=[(dielectric.id, "NP0")]
+        )
+    assert cs.list_components(session, type_id=ctype.id) == []
+
+
 def test_enum_values_by_definition_batches_multiple(session: Session) -> None:
     ctype = cs.create_type(session, "capacitor")
     dielectric = cs.add_parameter_definition(

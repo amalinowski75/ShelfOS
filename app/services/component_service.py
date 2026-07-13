@@ -415,6 +415,22 @@ def create_component_with_values(
             if pairs
             else {}
         )
+        # Batch-load allowed enum tokens for the enum definitions being set in one
+        # query, so validating K enum values costs one query, not K. Restrict to
+        # known enum definitions so an all-non-enum create issues no enum query at
+        # all (and foreign/unknown ids stay out of the IN clause).
+        enum_ids = [
+            definition_id
+            for definition_id, _ in pairs
+            if (d := definitions.get(definition_id)) is not None
+            and d.data_type is ParameterDataType.ENUM
+        ]
+        allowed_enums = {
+            definition_id: set(values)
+            for definition_id, values in enum_values_by_definition(
+                session, enum_ids
+            ).items()
+        }
         seen: set[int] = set()
         for definition_id, value in pairs:
             if definition_id in seen:
@@ -431,7 +447,17 @@ def create_component_with_values(
                 component_id=cast(int, component.id),
                 parameter_definition_id=definition_id,
             )
-            _assign_value(session, param, definition, value)
+            _assign_value(
+                session,
+                param,
+                definition,
+                value,
+                # For an enum definition with no rows this is an empty set, which
+                # correctly rejects any token (an enum always has ≥1 allowed value).
+                allowed_enum=allowed_enums.get(definition_id, set())
+                if definition.data_type is ParameterDataType.ENUM
+                else None,
+            )
             session.add(param)
             if user_id is not None:
                 audit_service.record_change(
@@ -590,8 +616,16 @@ def _assign_value(
     param: ComponentParameter,
     definition: ParameterDefinition,
     value: ParameterValue,
+    *,
+    allowed_enum: set[str] | None = None,
 ) -> None:
-    """Populate exactly the value column matching the definition's data type."""
+    """Populate exactly the value column matching the definition's data type.
+
+    ``allowed_enum`` lets a caller pass the definition's allowed enum tokens when
+    it has already batch-loaded them (see ``create_component_with_values``),
+    avoiding a per-value ``enum_values_of`` query; when ``None`` the set is
+    fetched here, which is fine for the single-value ``set_parameter_value`` path.
+    """
     param.value_num = None
     param.value_text = None
     param.value_bool = None
@@ -610,7 +644,11 @@ def _assign_value(
         case ParameterDataType.ENUM:
             if not isinstance(value, str):
                 raise ValidationError(f"expected an enum token for {definition.name!r}")
-            allowed = set(enum_values_of(session, cast(int, definition.id)))
+            allowed = (
+                allowed_enum
+                if allowed_enum is not None
+                else set(enum_values_of(session, cast(int, definition.id)))
+            )
             if value not in allowed:
                 raise ValidationError(
                     f"{value!r} is not an allowed value for {definition.name!r}"
