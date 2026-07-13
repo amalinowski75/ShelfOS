@@ -106,5 +106,63 @@
       collapseAll();
       close();
     };
+
+    // Inline "+ New location": create a location without leaving this picker,
+    // then insert it as a selectable entry and select it. Enhanced only when the
+    // shared New Location dialog is present on the page (window.openLocationDialog);
+    // the button stays hidden otherwise, so it never dangles without a handler.
+    const newBtn = picker.querySelector(".loc-picker-new");
+    if (newBtn && typeof window.openLocationDialog === "function") {
+      newBtn.hidden = false;
+      newBtn.addEventListener("click", () => {
+        openLocationDialog(addCreatedLocation);
+      });
+    }
+
+    function addCreatedLocation(created) {
+      // The POST response carries no computed path, so build it from the parent
+      // node already in the menu (falling back to the bare name at top level).
+      let path = created.name;
+      if (created.parent_id != null) {
+        const parent = [...menu.querySelectorAll(".loc-picker-node")].find(
+          (node) => node.dataset.locId === String(created.parent_id),
+        );
+        if (parent) path = `${parent.dataset.locPath} / ${created.name}`;
+      }
+      // Append a flat, path-labelled node so setValue can match it and a re-open
+      // keeps it visible; the server-rendered tree nests it properly on the next
+      // page load.
+      let list = menu.querySelector(".loc-picker-list");
+      if (!list) {
+        menu.querySelector(".loc-picker-empty")?.remove();
+        list = document.createElement("ul");
+        list.className = "loc-picker-list";
+        menu.appendChild(list);
+      }
+      const li = document.createElement("li");
+      const row = document.createElement("div");
+      row.className = "loc-picker-row";
+      const spacer = document.createElement("span");
+      spacer.className = "loc-picker-caret-spacer";
+      const node = document.createElement("button");
+      node.type = "button";
+      node.className = "loc-picker-node";
+      node.dataset.locId = String(created.id);
+      node.dataset.locPath = path;
+      node.textContent = path;
+      if (created.type) {
+        // Mirror the server-rendered nodes, which carry a type badge.
+        const type = document.createElement("span");
+        type.className = "loc-picker-type";
+        type.textContent = created.type;
+        node.appendChild(type);
+      }
+      row.append(spacer, node);
+      li.append(row);
+      list.appendChild(li);
+
+      picker.setValue(created.id);
+      close();
+    }
   }
 })();
