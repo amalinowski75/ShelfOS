@@ -274,6 +274,70 @@ export function componentDialogFixture(types = [{ id: 1, name: "resistor" }]) {
     </form></dialog>`;
 }
 
+// The components page essentials app.js needs at load: type filter, table mount,
+// the New Type dialog (+ its param-row <template>) and New Type / New Component
+// buttons. Mirrors index.html closely enough to drive the type-builder flow.
+export function typePageFixture(types = [{ id: 1, name: "resistor" }]) {
+  const options = types
+    .map((t) => `<option value="${t.id}">${t.name}</option>`)
+    .join("");
+  return `
+    <select id="type-filter" class="control"><option value="">All types</option>${options}</select>
+    <button id="new-type-btn"></button>
+    <button id="new-component-btn"></button>
+    <div id="components-table"></div>
+    <dialog id="stock-dialog">
+      <strong id="stock-dialog-title"></strong>
+      <form id="stock-form">
+        <input name="component_id" /><input name="mode" />
+        <input name="quantity" type="number" />
+        <div class="loc-picker">
+          <input type="hidden" name="location_id" value="" />
+          <button type="button" class="loc-picker-toggle">
+            <span class="loc-picker-label">Select a location…</span>
+          </button>
+          <div class="loc-picker-menu" hidden>
+            <button type="button" class="loc-picker-new" hidden>+ New location</button>
+            <p class="loc-picker-empty">No locations yet — add one on the Locations page.</p>
+          </div>
+        </div>
+        <input name="note" />
+        <p id="stock-error" hidden></p>
+        <button type="submit"></button>
+      </form>
+    </dialog>
+    <dialog id="type-dialog">
+      <form id="type-form">
+        <input name="type-name" />
+        <select name="parent-id"><option value="">None (top level)</option>${options}</select>
+        <button type="button" id="add-param"></button>
+        <p class="params-empty" id="params-empty"></p>
+        <div class="params" id="params"></div>
+        <p id="type-error" hidden></p>
+        <button type="submit"></button>
+      </form>
+      <p id="inherited-hint"></p>
+      <ul id="inherited-list"></ul>
+    </dialog>
+    <template id="param-row-template">
+      <div class="param-row">
+        <input name="p-name" />
+        <input name="p-label" />
+        <select name="p-data-type">
+          <option value="number">number</option>
+          <option value="text">text</option>
+          <option value="bool">bool</option>
+          <option value="enum">enum</option>
+        </select>
+        <input name="p-unit" />
+        <div class="param-enum" hidden><input name="p-enum" /></div>
+        <label><input type="checkbox" name="p-table" /></label>
+        <label><input type="checkbox" name="p-filter" /></label>
+        <button type="button" class="param-remove"></button>
+      </div>
+    </template>`;
+}
+
 // Parse the JSON body of the Nth fetch call.
 export function fetchBody(fetchMock, call = 0) {
   return JSON.parse(fetchMock.mock.calls[call][1].body);
