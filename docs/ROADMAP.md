@@ -60,10 +60,10 @@ Priorities set by the user on 2026-07-08.
    only if required.
 9. **User management window (UI).** Simple admin screen to manage user accounts
    from the web UI (auth/roles already work via API). Very low priority.
-10. **Split CI into parallel jobs.** `pytest` and `npm test` (Vitest) run
-    sequentially in the single required `checks` job. Split them into two
-    parallel jobs to cut CI wall-clock; requires adding the second job as a
-    required status check in branch protection. Low priority.
+10. **Split CI into parallel jobs.** ✅ **Done** (PR #25). `pytest` and
+    `npm test` (Vitest) now run as independent parallel `python` / `web` jobs; a
+    lightweight `checks` gate (`needs: [python, web]`) preserves the existing
+    required status check, so no ruleset change was needed.
 
 Deferred / unscheduled: BOM & KiCad integration (§22), Playwright UI tests,
 `app.js` JS test coverage (stock dialogs + New Type builder — needs a
