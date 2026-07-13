@@ -236,8 +236,9 @@ def invoice_detail(
         {
             "invoice": invoice,
             "lines": lines,
-            "locations": ls.list_all(session),
-            # For the shared "New component" dialog reachable from the picker.
+            # The line dialog (location tree-picker + "New component") only renders
+            # for a writer on a draft, so only fetch its data then.
+            "location_tree": ls.location_tree(session) if can_edit else [],
             "types": cs.list_types(session) if can_edit else [],
             "mounting_types": [mt.value for mt in MountingType],
             "current_user": user,

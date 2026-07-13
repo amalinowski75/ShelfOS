@@ -118,7 +118,17 @@ export function detailFixture({
   lineSpn = "",
   lineLocationId = "",
   withFinalize = false,
+  secondLine = false,
 } = {}) {
+  const extraRow = secondLine
+    ? `<tr data-line-id="4" data-quantity="2" data-unit-price="2.00"
+           data-spn="" data-location-id="">
+         <td>
+           <button type="button" data-act="edit-line"></button>
+           <button type="button" data-act="remove-line"></button>
+         </td>
+       </tr>`
+    : "";
   const finalize = withFinalize
     ? `<button id="invoice-finalize-btn"></button>
        <dialog id="invoice-finalize-dialog"><form id="invoice-finalize-form">
@@ -149,6 +159,7 @@ export function detailFixture({
             <button type="button" data-act="remove-line"></button>
           </td>
         </tr>
+        ${extraRow}
       </tbody></table>
     </div>
 
@@ -171,11 +182,21 @@ export function detailFixture({
       <input name="quantity" type="number" />
       <input name="unit_price" type="number" />
       <input name="supplier_part_number" />
-      <select name="location_id">
-        <option value="">none</option>
-        <option value="5">D1</option>
-        <option value="9">D2</option>
-      </select>
+      <div class="loc-picker" data-optional="true">
+        <input type="hidden" name="location_id" value="" />
+        <button type="button" class="loc-picker-toggle">
+          <span class="loc-picker-label">— none —</span>
+        </button>
+        <div class="loc-picker-menu" hidden>
+          <button type="button" class="loc-picker-node loc-picker-none" data-loc-id="" data-loc-path="">— none —</button>
+          <ul class="loc-picker-list">
+            <li><div class="loc-picker-row"><span class="loc-picker-caret-spacer"></span>
+              <button type="button" class="loc-picker-node" data-loc-id="5" data-loc-path="D1">D1</button></div></li>
+            <li><div class="loc-picker-row"><span class="loc-picker-caret-spacer"></span>
+              <button type="button" class="loc-picker-node" data-loc-id="9" data-loc-path="D2">D2</button></div></li>
+          </ul>
+        </div>
+      </div>
       <p id="invoice-line-error" hidden></p>
       <strong id="invoice-line-title"></strong>
       <button type="submit"></button>

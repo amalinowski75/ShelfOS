@@ -32,7 +32,7 @@
 <div class="loc-picker"{% if optional %} data-optional="true"{% endif %}>
   <input type="hidden" name="{{ name }}" value="" />
   <button type="button" class="control loc-picker-toggle">
-    <span class="loc-picker-label">Select a location…</span>
+    <span class="loc-picker-label">{% if optional %}— none —{% else %}Select a location…{% endif %}</span>
   </button>
   <div class="loc-picker-menu" hidden>
     {% if optional %}

@@ -9,7 +9,8 @@ import {
   fetchBody,
 } from "./harness.js";
 
-const SCRIPTS = ["shared.js", "invoices.js"];
+// location_tree.js enhances the line dialog's location picker (§7).
+const SCRIPTS = ["shared.js", "location_tree.js", "invoices.js"];
 
 function submit(document, formId) {
   document
@@ -94,6 +95,24 @@ describe("invoices.js — edit line", () => {
     );
     document.querySelector('[data-act="edit-line"]').click();
     document.getElementById("invoice-line-form").location_id.value = "";
+    submit(document, "invoice-line-form");
+    await tick();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    const error = document.getElementById("invoice-line-error");
+    expect(error.hidden).toBe(false);
+    expect(error.textContent).toMatch(/can't be cleared/);
+  });
+
+  it("rejects clearing a location picked via the — none — node", async () => {
+    const { document, fetchMock } = loadPage(
+      detailFixture({ lineLocationId: "5" }),
+      SCRIPTS,
+    );
+    document.querySelector('[data-act="edit-line"]').click(); // prefilled to D1 (5)
+    // Clear through the widget, not by writing the hidden input directly.
+    document.querySelector(".loc-picker-none").click();
+    expect(document.querySelector('[name="location_id"]').value).toBe("");
     submit(document, "invoice-line-form");
     await tick();
 
@@ -247,6 +266,91 @@ describe("invoices.js — error surfacing and add-line", () => {
     });
   });
 
+  it("picks a location for the new line through the tree-picker", async () => {
+    const fetchImpl = (url) =>
+      url === "/web/api/components"
+        ? Promise.resolve({
+            ok: true,
+            json: async () => ({
+              data: [{ id: 11, mpn: "R-1", manufacturer: null, type: "resistor" }],
+            }),
+          })
+        : Promise.resolve({ ok: true, json: async () => ({ id: 99 }) });
+    const { document, fetchMock } = loadPage(detailFixture(), SCRIPTS, {
+      fetchImpl,
+    });
+    document.getElementById("invoice-addline-btn").click();
+    await tick();
+
+    const form = document.getElementById("invoice-line-form");
+    form.quantity.value = "2";
+    form.unit_price.value = "1";
+    // Select a location through the widget (node D1 = id 5).
+    document.querySelector('.loc-picker-node[data-loc-id="5"]').click();
+    expect(form.location_id.value).toBe("5");
+    submit(document, "invoice-line-form");
+    await tick();
+
+    const post = fetchMock.mock.calls.find(
+      ([url, opts]) => url === "/api/invoices/7/lines" && opts.method === "POST",
+    );
+    expect(JSON.parse(post[1].body).location_id).toBe(5);
+  });
+
+  it("edit line reflects the existing location in the picker", () => {
+    const { document } = loadPage(detailFixture({ lineLocationId: "5" }), SCRIPTS);
+    document.querySelector('[data-act="edit-line"]').click();
+    // openEditLine calls the picker's setValue -> hidden input and label follow.
+    expect(document.querySelector('[name="location_id"]').value).toBe("5");
+    expect(document.querySelector(".loc-picker-label").textContent.trim()).toBe(
+      "D1",
+    );
+  });
+
+  it("does not leak a location between lines when switching edits", () => {
+    const { document } = loadPage(
+      detailFixture({ lineLocationId: "5", secondLine: true }),
+      SCRIPTS,
+    );
+    const editButtons = document.querySelectorAll('[data-act="edit-line"]');
+    editButtons[0].click(); // line 3 has D1
+    expect(document.querySelector(".loc-picker-label").textContent.trim()).toBe(
+      "D1",
+    );
+    editButtons[1].click(); // line 4 has no location -> reset() clears the prior pick
+    expect(document.querySelector('[name="location_id"]').value).toBe("");
+    expect(document.querySelector(".loc-picker-label").textContent.trim()).toBe(
+      "— none —",
+    );
+  });
+
+  it("restores the placeholder when the add-line dialog is reopened", async () => {
+    const fetchImpl = (url) =>
+      url === "/web/api/components"
+        ? Promise.resolve({
+            ok: true,
+            json: async () => ({
+              data: [{ id: 11, mpn: "R", manufacturer: null, type: "resistor" }],
+            }),
+          })
+        : Promise.resolve({ ok: true, json: async () => ({}) });
+    const { document } = loadPage(detailFixture(), SCRIPTS, { fetchImpl });
+
+    document.getElementById("invoice-addline-btn").click();
+    await tick();
+    document.querySelector('.loc-picker-node[data-loc-id="5"]').click(); // pick D1
+    expect(document.querySelector(".loc-picker-label").textContent.trim()).toBe(
+      "D1",
+    );
+
+    document.getElementById("invoice-addline-btn").click(); // reopen -> reset
+    await tick();
+    expect(document.querySelector('[name="location_id"]').value).toBe("");
+    expect(document.querySelector(".loc-picker-label").textContent.trim()).toBe(
+      "— none —",
+    );
+  });
+
   it("guards against a double submit while a write is in flight", async () => {
     const { document, fetchMock } = loadPage(newInvoiceFixture(), SCRIPTS, {
       fetchImpl: () =>
@@ -273,7 +377,12 @@ describe("invoices.js — error surfacing and add-line", () => {
 });
 
 describe("invoices.js — new component from the add-line flow", () => {
-  const SHARED = ["shared.js", "component_dialog.js", "invoices.js"];
+  const SHARED = [
+    "shared.js",
+    "component_dialog.js",
+    "location_tree.js",
+    "invoices.js",
+  ];
 
   it("creates a component in the picker and selects it, without new backend", async () => {
     // The picker feed deliberately never includes the new component, proving the

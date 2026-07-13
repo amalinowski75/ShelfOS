@@ -120,6 +120,9 @@ if (detail && lineDialog) {
   const lineTitle = document.getElementById("invoice-line-title");
   const componentField = document.getElementById("line-component-field");
   const componentSelect = lineForm.component_id;
+  // The location field is the tree-picker (location_tree.js); it backs a hidden
+  // `location_id` input the submit logic still reads.
+  const locationPicker = lineForm.querySelector(".loc-picker");
 
   // Fetch the component list once and reuse it for the picker.
   let componentOptions = null;
@@ -154,6 +157,7 @@ if (detail && lineDialog) {
     lineForm.line_id.value = "";
     lineForm.dataset.originalLocationId = "";
     lineForm.dataset.originalSpn = "";
+    locationPicker?.reset();
     componentField.hidden = false;
     componentSelect.required = true;
     const options = await loadComponentOptions();
@@ -199,7 +203,9 @@ if (detail && lineDialog) {
     lineForm.quantity.value = row.dataset.quantity;
     lineForm.unit_price.value = row.dataset.unitPrice;
     lineForm.supplier_part_number.value = row.dataset.spn;
-    lineForm.location_id.value = row.dataset.locationId;
+    // reset() first so a previous line's expanded/scrolled tree doesn't linger.
+    locationPicker?.reset();
+    locationPicker?.setValue(row.dataset.locationId);
     lineForm.dataset.originalLocationId = row.dataset.locationId;
     lineForm.dataset.originalSpn = row.dataset.spn;
     lineDialog.showModal();
