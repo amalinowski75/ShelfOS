@@ -120,6 +120,19 @@ export function invoicesPageFixture() {
     <p id="invoice-list-hint" hidden></p>`;
 }
 
+// The global "Change password" control + dialog (mirrors base.html); present on
+// every authenticated page.
+export function passwordDialogFixture() {
+  return `
+    <button id="change-password-btn"></button>
+    <dialog id="password-dialog"><form id="password-form">
+      <input name="current_password" type="password" />
+      <input name="new_password" type="password" />
+      <p id="password-error" hidden></p>
+      <button type="submit"></button>
+    </form></dialog>`;
+}
+
 // The shared "New location" dialog markup (mirrors _location_dialog.html);
 // append to a page fixture to exercise the inline-create flow end to end.
 export function locationDialogFixture() {
