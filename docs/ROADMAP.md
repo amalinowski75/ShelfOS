@@ -56,10 +56,14 @@ Priorities set by the user on 2026-07-08.
    `shared.js` and `invoices.js`; `app.js` coverage remains a fast-follow.
 6. **CSV import / export (§21).** Low priority for now.
 7. **Attachments upload (§10).** Actual file upload/serving; today only metadata.
-8. **Alembic migrations + PostgreSQL.** Near-last; may never be needed — revisit
-   only if required.
-9. **User management window (UI).** Simple admin screen to manage user accounts
-   from the web UI (auth/roles already work via API). Very low priority.
+8. **Alembic migrations + PostgreSQL.** ❌ **Not planned.** SQLite is the intended
+   datastore; as long as it stays good enough, it stays. Only revisit if SQLite
+   proves genuinely insufficient (scale, concurrency) — not on the roadmap
+   otherwise. Until then, schema changes use the recreate flow below.
+9. **User management window (UI).** ✅ **Done** (PR #28). Admin-only `/users`
+   screen (Tabulator + `/web/api/users` feed) to list accounts and change role,
+   reset password or enable/disable them. Self-service password change for any
+   role landed alongside it (PR #29).
 10. **Split CI into parallel jobs.** ✅ **Done** (PR #25). `pytest` and
     `npm test` (Vitest) now run as independent parallel `python` / `web` jobs; a
     lightweight `checks` gate (`needs: [python, web]`) preserves the existing
@@ -71,10 +75,10 @@ Deferred / unscheduled: BOM & KiCad integration (§22), Playwright UI tests,
 
 ### Schema changes without migrations
 
-Until Alembic lands (backlog #8), `SQLModel.metadata.create_all` only creates
-missing tables — it does **not** add columns to existing ones. After changing a
-model, the running SQLite file drifts and the app fails on the missing columns.
-Recreate it (destroys all local data):
+With no migration tool (backlog #8 is not planned), `SQLModel.metadata.create_all`
+only creates missing tables — it does **not** add columns to existing ones. After
+changing a model, the running SQLite file drifts and the app fails on the missing
+columns. Recreate it (destroys all local data):
 
 ```bash
 rm data/shelfos.db          # delete the stale SQLite file
