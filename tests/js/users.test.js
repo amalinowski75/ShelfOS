@@ -111,6 +111,19 @@ describe("users.js — writes", () => {
     });
   });
 
+  it("defaults a new account to the 'user' role, never admin", async () => {
+    const { document, fetchMock } = loadPage(usersPageFixture(), SCRIPTS);
+    document.getElementById("user-new-btn").click();
+    const form = document.getElementById("user-new-form");
+    form.username.value = "carol";
+    form.password.value = "password123";
+    // Submit WITHOUT touching the role select: a blind fill must not mint admin.
+    submit(document, "user-new-form");
+    await tick();
+
+    expect(fetchBody(fetchMock).role).toBe("user");
+  });
+
   it("changes a role via PUT", async () => {
     const { window, document, fetchMock } = loadPage(usersPageFixture(), SCRIPTS);
     window.openRoleDialog({ id: 9, name: "bob", role: "user", is_active: true });
@@ -151,6 +164,34 @@ describe("users.js — writes", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("/api/admin/users/3/active");
     expect(fetchMock.mock.calls[0][1].method).toBe("PUT");
     expect(fetchBody(fetchMock)).toEqual({ is_active: false });
+  });
+
+  it("alerts when disabling is rejected (e.g. the last-active-admin guard)", async () => {
+    const fetchImpl = () =>
+      Promise.resolve({
+        ok: false,
+        json: async () => ({ detail: "cannot disable the last active admin" }),
+      });
+    const { window } = loadPage(usersPageFixture(), SCRIPTS, { fetchImpl });
+    window.confirm = vi.fn(() => true);
+    window.alert = vi.fn();
+
+    window.toggleActive({ id: 1, name: "admin", is_active: true });
+    await tick();
+
+    expect(window.alert).toHaveBeenCalledWith("cannot disable the last active admin");
+  });
+
+  it("alerts a reach-the-server message when the toggle request throws", async () => {
+    const fetchImpl = () => Promise.reject(new Error("network"));
+    const { window } = loadPage(usersPageFixture(), SCRIPTS, { fetchImpl });
+    window.confirm = vi.fn(() => true);
+    window.alert = vi.fn();
+
+    window.toggleActive({ id: 3, name: "bob", is_active: true });
+    await tick();
+
+    expect(window.alert).toHaveBeenCalledWith("Could not reach the server.");
   });
 
   it("surfaces a server rejection (e.g. last-admin guard) in the role dialog", async () => {

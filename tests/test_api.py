@@ -820,3 +820,100 @@ def test_create_component_with_wrong_typed_value_is_atomic(client: TestClient) -
     assert resp.status_code == 422
     after = len(client.get("/web/api/components").json()["data"])
     assert after == before
+
+
+def _account_headers(
+    client: TestClient,
+    anon_client: TestClient,
+    *,
+    username: str = "carol",
+    password: str = "oldpassword",
+    role: str = "user",
+) -> dict[str, str]:
+    """Create an account (via the admin client) and return its bearer header."""
+    client.post(
+        "/api/admin/users",
+        json={"username": username, "password": password, "role": role},
+    )
+    token = anon_client.post(
+        "/api/auth/token", json={"username": username, "password": password}
+    ).json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_user_can_change_own_password(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    headers = _account_headers(client, anon_client)
+    resp = anon_client.post(
+        "/api/auth/change-password",
+        json={"current_password": "oldpassword", "new_password": "newpassword"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    # The old password stops working and the new one is accepted.
+    assert (
+        anon_client.post(
+            "/api/auth/token", json={"username": "carol", "password": "oldpassword"}
+        ).status_code
+        == 401
+    )
+    assert (
+        anon_client.post(
+            "/api/auth/token", json={"username": "carol", "password": "newpassword"}
+        ).status_code
+        == 200
+    )
+
+
+def test_change_password_rejects_wrong_current(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    headers = _account_headers(client, anon_client)
+    resp = anon_client.post(
+        "/api/auth/change-password",
+        json={"current_password": "not-it", "new_password": "newpassword"},
+        headers=headers,
+    )
+    assert resp.status_code == 422
+    assert "current password" in resp.json()["detail"].lower()
+    # The password is unchanged.
+    assert (
+        anon_client.post(
+            "/api/auth/token", json={"username": "carol", "password": "oldpassword"}
+        ).status_code
+        == 200
+    )
+
+
+def test_read_only_user_can_change_own_password(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    # The endpoint is off the read-only write block, so a viewer can rotate creds.
+    headers = _account_headers(client, anon_client, username="viewer", role="read-only")
+    resp = anon_client.post(
+        "/api/auth/change-password",
+        json={"current_password": "oldpassword", "new_password": "newpassword"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+
+
+def test_change_password_rejects_empty_new(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    headers = _account_headers(client, anon_client)
+    resp = anon_client.post(
+        "/api/auth/change-password",
+        json={"current_password": "oldpassword", "new_password": ""},
+        headers=headers,
+    )
+    assert resp.status_code == 422
+
+
+def test_change_password_requires_authentication(anon_client: TestClient) -> None:
+    resp = anon_client.post(
+        "/api/auth/change-password",
+        json={"current_password": "x", "new_password": "y"},
+    )
+    assert resp.status_code == 401

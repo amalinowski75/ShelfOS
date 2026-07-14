@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Users — ShelfOS{% endblock %}
 
-{% macro role_options() -%}
-  {% for role in roles %}<option value="{{ role }}">{{ role }}</option>{% endfor %}
+{% macro role_options(selected="") -%}
+  {% for role in roles %}<option value="{{ role }}"{% if role == selected %} selected{% endif %}>{{ role }}</option>{% endfor %}
 {%- endmacro %}
 
 {% block content %}
@@ -31,11 +31,13 @@
       </div>
       <div class="field">
         <label>Password</label>
-        <input class="control" type="password" name="password" required />
+        <input class="control" type="password" name="password" required autocomplete="new-password" />
       </div>
       <div class="field">
         <label>Role</label>
-        <select class="control" name="role">{{ role_options() }}</select>
+        <!-- Default to the least-privileged sensible role, not the enum's first
+             member (admin), so a blind "fill + Create" never mints an admin. -->
+        <select class="control" name="role">{{ role_options(selected="user") }}</select>
       </div>
       <p id="user-new-error" class="error" hidden></p>
       <footer>
@@ -79,7 +81,7 @@
       <p class="muted">Account: <strong id="user-password-name"></strong></p>
       <div class="field">
         <label>New password</label>
-        <input class="control" type="password" name="password" required />
+        <input class="control" type="password" name="password" required autocomplete="new-password" />
       </div>
       <p id="user-password-error" class="error" hidden></p>
       <footer>

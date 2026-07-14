@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, cast
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session
@@ -208,10 +208,14 @@ def invoices_list(
 
 @router.get("/web/api/users")
 def users_feed(
+    response: Response,
     session: Session = Depends(get_session),
     user: User = Depends(require_web_admin),
 ) -> dict[str, Any]:
     """JSON feed for the Tabulator user table (admin only, §18)."""
+    # Account listings are sensitive; keep them out of shared/proxy caches and
+    # the back/forward cache so they don't linger after logout.
+    response.headers["Cache-Control"] = "no-store"
     return {
         "data": [
             {

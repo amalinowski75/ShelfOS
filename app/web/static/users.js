@@ -223,6 +223,7 @@ document
         );
         if (resp.ok) {
           document.getElementById("user-password-dialog").close();
+          form.reset(); // don't leave the just-set password sitting in the DOM
         } else {
           error.textContent = await errorMessage(resp);
           error.hidden = false;

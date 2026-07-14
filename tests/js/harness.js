@@ -125,7 +125,7 @@ export function invoicesPageFixture() {
 export function usersPageFixture() {
   const roleOptions = `
     <option value="admin">admin</option>
-    <option value="user">user</option>
+    <option value="user" selected>user</option>
     <option value="read-only">read-only</option>`;
   return `
     <div id="users-table"></div>
@@ -149,6 +149,19 @@ export function usersPageFixture() {
       <strong id="user-password-name"></strong>
       <input name="password" type="password" />
       <p id="user-password-error" hidden></p>
+      <button type="submit"></button>
+    </form></dialog>`;
+}
+
+// The global "Change password" control + dialog (mirrors base.html); present on
+// every authenticated page.
+export function passwordDialogFixture() {
+  return `
+    <button id="change-password-btn"></button>
+    <dialog id="password-dialog"><form id="password-form">
+      <input name="current_password" type="password" />
+      <input name="new_password" type="password" />
+      <p id="password-error" hidden></p>
       <button type="submit"></button>
     </form></dialog>`;
 }

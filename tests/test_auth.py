@@ -54,6 +54,29 @@ def test_bearer_write_is_exempt_from_csrf(client: TestClient) -> None:
     assert resp.status_code == 201
 
 
+def test_change_password_via_cookie_requires_csrf(
+    session,  # type: ignore[no-untyped-def]
+    anon_client: TestClient,
+) -> None:
+    """Self-service change-password enforces CSRF for cookie calls too.
+
+    The endpoint re-adds ``Depends(require_csrf)`` by hand (it lives on the auth
+    router, outside the protected routers' router-level guard), so pin that the
+    token is actually required.
+    """
+    _seed_admin(session)
+    anon_client.post("/login", data={"username": "admin", "password": "admin"})
+    body = {"current_password": "admin", "new_password": "newpassword"}
+
+    assert anon_client.post("/api/auth/change-password", json=body).status_code == 403
+
+    token = _csrf_from_page(anon_client.get("/").text)
+    resp = anon_client.post(
+        "/api/auth/change-password", json=body, headers={"X-CSRF-Token": token}
+    )
+    assert resp.status_code == 200
+
+
 def test_bearer_with_non_numeric_subject_is_unauthenticated(
     anon_client: TestClient,
 ) -> None:
