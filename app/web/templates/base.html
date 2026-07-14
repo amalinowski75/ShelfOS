@@ -42,6 +42,7 @@
             {{ current_user.name }}
           </span>
           <span class="badge b-neutral">{{ current_user.role.value }}</span>
+          <button type="button" class="btn btn-ghost btn-sm" id="change-password-btn">Change password</button>
           <form action="/logout" method="post">
             <button type="submit" class="btn btn-ghost btn-sm">Log out</button>
           </form>
@@ -53,10 +54,34 @@
       {% block content %}{% endblock %}
     </div>
     {% if current_user %}
+    <dialog id="password-dialog">
+      <article>
+        <header>
+          <strong>Change password</strong>
+          <button class="close" aria-label="Close" data-close></button>
+        </header>
+        <form id="password-form">
+          <div class="field">
+            <label>Current password</label>
+            <input class="control" type="password" name="current_password" required autocomplete="current-password" />
+          </div>
+          <div class="field">
+            <label>New password</label>
+            <input class="control" type="password" name="new_password" required autocomplete="new-password" />
+          </div>
+          <p id="password-error" class="error" hidden></p>
+          <footer>
+            <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </footer>
+        </form>
+      </article>
+    </dialog>
     <script src="/static/shared.js?v={{ static_version() }}"></script>
     <script src="/static/component_dialog.js?v={{ static_version() }}"></script>
     <script src="/static/location_dialog.js?v={{ static_version() }}"></script>
     <script src="/static/location_tree.js?v={{ static_version() }}"></script>
+    <script src="/static/password_dialog.js?v={{ static_version() }}"></script>
     {% endif %}
     {% block scripts %}{% endblock %}
   </body>

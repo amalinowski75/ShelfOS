@@ -6,6 +6,8 @@ management. There is no self-registration: accounts are created by an admin.
 
 from __future__ import annotations
 
+from typing import cast
+
 import bcrypt
 from sqlmodel import Session, col, select
 
@@ -142,6 +144,24 @@ def set_password(session: Session, user_id: int, password: str) -> User:
     session.commit()
     session.refresh(user)
     return user
+
+
+def change_own_password(
+    session: Session, user: User, current_password: str, new_password: str
+) -> User:
+    """Let a signed-in user change their own password (any role, self-service).
+
+    The current password must be verified first: it is standard practice and
+    stops a bystander at an unlocked browser from setting a new password. It does
+    not by itself revoke other active sessions or already-issued bearer tokens
+    (those are stateless, D11), so it is not a full account-takeover recovery.
+    Reuses ``set_password`` so the hashing and length checks stay in one place.
+    """
+    if user.password_hash is None or not verify_password(
+        current_password, user.password_hash
+    ):
+        raise ValidationError("current password is incorrect")
+    return set_password(session, cast(int, user.id), new_password)
 
 
 def ensure_admin(session: Session, *, username: str, password: str) -> User:
