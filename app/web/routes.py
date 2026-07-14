@@ -18,7 +18,7 @@ from sqlmodel import Session
 from app.api.deps import get_session
 from app.auth.deps import get_optional_user, issue_csrf_token
 from app.models.component import ComponentType
-from app.models.enums import LocationType, MountingType, ParameterDataType
+from app.models.enums import LocationType, MountingType, ParameterDataType, UserRole
 from app.models.user import User
 from app.services import component_service as cs
 from app.services import invoice_service as inv
@@ -86,6 +86,18 @@ def require_web_user(request: Request, session: Session = Depends(get_session)) 
         )
     if not request.session.get("csrf_token"):
         issue_csrf_token(request)
+    return user
+
+
+def require_web_admin(
+    request: Request, session: Session = Depends(get_session)
+) -> User:
+    """Return the logged-in admin; redirect anon to login and non-admins home."""
+    user = require_web_user(request, session)
+    if user.role is not UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_303_SEE_OTHER, headers={"Location": "/"}
+        )
     return user
 
 
@@ -191,6 +203,38 @@ def invoices_list(
     """Invoice list shell; rows load from /web/api/invoices (spec §16)."""
     return templates.TemplateResponse(
         request, "invoices_list.html", {"current_user": user}
+    )
+
+
+@router.get("/web/api/users")
+def users_feed(
+    session: Session = Depends(get_session),
+    user: User = Depends(require_web_admin),
+) -> dict[str, Any]:
+    """JSON feed for the Tabulator user table (admin only, §18)."""
+    return {
+        "data": [
+            {
+                "id": account.id,
+                "name": account.name,
+                "role": account.role.value,
+                "is_active": account.is_active,
+            }
+            for account in us.list_users(session)
+        ]
+    }
+
+
+@router.get("/users", response_class=HTMLResponse)
+def users_page(
+    request: Request,
+    user: User = Depends(require_web_admin),
+) -> HTMLResponse:
+    """User-account management shell; rows load from /web/api/users (admin, §18)."""
+    return templates.TemplateResponse(
+        request,
+        "users.html",
+        {"current_user": user, "roles": [role.value for role in UserRole]},
     )
 
 
