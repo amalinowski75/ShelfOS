@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="csrf-token" content="{{ request.session.get('csrf_token', '') }}" />
+    <meta name="user-role" content="{{ current_user.role.value if current_user else '' }}" />
     <title>{% block title %}ShelfOS{% endblock %}</title>
     <link
       rel="stylesheet"

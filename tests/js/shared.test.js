@@ -7,6 +7,18 @@ describe("shared.js", () => {
     expect(window.eval("csrfToken")).toBe(CSRF);
   });
 
+  it("canWrite reflects the user-role meta", () => {
+    const writable = (role) => {
+      const { window } = loadPage("<div></div>", ["shared.js"], { role });
+      return window.eval("canWrite");
+    };
+    expect(writable("admin")).toBe(true);
+    expect(writable("user")).toBe(true);
+    expect(writable("read-only")).toBe(false);
+    // No role (logged-out / no meta) is treated as non-writer.
+    expect(writable("")).toBe(false);
+  });
+
   it("esc() escapes every HTML metacharacter", () => {
     const { window } = loadPage("<div></div>", ["shared.js"]);
     expect(window.esc(`<a href="x">&'`)).toBe(

@@ -68,6 +68,8 @@ def test_stock_dialog_uses_location_tree_picker(client: TestClient) -> None:
 def test_index_shows_new_type_control_for_writer(client: TestClient) -> None:
     """An account that can write sees the §13 create-type dialog and builder."""
     html = client.get("/").text
+    # The role meta drives client-side write gating (admin here → writer).
+    assert 'name="user-role" content="admin"' in html
     assert 'id="new-type-btn"' in html
     assert 'id="type-dialog"' in html
     assert 'id="param-row-template"' in html
@@ -103,6 +105,8 @@ def test_new_component_control_hidden_for_read_only(client: TestClient) -> None:
     assert 'id="component-dialog"' not in html
     # The stock dialog (and so its inline New Location dialog) is gated as well.
     assert 'id="location-dialog"' not in html
+    # The role is exposed so app.js can hide the table's Add/Take row buttons.
+    assert 'name="user-role" content="read-only"' in html
 
 
 def test_require_web_user_heals_missing_csrf_token(session) -> None:  # type: ignore[no-untyped-def]
