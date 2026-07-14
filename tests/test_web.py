@@ -785,3 +785,58 @@ def test_locations_page_requires_login(anon_client: TestClient) -> None:
     resp = anon_client.get("/locations", follow_redirects=False)
     assert resp.status_code == 303
     assert resp.headers["location"] == "/login"
+
+
+def _non_admin_token(
+    client: TestClient, role: str = "user", username: str = "bob"
+) -> str:
+    """Create a non-admin account (via the admin client) and return its token."""
+    client.post(
+        "/api/admin/users",
+        json={"username": username, "password": "password123", "role": role},
+    )
+    return client.post(
+        "/api/auth/token", json={"username": username, "password": "password123"}
+    ).json()["access_token"]
+
+
+def test_users_page_renders_for_admin(client: TestClient) -> None:
+    # The list is a Tabulator fed by JSON; the page renders the mount + loader.
+    html = client.get("/users").text
+    assert "Users" in html
+    assert 'id="users-table"' in html
+    assert "users.js" in html
+    # The create form defaults to the least-privileged role, never admin.
+    assert '<option value="user" selected>' in html
+
+
+def test_users_feed_lists_accounts(client: TestClient) -> None:
+    _non_admin_token(client, role="read-only")  # a second account to list
+    resp = client.get("/web/api/users")
+    # Sensitive account data must not be cached (shared stations / bfcache).
+    assert resp.headers["cache-control"] == "no-store"
+    feed = resp.json()
+    names = {row["name"]: row for row in feed["data"]}
+    assert names["admin"]["role"] == "admin"
+    assert names["admin"]["is_active"] is True
+    assert names["bob"]["role"] == "read-only"
+    # The feed must never expose the password hash (regression guard).
+    assert all("password_hash" not in row for row in feed["data"])
+
+
+def test_users_page_forbidden_for_non_admin(client: TestClient) -> None:
+    # Both non-admin roles are sent home, not to login, on the page and the feed.
+    for role in ("user", "read-only"):
+        token = _non_admin_token(client, role=role, username=f"acct_{role}")
+        headers = {"Authorization": f"Bearer {token}"}
+        for path in ("/users", "/web/api/users"):
+            resp = client.get(path, headers=headers, follow_redirects=False)
+            assert resp.status_code == 303
+            assert resp.headers["location"] == "/"
+
+
+def test_users_pages_require_login(anon_client: TestClient) -> None:
+    for path in ("/users", "/web/api/users"):
+        resp = anon_client.get(path, follow_redirects=False)
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/login"

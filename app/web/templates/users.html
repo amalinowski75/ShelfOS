@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Users — ShelfOS{% endblock %}
+
+{% macro role_options(selected="") -%}
+  {% for role in roles %}<option value="{{ role }}"{% if role == selected %} selected{% endif %}>{{ role }}</option>{% endfor %}
+{%- endmacro %}
+
+{% block content %}
+<div class="head">
+  <div>
+    <h1>Users</h1>
+    <p>Manage accounts, roles and access.</p>
+  </div>
+  <div class="head-actions">
+    <button type="button" class="btn btn-secondary" id="user-new-btn">New user</button>
+  </div>
+</div>
+
+<div id="users-table"></div>
+
+<dialog id="user-new-dialog">
+  <article>
+    <header>
+      <strong>New user</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <form id="user-new-form">
+      <div class="field">
+        <label>Username</label>
+        <input class="control" name="username" required />
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input class="control" type="password" name="password" required autocomplete="new-password" />
+      </div>
+      <div class="field">
+        <label>Role</label>
+        <!-- Default to the least-privileged sensible role, not the enum's first
+             member (admin), so a blind "fill + Create" never mints an admin. -->
+        <select class="control" name="role">{{ role_options(selected="user") }}</select>
+      </div>
+      <p id="user-new-error" class="error" hidden></p>
+      <footer>
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" class="btn btn-primary">Create</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+
+<dialog id="user-role-dialog">
+  <article>
+    <header>
+      <strong>Change role</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <form id="user-role-form">
+      <input type="hidden" name="user_id" />
+      <p class="muted">Account: <strong id="user-role-name"></strong></p>
+      <div class="field">
+        <label>Role</label>
+        <select class="control" name="role">{{ role_options() }}</select>
+      </div>
+      <p id="user-role-error" class="error" hidden></p>
+      <footer>
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+
+<dialog id="user-password-dialog">
+  <article>
+    <header>
+      <strong>Reset password</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <form id="user-password-form">
+      <input type="hidden" name="user_id" />
+      <p class="muted">Account: <strong id="user-password-name"></strong></p>
+      <div class="field">
+        <label>New password</label>
+        <input class="control" type="password" name="password" required autocomplete="new-password" />
+      </div>
+      <p id="user-password-error" class="error" hidden></p>
+      <footer>
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/users.js?v={{ static_version() }}"></script>
+{% endblock %}

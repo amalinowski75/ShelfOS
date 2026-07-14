@@ -120,6 +120,39 @@ export function invoicesPageFixture() {
     <p id="invoice-list-hint" hidden></p>`;
 }
 
+// The user-management page (mirrors users.html): the Tabulator mount plus the
+// create / change-role / reset-password dialogs. Rows come from /web/api/users.
+export function usersPageFixture() {
+  const roleOptions = `
+    <option value="admin">admin</option>
+    <option value="user" selected>user</option>
+    <option value="read-only">read-only</option>`;
+  return `
+    <div id="users-table"></div>
+    <button id="user-new-btn"></button>
+    <dialog id="user-new-dialog"><form id="user-new-form">
+      <input name="username" />
+      <input name="password" type="password" />
+      <select name="role">${roleOptions}</select>
+      <p id="user-new-error" hidden></p>
+      <button type="submit"></button>
+    </form></dialog>
+    <dialog id="user-role-dialog"><form id="user-role-form">
+      <input type="hidden" name="user_id" />
+      <strong id="user-role-name"></strong>
+      <select name="role">${roleOptions}</select>
+      <p id="user-role-error" hidden></p>
+      <button type="submit"></button>
+    </form></dialog>
+    <dialog id="user-password-dialog"><form id="user-password-form">
+      <input type="hidden" name="user_id" />
+      <strong id="user-password-name"></strong>
+      <input name="password" type="password" />
+      <p id="user-password-error" hidden></p>
+      <button type="submit"></button>
+    </form></dialog>`;
+}
+
 // The global "Change password" control + dialog (mirrors base.html); present on
 // every authenticated page.
 export function passwordDialogFixture() {
