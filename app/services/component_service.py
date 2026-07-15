@@ -27,7 +27,7 @@ from app.models.component import (
 )
 from app.models.enums import MountingType, ParameterDataType
 from app.models.location import ComponentLocation
-from app.services import audit_service
+from app.services import attachment_service, audit_service
 from app.services._common import require_entity
 from app.services.errors import ValidationError
 from app.units import UnitParseError, parse_engineering
@@ -537,6 +537,11 @@ def hard_delete_component(
         select(ComponentLocation).where(ComponentLocation.component_id == component_id)
     ).all():
         session.delete(cl)
+    # The attachments table has no FK cascade — clean its rows + files here so a
+    # hard delete leaves nothing orphaned (§10, §20).
+    attachment_service.delete_attachments_for(
+        session, entity_type="component", entity_id=component_id
+    )
     session.delete(component)
     session.commit()
 

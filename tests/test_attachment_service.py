@@ -49,6 +49,23 @@ def _attach(session: Session, entity_type: str, entity_id: int, **kw) -> Attachm
     )
 
 
+def _png_bytes(size: tuple[int, int] = (400, 300)) -> bytes:
+    """A real PNG so Pillow can actually decode/resize it."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("RGB", size, (10, 80, 160)).save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+def _image(session: Session, entity_id: int) -> Attachment:
+    return _attach(
+        session, "component", entity_id, filename="front.png", data=_png_bytes()
+    )
+
+
 def test_create_writes_row_and_file(session: Session, store) -> None:  # type: ignore[no-untyped-def]
     component = _component(session)
     att = _attach(session, "component", component.id, data=b"%PDF-1.4 bytes")
@@ -171,3 +188,125 @@ def test_stored_file_path_rejects_traversal(store) -> None:  # type: ignore[no-u
     )
     with pytest.raises(NotFoundError):
         ats.stored_file_path(att)
+
+
+def test_thumbnail_generates_and_caches_a_downscaled_png(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    from PIL import Image
+
+    component = _component(session)
+    att = _image(session, component.id)
+
+    thumb = ats.thumbnail_file(session, att.id)
+    assert thumb.parent == store / ".thumbs"
+    assert thumb.suffix == ".png"
+    with Image.open(thumb) as image:
+        assert max(image.size) <= config.THUMBNAIL_PX  # actually downscaled
+
+    # A second call reuses the cache rather than regenerating.
+    mtime = thumb.stat().st_mtime_ns
+    assert ats.thumbnail_file(session, att.id) == thumb
+    assert thumb.stat().st_mtime_ns == mtime
+
+
+def test_thumbnail_of_a_non_image_returns_the_original(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    component = _component(session)
+    att = _attach(
+        session, "component", component.id, filename="ds.pdf", data=b"%PDF-1.4"
+    )
+    assert ats.thumbnail_file(session, att.id) == ats.stored_file_path(att)
+
+
+def test_thumbnail_of_a_corrupt_image_falls_back_to_the_original(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    component = _component(session)
+    # An image extension but non-image bytes: Pillow can't decode it.
+    att = _attach(
+        session, "component", component.id, filename="broken.png", data=b"not an image"
+    )
+    assert ats.thumbnail_file(session, att.id) == ats.stored_file_path(att)
+
+
+def test_thumbnail_skips_an_oversized_image(
+    session: Session, store, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    # Cap the source pixels tiny; the real 400x300 PNG exceeds it.
+    monkeypatch.setattr(ats, "_MAX_SOURCE_PIXELS", 4)
+    component = _component(session)
+    att = _image(session, component.id)
+    assert ats.thumbnail_file(session, att.id) == ats.stored_file_path(att)
+    assert not ats._thumbnail_path(att).exists()  # nothing was decoded/written
+
+
+def test_thumbnail_survives_a_decompression_bomb_error(
+    session: Session, store, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    from PIL import Image as PILImage
+
+    def boom(*_a: object, **_k: object) -> object:
+        raise PILImage.DecompressionBombError("bomb")
+
+    component = _component(session)
+    att = _image(session, component.id)
+    monkeypatch.setattr(ats.Image, "open", boom)
+    # DecompressionBombError isn't an OSError — the broad catch still degrades.
+    assert ats.thumbnail_file(session, att.id) == ats.stored_file_path(att)
+
+
+def test_delete_removes_the_thumbnail_cache(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    component = _component(session)
+    att = _image(session, component.id)
+    thumb = ats.thumbnail_file(session, att.id)
+    assert thumb.is_file()
+
+    ats.delete_attachment(session, att.id)
+    assert not thumb.is_file()
+
+
+def test_delete_attachments_for_removes_only_that_entity(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    component = _component(session)
+    invoice = _invoice(session)
+    on_component = _image(session, component.id)
+    file_path = ats.stored_file_path(on_component)
+    thumb = ats.thumbnail_file(session, on_component.id)
+    _attach(session, "invoice", invoice.id, kind=AttachmentKind.INVOICE_PDF)
+
+    ats.delete_attachments_for(
+        session, entity_type="component", entity_id=component.id
+    )
+    session.commit()
+
+    assert ats.list_attachments(
+        session, entity_type="component", entity_id=component.id
+    ) == []
+    assert not file_path.exists()
+    assert not thumb.exists()
+    # The invoice's attachment is untouched.
+    assert len(
+        ats.list_attachments(session, entity_type="invoice", entity_id=invoice.id)
+    ) == 1
+
+
+def test_hard_delete_component_removes_its_attachments(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    component = _component(session)
+    att = _image(session, component.id)
+    file_path = ats.stored_file_path(att)
+    thumb = ats.thumbnail_file(session, att.id)
+    assert file_path.exists() and thumb.exists()
+
+    cs.hard_delete_component(session, component.id)
+
+    with pytest.raises(NotFoundError):
+        ats.get_attachment(session, att.id)
+    assert not file_path.exists()
+    assert not thumb.exists()

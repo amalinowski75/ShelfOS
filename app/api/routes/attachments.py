@@ -86,6 +86,17 @@ def download_attachment(
     return FileResponse(path, media_type=media_type, filename=attachment.filename)
 
 
+@router.get("/{attachment_id}/thumbnail")
+def thumbnail_attachment(
+    attachment_id: int,
+    session: Session = Depends(get_session),
+) -> FileResponse:
+    """Serve a small cached thumbnail (image attachments; else the original)."""
+    path = svc.thumbnail_file(session, attachment_id)
+    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    return FileResponse(path, media_type=media_type)
+
+
 @router.delete("/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_attachment(
     attachment_id: int,

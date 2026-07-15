@@ -23,6 +23,7 @@ if (gallery && dialog) {
   const nextBtn = dialog.querySelector(".lightbox-next");
 
   const downloadUrl = (image) => `/api/attachments/${image.id}/download`;
+  const thumbnailUrl = (image) => `/api/attachments/${image.id}/thumbnail`;
 
   let images = [];
   let current = 0;
@@ -55,7 +56,7 @@ if (gallery && dialog) {
       button.title = image.filename;
       button.addEventListener("click", () => open(index));
       const thumb = document.createElement("img");
-      thumb.src = downloadUrl(image);
+      thumb.src = thumbnailUrl(image); // small server-generated thumbnail
       thumb.alt = image.filename;
       thumb.loading = "lazy";
       button.appendChild(thumb);
@@ -66,13 +67,9 @@ if (gallery && dialog) {
   async function load() {
     // The gallery is a nicety — the attachments panel below already surfaces
     // load failures — so warn for debugging but don't add error chrome here.
+    // Shares the panel's single feed fetch (fetchAttachmentList, shared.js).
     try {
-      const resp = await fetch(feed);
-      if (!resp.ok) {
-        console.warn("component images: feed responded", resp.status);
-        return;
-      }
-      const rows = await resp.json();
+      const rows = await fetchAttachmentList(feed);
       images = rows.filter((row) => IMAGE_EXTENSION.test(row.filename));
       render();
     } catch (err) {

@@ -19,6 +19,16 @@ def _component_id(client: TestClient) -> int:
     return client.post("/api/components", json={"type_id": ctype["id"]}).json()["id"]
 
 
+def _png_bytes(size: tuple[int, int] = (400, 300)) -> bytes:
+    from io import BytesIO
+
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("RGB", size, (10, 80, 160)).save(buffer, "PNG")
+    return buffer.getvalue()
+
+
 def _invoice_id(client: TestClient) -> int:
     return client.post(
         "/api/invoices",
@@ -149,6 +159,37 @@ def test_download_unknown_id_404(client: TestClient) -> None:
     assert client.get("/api/attachments/999/download").status_code == 404
 
 
+def test_thumbnail_of_an_image_is_a_downscaled_png(client: TestClient) -> None:
+    from io import BytesIO
+
+    from PIL import Image
+
+    component_id = _component_id(client)
+    att_id = _upload(
+        client,
+        component_id,
+        filename="p.png",
+        content=_png_bytes(),
+        content_type="image/png",
+        kind="photo",
+    ).json()["id"]
+
+    resp = client.get(f"/api/attachments/{att_id}/thumbnail")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
+    with Image.open(BytesIO(resp.content)) as image:
+        assert max(image.size) <= 240
+
+
+def test_thumbnail_of_a_non_image_serves_the_original(client: TestClient) -> None:
+    component_id = _component_id(client)
+    att_id = _upload(client, component_id, content=b"%PDF-1.4 body").json()["id"]
+
+    resp = client.get(f"/api/attachments/{att_id}/thumbnail")
+    assert resp.status_code == 200
+    assert resp.content == b"%PDF-1.4 body"
+
+
 def test_upload_unknown_entity_type_422(client: TestClient) -> None:
     resp = _upload(client, 1, entity_type="widget")
     assert resp.status_code == 422
@@ -196,6 +237,8 @@ def test_any_writer_can_access_any_attachment(
 
     download = anon_client.get(f"/api/attachments/{att_id}/download", headers=headers)
     assert download.status_code == 200
+    thumb = anon_client.get(f"/api/attachments/{att_id}/thumbnail", headers=headers)
+    assert thumb.status_code == 200
     delete = anon_client.delete(f"/api/attachments/{att_id}", headers=headers)
     assert delete.status_code == 204
 
@@ -249,3 +292,4 @@ def test_anonymous_access_requires_auth(anon_client: TestClient) -> None:
         == 401
     )
     assert anon_client.get("/api/attachments/1/download").status_code == 401
+    assert anon_client.get("/api/attachments/1/thumbnail").status_code == 401

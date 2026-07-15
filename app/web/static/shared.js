@@ -19,6 +19,24 @@ const userRole =
   document.querySelector('meta[name="user-role"]')?.content || "";
 const canWrite = userRole !== "" && userRole !== "read-only";
 
+// Per-page cache of attachment-list GETs, so the attachments panel and the image
+// gallery (both on the component-detail page) don't each fetch the same feed.
+// Returns a promise of the parsed rows; pass {fresh:true} after a write to skip
+// the cache and refetch. A failed fetch is not cached, so the next call retries.
+const _attachmentFeeds = new Map();
+function fetchAttachmentList(url, { fresh = false } = {}) {
+  if (fresh) _attachmentFeeds.delete(url);
+  if (!_attachmentFeeds.has(url)) {
+    const pending = fetch(url).then((resp) => {
+      if (!resp.ok) throw new Error("attachments feed failed");
+      return resp.json();
+    });
+    pending.catch(() => _attachmentFeeds.delete(url));
+    _attachmentFeeds.set(url, pending);
+  }
+  return _attachmentFeeds.get(url);
+}
+
 // HTML-escape a value for safe interpolation into innerHTML.
 function esc(value) {
   return String(value ?? "").replace(

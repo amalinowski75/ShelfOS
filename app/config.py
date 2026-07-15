@@ -35,6 +35,10 @@ ATTACHMENTS_DIR = Path(os.environ.get("SHELFOS_ATTACHMENTS_DIR", "attachments"))
 MAX_ATTACHMENT_MB = int(os.environ.get("SHELFOS_MAX_ATTACHMENT_MB", "25"))
 MAX_ATTACHMENT_BYTES = MAX_ATTACHMENT_MB * 1024 * 1024
 
+# Longest edge (px) of generated image thumbnails; cached on disk next to the
+# originals under ATTACHMENTS_DIR/.thumbs.
+THUMBNAIL_PX = int(os.environ.get("SHELFOS_THUMBNAIL_PX", "240"))
+
 
 def is_production() -> bool:
     """True when running in a production deployment (D11)."""
