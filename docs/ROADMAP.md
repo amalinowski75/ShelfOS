@@ -55,7 +55,10 @@ Priorities set by the user on 2026-07-08.
 5. **JavaScript test harness.** ✅ **Done** (PR #11). Vitest + jsdom covering
    `shared.js` and `invoices.js`; `app.js` coverage remains a fast-follow.
 6. **CSV import / export (§21).** Low priority for now.
-7. **Attachments upload (§10).** Actual file upload/serving; today only metadata.
+7. **Attachments upload (§10).** ⏳ **Backend done**; UI pending. Upload / list /
+   download / delete of files attached to components or invoices via
+   `/api/attachments` (multipart; files on disk under `SHELFOS_ATTACHMENTS_DIR`,
+   DB stores metadata only). No UI yet — nothing displays attachments.
 8. **Alembic migrations + PostgreSQL.** ❌ **Not planned.** SQLite is the intended
    datastore; as long as it stays good enough, it stays. Only revisit if SQLite
    proves genuinely insufficient (scale, concurrency) — not on the roadmap

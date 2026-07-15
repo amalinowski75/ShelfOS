@@ -12,6 +12,7 @@ from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.enums import (
+    AttachmentKind,
     ContainerType,
     LocationType,
     MountingType,
@@ -213,3 +214,20 @@ class LineLocationSet(BaseModel):
 
 class InvoiceFinalize(BaseModel):
     total_gross: Decimal | None = None
+
+
+class AttachmentRead(BaseModel):
+    """Attachment metadata for the API.
+
+    Omits ``file_path`` so the internal on-disk name/layout never leaks; the file
+    is reached only through the download endpoint.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    entity_type: str
+    entity_id: int
+    kind: AttachmentKind
+    filename: str
+    notes: str | None

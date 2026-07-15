@@ -7,6 +7,7 @@ deployments should override the secret and admin password via the environment.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 # Deployment environment. Anything other than "production" is treated as a
 # development/test context where the insecure defaults below are tolerated.
@@ -23,6 +24,16 @@ ADMIN_PASSWORD = os.environ.get("SHELFOS_ADMIN_PASSWORD", "admin")
 
 # JWT access-token lifetime, in hours.
 TOKEN_EXPIRE_HOURS = int(os.environ.get("SHELFOS_TOKEN_EXPIRE_HOURS", "24"))
+
+# On-disk store for uploaded attachments (spec §10); the DB keeps only metadata
+# and the stored path. Relative to the CWD by default (git-ignored), created
+# lazily on first write. Referenced as ``config.ATTACHMENTS_DIR`` at call time so
+# tests can point it at a tmp dir.
+ATTACHMENTS_DIR = Path(os.environ.get("SHELFOS_ATTACHMENTS_DIR", "attachments"))
+
+# Reject uploads larger than this (the whole file is buffered in memory).
+MAX_ATTACHMENT_MB = int(os.environ.get("SHELFOS_MAX_ATTACHMENT_MB", "25"))
+MAX_ATTACHMENT_BYTES = MAX_ATTACHMENT_MB * 1024 * 1024
 
 
 def is_production() -> bool:

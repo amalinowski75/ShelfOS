@@ -21,6 +21,7 @@ from app import config
 from app.api.errors import register_error_handlers
 from app.api.routes import (
     admin,
+    attachments,
     auth,
     components,
     invoices,
@@ -38,7 +39,7 @@ _STATIC_DIR = Path(__file__).parent / "web" / "static"
 _logger = logging.getLogger("shelfos")
 
 # Business routers require authentication and enforce read-only write blocking.
-_PROTECTED_ROUTERS = (types, components, locations, stock, invoices)
+_PROTECTED_ROUTERS = (types, components, locations, stock, invoices, attachments)
 
 
 def _bootstrap() -> None:
