@@ -38,8 +38,9 @@ _SAFE_EXTENSION = re.compile(r"\.[a-z0-9]{1,10}")
 _IMAGE_EXTENSION = re.compile(r"\.(png|jpe?g|gif|webp|bmp|avif)$", re.IGNORECASE)
 
 # Refuse to decode images beyond this many pixels (defends against a small,
-# highly-compressible "decompression bomb"); such an image serves as-is.
-_MAX_SOURCE_PIXELS = 50_000_000
+# highly-compressible "decompression bomb", and bounds per-request memory —
+# ~20 Mpx decodes to ~80 MB RGBA); such an image serves as-is.
+_MAX_SOURCE_PIXELS = 20_000_000
 
 # Bound the free-text metadata so a writer can't bloat the row with a huge
 # filename or notes field (the file bytes have their own size cap).
@@ -200,8 +201,12 @@ def thumbnail_file(session: Session, attachment_id: int) -> Path:
             # Write to a temp file then atomically rename, so a concurrent reader
             # never sees a half-written PNG. RGBA + PNG preserves transparency.
             tmp = cache.with_name(f"{cache.name}.{uuid4().hex}.tmp")
-            oriented.convert("RGBA").save(tmp, "PNG")
-            tmp.replace(cache)
+            try:
+                oriented.convert("RGBA").save(tmp, "PNG")
+                tmp.replace(cache)
+            finally:
+                # No-op after a successful rename; cleans a partial file on error.
+                tmp.unlink(missing_ok=True)
         return cache
     except Exception:  # noqa: BLE001 - any decode failure -> serve the original
         # Corrupt, unsupported, or a decompression bomb — never 500; serve the

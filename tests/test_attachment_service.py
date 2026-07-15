@@ -257,6 +257,23 @@ def test_thumbnail_survives_a_decompression_bomb_error(
     assert ats.thumbnail_file(session, att.id) == ats.stored_file_path(att)
 
 
+def test_thumbnail_cleans_up_temp_file_on_a_save_failure(
+    session: Session, store, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    component = _component(session)
+    att = _image(session, component.id)
+
+    def boom(*_a: object, **_k: object) -> object:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(ats.Image.Image, "save", boom)
+    # The save fails, so we fall back to the original...
+    assert ats.thumbnail_file(session, att.id) == ats.stored_file_path(att)
+    # ...and no partial .tmp file is left behind.
+    thumbs = store / ".thumbs"
+    assert list(thumbs.glob("*.tmp")) == []
+
+
 def test_delete_removes_the_thumbnail_cache(
     session: Session, store
 ) -> None:  # type: ignore[no-untyped-def]

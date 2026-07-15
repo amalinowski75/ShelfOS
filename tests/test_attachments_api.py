@@ -177,6 +177,8 @@ def test_thumbnail_of_an_image_is_a_downscaled_png(client: TestClient) -> None:
     resp = client.get(f"/api/attachments/{att_id}/thumbnail")
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "image/png"
+    # Even the generated image is served as a download (uniform, safe).
+    assert "attachment" in resp.headers["content-disposition"]
     with Image.open(BytesIO(resp.content)) as image:
         assert max(image.size) <= 240
 
@@ -188,6 +190,25 @@ def test_thumbnail_of_a_non_image_serves_the_original(client: TestClient) -> Non
     resp = client.get(f"/api/attachments/{att_id}/thumbnail")
     assert resp.status_code == 200
     assert resp.content == b"%PDF-1.4 body"
+
+
+def test_thumbnail_forces_download_for_a_non_image(client: TestClient) -> None:
+    # A .svg/.html original must be served as a download, never rendered inline —
+    # otherwise a <script> in it would run in our origin (stored XSS).
+    component_id = _component_id(client)
+    att_id = _upload(
+        client,
+        component_id,
+        filename="evil.svg",
+        content=b"<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>",
+        content_type="image/svg+xml",
+        kind="other",
+    ).json()["id"]
+
+    resp = client.get(f"/api/attachments/{att_id}/thumbnail")
+    assert resp.status_code == 200
+    assert "attachment" in resp.headers["content-disposition"]
+    assert resp.headers["x-content-type-options"] == "nosniff"
 
 
 def test_upload_unknown_entity_type_422(client: TestClient) -> None:

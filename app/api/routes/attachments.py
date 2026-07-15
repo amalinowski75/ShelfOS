@@ -92,9 +92,19 @@ def thumbnail_attachment(
     session: Session = Depends(get_session),
 ) -> FileResponse:
     """Serve a small cached thumbnail (image attachments; else the original)."""
+    attachment = svc.get_attachment(session, attachment_id)  # 404 + name
     path = svc.thumbnail_file(session, attachment_id)
     media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-    return FileResponse(path, media_type=media_type)
+    # Always force download, never inline: the fallback can serve a non-image
+    # original (e.g. an uploaded .svg/.html), which must not render as a document
+    # in our origin (stored XSS). The gallery's <img> renders it regardless of
+    # Content-Disposition, so thumbnails still display.
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=attachment.filename,
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.delete("/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT)
