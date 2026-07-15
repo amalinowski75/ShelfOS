@@ -112,6 +112,7 @@ describe("app.js — row actions", () => {
   it("renders the three row actions and opens the stock dialog on Add", () => {
     const { window, document } = loadPage(typePageFixture(), SCRIPTS);
     const col = window.actionColumn();
+    expect(col.width).toBe(200);
     const html = col.formatter();
     expect(html).toContain('data-act="add"');
     expect(html).toContain('data-act="take"');
@@ -122,6 +123,16 @@ describe("app.js — row actions", () => {
     expect(document.getElementById("stock-dialog-title").textContent).toBe("Add stock");
     expect(document.getElementById("stock-form").component_id.value).toBe("7");
     expect(window.HTMLDialogElement.prototype.showModal).toHaveBeenCalled();
+  });
+
+  it("hides the write actions for a read-only account, keeping Details", () => {
+    const { window } = loadPage(typePageFixture(), SCRIPTS, { role: "read-only" });
+    const col = window.actionColumn();
+    expect(col.width).toBe(100); // narrower without the Add/Take buttons
+    const html = col.formatter();
+    expect(html).not.toContain('data-act="add"');
+    expect(html).not.toContain('data-act="take"');
+    expect(html).toContain('data-act="details"');
   });
 
   it("opens the dialog in take mode from a Take cell click", () => {

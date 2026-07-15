@@ -5,6 +5,20 @@
 const csrfToken =
   document.querySelector('meta[name="csrf-token"]')?.content || "";
 
+// The signed-in user's role, and whether they may modify state. Read-only
+// accounts are GET-only on the server, so client-rendered write affordances
+// (e.g. the component table's Add/Take buttons) are hidden for them rather than
+// shown and rejected on submit. This is UX only — the server (require_access)
+// remains the actual boundary.
+//
+// An empty role (no meta) is treated as non-writer. That is safe because these
+// scripts only load on pages rendered with a current_user (base.html gates them
+// behind `{% if current_user %}`); if that ever changes, a writer on a
+// current_user-less page would wrongly lose write buttons.
+const userRole =
+  document.querySelector('meta[name="user-role"]')?.content || "";
+const canWrite = userRole !== "" && userRole !== "read-only";
+
 // HTML-escape a value for safe interpolation into innerHTML.
 function esc(value) {
   return String(value ?? "").replace(

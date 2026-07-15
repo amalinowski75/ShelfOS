@@ -75,17 +75,22 @@ function columnDef(column) {
 }
 
 function actionColumn() {
+  // Read-only accounts can't add/take stock, so don't render those buttons for
+  // them — only the read-only "Details" link. (`canWrite` from shared.js.)
+  const writeButtons = canWrite
+    ? `<button class="btn btn-secondary btn-sm" data-act="add">Add</button>
+         <button class="btn btn-secondary btn-sm" data-act="take">Take</button>
+         `
+    : "";
   return {
     title: "",
     field: "actions",
     headerSort: false,
-    width: 200,
+    width: canWrite ? 200 : 100,
     hozAlign: "right",
     formatter: () =>
       `<div class="row-actions">
-         <button class="btn btn-secondary btn-sm" data-act="add">Add</button>
-         <button class="btn btn-secondary btn-sm" data-act="take">Take</button>
-         <button class="btn btn-ghost btn-sm" data-act="details">Details</button>
+         ${writeButtons}<button class="btn btn-ghost btn-sm" data-act="details">Details</button>
        </div>`,
     cellClick: (event, cell) => {
       const act = event.target.dataset.act;

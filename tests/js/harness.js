@@ -24,7 +24,7 @@ const readStatic = (name) => readFileSync(join(STATIC, name), "utf8");
 
 export const CSRF = "csrf-test-token";
 
-export function loadPage(bodyHtml, scripts, { fetchImpl } = {}) {
+export function loadPage(bodyHtml, scripts, { fetchImpl, role = "user" } = {}) {
   const virtualConsole = new VirtualConsole();
   // jsdom logs a "Not implemented: navigation" error for the reload/redirect
   // the scripts do on success; swallow only that specific message, and surface
@@ -35,7 +35,8 @@ export function loadPage(bodyHtml, scripts, { fetchImpl } = {}) {
   });
 
   const dom = new JSDOM(
-    `<!DOCTYPE html><html><head><meta name="csrf-token" content="${CSRF}"></head>` +
+    `<!DOCTYPE html><html><head><meta name="csrf-token" content="${CSRF}">` +
+      `<meta name="user-role" content="${role}"></head>` +
       `<body>${bodyHtml}</body></html>`,
     { runScripts: "dangerously", virtualConsole, url: "http://localhost/" },
   );
