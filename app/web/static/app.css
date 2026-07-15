@@ -457,3 +457,19 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* ---------- attachments panel (§10) ---------- */
+.attachment-list { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.attachment-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0; border-bottom: 1px solid var(--border);
+}
+.attachment-item:last-child { border-bottom: none; }
+.attachment-notes { font-size: 13px; }
+.attachment-item .btn { margin-left: auto; }
+.attachment-form {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px;
+}
+.attachment-form input[type="file"] { flex: 1 1 200px; }
+.attachment-form input[name="notes"] { flex: 1 1 160px; }
+.attachment-form .attachment-error { flex-basis: 100%; margin: 0; }

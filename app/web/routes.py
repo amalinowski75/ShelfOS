@@ -18,7 +18,13 @@ from sqlmodel import Session
 from app.api.deps import get_session
 from app.auth.deps import get_optional_user, issue_csrf_token
 from app.models.component import ComponentType
-from app.models.enums import LocationType, MountingType, ParameterDataType, UserRole
+from app.models.enums import (
+    AttachmentKind,
+    LocationType,
+    MountingType,
+    ParameterDataType,
+    UserRole,
+)
 from app.models.user import User
 from app.services import component_service as cs
 from app.services import invoice_service as inv
@@ -296,6 +302,7 @@ def invoice_detail(
             "location_options": _location_options(tree) if can_edit else [],
             "types": cs.list_types(session) if can_edit else [],
             "mounting_types": [mt.value for mt in MountingType],
+            "attachment_kinds": [k.value for k in AttachmentKind],
             "current_user": user,
         },
     )
@@ -365,6 +372,7 @@ def component_detail(
             "history": history,
             "movements": movements,
             "all_locations": ls.list_all(session),
+            "attachment_kinds": [k.value for k in AttachmentKind],
             "current_user": user,
         },
     )

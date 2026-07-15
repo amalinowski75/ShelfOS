@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_attachments.html" import attachments_card %}
 {% block title %}{{ component.mpn or "Component" }} — ShelfOS{% endblock %}
 
 {% macro status_badge(status) -%}
@@ -127,5 +128,12 @@
     <p class="empty">No movements recorded.</p>
     {% endif %}
   </div>
+
+  {{ attachments_card("component", component.id,
+                      current_user.role.value != "read-only", attachment_kinds) }}
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/attachments.js?v={{ static_version() }}"></script>
 {% endblock %}

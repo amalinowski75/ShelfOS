@@ -154,6 +154,26 @@ export function usersPageFixture() {
     </form></dialog>`;
 }
 
+// The reusable attachments panel (mirrors _attachments.html). `withForm` renders
+// the writer-only upload form; omit it for the read-only view.
+export function attachmentsWidgetFixture({ withForm = true } = {}) {
+  const form = withForm
+    ? `<form class="attachment-form">
+         <input type="file" name="file" />
+         <select name="kind"><option value="datasheet">datasheet</option></select>
+         <input name="notes" />
+         <button type="submit"></button>
+         <p class="error attachment-error" hidden></p>
+       </form>`
+    : "";
+  return `
+    <div class="attachments-widget" data-entity-type="component" data-entity-id="7">
+      <ul class="attachment-list"></ul>
+      <p class="empty attachment-empty" hidden></p>
+      ${form}
+    </div>`;
+}
+
 // The global "Change password" control + dialog (mirrors base.html); present on
 // every authenticated page.
 export function passwordDialogFixture() {
