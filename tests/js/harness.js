@@ -174,6 +174,19 @@ export function attachmentsWidgetFixture({ withForm = true } = {}) {
     </div>`;
 }
 
+// The component-detail image gallery: the header thumbnail strip + the lightbox
+// dialog (mirrors component_detail.html).
+export function componentImagesFixture() {
+  return `
+    <div id="component-images" data-entity-type="component" data-entity-id="7"></div>
+    <dialog id="image-lightbox" class="lightbox">
+      <button class="lightbox-nav lightbox-prev"></button>
+      <img class="lightbox-img" alt="" />
+      <button class="lightbox-nav lightbox-next"></button>
+      <button class="lightbox-close" data-close></button>
+    </dialog>`;
+}
+
 // The global "Change password" control + dialog (mirrors base.html); present on
 // every authenticated page.
 export function passwordDialogFixture() {
