@@ -165,13 +165,54 @@ def test_upload_empty_file_422(client: TestClient) -> None:
     assert resp.status_code == 422
 
 
-def _read_only_headers(client: TestClient, anon_client: TestClient) -> dict[str, str]:
+def test_upload_oversize_is_rejected(client: TestClient, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(config, "MAX_ATTACHMENT_BYTES", 4)
+    component_id = _component_id(client)
+    resp = _upload(client, component_id, content=b"way too long")
+    assert resp.status_code == 422
+
+
+def test_upload_overlong_notes_is_rejected(client: TestClient) -> None:
+    component_id = _component_id(client)
+    resp = _upload(client, component_id, notes="x" * 3000)
+    assert resp.status_code == 422
+
+
+def test_list_of_missing_entity_returns_404(client: TestClient) -> None:
+    resp = client.get(
+        "/api/attachments", params={"entity_type": "component", "entity_id": 999}
+    )
+    assert resp.status_code == 404
+
+
+def test_any_writer_can_access_any_attachment(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    # Flat trust model: access is by attachment id, with no ownership check —
+    # a different writer can download and delete another's attachment.
+    component_id = _component_id(client)
+    att_id = _upload(client, component_id).json()["id"]
+    headers = _account_headers(client, anon_client, role="user", username="carol")
+
+    download = anon_client.get(f"/api/attachments/{att_id}/download", headers=headers)
+    assert download.status_code == 200
+    delete = anon_client.delete(f"/api/attachments/{att_id}", headers=headers)
+    assert delete.status_code == 204
+
+
+def _account_headers(
+    client: TestClient,
+    anon_client: TestClient,
+    *,
+    role: str,
+    username: str,
+) -> dict[str, str]:
     client.post(
         "/api/admin/users",
-        json={"username": "viewer", "password": "password123", "role": "read-only"},
+        json={"username": username, "password": "password123", "role": role},
     )
     token = anon_client.post(
-        "/api/auth/token", json={"username": "viewer", "password": "password123"}
+        "/api/auth/token", json={"username": username, "password": "password123"}
     ).json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
 
@@ -181,7 +222,7 @@ def test_read_only_can_read_but_not_write(
 ) -> None:
     component_id = _component_id(client)
     att_id = _upload(client, component_id).json()["id"]
-    headers = _read_only_headers(client, anon_client)
+    headers = _account_headers(client, anon_client, role="read-only", username="viewer")
 
     # Writes are blocked for read-only accounts...
     assert _upload(anon_client, component_id, headers=headers).status_code == 403

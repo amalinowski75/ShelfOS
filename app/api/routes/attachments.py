@@ -4,6 +4,10 @@ Generic over the target entity (``entity_type`` + ``entity_id``): a component or
 an invoice can carry attachments. Files are stored on disk by the service; these
 routes stay thin. Mounted under the protected routers, so read-only accounts may
 list/download (GET) but not upload/delete.
+
+Access is by ``attachment_id`` alone, with no per-attachment ownership check —
+consistent with ShelfOS's flat trust model (every authenticated user can see
+every entity). If attachments ever hold more sensitive content, revisit this.
 """
 
 from __future__ import annotations
@@ -14,12 +18,13 @@ from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlmodel import Session
 
+from app import config
 from app.api.deps import get_session
 from app.api.schemas import AttachmentRead
 from app.models.attachment import Attachment
 from app.models.enums import AttachmentKind
 from app.services import attachment_service as svc
-from app.services.errors import NotFoundError
+from app.services.errors import NotFoundError, ValidationError
 
 router = APIRouter(prefix="/api/attachments", tags=["attachments"])
 
@@ -34,6 +39,12 @@ def upload_attachment(
     session: Session = Depends(get_session),
 ) -> Attachment:
     """Attach an uploaded file to an entity (§10). Writers only."""
+    # Reject an oversize upload from its declared size before reading it into
+    # memory; the service re-checks the actual bytes (and covers an absent size).
+    if file.size is not None and file.size > config.MAX_ATTACHMENT_BYTES:
+        raise ValidationError(
+            f"attachment exceeds the {config.MAX_ATTACHMENT_MB} MB limit"
+        )
     try:
         data = file.file.read()
     finally:

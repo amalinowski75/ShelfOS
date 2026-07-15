@@ -33,6 +33,11 @@ _ENTITY_MODELS: dict[str, type[SQLModel]] = {
 # A short, alphanumeric file extension, e.g. ".pdf" / ".jpg".
 _SAFE_EXTENSION = re.compile(r"\.[a-z0-9]{1,10}")
 
+# Bound the free-text metadata so a writer can't bloat the row with a huge
+# filename or notes field (the file bytes have their own size cap).
+_MAX_FILENAME_LEN = 255
+_MAX_NOTES_LEN = 2000
+
 
 def _entity_model(entity_type: str) -> type[SQLModel]:
     """Return the model for a known ``entity_type`` or raise ``ValidationError``."""
@@ -80,6 +85,12 @@ def create_attachment(
         raise ValidationError(
             f"attachment exceeds the {config.MAX_ATTACHMENT_MB} MB limit"
         )
+    if len(filename) > _MAX_FILENAME_LEN:
+        raise ValidationError(
+            f"filename must be at most {_MAX_FILENAME_LEN} characters"
+        )
+    if notes is not None and len(notes) > _MAX_NOTES_LEN:
+        raise ValidationError(f"notes must be at most {_MAX_NOTES_LEN} characters")
 
     base = config.ATTACHMENTS_DIR
     base.mkdir(parents=True, exist_ok=True)
@@ -109,8 +120,13 @@ def create_attachment(
 def list_attachments(
     session: Session, *, entity_type: str, entity_id: int
 ) -> list[Attachment]:
-    """Return the attachments for one entity, oldest first (metadata only)."""
-    _entity_model(entity_type)  # reject an unknown type the same way create does
+    """Return the attachments for one entity, oldest first (metadata only).
+
+    The target must exist (unknown type → 422, unknown id → 404), matching
+    ``create_attachment`` rather than silently returning an empty list.
+    """
+    model = _entity_model(entity_type)
+    require_entity(session, model, entity_id, entity_type)
     statement = (
         select(Attachment)
         .where(Attachment.entity_type == entity_type)

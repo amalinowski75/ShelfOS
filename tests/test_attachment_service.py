@@ -115,6 +115,23 @@ def test_list_rejects_unknown_entity_type(session: Session, store) -> None:  # t
         ats.list_attachments(session, entity_type="widget", entity_id=1)
 
 
+def test_list_of_missing_entity_raises(session: Session, store) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(NotFoundError):
+        ats.list_attachments(session, entity_type="component", entity_id=999)
+
+
+def test_create_rejects_overlong_filename(session: Session, store) -> None:  # type: ignore[no-untyped-def]
+    component = _component(session)
+    with pytest.raises(ValidationError):
+        _attach(session, "component", component.id, filename="x" * 300)
+
+
+def test_create_rejects_overlong_notes(session: Session, store) -> None:  # type: ignore[no-untyped-def]
+    component = _component(session)
+    with pytest.raises(ValidationError):
+        _attach(session, "component", component.id, notes="x" * 3000)
+
+
 def test_get_unknown_raises(session: Session, store) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(NotFoundError):
         ats.get_attachment(session, 999)
