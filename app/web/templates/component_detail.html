@@ -19,6 +19,10 @@
     <h1>{{ component.mpn or ("Component #" ~ component.id) }}</h1>
     <p>{{ type_name }}{% if component.manufacturer %} · {{ component.manufacturer }}{% endif %}</p>
   </div>
+  {# Right-aligned thumbnails of this component's image attachments (§10);
+     filled by image_gallery.js, empty (no chrome) when there are none. #}
+  <div id="component-images" class="component-images"
+       data-entity-type="component" data-entity-id="{{ component.id }}"></div>
 </div>
 
 <div class="grid2">
@@ -132,8 +136,17 @@
   {{ attachments_card("component", component.id,
                       current_user.role.value != "read-only", attachment_kinds) }}
 </div>
+
+{# Full-size viewer for the header thumbnails, with prev/next navigation. #}
+<dialog id="image-lightbox" class="lightbox">
+  <button type="button" class="lightbox-nav lightbox-prev" aria-label="Previous image">&lsaquo;</button>
+  <img class="lightbox-img" alt="" />
+  <button type="button" class="lightbox-nav lightbox-next" aria-label="Next image">&rsaquo;</button>
+  <button type="button" class="lightbox-close" aria-label="Close" data-close>&times;</button>
+</dialog>
 {% endblock %}
 
 {% block scripts %}
 <script src="/static/attachments.js?v={{ static_version() }}"></script>
+<script src="/static/image_gallery.js?v={{ static_version() }}"></script>
 {% endblock %}

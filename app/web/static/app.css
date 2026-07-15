@@ -473,3 +473,38 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 .attachment-form input[type="file"] { flex: 1 1 200px; }
 .attachment-form input[name="notes"] { flex: 1 1 160px; }
 .attachment-form .attachment-error { flex-basis: 100%; margin: 0; }
+
+/* ---------- component image gallery + lightbox (§10) ---------- */
+.component-images {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  justify-content: flex-end; align-content: flex-start; max-width: 60%;
+}
+.component-thumb {
+  appearance: none; padding: 0; height: 72px; width: 72px; cursor: pointer;
+  overflow: hidden; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--surface-2);
+  transition: border-color .12s;
+}
+.component-thumb img { display: block; height: 100%; width: 100%; object-fit: cover; }
+.component-thumb:hover { border-color: var(--accent); }
+.component-thumb:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+/* The lightbox is a deliberately dark overlay in either theme. */
+dialog.lightbox {
+  border: none; background: transparent; padding: 0; overflow: visible;
+  max-width: 96vw; max-height: 92vh;
+}
+dialog.lightbox::backdrop { background: rgba(0, 0, 0, .82); }
+.lightbox-img {
+  display: block; max-width: 90vw; max-height: 85vh; object-fit: contain;
+  border-radius: var(--radius); box-shadow: 0 12px 48px rgba(0, 0, 0, .55);
+}
+.lightbox-nav, .lightbox-close {
+  position: fixed; background: rgba(0, 0, 0, .5); color: #fff; border: none;
+  cursor: pointer; line-height: 1;
+}
+.lightbox-nav { top: 50%; transform: translateY(-50%); width: 56px; height: 72px; font-size: 40px; border-radius: var(--radius-sm); }
+.lightbox-prev { left: 3vw; }
+.lightbox-next { right: 3vw; }
+.lightbox-close { top: 3vh; right: 3vw; width: 44px; height: 44px; font-size: 26px; border-radius: 50%; }
+.lightbox-nav:hover, .lightbox-close:hover { background: rgba(0, 0, 0, .78); }

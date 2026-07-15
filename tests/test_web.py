@@ -341,6 +341,10 @@ def test_component_detail_page(client: TestClient) -> None:
     assert 'data-entity-type="component"' in html
     assert "attachments.js" in html
     assert "attachment-form" in html  # a writer sees the upload form
+    # The header image gallery + lightbox (§10) and its script are present.
+    assert 'id="component-images"' in html
+    assert 'id="image-lightbox"' in html
+    assert "image_gallery.js" in html
 
 
 def test_component_detail_attachments_read_only_has_no_upload_form(
@@ -355,6 +359,9 @@ def test_component_detail_attachments_read_only_has_no_upload_form(
     # Read-only still sees the panel (to view/download) but not the upload form.
     assert "attachments-widget" in html
     assert "attachment-form" not in html
+    # The image gallery is view-only, so it renders for read-only accounts too.
+    assert 'id="component-images"' in html
+    assert "image_gallery.js" in html
 
 
 def test_component_detail_missing_returns_404(client: TestClient) -> None:
