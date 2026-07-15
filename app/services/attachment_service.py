@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 from uuid import uuid4
 
+from PIL import Image, ImageOps
 from sqlmodel import Session, SQLModel, col, select
 
 from app import config
@@ -32,6 +33,14 @@ _ENTITY_MODELS: dict[str, type[SQLModel]] = {
 
 # A short, alphanumeric file extension, e.g. ".pdf" / ".jpg".
 _SAFE_EXTENSION = re.compile(r"\.[a-z0-9]{1,10}")
+
+# Attachments whose filename ends in one of these get a generated thumbnail.
+_IMAGE_EXTENSION = re.compile(r"\.(png|jpe?g|gif|webp|bmp|avif)$", re.IGNORECASE)
+
+# Refuse to decode images beyond this many pixels (defends against a small,
+# highly-compressible "decompression bomb", and bounds per-request memory —
+# ~20 Mpx decodes to ~80 MB RGBA); such an image serves as-is.
+_MAX_SOURCE_PIXELS = 20_000_000
 
 # Bound the free-text metadata so a writer can't bloat the row with a huge
 # filename or notes field (the file bytes have their own size cap).
@@ -154,16 +163,96 @@ def stored_file_path(attachment: Attachment) -> Path:
     return candidate
 
 
-def delete_attachment(session: Session, attachment_id: int) -> None:
-    """Delete an attachment row and its file (hard delete).
+def _thumbnail_path(attachment: Attachment) -> Path:
+    """Cache location for an attachment's thumbnail (under ATTACHMENTS_DIR/.thumbs).
 
-    Unlink the file first (best-effort), then remove the row. A crash between the
-    two then leaves at worst a row with a missing file — which downloads treat as
-    404 and a repeat delete cleans up — never a file with no row pointing at it.
+    ``file_path`` is a server-generated name with no separators, so this can't
+    escape the store.
+    """
+    return config.ATTACHMENTS_DIR / ".thumbs" / f"{attachment.file_path}.png"
+
+
+def thumbnail_file(session: Session, attachment_id: int) -> Path:
+    """Return a small cached thumbnail for an image attachment (§10).
+
+    Non-image attachments (and images Pillow can't decode) fall back to the
+    original file, so the caller always gets a servable path. Thumbnails are
+    generated once and cached on disk; attachments are immutable, so the cache
+    never goes stale (``delete`` clears it).
     """
     attachment = get_attachment(session, attachment_id)
-    path = stored_file_path(attachment)
+    source = stored_file_path(attachment)
+    if not source.is_file():
+        raise NotFoundError("attachment file is not available")
+    if not _IMAGE_EXTENSION.search(attachment.filename):
+        return source
+
+    cache = _thumbnail_path(attachment)
+    if cache.is_file():
+        return cache
+    try:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        with Image.open(source) as image:
+            # ``open`` only read the header, so this is a cheap pre-decode guard.
+            if image.width * image.height > _MAX_SOURCE_PIXELS:
+                return source
+            oriented = ImageOps.exif_transpose(image)  # honour phone-photo EXIF
+            oriented.thumbnail((config.THUMBNAIL_PX, config.THUMBNAIL_PX))
+            # Write to a temp file then atomically rename, so a concurrent reader
+            # never sees a half-written PNG. RGBA + PNG preserves transparency.
+            tmp = cache.with_name(f"{cache.name}.{uuid4().hex}.tmp")
+            try:
+                oriented.convert("RGBA").save(tmp, "PNG")
+                tmp.replace(cache)
+            finally:
+                # No-op after a successful rename; cleans a partial file on error.
+                tmp.unlink(missing_ok=True)
+        return cache
+    except Exception:  # noqa: BLE001 - any decode failure -> serve the original
+        # Corrupt, unsupported, or a decompression bomb — never 500; serve the
+        # original file instead.
+        return source
+
+
+def _remove_stored_files(attachment: Attachment) -> None:
+    """Best-effort delete of an attachment's on-disk file and its thumbnail."""
+    with contextlib.suppress(OSError, NotFoundError):
+        stored_file_path(attachment).unlink(missing_ok=True)
     with contextlib.suppress(OSError):
-        path.unlink(missing_ok=True)
+        _thumbnail_path(attachment).unlink(missing_ok=True)
+
+
+def delete_attachment(session: Session, attachment_id: int) -> None:
+    """Delete an attachment row and its files (hard delete).
+
+    Unlink the files first (best-effort), then remove the row. A crash between
+    the two then leaves at worst a row with a missing file — which downloads
+    treat as 404 and a repeat delete cleans up — never a file with no row.
+    """
+    attachment = get_attachment(session, attachment_id)
+    _remove_stored_files(attachment)
     session.delete(attachment)
     session.commit()
+
+
+def delete_attachments_for(
+    session: Session, *, entity_type: str, entity_id: int
+) -> None:
+    """Delete every attachment (rows + files) for an entity, in the caller's
+    transaction.
+
+    Called when the parent entity is hard-deleted (§20): the polymorphic table
+    has no FK cascade, so without this its attachments would be orphaned. Does
+    not commit — the caller's transaction owns that. Files are unlinked eagerly
+    (same trade-off as :func:`delete_attachment`): if the caller's transaction
+    later rolls back, the rows return but the files are gone — acceptable for
+    this admin-only path.
+    """
+    rows = session.exec(
+        select(Attachment)
+        .where(Attachment.entity_type == entity_type)
+        .where(Attachment.entity_id == entity_id)
+    ).all()
+    for attachment in rows:
+        _remove_stored_files(attachment)
+        session.delete(attachment)

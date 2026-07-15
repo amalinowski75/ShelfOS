@@ -19,6 +19,36 @@ describe("shared.js", () => {
     expect(writable("")).toBe(false);
   });
 
+  it("fetchAttachmentList caches per URL and refetches only when fresh", async () => {
+    const { window, fetchMock } = loadPage("<div></div>", ["shared.js"], {
+      fetchImpl: () => Promise.resolve({ ok: true, json: async () => [{ id: 1 }] }),
+    });
+    const get = window.eval("(url, opts) => fetchAttachmentList(url, opts)");
+
+    await get("/api/attachments?x");
+    await get("/api/attachments?x");
+    expect(fetchMock).toHaveBeenCalledTimes(1); // second call served from cache
+
+    await get("/api/attachments?x", { fresh: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2); // fresh bypasses the cache
+  });
+
+  it("fetchAttachmentList does not cache a failed fetch (retries next call)", async () => {
+    let calls = 0;
+    const fetchImpl = () => {
+      calls += 1;
+      return calls === 1
+        ? Promise.reject(new Error("down"))
+        : Promise.resolve({ ok: true, json: async () => [{ id: 1 }] });
+    };
+    const { window } = loadPage("<div></div>", ["shared.js"], { fetchImpl });
+    const get = window.eval("(url) => fetchAttachmentList(url)");
+
+    await expect(get("/api/attachments?x")).rejects.toThrow();
+    // The failed fetch wasn't cached, so this retries and succeeds.
+    expect(await get("/api/attachments?x")).toEqual([{ id: 1 }]);
+  });
+
   it("esc() escapes every HTML metacharacter", () => {
     const { window } = loadPage("<div></div>", ["shared.js"]);
     expect(window.esc(`<a href="x">&'`)).toBe(

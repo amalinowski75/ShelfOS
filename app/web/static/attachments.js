@@ -14,11 +14,11 @@ function setupAttachments(widget) {
     `&entity_id=${encodeURIComponent(entityId)}`;
   const emptyText = empty.textContent; // the macro's "No attachments." default
 
-  async function load() {
+  async function load(fresh = false) {
     try {
-      const resp = await fetch(feed);
-      if (!resp.ok) throw new Error("failed to load attachments");
-      render(await resp.json());
+      // Shared with the image gallery so the page fetches the list once; after
+      // our own writes, pass fresh to bypass that cache.
+      render(await fetchAttachmentList(feed, { fresh }));
     } catch {
       // Show the failure instead of leaving the panel silently blank.
       list.replaceChildren();
@@ -66,7 +66,7 @@ function setupAttachments(widget) {
         headers: { "X-CSRF-Token": csrfToken },
       });
       if (resp.ok) {
-        await load();
+        await load(true);
       } else {
         alert(await errorMessage(resp));
       }
@@ -99,7 +99,7 @@ function setupAttachments(widget) {
           if (resp.ok) {
             form.reset();
             error.hidden = true;
-            await load();
+            await load(true);
           } else {
             error.textContent = await errorMessage(resp);
             error.hidden = false;

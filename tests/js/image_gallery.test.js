@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { loadPage, tick, componentImagesFixture } from "./harness.js";
 
-const SCRIPTS = ["image_gallery.js"];
+const SCRIPTS = ["shared.js", "image_gallery.js"];
 
 const feedImpl = (rows) => () =>
   Promise.resolve({ ok: true, json: async () => rows });
@@ -28,9 +28,10 @@ describe("image_gallery.js", () => {
     expect(rendered).toHaveLength(2);
     // Each thumbnail is a focusable <button> wrapping the image.
     expect(rendered.every((t) => t.tagName === "BUTTON")).toBe(true);
+    // Thumbnails point at the server-generated thumbnail endpoint.
     expect(rendered.map((t) => t.querySelector("img").getAttribute("src"))).toEqual([
-      "/api/attachments/3/download",
-      "/api/attachments/8/download",
+      "/api/attachments/3/thumbnail",
+      "/api/attachments/8/thumbnail",
     ]);
   });
 
