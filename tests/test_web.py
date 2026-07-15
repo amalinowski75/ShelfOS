@@ -335,6 +335,26 @@ def test_component_detail_page(client: TestClient) -> None:
     assert "RC0603" in response.text
     assert "Stock by location" in response.text
     assert "D1" in response.text
+    # The attachments panel (§10) is present and wired to this component.
+    html = response.text
+    assert "attachments-widget" in html
+    assert 'data-entity-type="component"' in html
+    assert "attachments.js" in html
+    assert "attachment-form" in html  # a writer sees the upload form
+
+
+def test_component_detail_attachments_read_only_has_no_upload_form(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    token = _non_admin_token(client, role="read-only", username="viewer")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    html = anon_client.get(f"/components/{component['id']}", headers=headers).text
+    # Read-only still sees the panel (to view/download) but not the upload form.
+    assert "attachments-widget" in html
+    assert "attachment-form" not in html
 
 
 def test_component_detail_missing_returns_404(client: TestClient) -> None:
@@ -477,6 +497,20 @@ def test_invoice_detail_page_links_to_components(client: TestClient) -> None:
 
 def test_invoice_detail_unknown_returns_404(client: TestClient) -> None:
     assert client.get("/invoices/9999").status_code == 404
+
+
+def test_invoice_detail_shows_attachments_even_when_finalized(
+    client: TestClient,
+) -> None:
+    invoice = _invoice_with_line(client)["invoice"]
+    client.post(f"/api/invoices/{invoice['id']}/finalize", json={})  # type: ignore[index]
+
+    html = client.get(f"/invoices/{invoice['id']}").text  # type: ignore[index]
+    assert "attachments-widget" in html
+    assert 'data-entity-type="invoice"' in html
+    # Uploads are gated on writer role, not can_edit, so the form stays on a
+    # finalized invoice (e.g. to attach the scanned PDF afterwards).
+    assert "attachment-form" in html
 
 
 def test_component_detail_links_to_invoices(client: TestClient) -> None:

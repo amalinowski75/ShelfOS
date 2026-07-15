@@ -1,0 +1,24 @@
+{# Reusable attachments panel (spec §10). Rows load from /api/attachments via
+   attachments.js; the upload form only renders for writers. `can_write` gates
+   the form here; attachments.js gates the per-row Delete button on the same
+   role (canWrite from shared.js). #}
+{% macro attachments_card(entity_type, entity_id, can_write, kinds) %}
+<div class="card card-pad attachments-widget"
+     data-entity-type="{{ entity_type }}"
+     data-entity-id="{{ entity_id }}">
+  <h2>Attachments</h2>
+  <ul class="attachment-list"></ul>
+  <p class="empty attachment-empty" hidden>No attachments.</p>
+  {% if can_write %}
+  <form class="attachment-form">
+    <input type="file" name="file" class="control" required />
+    <select name="kind" class="control">
+      {% for kind in kinds %}<option value="{{ kind }}">{{ kind }}</option>{% endfor %}
+    </select>
+    <input class="control" name="notes" placeholder="notes (optional)" />
+    <button type="submit" class="btn btn-secondary btn-sm">Upload</button>
+    <p class="error attachment-error" hidden></p>
+  </form>
+  {% endif %}
+</div>
+{% endmacro %}

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_location_picker.html" import location_picker %}
+{% from "_attachments.html" import attachments_card %}
 {% block title %}{{ invoice.invoice_number }} — ShelfOS{% endblock %}
 
 {% set can_edit = current_user.role.value != "read-only" and not invoice.is_finalized %}
@@ -48,7 +49,7 @@
       <tr><th>Total net</th><td class="mono">{{ format_money(invoice.total_net) }} {{ invoice.currency }}</td></tr>
       <tr><th>Total gross</th><td class="mono">{% if invoice.is_finalized %}{{ format_money(invoice.total_gross) }} {{ invoice.currency }}{% else %}<span class="muted">— (set on finalize)</span>{% endif %}</td></tr>
       <tr><th>Status</th><td>{{ state_badge(invoice.is_finalized) }}</td></tr>
-      {% if invoice.file_path %}<tr><th>Attachment</th><td class="mono">{{ invoice.file_path }}</td></tr>{% endif %}
+      {% if invoice.file_path %}<tr><th>Invoice file</th><td class="mono">{{ invoice.file_path }}</td></tr>{% endif %}
     </tbody>
   </table>
   {% if invoice.notes %}<p class="muted" style="margin: 14px 0 0">{{ invoice.notes }}</p>{% endif %}
@@ -107,6 +108,11 @@
 </div>
 
 </div>{# /#invoice-detail #}
+
+{# Uploads are allowed for any writer, including on a finalized invoice (e.g. to
+   attach the scanned PDF after finalizing) — so gate on role, not can_edit. #}
+{{ attachments_card("invoice", invoice.id,
+                    current_user.role.value != "read-only", attachment_kinds) }}
 
 {% if can_edit %}
 <dialog id="invoice-meta-dialog">
@@ -216,4 +222,5 @@
 
 {% block scripts %}
 <script src="/static/invoices.js?v={{ static_version() }}"></script>
+<script src="/static/attachments.js?v={{ static_version() }}"></script>
 {% endblock %}
