@@ -8,11 +8,11 @@ Run locally with::
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session
 from starlette.middleware.sessions import SessionMiddleware
@@ -109,6 +109,40 @@ def create_app(*, create_tables: bool = True) -> FastAPI:
         https_only=config.is_production(),
         same_site="lax",
     )
+
+    @app.middleware("http")
+    async def _security_headers(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        """Set baseline security response headers on every response.
+
+        ``setdefault`` so a route that sets its own (e.g. the attachment download
+        already sends ``nosniff``) is not overridden.
+
+        Known gap: a truly unhandled exception is turned into a 500 by Starlette's
+        ServerErrorMiddleware, which wraps this middleware, so that response skips
+        these headers. The body is a static ``debug=False`` message with no
+        reflected content; a fronting reverse proxy should set these for full
+        coverage in production.
+        """
+        response = await call_next(request)
+        # Refuse framing (clickjacking): X-Frame-Options for old browsers,
+        # CSP frame-ancestors for modern ones.
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault(
+            "Content-Security-Policy", "frame-ancestors 'none'"
+        )
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault(
+            "Referrer-Policy", "strict-origin-when-cross-origin"
+        )
+        # HSTS only in production — it is meaningful over HTTPS and would pin
+        # localhost to HTTPS in dev otherwise.
+        if config.is_production():
+            response.headers.setdefault(
+                "Strict-Transport-Security", "max-age=63072000; includeSubDomains"
+            )
+        return response
 
     register_error_handlers(app)
 
