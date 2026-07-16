@@ -174,4 +174,31 @@ describe("attachments.js", () => {
     expect(document.querySelector(".attachment-item button")).toBeNull();
     expect(document.querySelector(".attachment-form")).toBeNull();
   });
+
+  it("fetches an attachment from a URL as JSON with the CSRF token", async () => {
+    const { window, document, fetchMock } = loadPage(attachmentsWidgetFixture(), SCRIPTS, {
+      fetchImpl: feedImpl([]),
+    });
+    await tick();
+    const urlForm = document.querySelector(".attachment-url-form");
+    urlForm.elements.url.value = "https://example.com/d.pdf";
+    urlForm.elements.notes.value = "sheet";
+    urlForm.dispatchEvent(
+      new window.Event("submit", { cancelable: true, bubbles: true }),
+    );
+    await tick();
+
+    const call = fetchMock.mock.calls.find((c) => c[0] === "/api/attachments/from-url");
+    expect(call).toBeTruthy();
+    const opts = call[1];
+    expect(opts.method).toBe("POST");
+    expect(opts.headers["Content-Type"]).toBe("application/json");
+    expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
+    expect(JSON.parse(opts.body)).toMatchObject({
+      entity_type: "component",
+      entity_id: 7,
+      url: "https://example.com/d.pdf",
+      notes: "sheet",
+    });
+  });
 });

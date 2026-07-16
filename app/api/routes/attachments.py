@@ -20,10 +20,11 @@ from sqlmodel import Session
 
 from app import config
 from app.api.deps import get_session
-from app.api.schemas import AttachmentRead
+from app.api.schemas import AttachmentFromUrl, AttachmentRead
 from app.models.attachment import Attachment
 from app.models.enums import AttachmentKind
 from app.services import attachment_service as svc
+from app.services import url_fetch
 from app.services.errors import NotFoundError, ValidationError
 
 router = APIRouter(prefix="/api/attachments", tags=["attachments"])
@@ -57,6 +58,30 @@ def upload_attachment(
         filename=file.filename or "upload",
         data=data,
         notes=notes,
+    )
+
+
+@router.post(
+    "/from-url", response_model=AttachmentRead, status_code=status.HTTP_201_CREATED
+)
+def attach_from_url(
+    payload: AttachmentFromUrl,
+    session: Session = Depends(get_session),
+) -> Attachment:
+    """Fetch a file from a public URL server-side and attach it (§10). Writers only.
+
+    The fetch is SSRF-guarded in ``url_fetch`` (http/https only, non-public hosts
+    rejected, size-capped, timed out); any failure surfaces as a 422.
+    """
+    data, filename = url_fetch.fetch_url(payload.url)
+    return svc.create_attachment(
+        session,
+        entity_type=payload.entity_type,
+        entity_id=payload.entity_id,
+        kind=payload.kind,
+        filename=filename,
+        data=data,
+        notes=payload.notes,
     )
 
 

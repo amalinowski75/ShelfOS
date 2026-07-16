@@ -19,6 +19,16 @@
     <button type="submit" class="btn btn-secondary btn-sm">Upload</button>
     <p class="error attachment-error" hidden></p>
   </form>
+  <form class="attachment-url-form">
+    <input type="url" name="url" class="control"
+           placeholder="https://…/datasheet.pdf" required />
+    <select name="kind" class="control">
+      {% for kind in kinds %}<option value="{{ kind }}">{{ kind }}</option>{% endfor %}
+    </select>
+    <input class="control" name="notes" placeholder="notes (optional)" />
+    <button type="submit" class="btn btn-secondary btn-sm">Fetch from URL</button>
+    <p class="error attachment-url-error" hidden></p>
+  </form>
   {% endif %}
 </div>
 {% endmacro %}

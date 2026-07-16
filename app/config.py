@@ -59,3 +59,15 @@ def is_using_default_secret() -> bool:
 def is_using_default_admin_password() -> bool:
     """True when the default admin password is in effect."""
     return ADMIN_PASSWORD == "admin"
+
+# Server-side fetch of an attachment from a URL (spec §10): connect+read timeout
+# (seconds) and the maximum number of redirects followed (each re-validated).
+ATTACHMENT_URL_TIMEOUT = float(os.environ.get("SHELFOS_ATTACHMENT_URL_TIMEOUT", "10"))
+# Hard wall-clock ceiling for the whole fetch (all hops), independent of the
+# per-read timeout above, so a slow-trickle server can't hold a worker thread.
+ATTACHMENT_URL_TOTAL_TIMEOUT = float(
+    os.environ.get("SHELFOS_ATTACHMENT_URL_TOTAL_TIMEOUT", "30")
+)
+ATTACHMENT_URL_MAX_REDIRECTS = int(
+    os.environ.get("SHELFOS_ATTACHMENT_URL_MAX_REDIRECTS", "5")
+)

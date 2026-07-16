@@ -164,6 +164,13 @@ export function attachmentsWidgetFixture({ withForm = true } = {}) {
          <input name="notes" />
          <button type="submit"></button>
          <p class="error attachment-error" hidden></p>
+       </form>
+       <form class="attachment-url-form">
+         <input type="url" name="url" />
+         <select name="kind"><option value="datasheet">datasheet</option></select>
+         <input name="notes" />
+         <button type="submit"></button>
+         <p class="error attachment-url-error" hidden></p>
        </form>`
     : "";
   return `

@@ -233,6 +233,16 @@ class AttachmentRead(BaseModel):
     notes: str | None
 
 
+class AttachmentFromUrl(BaseModel):
+    """Attach a file fetched server-side from a public URL (spec §10)."""
+
+    entity_type: str
+    entity_id: int
+    url: str = Field(max_length=2048)
+    kind: AttachmentKind = AttachmentKind.OTHER
+    notes: str | None = None
+
+
 class BomLineRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

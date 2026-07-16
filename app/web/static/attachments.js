@@ -1,5 +1,5 @@
 // Attachments panel (spec §10): lists an entity's files with download links,
-// lets a writer upload (multipart) and delete. Enhances every
+// lets a writer upload (multipart), fetch from a URL, and delete. Enhances every
 // `.attachments-widget` on the page, reading its entity from data attributes.
 // `esc`, `csrfToken`, `errorMessage` and `canWrite` come from shared.js.
 
@@ -109,6 +109,47 @@ function setupAttachments(widget) {
           error.hidden = false;
         } finally {
           submitting = false;
+        }
+      })();
+    });
+  }
+
+  // Second writer path: attach a file the server fetches from a URL (JSON, not
+  // multipart). The fetch is SSRF-guarded server-side.
+  const urlForm = widget.querySelector(".attachment-url-form");
+  if (urlForm) {
+    const urlError = urlForm.querySelector(".attachment-url-error");
+    let fetching = false;
+    urlForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (fetching) return;
+      fetching = true;
+      (async () => {
+        try {
+          const resp = await fetch("/api/attachments/from-url", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+            body: JSON.stringify({
+              entity_type: entityType,
+              entity_id: Number(entityId),
+              url: urlForm.elements.url.value.trim(),
+              kind: urlForm.elements.kind.value,
+              notes: urlForm.elements.notes.value.trim() || null,
+            }),
+          });
+          if (resp.ok) {
+            urlForm.reset();
+            urlError.hidden = true;
+            await load(true);
+          } else {
+            urlError.textContent = await errorMessage(resp);
+            urlError.hidden = false;
+          }
+        } catch {
+          urlError.textContent = "Could not reach the server.";
+          urlError.hidden = false;
+        } finally {
+          fetching = false;
         }
       })();
     });
