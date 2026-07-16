@@ -48,19 +48,27 @@ function bomSubstitutesFormatter(cell) {
   return `<span class="subs-inline">${links.join(" · ")}</span>`;
 }
 
-// Plain-text tooltip (Tabulator sets it as a title attribute, so no escaping is
-// needed) with each substitute's value, mpn, stock and whether it's an exact match.
+// Tooltip with each substitute's value, footprint, mpn, stock and exact-ness.
+// Tabulator sets tooltip content via innerHTML (NOT a title attribute), so every
+// user-controlled field must be esc()'d — value/package/mpn derive from an
+// uploaded CSV / free-text component fields. Ints go through Number().
 function bomSubstitutesTooltip(subs) {
   return (subs || [])
     .map((s) => {
-      const parts = [s.value];
-      if (s.package) parts.push(s.package); // the candidate's footprint/package
-      if (s.mpn) parts.push(s.mpn);
+      const parts = [esc(s.value)];
+      if (s.package) parts.push(esc(s.package)); // the candidate's footprint/package
+      if (s.mpn) parts.push(esc(s.mpn));
       parts.push(`stock ${Number(s.stock)}`);
       if (s.exact) parts.push("exact");
       return parts.join(" · ");
     })
     .join("\n");
+}
+
+// References tooltip: Tabulator would innerHTML the raw cell value for
+// `tooltip: true`, so escape it (the refdes string comes from the CSV).
+function bomReferencesTooltip(e, cell) {
+  return esc(cell.getValue() ?? "");
 }
 
 function renderBomSummary(summary) {
@@ -90,7 +98,7 @@ function bomReportColumns() {
       field: "references",
       width: 200,
       cssClass: "cell-mono",
-      tooltip: true, // full refdes on hover; the cell truncates with an ellipsis
+      tooltip: bomReferencesTooltip, // full refdes on hover; escaped (see helper)
       ...bomTextFilter("References"),
     },
     { title: "Value", field: "value", ...bomTextFilter("Value") },

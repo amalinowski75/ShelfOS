@@ -99,6 +99,33 @@ describe("boms_report.js — rendering", () => {
     expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
   });
 
+  // Tabulator renders tooltip content via innerHTML, so tooltip text is an XSS
+  // sink too — both tooltips must escape their untrusted fields.
+  it("escapes untrusted fields in the substitute tooltip", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const tip = window.bomSubstitutesTooltip([
+      {
+        component_id: 5,
+        value: "<script>alert(1)</script>",
+        package: "<b>x</b>",
+        mpn: '<img src=x onerror=1>',
+        stock: 3,
+        exact: false,
+      },
+    ]);
+    expect(tip).not.toContain("<script>");
+    expect(tip).not.toContain("<img");
+    expect(tip).not.toContain("<b>");
+    expect(tip).toContain("&lt;script&gt;");
+  });
+
+  it("escapes the references tooltip", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const tip = window.bomReferencesTooltip(null, fakeCell("R1<img src=x onerror=1>"));
+    expect(tip).not.toContain("<img");
+    expect(tip).toContain("&lt;img");
+  });
+
   it("escapes an untrusted MPN cell", () => {
     const { window } = loadPage(bomReportFixture(), SCRIPTS);
     const html = window.bomMpnFormatter(fakeCell("<img src=x onerror=1>"));
