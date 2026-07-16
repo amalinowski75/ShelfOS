@@ -1,8 +1,9 @@
 // Shared "New component" dialog (spec §16.5). Loaded on every authenticated
 // page; active only where the _component_dialog.html partial is present.
-// Exposes `openComponentDialog(onCreated)` — `onCreated` receives the created
-// component so each caller can react (filter the table, select it in a picker…).
-// Uses shared.js helpers (csrfToken, errorMessage).
+// Exposes `openComponentDialog(onCreated, prefill)` — `onCreated` receives the
+// created component so each caller can react (filter the table, select it in a
+// picker…); the optional `prefill` ({category, value, mpn, manufacturer}) seeds
+// the fields from a BOM line. Uses shared.js helpers (csrfToken, errorMessage).
 
 (function () {
   const dialog = document.getElementById("component-dialog");
@@ -17,6 +18,8 @@
   // Monotonic id so overlapping type-select changes can't render stale fields.
   let paramsRequestId = 0;
   let onCreated = null;
+  // The effective parameter definitions currently rendered (for prefill lookups).
+  let currentDefinitions = [];
 
   // Build a value input for one effective parameter definition, keyed by its id
   // and data type so the payload can be assembled without another lookup.
@@ -58,6 +61,7 @@
   async function loadParams(typeId) {
     const requestId = ++paramsRequestId;
     paramsBox.replaceChildren();
+    currentDefinitions = [];
     if (!typeId) {
       paramsHint.textContent = "Select a type to enter its parameters.";
       paramsHint.hidden = false;
@@ -85,6 +89,7 @@
       return;
     }
     paramsHint.hidden = true;
+    currentDefinitions = definitions;
     for (const definition of definitions) {
       paramsBox.appendChild(buildParamField(definition));
     }
@@ -164,12 +169,70 @@
     }
   });
 
-  // Open the dialog; `callback(created)` runs after a successful create.
-  window.openComponentDialog = function (callback) {
+  // Select the type whose name matches `category` (case-insensitive); null if none.
+  function matchTypeByName(category) {
+    if (!category) return null;
+    const target = String(category).trim().toLowerCase();
+    const option = [...typeSelect.options].find(
+      (o) => o.value && o.textContent.trim().toLowerCase() === target,
+    );
+    return option ? option.value : null;
+  }
+
+  // The type's "value" parameter, chosen exactly like the server's bom_service
+  // (`_value_parameter`): the NUMBER definition with the lowest (sort_order, id)
+  // across the WHOLE effective set — NOT DOM order, which is ancestor-first and
+  // would pick an inherited parameter over a lower-order own one.
+  function valueParamId() {
+    const numbers = currentDefinitions.filter((d) => d.data_type === "number");
+    if (!numbers.length) return null;
+    return numbers.reduce((best, d) =>
+      d.sort_order < best.sort_order ||
+      (d.sort_order === best.sort_order && d.id < best.id)
+        ? d
+        : best,
+    ).id;
+  }
+
+  // Put a BOM line's value into that value parameter. The raw value may carry a
+  // tolerance/voltage suffix ("10k 1%", "10uF/50V"); keep only the token the
+  // number parser accepts, mirroring the server's clean_value.
+  function setValueParam(rawValue) {
+    const id = valueParamId();
+    if (id == null) return;
+    const input = paramsBox.querySelector(`input[data-definition-id="${id}"]`);
+    if (input) input.value = String(rawValue).split(/[\s/]/)[0];
+  }
+
+  // Pre-fill from a BOM line: { category, value, mpn, manufacturer }. Runs async
+  // (loading the matched type's parameters); fired after the dialog is shown.
+  async function applyPrefill(prefill) {
+    if (!prefill) {
+      loadParams(""); // clears the fields and shows the hint
+      return;
+    }
+    if (prefill.mpn) form.querySelector('[name="mpn"]').value = prefill.mpn;
+    if (prefill.manufacturer) {
+      form.querySelector('[name="manufacturer"]').value = prefill.manufacturer;
+    }
+    const typeId = matchTypeByName(prefill.category);
+    if (!typeId) {
+      loadParams(""); // no matching type — let the user pick one
+      return;
+    }
+    typeSelect.value = typeId;
+    await loadParams(typeId); // render the type's parameter fields
+    // Only fill the value if the user hasn't changed the type while we loaded.
+    if (prefill.value && typeSelect.value === typeId) setValueParam(prefill.value);
+  }
+
+  // Open the dialog; `callback(created)` runs after a successful create. An
+  // optional `prefill` seeds the fields from a BOM line.
+  window.openComponentDialog = function (callback, prefill) {
     onCreated = callback || null;
     form.reset();
     errorEl.hidden = true;
-    loadParams(""); // clears the fields and shows the hint
-    dialog.showModal();
+    dialog.showModal(); // open synchronously; fields fill in a tick later
+    applyPrefill(prefill);
   };
 })();

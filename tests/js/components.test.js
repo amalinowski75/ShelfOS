@@ -227,3 +227,81 @@ describe("app.js — new component", () => {
     expect(hint.textContent).toBe("Loading…");
   });
 });
+
+describe("component_dialog.js — prefill (add from BOM)", () => {
+  it("matches the type by category name and fills value/mpn/manufacturer", async () => {
+    const { window, document } = loadPage(componentPageFixture(), SCRIPTS, { fetchImpl });
+    // Case-insensitive match to the "resistor" option (id 1 in the fixture).
+    window.openComponentDialog(null, {
+      category: "Resistor",
+      value: "10k 1%",
+      mpn: "RES-10K",
+      manufacturer: "YAGEO",
+    });
+    await tick();
+    expect(document.getElementById("component-type").value).toBe("1");
+    expect(document.querySelector('#component-form [name="mpn"]').value).toBe("RES-10K");
+    expect(document.querySelector('#component-form [name="manufacturer"]').value).toBe(
+      "YAGEO",
+    );
+    // The value lands in the type's first NUMBER field, suffix stripped.
+    const numberInput = document.querySelector(
+      '#component-params input[data-data-type="number"]',
+    );
+    expect(numberInput.value).toBe("10k");
+  });
+
+  it("leaves the type unselected when no name matches", async () => {
+    const { window, document } = loadPage(componentPageFixture(), SCRIPTS, { fetchImpl });
+    window.openComponentDialog(null, { category: "transistor", mpn: "BC847" });
+    await tick();
+    expect(document.getElementById("component-type").value).toBe("");
+    expect(document.querySelector('#component-form [name="mpn"]').value).toBe("BC847");
+    expect(document.getElementById("component-params-hint").hidden).toBe(false);
+  });
+
+  it("fills the value parameter by (sort_order, id), not DOM order", async () => {
+    // The value param must be the lowest-order NUMBER (like the server), even when
+    // an inherited number renders first in the list.
+    const inheritDefs = [
+      { id: 20, label: "Base", data_type: "number", unit: null, enum_values: [], sort_order: 5 },
+      { id: 21, label: "Resistance", data_type: "number", unit: "Ω", enum_values: [], sort_order: 1 },
+    ];
+    const impl = (url, opts) =>
+      url.startsWith("/api/types/") && url.endsWith("/parameters")
+        ? Promise.resolve({ ok: true, json: async () => inheritDefs })
+        : fetchImpl(url, opts);
+    const { window, document } = loadPage(componentPageFixture(), SCRIPTS, {
+      fetchImpl: impl,
+    });
+    window.openComponentDialog(null, { category: "resistor", value: "10k" });
+    await tick();
+    expect(
+      document.querySelector('#component-params input[data-definition-id="21"]').value,
+    ).toBe("10k");
+    expect(
+      document.querySelector('#component-params input[data-definition-id="20"]').value,
+    ).toBe("");
+  });
+
+  it("does not fill the value if the type is changed while parameters load", async () => {
+    const { window, document } = loadPage(
+      componentPageFixture([
+        { id: 1, name: "resistor" },
+        { id: 2, name: "capacitor" },
+      ]),
+      SCRIPTS,
+      { fetchImpl },
+    );
+    window.openComponentDialog(null, { category: "resistor", value: "10k" });
+    // Before the prefill's params load, the user switches type.
+    const typeSelect = document.getElementById("component-type");
+    typeSelect.value = "2";
+    fire(typeSelect, "change");
+    await tick();
+    // The prefill value must NOT land in the now-current (different) type's field.
+    expect(
+      document.querySelector('#component-params input[data-data-type="number"]').value,
+    ).toBe("");
+  });
+});
