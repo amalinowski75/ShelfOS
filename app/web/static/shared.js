@@ -67,16 +67,20 @@ function frameTable(table) {
     // leaves room for a horizontal scrollbar so a short-but-wide table doesn't get
     // a spurious vertical one.
     const full = holder.scrollHeight + headerH + 16;
-    // Available height = from the table's top down to the viewport bottom, minus
-    // the page's own bottom padding so the page itself never has to scroll. Using
-    // the live top position accounts for everything above the table (nav, page
-    // heading, summary banner) instead of a blind fraction of the window.
-    const page = el.closest(".page");
-    const pad = page ? parseFloat(getComputedStyle(page).paddingBottom) || 0 : 0;
-    const avail = window.innerHeight - el.getBoundingClientRect().top - pad - 8;
-    // Floor at header + ~one row so a tiny viewport can't size the table shorter
-    // than its own header.
-    table.setHeight(Math.max(headerH + 40, Math.min(avail, full)));
+    // Grow/shrink the table so the WHOLE page's bottom lands just above the viewport
+    // bottom, so the page itself never scrolls. Measuring the live page bottom
+    // accounts for everything above AND below the table (nav, headings, and any
+    // wrapping card's + the page's own bottom padding) without hard-coding any of
+    // it — the BOM table sits in a padded card, the components table doesn't.
+    // Resolves in one pass: a change in the table's height shifts the page bottom by
+    // the same amount.
+    const pageEl = el.closest(".page") || document.body;
+    const pageBottom = pageEl.getBoundingClientRect().bottom;
+    const curH = el.getBoundingClientRect().height;
+    const avail = curH + window.innerHeight - pageBottom - 8;
+    // Cap at the content height (short tables wrap exactly) and floor at header +
+    // ~one row so a tiny viewport can't size the table below its own header.
+    table.setHeight(Math.round(Math.max(headerH + 40, Math.min(avail, full))));
   };
   if (!table._framed) {
     table._framed = true;
