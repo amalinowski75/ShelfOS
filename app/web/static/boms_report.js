@@ -188,6 +188,15 @@ function bomAddPrefill(row) {
   };
 }
 
+// The component-detail URL for a matched line (ok/short/out → a matched part), or
+// null when nothing is in inventory (missing/no_mpn) so the row isn't clickable.
+function bomRowTarget(row) {
+  const matched = row.matched && row.matched[0];
+  return matched && matched.component_id
+    ? `/components/${matched.component_id}`
+    : null;
+}
+
 const bomTableEl = document.getElementById("bom-lines-table");
 if (bomTableEl) {
   const bomId = bomTableEl.dataset.bomId;
@@ -198,6 +207,18 @@ if (bomTableEl) {
     layout: "fitDataFill",
     placeholder: "No lines",
     columns: bomReportColumns(),
+    // A matched line reads as clickable (→ its component); unmatched rows don't.
+    rowFormatter: (row) => {
+      if (bomRowTarget(row.getData())) row.getElement().style.cursor = "pointer";
+    },
+  });
+
+  // Clicking a matched line opens its component detail page. Ignore clicks on the
+  // substitute links and the "Add to inventory" button so those still act.
+  table.on("rowClick", (e, row) => {
+    if (e.target.closest("a, button")) return;
+    const url = bomRowTarget(row.getData());
+    if (url) window.location = url;
   });
 
   // Writers get an "Add to inventory" action on unmatched lines, opening the

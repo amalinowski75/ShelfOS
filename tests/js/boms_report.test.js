@@ -161,6 +161,17 @@ describe("boms_report.js — add to inventory", () => {
   });
 });
 
+describe("boms_report.js — row navigation", () => {
+  it("targets the first matched component's detail page, else null", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    expect(
+      window.bomRowTarget({ matched: [{ component_id: 8 }, { component_id: 9 }] }),
+    ).toBe("/components/8");
+    expect(window.bomRowTarget({ matched: [] })).toBe(null); // no match → not clickable
+    expect(window.bomRowTarget({})).toBe(null);
+  });
+});
+
 describe("boms_report.js — loadReport", () => {
   it("fills the summary and sets the rows on success", async () => {
     const report = {
