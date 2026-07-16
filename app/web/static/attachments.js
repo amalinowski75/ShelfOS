@@ -77,25 +77,65 @@ function setupAttachments(widget) {
     }
   }
 
+  // One form, two sources: a picked file (multipart) or a URL the server fetches
+  // (JSON, SSRF-guarded). The submit picks whichever field is filled; if both are,
+  // it asks which to use.
   if (form) {
     const error = form.querySelector(".attachment-error");
     let submitting = false;
+
+    function uploadFile() {
+      // FormData drives the multipart request; do NOT set Content-Type — the
+      // browser adds it with the correct boundary. (An empty url field rides
+      // along harmlessly; the route ignores it.)
+      const body = new FormData(form);
+      body.append("entity_type", entityType);
+      body.append("entity_id", entityId);
+      return fetch("/api/attachments", {
+        method: "POST",
+        headers: { "X-CSRF-Token": csrfToken },
+        body,
+      });
+    }
+
+    function fetchFromUrl(url) {
+      return fetch("/api/attachments/from-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body: JSON.stringify({
+          entity_type: entityType,
+          entity_id: Number(entityId),
+          url,
+          kind: form.elements.kind.value,
+          notes: form.elements.notes.value.trim() || null,
+        }),
+      });
+    }
+
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       if (submitting) return;
+      const hasFile = form.elements.file.files.length > 0;
+      const url = form.elements.url.value.trim();
+      let useUrl;
+      if (hasFile && url) {
+        // OK = the file, Cancel = the URL.
+        useUrl = !confirm(
+          "Both a file and a URL are set — use the file? (Cancel to use the URL instead.)",
+        );
+      } else if (url) {
+        useUrl = true;
+      } else if (hasFile) {
+        useUrl = false;
+      } else {
+        error.textContent = "Choose a file or paste a URL.";
+        error.hidden = false;
+        return;
+      }
       submitting = true;
       (async () => {
         try {
-          // FormData drives the multipart request; do NOT set Content-Type —
-          // the browser adds it with the correct boundary.
-          const body = new FormData(form);
-          body.append("entity_type", entityType);
-          body.append("entity_id", entityId);
-          const resp = await fetch("/api/attachments", {
-            method: "POST",
-            headers: { "X-CSRF-Token": csrfToken },
-            body,
-          });
+          const resp = useUrl ? await fetchFromUrl(url) : await uploadFile();
           if (resp.ok) {
             form.reset();
             error.hidden = true;
@@ -109,47 +149,6 @@ function setupAttachments(widget) {
           error.hidden = false;
         } finally {
           submitting = false;
-        }
-      })();
-    });
-  }
-
-  // Second writer path: attach a file the server fetches from a URL (JSON, not
-  // multipart). The fetch is SSRF-guarded server-side.
-  const urlForm = widget.querySelector(".attachment-url-form");
-  if (urlForm) {
-    const urlError = urlForm.querySelector(".attachment-url-error");
-    let fetching = false;
-    urlForm.addEventListener("submit", (event) => {
-      event.preventDefault();
-      if (fetching) return;
-      fetching = true;
-      (async () => {
-        try {
-          const resp = await fetch("/api/attachments/from-url", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-            body: JSON.stringify({
-              entity_type: entityType,
-              entity_id: Number(entityId),
-              url: urlForm.elements.url.value.trim(),
-              kind: urlForm.elements.kind.value,
-              notes: urlForm.elements.notes.value.trim() || null,
-            }),
-          });
-          if (resp.ok) {
-            urlForm.reset();
-            urlError.hidden = true;
-            await load(true);
-          } else {
-            urlError.textContent = await errorMessage(resp);
-            urlError.hidden = false;
-          }
-        } catch {
-          urlError.textContent = "Could not reach the server.";
-          urlError.hidden = false;
-        } finally {
-          fetching = false;
         }
       })();
     });
