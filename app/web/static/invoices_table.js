@@ -76,6 +76,7 @@ async function loadInvoices(table, hint) {
   try {
     const feed = await fetch("/web/api/invoices").then((r) => r.json());
     await table.setData(feed.data);
+    frameTable(table);
     if (hint && feed.truncated) {
       hint.textContent = `Showing the ${feed.limit} most recent invoices.`;
       hint.className = "muted"; // clear a stale error style from a prior load
@@ -96,7 +97,7 @@ async function loadInvoices(table, hint) {
 const invoicesContainer = document.getElementById("invoices-table");
 if (invoicesContainer) {
   const invoicesTable = new Tabulator("#invoices-table", {
-    layout: "fitColumns",
+    layout: "fitDataFill", // natural widths + horizontal scroll; framed by frameTable
     placeholder: "No invoices",
     columns: invoiceColumns(),
   });

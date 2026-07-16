@@ -46,6 +46,41 @@ function esc(value) {
   );
 }
 
+// Frame a Tabulator table: a sticky header + internal scroll once its content is
+// taller than ~`fraction` of the viewport, wrapping shorter tables exactly (no
+// empty frame). Uses a FIXED pixel height — never `height`/`maxHeight` set to a
+// `vh`/`%` value, which make Tabulator recompute its height on every resize event
+// and hit an internal recursion that freezes the UI for tens of seconds. The
+// height is recomputed on a DEBOUNCED window resize (a one-shot px value, not the
+// continuous relative recalculation), so the table tracks the window safely.
+// Call after each `setData`; the resize listener is attached only once per table.
+function frameTable(table, fraction = 0.7) {
+  const fit = () => {
+    const el = table.element;
+    if (!el) return;
+    const holder = el.querySelector(".tabulator-tableholder");
+    if (!holder) return;
+    const header = el.querySelector(".tabulator-header");
+    const headerH = header ? header.offsetHeight : 0;
+    // scrollHeight reflects the FULL content (all rows) even when a height is
+    // already applied, so this measurement stays stable across re-fits. The +16
+    // leaves room for a horizontal scrollbar so a short-but-wide table doesn't get
+    // a spurious vertical one.
+    const full = holder.scrollHeight + headerH + 16;
+    const cap = Math.round(window.innerHeight * fraction);
+    table.setHeight(Math.min(cap, full));
+  };
+  if (!table._framed) {
+    table._framed = true;
+    let timer;
+    window.addEventListener("resize", () => {
+      clearTimeout(timer);
+      timer = setTimeout(fit, 150);
+    });
+  }
+  fit();
+}
+
 // A readable message from a failed JSON API response. Tolerates a non-JSON body
 // (proxy/500 HTML, network error) and FastAPI's list-shaped 422 `detail` so the
 // user never sees an unhandled rejection or "[object Object]".
