@@ -14,6 +14,16 @@ function feedImpl(rows, extra = () => null) {
   };
 }
 
+// jsdom: attach a File to the file input so the form treats it as a file upload.
+function setFile(document, name = "d.pdf") {
+  const view = document.defaultView;
+  const input = document.querySelector('.attachment-form input[name="file"]');
+  const file = new view.File([new view.Uint8Array([1, 2, 3])], name, {
+    type: "application/pdf",
+  });
+  Object.defineProperty(input, "files", { configurable: true, value: [file] });
+}
+
 describe("attachments.js", () => {
   it("lists attachments with a download link, kind badge and delete button", async () => {
     const rows = [
@@ -62,6 +72,7 @@ describe("attachments.js", () => {
     );
     await tick();
 
+    setFile(document);
     document.querySelector(".attachment-form").dispatchEvent(
       new window.Event("submit", { cancelable: true, bubbles: true }),
     );
@@ -120,6 +131,7 @@ describe("attachments.js", () => {
     });
     await tick();
 
+    setFile(document);
     document.querySelector(".attachment-form").dispatchEvent(
       new window.Event("submit", { cancelable: true, bubbles: true }),
     );
@@ -140,6 +152,7 @@ describe("attachments.js", () => {
     });
     await tick();
 
+    setFile(document);
     document.querySelector(".attachment-form").dispatchEvent(
       new window.Event("submit", { cancelable: true, bubbles: true }),
     );
@@ -173,5 +186,77 @@ describe("attachments.js", () => {
     expect(document.querySelectorAll(".attachment-item")).toHaveLength(1);
     expect(document.querySelector(".attachment-item button")).toBeNull();
     expect(document.querySelector(".attachment-form")).toBeNull();
+  });
+
+  function submitForm(document, window) {
+    document.querySelector(".attachment-form").dispatchEvent(
+      new window.Event("submit", { cancelable: true, bubbles: true }),
+    );
+  }
+
+  it("fetches from a URL (JSON + CSRF) when only the URL field is filled", async () => {
+    const { window, document, fetchMock } = loadPage(attachmentsWidgetFixture(), SCRIPTS, {
+      fetchImpl: feedImpl([]),
+    });
+    await tick();
+    const form = document.querySelector(".attachment-form");
+    form.elements.url.value = "https://example.com/d.pdf";
+    form.elements.notes.value = "sheet";
+    submitForm(document, window);
+    await tick();
+
+    const call = fetchMock.mock.calls.find((c) => c[0] === "/api/attachments/from-url");
+    expect(call).toBeTruthy();
+    const opts = call[1];
+    expect(opts.method).toBe("POST");
+    expect(opts.headers["Content-Type"]).toBe("application/json");
+    expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
+    expect(JSON.parse(opts.body)).toMatchObject({
+      entity_type: "component",
+      entity_id: 7,
+      url: "https://example.com/d.pdf",
+      notes: "sheet",
+    });
+  });
+
+  it("asks which to use when both a file and a URL are filled", async () => {
+    const { window, document, fetchMock } = loadPage(attachmentsWidgetFixture(), SCRIPTS, {
+      fetchImpl: feedImpl([]),
+    });
+    await tick();
+    setFile(document);
+    document.querySelector(".attachment-form").elements.url.value =
+      "https://example.com/d.pdf";
+
+    // Cancel → use the URL.
+    window.confirm = vi.fn(() => false);
+    submitForm(document, window);
+    await tick();
+    expect(window.confirm).toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some((c) => c[0] === "/api/attachments/from-url")).toBe(
+      true,
+    );
+
+    // OK → use the file (multipart).
+    window.confirm = vi.fn(() => true);
+    submitForm(document, window);
+    await tick();
+    expect(fetchMock.mock.calls.some((c) => c[0] === "/api/attachments")).toBe(true);
+  });
+
+  it("shows an error and posts nothing when neither field is filled", async () => {
+    const { window, document, fetchMock } = loadPage(attachmentsWidgetFixture(), SCRIPTS, {
+      fetchImpl: feedImpl([]),
+    });
+    await tick();
+    submitForm(document, window);
+    await tick();
+
+    const error = document.querySelector(".attachment-error");
+    expect(error.hidden).toBe(false);
+    expect(error.textContent).toMatch(/file or.*URL/i);
+    expect(fetchMock.mock.calls.some((c) => (c[1]?.method || "GET") === "POST")).toBe(
+      false,
+    );
   });
 });

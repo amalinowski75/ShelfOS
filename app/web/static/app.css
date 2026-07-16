@@ -491,6 +491,7 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
   display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px;
 }
 .attachment-form input[type="file"] { flex: 1 1 200px; }
+.attachment-form input[type="url"] { flex: 1 1 200px; }
 .attachment-form input[name="notes"] { flex: 1 1 160px; }
 .attachment-form .attachment-error { flex-basis: 100%; margin: 0; }
 

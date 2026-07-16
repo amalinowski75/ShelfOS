@@ -160,6 +160,7 @@ export function attachmentsWidgetFixture({ withForm = true } = {}) {
   const form = withForm
     ? `<form class="attachment-form">
          <input type="file" name="file" />
+         <input type="url" name="url" />
          <select name="kind"><option value="datasheet">datasheet</option></select>
          <input name="notes" />
          <button type="submit"></button>

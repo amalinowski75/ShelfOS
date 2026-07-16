@@ -314,3 +314,67 @@ def test_anonymous_access_requires_auth(anon_client: TestClient) -> None:
     )
     assert anon_client.get("/api/attachments/1/download").status_code == 401
     assert anon_client.get("/api/attachments/1/thumbnail").status_code == 401
+
+
+def test_attach_from_url_creates_attachment(
+    client: TestClient, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    from app.services import url_fetch
+
+    monkeypatch.setattr(
+        url_fetch, "fetch_url", lambda url, **_k: (b"%PDF-1.4", "sheet.pdf")
+    )
+    component_id = _component_id(client)
+    resp = client.post(
+        "/api/attachments/from-url",
+        json={
+            "entity_type": "component",
+            "entity_id": component_id,
+            "url": "https://example.com/x.pdf",
+            "kind": "datasheet",
+            "notes": "from web",
+        },
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["filename"] == "sheet.pdf"
+    assert body["kind"] == "datasheet"
+    assert body["notes"] == "from web"
+    download = client.get(f"/api/attachments/{body['id']}/download")
+    assert download.status_code == 200
+    assert download.content == b"%PDF-1.4"
+
+
+def test_attach_from_url_rejects_non_http_scheme(client: TestClient) -> None:
+    component_id = _component_id(client)
+    resp = client.post(
+        "/api/attachments/from-url",
+        json={
+            "entity_type": "component",
+            "entity_id": component_id,
+            "url": "ftp://example.com/x",
+        },
+    )
+    assert resp.status_code == 422  # url_fetch rejects the scheme before any fetch
+
+
+def test_attach_from_url_forbidden_for_read_only(
+    client: TestClient, anon_client: TestClient, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    from app.services import url_fetch
+
+    monkeypatch.setattr(url_fetch, "fetch_url", lambda url, **_k: (b"x", "x.pdf"))
+    component_id = _component_id(client)
+    headers = _account_headers(
+        client, anon_client, role="read-only", username="viewer_url"
+    )
+    resp = anon_client.post(
+        "/api/attachments/from-url",
+        json={
+            "entity_type": "component",
+            "entity_id": component_id,
+            "url": "https://example.com/x.pdf",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 403

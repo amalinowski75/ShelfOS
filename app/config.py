@@ -59,3 +59,27 @@ def is_using_default_secret() -> bool:
 def is_using_default_admin_password() -> bool:
     """True when the default admin password is in effect."""
     return ADMIN_PASSWORD == "admin"
+
+# Server-side fetch of an attachment from a URL (spec §10): connect+read timeout
+# (seconds) and the maximum number of redirects followed (each re-validated).
+ATTACHMENT_URL_TIMEOUT = float(os.environ.get("SHELFOS_ATTACHMENT_URL_TIMEOUT", "10"))
+# Hard wall-clock ceiling for the whole fetch (all hops), independent of the
+# per-read timeout above, so a slow-trickle server can't hold a worker thread.
+ATTACHMENT_URL_TOTAL_TIMEOUT = float(
+    os.environ.get("SHELFOS_ATTACHMENT_URL_TOTAL_TIMEOUT", "30")
+)
+ATTACHMENT_URL_MAX_REDIRECTS = int(
+    os.environ.get("SHELFOS_ATTACHMENT_URL_MAX_REDIRECTS", "5")
+)
+# Cap concurrent URL fetches so a burst of slow downloads can't exhaust the sync
+# worker-thread pool and stall unrelated endpoints.
+ATTACHMENT_URL_MAX_CONCURRENCY = int(
+    os.environ.get("SHELFOS_ATTACHMENT_URL_MAX_CONCURRENCY", "4")
+)
+# Some CDNs/WAFs (e.g. Akamai in front of st.com) tarpit non-browser clients, so
+# the default python-httpx UA hangs instead of downloading. Present as a browser.
+ATTACHMENT_URL_USER_AGENT = os.environ.get(
+    "SHELFOS_ATTACHMENT_URL_USER_AGENT",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+)

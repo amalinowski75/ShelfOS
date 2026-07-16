@@ -10,13 +10,16 @@
   <ul class="attachment-list"></ul>
   <p class="empty attachment-empty" hidden>No attachments.</p>
   {% if can_write %}
+  {# One form for both sources: pick a file OR paste a URL (the server fetches it).
+     If both are filled the submit handler asks which to use. #}
   <form class="attachment-form">
-    <input type="file" name="file" class="control" required />
+    <input type="file" name="file" class="control" />
+    <input type="url" name="url" class="control" placeholder="…or paste a file URL" />
     <select name="kind" class="control">
       {% for kind in kinds %}<option value="{{ kind }}">{{ kind }}</option>{% endfor %}
     </select>
     <input class="control" name="notes" placeholder="notes (optional)" />
-    <button type="submit" class="btn btn-secondary btn-sm">Upload</button>
+    <button type="submit" class="btn btn-secondary btn-sm">Add</button>
     <p class="error attachment-error" hidden></p>
   </form>
   {% endif %}
