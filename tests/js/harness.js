@@ -199,6 +199,14 @@ export function bomUploadFixture() {
     </form></dialog>`;
 }
 
+// The BOM report page shell (mirrors bom_report.html): the summary placeholder
+// and the Tabulator mount carrying the bom id. Lines/summary come from the feed.
+export function bomReportFixture() {
+  return `
+    <div id="bom-summary"><p class="muted">Loading…</p></div>
+    <div id="bom-lines-table" data-bom-id="7"></div>`;
+}
+
 // The global "Change password" control + dialog (mirrors base.html); present on
 // every authenticated page.
 export function passwordDialogFixture() {

@@ -519,5 +519,7 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, .82); }
 .lightbox-nav:hover, .lightbox-close:hover { background: rgba(0, 0, 0, .78); }
 
 /* ---------- BOM report (§21) ---------- */
-.sub-list { list-style: none; display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
-.sub-list .muted { font-size: 12px; }
+.bom-summary { margin-bottom: 20px; }
+/* Substitutes stay on one line (uniform row height keeps Tabulator fast); links
+   are dot-separated and the cell truncates, with full detail in the tooltip. */
+.subs-inline a + a { margin-left: 2px; }

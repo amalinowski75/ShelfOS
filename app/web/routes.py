@@ -271,8 +271,13 @@ def bom_report_page(
     session: Session = Depends(get_session),
     user: User = Depends(require_web_user),
 ) -> HTMLResponse:
-    """Live availability report for one BOM (§21). 404 if it doesn't exist."""
-    report = boms_svc.build_bom_report(session, bom_id)  # raises NotFound → 404
+    """Live availability report for one BOM (§21). 404 if it doesn't exist.
+
+    A shell page: the lines + summary are fetched client-side from the report feed
+    (``/api/boms/{id}/report``) and rendered by Tabulator, so here we only need the
+    BOM header and the stored-CSV link.
+    """
+    bom = boms_svc.get_bom(session, bom_id)  # raises NotFound → 404
     # The original CSV is the only thing attached to a bom, added first at import,
     # so the oldest-first list's first entry is it (None if it was removed).
     csv_attachments = ats.list_attachments(
@@ -282,7 +287,7 @@ def bom_report_page(
         request,
         "bom_report.html",
         {
-            "report": report,
+            "bom": bom,
             "csv_attachment": csv_attachments[0] if csv_attachments else None,
             "current_user": user,
         },

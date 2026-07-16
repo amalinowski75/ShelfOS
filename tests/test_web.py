@@ -963,10 +963,12 @@ def test_bom_report_page_renders(
 ) -> None:  # type: ignore[no-untyped-def]
     bom_id = _upload_bom(client, tmp_path, monkeypatch)
     html = client.get(f"/boms/{bom_id}").text
-    assert "hiduart" in html
-    assert "buildable" in html
-    assert "R3,R10,R26" in html  # a parsed line's references
-    assert "not in inventory" in html  # a status badge (fresh inventory → missing)
+    # A shell page: the header + the Tabulator mount + the feed hook. The lines and
+    # summary are fetched client-side from /api/boms/{id}/report (see the JS tests).
+    assert "hiduart" in html  # the BOM name in the header
+    assert 'id="bom-lines-table"' in html
+    assert f'data-bom-id="{bom_id}"' in html
+    assert "boms_report.js" in html
     # The original CSV is downloadable.
     assert "/api/attachments/" in html and "/download" in html
 
@@ -975,26 +977,22 @@ def test_bom_report_unknown_returns_404(client: TestClient) -> None:
     assert client.get("/boms/9999").status_code == 404
 
 
-def test_bom_report_escapes_untrusted_csv_content(
+def test_bom_report_escapes_bom_name(
     client: TestClient, tmp_path, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr(config, "ATTACHMENTS_DIR", tmp_path)
-    evil = (
-        b"Reference,Qty,Value,MPN\n"
-        b'R1,1,"<script>alert(1)</script>","<img src=x onerror=1>"\n'
-    )
     bom_id = client.post(
         "/api/boms",
-        files={"file": ("evil.csv", evil, "text/csv")},
+        files={"file": ("kicad_bom.csv", _BOM_CSV, "text/csv")},
         data={"name": "<b>pwn</b>"},
     ).json()["id"]
 
     html = client.get(f"/boms/{bom_id}").text
-    # Jinja autoescape neutralises the CSV fields and the BOM name.
-    assert "<script>alert(1)</script>" not in html
-    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
-    assert "<img src=x onerror=1>" not in html
+    # The name is the only untrusted field rendered server-side (header + title);
+    # Jinja autoescape neutralises it. CSV line content is rendered client-side, and
+    # its escaping is covered in tests/js/boms_report.test.js.
     assert "<b>pwn</b>" not in html
+    assert "&lt;b&gt;pwn&lt;/b&gt;" in html
 
 
 def test_bom_report_renders_without_a_csv_attachment(
