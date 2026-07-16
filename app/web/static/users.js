@@ -6,6 +6,7 @@
 
 const usersTable = new Tabulator("#users-table", {
   layout: "fitColumns",
+  maxHeight: "70vh", // scroll inside the frame, keep the header pinned
   placeholder: "No users",
   columns: userColumns(), // static columns; only the data reloads (below)
 });

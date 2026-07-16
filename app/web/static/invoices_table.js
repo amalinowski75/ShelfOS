@@ -97,6 +97,7 @@ const invoicesContainer = document.getElementById("invoices-table");
 if (invoicesContainer) {
   const invoicesTable = new Tabulator("#invoices-table", {
     layout: "fitColumns",
+    maxHeight: "70vh", // scroll inside the frame, keep the header pinned
     placeholder: "No invoices",
     columns: invoiceColumns(),
   });

@@ -209,12 +209,16 @@ select.control {
 .stack { display: flex; flex-direction: column; gap: 20px; }
 
 /* ---------- static tables (detail page) ---------- */
-.table-wrap { overflow-x: auto; }
+/* Scroll inside the frame (both axes) and cap the height, so a long/wide table
+   keeps its horizontal scrollbar reachable and its header in view instead of
+   forcing a page-long scroll to the very bottom. Short tables never hit the cap. */
+.table-wrap { overflow: auto; max-height: 70vh; }
 table.data { width: 100%; border-collapse: collapse; font-size: 14px; }
 table.data thead th {
   text-align: left; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em;
   color: var(--muted); font-weight: 650; background: var(--surface-2);
   padding: 10px 14px; border-bottom: 1px solid var(--border); white-space: nowrap;
+  position: sticky; top: 0; z-index: 1; /* keep the header while scrolling */
 }
 table.data tbody td { padding: 11px 14px; border-bottom: 1px solid var(--border); }
 table.data tbody tr:last-child td { border-bottom: none; }
