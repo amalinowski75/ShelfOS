@@ -106,6 +106,18 @@ def test_rejects_oversize_when_streamed(monkeypatch) -> None:  # type: ignore[no
         url_fetch.fetch_url("https://example.com/x", transport=transport)
 
 
+def test_sends_a_browser_user_agent(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    _resolve_to(monkeypatch, "93.184.216.34")
+    seen: dict[str, str] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["ua"] = req.headers.get("user-agent", "")
+        return httpx.Response(200, content=b"ok")
+
+    url_fetch.fetch_url("https://example.com/x", transport=httpx.MockTransport(handler))
+    assert seen["ua"].startswith("Mozilla/")  # not the default python-httpx UA
+
+
 def test_non_2xx_is_rejected(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     _resolve_to(monkeypatch, "93.184.216.34")
     transport = httpx.MockTransport(lambda req: httpx.Response(404))

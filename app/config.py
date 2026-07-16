@@ -71,3 +71,10 @@ ATTACHMENT_URL_TOTAL_TIMEOUT = float(
 ATTACHMENT_URL_MAX_REDIRECTS = int(
     os.environ.get("SHELFOS_ATTACHMENT_URL_MAX_REDIRECTS", "5")
 )
+# Some CDNs/WAFs (e.g. Akamai in front of st.com) tarpit non-browser clients, so
+# the default python-httpx UA hangs instead of downloading. Present as a browser.
+ATTACHMENT_URL_USER_AGENT = os.environ.get(
+    "SHELFOS_ATTACHMENT_URL_USER_AGENT",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+)

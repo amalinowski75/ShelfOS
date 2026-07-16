@@ -32,6 +32,15 @@ _DEFAULT_FILENAME = "download"
 _MAX_FILENAME_LEN = 255
 
 
+def _request_headers() -> dict[str, str]:
+    # Browser-like headers so WAFs that tarpit non-browser clients let us through.
+    return {
+        "User-Agent": config.ATTACHMENT_URL_USER_AGENT,
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
+
 def _reject(reason: str) -> ValidationError:
     return ValidationError(f"could not fetch the URL: {reason}")
 
@@ -102,7 +111,10 @@ def fetch_url(
     current = _guard_url(url)
 
     with httpx.Client(
-        transport=transport, timeout=timeout, follow_redirects=False
+        transport=transport,
+        timeout=timeout,
+        follow_redirects=False,
+        headers=_request_headers(),
     ) as client:
         for _ in range(config.ATTACHMENT_URL_MAX_REDIRECTS + 1):
             if time.monotonic() > deadline:
