@@ -32,3 +32,6 @@ node_modules/
 .vscode/
 .idea/
 .DS_Store
+
+# Local sample BOM (not part of the repo; tests use tests/fixtures/kicad_bom.csv)
+/hiduart.csv

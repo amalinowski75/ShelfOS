@@ -18,6 +18,7 @@ from sqlmodel import Session, SQLModel, col, select
 
 from app import config
 from app.models.attachment import Attachment
+from app.models.bom import Bom
 from app.models.component import Component
 from app.models.enums import AttachmentKind
 from app.models.invoice import Invoice
@@ -29,6 +30,7 @@ from app.services.errors import NotFoundError, ValidationError
 _ENTITY_MODELS: dict[str, type[SQLModel]] = {
     "component": Component,
     "invoice": Invoice,
+    "bom": Bom,
 }
 
 # A short, alphanumeric file extension, e.g. ".pdf" / ".jpg".

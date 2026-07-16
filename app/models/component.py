@@ -69,7 +69,7 @@ class Component(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     type_id: int = Field(foreign_key="component_types.id")
     manufacturer: str | None = Field(default=None)
-    mpn: str | None = Field(default=None)
+    mpn: str | None = Field(default=None, index=True)  # BOM import matches by MPN
     package: str | None = Field(default=None)
     mounting_type: MountingType = Field(
         default=MountingType.OTHER, sa_column=enum_column(MountingType)

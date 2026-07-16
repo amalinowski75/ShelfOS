@@ -6,7 +6,7 @@ models), so only inbound payloads need dedicated schemas here.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -231,3 +231,30 @@ class AttachmentRead(BaseModel):
     kind: AttachmentKind
     filename: str
     notes: str | None
+
+
+class BomLineRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    references: str
+    reference_prefix: str | None
+    category: str | None
+    value: str | None
+    footprint: str | None
+    mpn: str | None
+    manufacturer: str | None
+    quantity: int
+
+
+class BomRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    source_filename: str | None
+    created_at: datetime
+
+
+class BomDetailRead(BomRead):
+    lines: list[BomLineRead]

@@ -16,6 +16,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import cast
 
+from sqlalchemy import func
 from sqlmodel import Session, col, select
 
 from app.models.component import (
@@ -487,6 +488,23 @@ def list_components(session: Session, *, type_id: int | None = None) -> list[Com
     if type_id is not None:
         statement = statement.where(Component.type_id == type_id)
     return list(session.exec(statement.order_by(col(Component.id))).all())
+
+
+def find_components_by_mpn(session: Session, mpn: str) -> list[Component]:
+    """Return non-deleted components matching an MPN (BOM import, §21).
+
+    Case-insensitive, since a KiCad library field and the inventory entry (and
+    vendor catalogs) often differ only in case. MPN is not unique, so this can
+    return several; the caller decides how to use them (e.g. sum their stock).
+    """
+    return list(
+        session.exec(
+            select(Component)
+            .where(func.lower(col(Component.mpn)) == mpn.lower())
+            .where(col(Component.deleted_at).is_(None))
+            .order_by(col(Component.id))
+        ).all()
+    )
 
 
 def list_types(session: Session) -> list[ComponentType]:

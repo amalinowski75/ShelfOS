@@ -6,6 +6,7 @@ Importing this package registers every table on ``SQLModel.metadata`` so that
 
 from app.models.attachment import Attachment
 from app.models.audit import AuditLog
+from app.models.bom import Bom, BomLine
 from app.models.component import (
     Component,
     ComponentParameter,
@@ -32,6 +33,8 @@ __all__ = [
     "Attachment",
     "AttachmentKind",
     "AuditLog",
+    "Bom",
+    "BomLine",
     "Component",
     "ComponentLocation",
     "ComponentParameter",

@@ -25,6 +25,7 @@ from app.models.enums import (
     StockReason,
 )
 from app.seed import ensure_system_user
+from app.services import bom_service as bs
 from app.services import component_service as cs
 from app.services import invoice_service as inv
 from app.services import location_service as ls
@@ -46,6 +47,7 @@ def populate_demo(session: Session, *, seed: int = 1) -> dict[str, int]:
     components = _build_components(session, types, rng)
     movements = _stock_components(session, components, drawers, user.id, rng)
     invoices = _build_invoices(session, components, drawers, user.id, rng)
+    _build_demo_bom(session, user.id)
 
     return {
         "types": len(cs.list_types(session)),
@@ -53,6 +55,7 @@ def populate_demo(session: Session, *, seed: int = 1) -> dict[str, int]:
         "components": len(components),
         "movements": movements,
         "invoices": invoices,
+        "boms": len(bs.list_boms(session)),
     }
 
 
@@ -424,3 +427,23 @@ def _price(rng: random.Random):  # type: ignore[no-untyped-def]
 
     cents = rng.randint(1, 500)
     return Decimal(cents) / Decimal(100)
+
+
+def _build_demo_bom(session: Session, user_id: int) -> None:
+    """A small demo BOM whose values match seeded stock, so its report shows
+    substitute suggestions (the R/C lines carry no MPN)."""
+    csv_text = (
+        "Reference,Qty,Value,Footprint,MPN\n"
+        '"R1,R2,R3",3,10k 1%,Resistor_SMD:R_0402_1005Metric,\n'
+        '"R4,R5",2,4k7 1%,Resistor_SMD:R_0402_1005Metric,\n'
+        '"C1,C2,C3",3,100nF/50V,Capacitor_SMD:C_0402_1005Metric,\n'
+        '"C4,C5",2,10uF/25V,Capacitor_SMD:C_0805_2012Metric,\n'
+        "U1,1,STM32F103C8T6,Package_QFP:LQFP-48,STM32F103C8T6\n"
+    )
+    bs.create_bom(
+        session,
+        name="Demo board",
+        filename="demo_board.csv",
+        data=csv_text.encode(),
+        user_id=user_id,
+    )
