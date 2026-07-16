@@ -209,12 +209,16 @@ select.control {
 .stack { display: flex; flex-direction: column; gap: 20px; }
 
 /* ---------- static tables (detail page) ---------- */
-.table-wrap { overflow-x: auto; }
+/* Scroll inside the frame (both axes) and cap the height, so a long/wide table
+   keeps its horizontal scrollbar reachable and its header in view instead of
+   forcing a page-long scroll to the very bottom. Short tables never hit the cap. */
+.table-wrap { overflow: auto; max-height: 70vh; }
 table.data { width: 100%; border-collapse: collapse; font-size: 14px; }
 table.data thead th {
   text-align: left; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em;
   color: var(--muted); font-weight: 650; background: var(--surface-2);
   padding: 10px 14px; border-bottom: 1px solid var(--border); white-space: nowrap;
+  position: sticky; top: 0; z-index: 1; /* keep the header while scrolling */
 }
 table.data tbody td { padding: 11px 14px; border-bottom: 1px solid var(--border); }
 table.data tbody tr:last-child td { border-bottom: none; }
@@ -443,6 +447,22 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 .tabulator .tabulator-row:last-child { border-bottom: none; }
 .tabulator .tabulator-tableholder .tabulator-placeholder-contents { color: var(--muted); font-size: 14px; }
 
+/* Tabulator's hover tooltip (BOM substitutes, References): the CDN default is a
+   near-white box that's unreadable on our theme, so restyle it with our tokens
+   and honour the newlines our tooltip text uses. */
+.tabulator-tooltip {
+  max-width: 340px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-line;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
 /* cell content helpers used by the Tabulator formatters (app.js) */
 .cell-mpn { font-family: var(--font-mono); font-weight: 600; letter-spacing: -.01em; color: var(--text); }
 .cell-mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -513,3 +533,9 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, .82); }
 .lightbox-next { right: 3vw; }
 .lightbox-close { top: 3vh; right: 3vw; width: 44px; height: 44px; font-size: 26px; border-radius: 50%; }
 .lightbox-nav:hover, .lightbox-close:hover { background: rgba(0, 0, 0, .78); }
+
+/* ---------- BOM report (§21) ---------- */
+.bom-summary { margin-bottom: 20px; }
+/* Substitutes stay on one line (uniform row height keeps Tabulator fast); links
+   are dot-separated and the cell truncates, with full detail in the tooltip. */
+.subs-inline a + a { margin-left: 2px; }

@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}BOMs — ShelfOS{% endblock %}
+
+{% block content %}
+<div class="head">
+  <div>
+    <h1>BOMs</h1>
+    <p>Check a KiCad BOM against your inventory — what's in stock, what's missing (§21).</p>
+  </div>
+  {% if current_user.role.value != "read-only" %}
+  <div class="head-actions">
+    <button type="button" class="btn btn-secondary" id="bom-upload-btn">Import BOM</button>
+  </div>
+  {% endif %}
+</div>
+
+{% if boms %}
+<div class="card card-pad">
+  <div class="table-wrap">
+    <table class="data">
+      <thead>
+        <tr><th>Name</th><th>File</th><th>Imported</th></tr>
+      </thead>
+      <tbody>
+        {% for bom in boms %}
+        <tr>
+          <td><a href="/boms/{{ bom.id }}">{{ bom.name }}</a></td>
+          <td class="mono">{{ bom.source_filename or "—" }}</td>
+          <td class="mono">{{ bom.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="card card-pad">
+  <p class="empty">No BOMs imported yet.{% if current_user.role.value != "read-only" %}
+    Use “Import BOM” to upload a KiCad CSV export.{% endif %}</p>
+</div>
+{% endif %}
+
+{% if current_user.role.value != "read-only" %}
+<dialog id="bom-upload-dialog">
+  <article>
+    <header>
+      <strong>Import BOM</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <form id="bom-upload-form">
+      <div class="field">
+        <label>Name</label>
+        <input class="control" name="name" placeholder="optional (defaults to the filename)" />
+      </div>
+      <div class="field">
+        <label>KiCad BOM CSV</label>
+        <input class="control" type="file" name="file" accept=".csv,text/csv" required />
+      </div>
+      <p id="bom-upload-error" class="error" hidden></p>
+      <footer>
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" class="btn btn-primary">Import</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/boms.js?v={{ static_version() }}"></script>
+{% endblock %}

@@ -336,6 +336,13 @@ def _find_substitutes(
     return suggestions[:_MAX_SUBSTITUTES]
 
 
+def _short_footprint(value: str | None) -> str | None:
+    """KiCad stores a footprint as ``Library:Name``; show just the ``Name`` part."""
+    if value is None:
+        return None
+    return value.split(":", 1)[1] if ":" in value else value
+
+
 def build_bom_report(session: Session, bom_id: int) -> dict[str, object]:
     """Live availability report for a BOM against current stock (§21).
 
@@ -393,7 +400,7 @@ def build_bom_report(session: Session, bom_id: int) -> dict[str, object]:
                 "reference_prefix": line.reference_prefix,
                 "category": line.category,
                 "value": line.value,
-                "footprint": line.footprint,
+                "footprint": _short_footprint(line.footprint),
                 "mpn": line.mpn,
                 "manufacturer": line.manufacturer,
                 "quantity": line.quantity,

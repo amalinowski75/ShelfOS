@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}{{ bom.name }} — BOM — ShelfOS{% endblock %}
+
+{% block content %}
+<p class="crumb"><a href="/boms">&larr; Back to BOMs</a></p>
+
+<div class="head">
+  <div>
+    <h1>{{ bom.name }}</h1>
+    <p>Imported {{ bom.created_at.strftime("%Y-%m-%d %H:%M") }}</p>
+  </div>
+  {% if csv_attachment %}
+  <div class="head-actions">
+    <a class="btn btn-ghost btn-sm" href="/api/attachments/{{ csv_attachment.id }}/download">Download CSV</a>
+  </div>
+  {% endif %}
+</div>
+
+<div id="bom-summary" class="card card-pad bom-summary">
+  <p class="muted">Loading…</p>
+</div>
+
+<div class="card card-pad">
+  <div id="bom-lines-table" data-bom-id="{{ bom.id }}"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/boms_report.js?v={{ static_version() }}"></script>
+{% endblock %}

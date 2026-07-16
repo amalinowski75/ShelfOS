@@ -187,6 +187,26 @@ export function componentImagesFixture() {
     </dialog>`;
 }
 
+// The BOM-import control + dialog on the BOMs list page (mirrors boms_list.html).
+export function bomUploadFixture() {
+  return `
+    <button id="bom-upload-btn"></button>
+    <dialog id="bom-upload-dialog"><form id="bom-upload-form">
+      <input name="name" />
+      <input type="file" name="file" />
+      <p id="bom-upload-error" hidden></p>
+      <button type="submit"></button>
+    </form></dialog>`;
+}
+
+// The BOM report page shell (mirrors bom_report.html): the summary placeholder
+// and the Tabulator mount carrying the bom id. Lines/summary come from the feed.
+export function bomReportFixture() {
+  return `
+    <div id="bom-summary"><p class="muted">Loading…</p></div>
+    <div id="bom-lines-table" data-bom-id="7"></div>`;
+}
+
 // The global "Change password" control + dialog (mirrors base.html); present on
 // every authenticated page.
 export function passwordDialogFixture() {
