@@ -1,0 +1,7 @@
+"Reference","Qty","Value","Footprint","MPN","Manufacturer","Shop"
+"R3,R10,R26","3","1k 1%","Resistor_SMD:R_0402_1005Metric","RES-1K-0402","YAGEO","http://x"
+"R4,R83","2","4.7k 1%","Resistor_SMD:R_0402","","","http://x"
+"C1,C2,C5","14","10uF/50V","Capacitor_SMD:C_0805","GRM21BR61H106KE43L"," MURATA","http://x"
+"C14,C15","2","22p/50V","Capacitor_SMD:C_0402","","",""
+"Q9","1","BC847","Package_TO_SOT_SMD:SOT-23","BC847","onsemi","http://x"
+"SP1","1","SPEAKER","footprints:spk","","",""

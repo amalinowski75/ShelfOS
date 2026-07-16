@@ -39,6 +39,12 @@ MAX_ATTACHMENT_BYTES = MAX_ATTACHMENT_MB * 1024 * 1024
 # originals under ATTACHMENTS_DIR/.thumbs.
 THUMBNAIL_PX = int(os.environ.get("SHELFOS_THUMBNAIL_PX", "240"))
 
+# BOM import: a stock part is offered as a "close" substitute for a passive
+# (R/C/L) when its value is within this percent of the BOM line's value (§21).
+SUBSTITUTE_TOLERANCE_PCT = float(
+    os.environ.get("SHELFOS_SUBSTITUTE_TOLERANCE_PCT", "10")
+)
+
 
 def is_production() -> bool:
     """True when running in a production deployment (D11)."""
