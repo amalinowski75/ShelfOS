@@ -5,7 +5,7 @@
 // `csrfToken`, `esc` and `errorMessage` come from shared.js.
 
 const usersTable = new Tabulator("#users-table", {
-  layout: "fitColumns",
+  layout: "fitDataFill", // natural widths + horizontal scroll; framed by frameTable
   placeholder: "No users",
   columns: userColumns(), // static columns; only the data reloads (below)
 });
@@ -74,10 +74,12 @@ async function loadUsers() {
   try {
     const payload = await fetch("/web/api/users").then((r) => r.json());
     await usersTable.setData(payload.data);
+    frameTable(usersTable);
   } catch {
     // Clear Tabulator's "loading" state and tell the admin, rather than leaving
     // the table spinning forever on a network/parse failure.
     await usersTable.setData([]);
+    frameTable(usersTable); // shrink the frame back around the empty/error state
     alert("Could not load users — refresh to try again.");
   }
 }

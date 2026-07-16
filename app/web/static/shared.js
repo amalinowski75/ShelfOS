@@ -46,6 +46,53 @@ function esc(value) {
   );
 }
 
+// Frame a Tabulator table: fill it from its top down to the bottom of the viewport
+// (a sticky header + internal scroll), wrapping shorter tables exactly so there's
+// no empty frame. Uses a FIXED pixel height — never `height`/`maxHeight` set to a
+// `vh`/`%` value, which make Tabulator recompute its height on every resize event
+// and hit an internal recursion that freezes the UI for tens of seconds. The
+// height is recomputed on a DEBOUNCED window resize (a one-shot px value, not the
+// continuous relative recalculation), so the table tracks the window safely.
+// Call after each `setData`; the resize listener is attached only once per table.
+function frameTable(table) {
+  const fit = () => {
+    const el = table.element;
+    if (!el || el.offsetParent === null) return; // gone or hidden → scrollHeight is 0
+    const holder = el.querySelector(".tabulator-tableholder");
+    if (!holder) return;
+    const header = el.querySelector(".tabulator-header");
+    const headerH = header ? header.offsetHeight : 0;
+    // scrollHeight reflects the FULL content (all rows) even when a height is
+    // already applied, so this measurement stays stable across re-fits. The +16
+    // leaves room for a horizontal scrollbar so a short-but-wide table doesn't get
+    // a spurious vertical one.
+    const full = holder.scrollHeight + headerH + 16;
+    // Grow/shrink the table so the WHOLE page's bottom lands just above the viewport
+    // bottom, so the page itself never scrolls. Measuring the live page bottom
+    // accounts for everything above AND below the table (nav, headings, and any
+    // wrapping card's + the page's own bottom padding) without hard-coding any of
+    // it — the BOM table sits in a padded card, the components table doesn't.
+    // Resolves in one pass: a change in the table's height shifts the page bottom by
+    // the same amount.
+    const pageEl = el.closest(".page") || document.body;
+    const pageBottom = pageEl.getBoundingClientRect().bottom;
+    const curH = el.getBoundingClientRect().height;
+    const avail = curH + window.innerHeight - pageBottom - 8;
+    // Cap at the content height (short tables wrap exactly) and floor at header +
+    // ~one row so a tiny viewport can't size the table below its own header.
+    table.setHeight(Math.round(Math.max(headerH + 40, Math.min(avail, full))));
+  };
+  if (!table._framed) {
+    table._framed = true;
+    let timer;
+    window.addEventListener("resize", () => {
+      clearTimeout(timer);
+      timer = setTimeout(fit, 150);
+    });
+  }
+  fit();
+}
+
 // A readable message from a failed JSON API response. Tolerates a non-JSON body
 // (proxy/500 HTML, network error) and FastAPI's list-shaped 422 `detail` so the
 // user never sees an unhandled rejection or "[object Object]".

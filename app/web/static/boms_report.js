@@ -144,7 +144,6 @@ function bomReportColumns() {
       title: "Substitutes",
       field: "substitutes",
       headerSort: false,
-      widthGrow: 2, // absorb the slack width under fitColumns
       minWidth: 160,
       formatter: bomSubstitutesFormatter,
       tooltip: (e, cell) => bomSubstitutesTooltip(cell.getValue()),
@@ -166,17 +165,17 @@ async function loadReport(table, bomId) {
   }
   renderBomSummary(report.summary);
   await table.setData(report.lines);
+  frameTable(table);
 }
 
 const bomTableEl = document.getElementById("bom-lines-table");
 if (bomTableEl) {
   const bomId = bomTableEl.dataset.bomId;
   const table = new Tabulator("#bom-lines-table", {
-    // Same config as the components table: fitColumns fits the container (no
-    // horizontal scroll on desktop) and NO height cap — a fixed height turns on
-    // Tabulator's virtual renderer, whose redraw on page-load/resize stalls for
-    // tens of seconds. Rendering every row up front is instant for a 160-line BOM.
-    layout: "fitColumns",
+    // Natural column widths + a horizontal scrollbar when they overflow; framed to
+    // a sticky-header scroll box by frameTable (fixed px height — never vh/maxHeight,
+    // which freeze Tabulator on resize; see shared.js frameTable).
+    layout: "fitDataFill",
     placeholder: "No lines",
     columns: bomReportColumns(),
   });

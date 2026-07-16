@@ -6,7 +6,10 @@ const dialog = document.getElementById("stock-dialog");
 const typeFilter = document.getElementById("type-filter");
 
 const table = new Tabulator("#components-table", {
-  layout: "fitColumns",
+  // fitDataFill: columns take their natural widths (horizontal scrollbar when they
+  // overflow); when narrower than the container the row background fills the slack
+  // rather than stretching a column. frameTable adds the sticky-header scroll box.
+  layout: "fitDataFill",
   placeholder: "No components",
 });
 
@@ -138,6 +141,7 @@ async function loadTable() {
   columns.push(actionColumn());
   table.setColumns(columns);
   await table.setData(payload.data);
+  frameTable(table);
 }
 
 function openStockDialog(mode, row) {

@@ -76,6 +76,7 @@ async function loadInvoices(table, hint) {
   try {
     const feed = await fetch("/web/api/invoices").then((r) => r.json());
     await table.setData(feed.data);
+    frameTable(table);
     if (hint && feed.truncated) {
       hint.textContent = `Showing the ${feed.limit} most recent invoices.`;
       hint.className = "muted"; // clear a stale error style from a prior load
@@ -85,6 +86,7 @@ async function loadInvoices(table, hint) {
     // Clear Tabulator's "loading" state and tell the user, rather than leaving
     // the table spinning forever on a network/parse failure.
     await table.setData([]);
+    frameTable(table); // shrink the frame back around the empty/error state
     if (hint) {
       hint.textContent = "Could not load invoices — refresh to try again.";
       hint.className = "error";
@@ -96,7 +98,7 @@ async function loadInvoices(table, hint) {
 const invoicesContainer = document.getElementById("invoices-table");
 if (invoicesContainer) {
   const invoicesTable = new Tabulator("#invoices-table", {
-    layout: "fitColumns",
+    layout: "fitDataFill", // natural widths + horizontal scroll; framed by frameTable
     placeholder: "No invoices",
     columns: invoiceColumns(),
   });
