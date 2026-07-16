@@ -62,12 +62,20 @@ describe("boms_report.js — rendering", () => {
     expect(html).toContain(" · "); // dot-separated on one line
   });
 
-  it("puts full substitute detail (mpn, stock, exact) in the tooltip", () => {
+  it("puts full substitute detail (footprint, mpn, stock, exact) in the tooltip", () => {
     const { window } = loadPage(bomReportFixture(), SCRIPTS);
     const tip = window.bomSubstitutesTooltip([
-      { component_id: 8, mpn: "INI-5747", value: "10 kΩ", stock: 240, exact: true },
+      {
+        component_id: 8,
+        value: "10 kΩ",
+        package: "0402",
+        mpn: "INI-5747",
+        stock: 240,
+        exact: true,
+      },
     ]);
-    expect(tip).toContain("10 kΩ");
+    // footprint comes right after the value
+    expect(tip).toContain("10 kΩ · 0402");
     expect(tip).toContain("INI-5747");
     expect(tip).toContain("stock 240");
     expect(tip).toContain("exact");

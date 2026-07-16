@@ -54,6 +54,7 @@ function bomSubstitutesTooltip(subs) {
   return (subs || [])
     .map((s) => {
       const parts = [s.value];
+      if (s.package) parts.push(s.package); // the candidate's footprint/package
       if (s.mpn) parts.push(s.mpn);
       parts.push(`stock ${Number(s.stock)}`);
       if (s.exact) parts.push("exact");
