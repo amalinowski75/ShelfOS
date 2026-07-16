@@ -46,15 +46,15 @@ function esc(value) {
   );
 }
 
-// Frame a Tabulator table: a sticky header + internal scroll once its content is
-// taller than ~`fraction` of the viewport, wrapping shorter tables exactly (no
-// empty frame). Uses a FIXED pixel height — never `height`/`maxHeight` set to a
+// Frame a Tabulator table: fill it from its top down to the bottom of the viewport
+// (a sticky header + internal scroll), wrapping shorter tables exactly so there's
+// no empty frame. Uses a FIXED pixel height — never `height`/`maxHeight` set to a
 // `vh`/`%` value, which make Tabulator recompute its height on every resize event
 // and hit an internal recursion that freezes the UI for tens of seconds. The
 // height is recomputed on a DEBOUNCED window resize (a one-shot px value, not the
 // continuous relative recalculation), so the table tracks the window safely.
 // Call after each `setData`; the resize listener is attached only once per table.
-function frameTable(table, fraction = 0.7) {
+function frameTable(table) {
   const fit = () => {
     const el = table.element;
     if (!el || el.offsetParent === null) return; // gone or hidden → scrollHeight is 0
@@ -67,10 +67,16 @@ function frameTable(table, fraction = 0.7) {
     // leaves room for a horizontal scrollbar so a short-but-wide table doesn't get
     // a spurious vertical one.
     const full = holder.scrollHeight + headerH + 16;
-    const cap = Math.round(window.innerHeight * fraction);
+    // Available height = from the table's top down to the viewport bottom, minus
+    // the page's own bottom padding so the page itself never has to scroll. Using
+    // the live top position accounts for everything above the table (nav, page
+    // heading, summary banner) instead of a blind fraction of the window.
+    const page = el.closest(".page");
+    const pad = page ? parseFloat(getComputedStyle(page).paddingBottom) || 0 : 0;
+    const avail = window.innerHeight - el.getBoundingClientRect().top - pad - 8;
     // Floor at header + ~one row so a tiny viewport can't size the table shorter
     // than its own header.
-    table.setHeight(Math.max(headerH + 40, Math.min(cap, full)));
+    table.setHeight(Math.max(headerH + 40, Math.min(avail, full)));
   };
   if (!table._framed) {
     table._framed = true;
