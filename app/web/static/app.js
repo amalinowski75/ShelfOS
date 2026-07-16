@@ -17,6 +17,21 @@ const table = new Tabulator("#components-table", {
 // "input" filter uses the "like" function — a case-insensitive substring match
 // applied as you type — and ANDs the active filters across columns, which is
 // exactly the "simple, additive per-column filtering" we want (spec §11).
+// Sort a per-type number column by the raw value the presenter sends alongside
+// the engineering-formatted display string (in `<field>__n`), so e.g. 47 Ω sorts
+// below 220 Ω below 1 kΩ instead of lexically. Missing values sort to one end.
+function numericParamSorter(field) {
+  const key = `${field}__n`;
+  return (a, b, aRow, bRow) => {
+    const an = aRow.getData()[key];
+    const bn = bRow.getData()[key];
+    if (an == null && bn == null) return 0;
+    if (an == null) return -1;
+    if (bn == null) return 1;
+    return an - bn;
+  };
+}
+
 function columnDef(column) {
   const base = {
     title: column.title,
@@ -53,6 +68,7 @@ function columnDef(column) {
       return {
         ...base,
         hozAlign: "right",
+        sorter: "number", // sort by magnitude, not lexically
         // The cell shows a thousands-separated number ("1,234") but the default
         // "like" filter only matches the raw value ("1234"); accept either so
         // typing what you see filters as expected.
@@ -70,7 +86,11 @@ function columnDef(column) {
         },
       };
     default:
-      return base;
+      // Per-type number columns sort by their raw value (set by the presenter);
+      // left-aligned like other param columns (the values are formatted strings).
+      return column.numeric
+        ? { ...base, sorter: numericParamSorter(column.field) }
+        : base;
   }
 }
 

@@ -20,7 +20,7 @@ from app.services import stock_service as ss
 from app.units import format_engineering
 
 # Columns shown for every component regardless of type (spec §11).
-_BASE_COLUMNS: list[dict[str, str]] = [
+_BASE_COLUMNS: list[dict[str, object]] = [
     {"title": "Type", "field": "type"},
     {"title": "Manufacturer", "field": "manufacturer"},
     {"title": "MPN", "field": "mpn"},
@@ -109,7 +109,7 @@ def build_component_table(
     In the generic view only common columns are returned; when a single type is
     selected, its table-flagged parameters are appended as extra columns (§11).
     """
-    columns: list[dict[str, str]] = list(_BASE_COLUMNS)
+    columns: list[dict[str, object]] = list(_BASE_COLUMNS)
     table_params: list[ParameterDefinition] = []
     if type_id is not None:
         table_params = [
@@ -117,7 +117,16 @@ def build_component_table(
             for d in cs.get_effective_parameter_definitions(session, type_id)
             if d.is_table_column
         ]
-        columns += [{"title": d.label, "field": f"param_{d.id}"} for d in table_params]
+        # `numeric` tells the client to sort this column by the raw value the
+        # rows carry (below), not the engineering-formatted display string.
+        columns += [
+            {
+                "title": d.label,
+                "field": f"param_{d.id}",
+                "numeric": d.data_type is ParameterDataType.NUMBER,
+            }
+            for d in table_params
+        ]
 
     totals = ss.total_quantities_by_component(session)
     components = cs.list_components(session, type_id=type_id)
@@ -144,9 +153,15 @@ def build_component_table(
         if table_params:
             values = values_by_component.get(component_id, {})
             for definition in table_params:
-                row[f"param_{definition.id}"] = format_parameter_value(
-                    definition, values.get(cast(int, definition.id))
-                )
+                param = values.get(cast(int, definition.id))
+                field = f"param_{definition.id}"
+                row[field] = format_parameter_value(definition, param)
+                if definition.data_type is ParameterDataType.NUMBER:
+                    # Raw value beside the formatted string so the client sorts
+                    # the column by magnitude (47 Ω < 220 Ω < 1 kΩ), not text.
+                    row[f"{field}__n"] = (
+                        param.value_num if param is not None else None
+                    )
         rows.append(row)
 
     return {"columns": columns, "data": rows}
