@@ -71,6 +71,12 @@ def test_parse_accepts_a_semicolon_delimiter() -> None:
     assert lines[0].value == "10k" and lines[0].quantity == 1
 
 
+def test_unparseable_qty_falls_back_to_the_designator_count() -> None:
+    # "1e400"/"inf" would overflow int(float(...)) — must not crash; count refdes.
+    lines = bs.parse_bom(b'Reference,Qty,Value\n"R1,R2",1e400,10k\n', filename="x.csv")
+    assert lines[0].quantity == 2
+
+
 # --- report ----------------------------------------------------------------
 
 
@@ -187,6 +193,33 @@ def test_create_bom_is_undone_when_the_attachment_fails(
     with pytest.raises(ValidationError):
         bs.create_bom(session, name="b", filename="b.csv", data=_FIXTURE, user_id=1)
     assert bs.list_boms(session) == []  # no orphan bom left behind
+
+
+def test_substitutes_exclude_soft_deleted_components(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    from datetime import UTC, datetime
+
+    ctype = cs.create_type(session, "resistor")
+    rdef = cs.add_parameter_definition(
+        session, ctype.id, name="resistance", label="R",
+        data_type=ParameterDataType.NUMBER, unit="ohm",
+    )
+    drawer = ls.create_location(session, type=LocationType.DRAWER, name="D1")
+    comp = cs.create_component_with_values(
+        session, ctype.id, mpn="RES-1K", values=[(rdef.id, 1000)]
+    )
+    ss.add_stock(
+        session, component_id=comp.id, location_id=drawer.id, quantity=50, user_id=1
+    )
+    comp.deleted_at = datetime.now(UTC)  # soft-delete it
+    session.add(comp)
+    session.commit()
+
+    data = b"Reference,Qty,Value,MPN\nR1,5,1k,\n"  # no MPN → wants substitutes
+    bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+    lines = bs.build_bom_report(session, bom.id)["lines"]
+    assert lines[0]["substitutes"] == []  # the only 1k is soft-deleted
 
 
 def test_create_bom_stores_the_original_csv_as_an_attachment(

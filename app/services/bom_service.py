@@ -60,6 +60,7 @@ _HEADER_ALIASES: dict[str, set[str]] = {
 }
 
 _MAX_SUBSTITUTES = 5
+_MAX_LINES = 10_000  # a real board BOM is well under this; guards a huge upload
 
 
 @dataclass
@@ -103,8 +104,9 @@ def _quantity(raw_qty: str | None, references: str) -> int:
     text = (raw_qty or "").strip()
     if text:
         try:
+            # OverflowError too: int(float("1e400"))/int(float("inf")) raise it.
             return max(int(float(text)), 0)
-        except ValueError:
+        except (ValueError, OverflowError):
             pass
     # No usable Qty column — count the designators.
     return sum(1 for ref in references.split(",") if ref.strip())
@@ -170,6 +172,8 @@ def parse_bom(data: bytes, *, filename: str) -> list[ParsedLine]:
                 quantity=_quantity(row.get(columns.get("quantity", "")), references),
             )
         )
+        if len(lines) > _MAX_LINES:
+            raise ValidationError(f"the BOM has more than {_MAX_LINES} lines")
     if not lines:
         raise ValidationError("the BOM has no usable lines")
     return lines
@@ -240,13 +244,6 @@ def delete_bom(session: Session, bom_id: int) -> None:
 # --- availability report (live, read-only) ---------------------------------
 
 
-def _category_type(session: Session, category: str) -> ComponentType | None:
-    for ctype in session.exec(select(ComponentType)).all():
-        if ctype.name.lower() == category:
-            return ctype
-    return None
-
-
 def _value_parameter(
     session: Session, ctype: ComponentType
 ) -> ParameterDefinition | None:
@@ -261,11 +258,29 @@ def _value_parameter(
     return min(number_defs, key=lambda d: (d.sort_order, d.id or 0))
 
 
+def _value_defs_by_category(
+    session: Session, categories: set[str]
+) -> dict[str, ParameterDefinition | None]:
+    """Resolve each value-category to its type's primary numeric param, once.
+
+    Avoids an N+1: computed a single time per report instead of per BOM line.
+    """
+    types_by_name = {
+        t.name.lower(): t for t in session.exec(select(ComponentType)).all()
+    }
+    resolved: dict[str, ParameterDefinition | None] = {}
+    for category in categories:
+        ctype = types_by_name.get(category)
+        resolved[category] = _value_parameter(session, ctype) if ctype else None
+    return resolved
+
+
 def _find_substitutes(
-    session: Session,
     line: BomLine,
     stock: dict[int, int],
     exclude: set[int],
+    value_def: ParameterDefinition | None,
+    session: Session,
 ) -> list[dict[str, object]]:
     """In-stock parts of the line's category with an equal/near value.
 
@@ -273,16 +288,10 @@ def _find_substitutes(
     are not allocated across lines, so two lines suggesting the same part both
     show the same quantity.
     """
-    if line.category not in _VALUE_CATEGORIES:
+    if value_def is None:
         return []
     target = clean_value(line.value)
     if target is None:
-        return []
-    ctype = _category_type(session, line.category)
-    if ctype is None:
-        return []
-    value_def = _value_parameter(session, ctype)
-    if value_def is None:
         return []
 
     tolerance = config.SUBSTITUTE_TOLERANCE_PCT / 100.0
@@ -328,10 +337,19 @@ def _find_substitutes(
 
 
 def build_bom_report(session: Session, bom_id: int) -> dict[str, object]:
-    """Live availability report for a BOM against current stock (§21)."""
+    """Live availability report for a BOM against current stock (§21).
+
+    ``summary.buildable`` counts whole boards from **exact MPN matches** only, so a
+    line with no MPN (common while designing) or one missing from inventory caps it
+    at 0 — substitutes are surfaced per line but not counted toward buildability.
+    """
     bom = get_bom(session, bom_id)
     lines = get_bom_lines(session, bom_id)
     stock = ss.total_quantities_by_component(session)
+    # Resolve each substitutable category's value parameter once (not per line).
+    value_defs = _value_defs_by_category(
+        session, {ln.category for ln in lines if ln.category in _VALUE_CATEGORIES}
+    )
 
     counts = {"ok": 0, "short": 0, "out": 0, "missing": 0, "no_mpn": 0}
     buildable: int | None = None
@@ -362,7 +380,11 @@ def build_bom_report(session: Session, bom_id: int) -> dict[str, object]:
         substitutes: list[dict[str, object]] = []
         if status != "ok":
             substitutes = _find_substitutes(
-                session, line, stock, {c.id for c in matched if c.id is not None}
+                line,
+                stock,
+                {c.id for c in matched if c.id is not None},
+                value_defs.get(line.category or ""),
+                session,
             )
 
         report_lines.append(
