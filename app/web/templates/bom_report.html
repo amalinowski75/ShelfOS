@@ -23,6 +23,11 @@
 <div class="card card-pad">
   <div id="bom-lines-table" data-bom-id="{{ bom.id }}"></div>
 </div>
+
+{% if current_user.role.value != "read-only" %}
+{# "Add to inventory" on a missing line opens this shared dialog, pre-filled. #}
+{% include "_component_dialog.html" %}
+{% endif %}
 {% endblock %}
 
 {% block scripts %}

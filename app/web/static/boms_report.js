@@ -168,6 +168,26 @@ async function loadReport(table, bomId) {
   frameTable(table);
 }
 
+// A line can be turned into a new inventory component when nothing matches it:
+// a missing MPN, or no MPN yet (still designing).
+function bomCanAdd(status) {
+  return status === "missing" || status === "no_mpn";
+}
+
+// Seed the "New component" dialog from a BOM line. Only passives carry a numeric
+// value worth pre-filling; a part-number "value" (IC/transistor) is left out.
+// The line's footprint is intentionally NOT mapped to the Package field — a KiCad
+// footprint ("R_0402_1005Metric") isn't the package name ("0402").
+const BOM_PASSIVE = new Set(["resistor", "capacitor", "inductor"]);
+function bomAddPrefill(row) {
+  return {
+    category: row.category || null,
+    value: BOM_PASSIVE.has(row.category) ? row.value || null : null,
+    mpn: row.mpn || null,
+    manufacturer: row.manufacturer || null,
+  };
+}
+
 const bomTableEl = document.getElementById("bom-lines-table");
 if (bomTableEl) {
   const bomId = bomTableEl.dataset.bomId;
@@ -179,5 +199,34 @@ if (bomTableEl) {
     placeholder: "No lines",
     columns: bomReportColumns(),
   });
+
+  // Writers get an "Add to inventory" action on unmatched lines, opening the
+  // shared New Component dialog pre-filled from the line; refresh on success so
+  // the line resolves. (Read-only users never see it; the API is writer-gated.)
+  if (canWrite) {
+    table.on("tableBuilt", () =>
+      table.addColumn({
+        title: "",
+        field: "_add",
+        headerSort: false,
+        width: 150,
+        hozAlign: "right",
+        formatter: (cell) =>
+          bomCanAdd(cell.getRow().getData().status)
+            ? '<button class="btn btn-secondary btn-sm" data-act="add-component">Add to inventory</button>'
+            : "",
+        cellClick: (e, cell) => {
+          if (e.target.dataset.act !== "add-component") return;
+          if (window.openComponentDialog) {
+            openComponentDialog(
+              () => loadReport(table, bomId),
+              bomAddPrefill(cell.getRow().getData()),
+            );
+          }
+        },
+      }),
+    );
+  }
+
   table.on("tableBuilt", () => loadReport(table, bomId));
 }

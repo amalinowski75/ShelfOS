@@ -290,6 +290,14 @@ def bom_report_page(
             "bom": bom,
             "csv_attachment": csv_attachments[0] if csv_attachments else None,
             "current_user": user,
+            # For the shared "New component" dialog (add a missing line to
+            # inventory) — only writers get it, so skip the types query otherwise.
+            "types": (
+                cs.list_types(session)
+                if user.role != UserRole.READ_ONLY
+                else []
+            ),
+            "mounting_types": [mt.value for mt in MountingType],
         },
     )
 

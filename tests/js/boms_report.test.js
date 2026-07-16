@@ -134,6 +134,33 @@ describe("boms_report.js — rendering", () => {
   });
 });
 
+describe("boms_report.js — add to inventory", () => {
+  it("offers the action only on unmatched lines", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    expect(window.bomCanAdd("missing")).toBe(true);
+    expect(window.bomCanAdd("no_mpn")).toBe(true);
+    expect(window.bomCanAdd("ok")).toBe(false);
+    expect(window.bomCanAdd("short")).toBe(false);
+    expect(window.bomCanAdd("out")).toBe(false);
+  });
+
+  it("seeds the prefill from a line, with a numeric value only for passives", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    expect(
+      window.bomAddPrefill({
+        category: "resistor",
+        value: "10k 1%",
+        mpn: "R-1",
+        manufacturer: "YAGEO",
+      }),
+    ).toEqual({ category: "resistor", value: "10k 1%", mpn: "R-1", manufacturer: "YAGEO" });
+    // A non-passive "value" is a part name, so it's dropped from the prefill.
+    expect(
+      window.bomAddPrefill({ category: "ic", value: "STM32", mpn: "STM32", manufacturer: "ST" }),
+    ).toEqual({ category: "ic", value: null, mpn: "STM32", manufacturer: "ST" });
+  });
+});
+
 describe("boms_report.js — loadReport", () => {
   it("fills the summary and sets the rows on success", async () => {
     const report = {

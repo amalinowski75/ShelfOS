@@ -1007,3 +1007,24 @@ def test_bom_report_renders_without_a_csv_attachment(
     resp = client.get(f"/boms/{bom_id}")
     assert resp.status_code == 200
     assert "Download CSV" not in resp.text
+
+
+def test_bom_report_includes_add_component_dialog_for_writer(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    bom_id = _upload_bom(client, tmp_path, monkeypatch)
+    html = client.get(f"/boms/{bom_id}").text
+    # The shared New Component dialog is present so a missing line can be added.
+    assert 'id="component-dialog"' in html
+    assert 'id="component-form"' in html
+
+
+def test_bom_report_has_no_add_component_dialog_for_read_only(
+    client: TestClient, anon_client: TestClient, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    bom_id = _upload_bom(client, tmp_path, monkeypatch)
+    token = _non_admin_token(client, role="read-only", username="viewer_bom")
+    html = anon_client.get(
+        f"/boms/{bom_id}", headers={"Authorization": f"Bearer {token}"}
+    ).text
+    assert 'id="component-dialog"' not in html
