@@ -72,6 +72,37 @@ describe("app.js — table formatting", () => {
     expect(headerFilterFunc("99", 1234)).toBe(false);
   });
 
+  it("sorts numeric columns by magnitude, not by the display string", () => {
+    const { window } = loadPage(typePageFixture(), SCRIPTS);
+    // Quantity uses Tabulator's built-in number sorter.
+    expect(window.columnDef({ field: "quantity", title: "Qty" }).sorter).toBe("number");
+
+    // A per-type number column gets a custom sorter over the raw `__n` value;
+    // a text column does not.
+    const num = window.columnDef({ title: "R", field: "param_5", numeric: true });
+    expect(typeof num.sorter).toBe("function");
+    expect(window.columnDef({ title: "Tol", field: "param_9", numeric: false }).sorter)
+      .toBeUndefined();
+
+    const row = (n) => ({ getData: () => ({ param_5__n: n }) });
+    const sort = window.numericParamSorter("param_5");
+    expect(sort(null, null, row(47), row(220))).toBeLessThan(0); // 47 Ω < 220 Ω
+    expect(sort(null, null, row(1_000_000), row(220))).toBeGreaterThan(0); // 1 MΩ > 220 Ω
+    expect(sort(null, null, row(null), row(5))).toBe(-1); // empties to one end
+    expect(sort(null, null, row(null), row(null))).toBe(0);
+
+    // A full sort of >2 rows with mixed empties orders by magnitude.
+    const rows = [220, null, 47, 1_000_000, null].map(row);
+    rows.sort((x, y) => sort(null, null, x, y));
+    expect(rows.map((r) => r.getData().param_5__n)).toEqual([
+      null,
+      null,
+      47,
+      220,
+      1_000_000,
+    ]);
+  });
+
   it("builds the type-filter query string", () => {
     const { window, document } = loadPage(typePageFixture(), SCRIPTS);
     expect(window.currentTypeQuery()).toBe("");

@@ -275,12 +275,47 @@ def test_components_feed_type_specific_adds_parameter_columns(
         f"/api/components/{component['id']}/parameters",
         json={"parameter_definition_id": definition["id"], "value": 4700},
     )
+    # A second component leaves the parameter unset.
+    unset = client.post("/api/components", json={"type_id": ctype["id"]}).json()
 
     feed = client.get("/web/api/components", params={"type_id": ctype["id"]}).json()
-    titles = [c["title"] for c in feed["columns"]]
-    assert "Resistance" in titles
-    # Engineering-formatted value with the definition's unit (decision D4).
-    assert feed["data"][0][f"param_{definition['id']}"] == "4.7 kohm"
+    column = next(c for c in feed["columns"] if c["title"] == "Resistance")
+    field = f"param_{definition['id']}"
+    rows = {r["id"]: r for r in feed["data"]}
+    # Engineering-formatted value with the definition's unit (decision D4)...
+    assert rows[component["id"]][field] == "4.7 kohm"
+    # ...plus a raw value + `numeric` flag so the client sorts by magnitude.
+    assert column["numeric"] is True
+    assert rows[component["id"]][f"{field}__n"] == 4700.0
+    # An unset numeric value carries a None raw value (sorts to one end), not a
+    # missing key.
+    assert rows[unset["id"]][field] == ""
+    assert rows[unset["id"]][f"{field}__n"] is None
+
+
+def test_components_feed_text_param_column_is_not_numeric(client: TestClient) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    client.post(
+        f"/api/types/{ctype['id']}/parameters",
+        json={
+            "name": "tolerance",
+            "label": "Tolerance",
+            "data_type": "text",
+            "is_table_column": True,
+        },
+    )
+    definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    client.put(
+        f"/api/components/{component['id']}/parameters",
+        json={"parameter_definition_id": definition["id"], "value": "1%"},
+    )
+
+    feed = client.get("/web/api/components", params={"type_id": ctype["id"]}).json()
+    column = next(c for c in feed["columns"] if c["title"] == "Tolerance")
+    assert column["numeric"] is False
+    # No numeric companion for a text column.
+    assert f"param_{definition['id']}__n" not in feed["data"][0]
 
 
 def test_components_feed_maps_values_per_component(client: TestClient) -> None:
