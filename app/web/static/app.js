@@ -7,7 +7,6 @@ const typeFilter = document.getElementById("type-filter");
 
 const table = new Tabulator("#components-table", {
   layout: "fitColumns",
-  maxHeight: "70vh", // scroll inside the frame, keep the header pinned
   placeholder: "No components",
 });
 

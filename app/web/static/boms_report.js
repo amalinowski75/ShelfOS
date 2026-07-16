@@ -4,10 +4,10 @@
 // each line: references, value, category, mpn, quantity, status, stock,
 // substitutes[] (component_id, mpn, package, value, stock, exact).
 //
-// Rows are kept single-line (uniform height): Tabulator's virtual DOM renders a
-// 160-line BOM instantly that way, whereas variable-height rows make it recompute
-// per-row layout and stall for tens of seconds. Substitute detail that doesn't fit
-// on one line moves into the cell's hover tooltip.
+// The table renders every row up front (no height cap → no virtual DOM; see the
+// Tabulator config below). Rows are kept single-line so that full render stays
+// small and fast; substitute detail that doesn't fit on one line moves into the
+// cell's hover tooltip.
 
 // status → [badge class, label]. Labels are a fixed set (safe to inline).
 const BOM_STATUS = {
@@ -157,12 +157,11 @@ const bomTableEl = document.getElementById("bom-lines-table");
 if (bomTableEl) {
   const bomId = bomTableEl.dataset.bomId;
   const table = new Tabulator("#bom-lines-table", {
-    // fitColumns (like the components table) sizes columns to the container so the
-    // whole BOM fits without a horizontal scroll on desktop; on a narrow screen it
-    // falls back to scrolling, and maxHeight keeps that bar + the header in the
-    // frame. Rows are single-line, so the virtual DOM stays fast on a 160-line BOM.
+    // Same config as the components table: fitColumns fits the container (no
+    // horizontal scroll on desktop) and NO height cap — a fixed height turns on
+    // Tabulator's virtual renderer, whose redraw on page-load/resize stalls for
+    // tens of seconds. Rendering every row up front is instant for a 160-line BOM.
     layout: "fitColumns",
-    maxHeight: "70vh",
     placeholder: "No lines",
     columns: bomReportColumns(),
   });
