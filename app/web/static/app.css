@@ -447,6 +447,22 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 .tabulator .tabulator-row:last-child { border-bottom: none; }
 .tabulator .tabulator-tableholder .tabulator-placeholder-contents { color: var(--muted); font-size: 14px; }
 
+/* Tabulator's hover tooltip (BOM substitutes, References): the CDN default is a
+   near-white box that's unreadable on our theme, so restyle it with our tokens
+   and honour the newlines our tooltip text uses. */
+.tabulator-tooltip {
+  max-width: 340px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-line;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
 /* cell content helpers used by the Tabulator formatters (app.js) */
 .cell-mpn { font-family: var(--font-mono); font-weight: 600; letter-spacing: -.01em; color: var(--text); }
 .cell-mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
