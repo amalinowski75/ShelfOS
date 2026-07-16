@@ -57,7 +57,7 @@ function esc(value) {
 function frameTable(table, fraction = 0.7) {
   const fit = () => {
     const el = table.element;
-    if (!el) return;
+    if (!el || el.offsetParent === null) return; // gone or hidden → scrollHeight is 0
     const holder = el.querySelector(".tabulator-tableholder");
     if (!holder) return;
     const header = el.querySelector(".tabulator-header");
@@ -68,7 +68,9 @@ function frameTable(table, fraction = 0.7) {
     // a spurious vertical one.
     const full = holder.scrollHeight + headerH + 16;
     const cap = Math.round(window.innerHeight * fraction);
-    table.setHeight(Math.min(cap, full));
+    // Floor at header + ~one row so a tiny viewport can't size the table shorter
+    // than its own header.
+    table.setHeight(Math.max(headerH + 40, Math.min(cap, full)));
   };
   if (!table._framed) {
     table._framed = true;

@@ -86,6 +86,7 @@ async function loadInvoices(table, hint) {
     // Clear Tabulator's "loading" state and tell the user, rather than leaving
     // the table spinning forever on a network/parse failure.
     await table.setData([]);
+    frameTable(table); // shrink the frame back around the empty/error state
     if (hint) {
       hint.textContent = "Could not load invoices — refresh to try again.";
       hint.className = "error";

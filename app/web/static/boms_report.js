@@ -144,7 +144,6 @@ function bomReportColumns() {
       title: "Substitutes",
       field: "substitutes",
       headerSort: false,
-      widthGrow: 2, // absorb the slack width under fitColumns
       minWidth: 160,
       formatter: bomSubstitutesFormatter,
       tooltip: (e, cell) => bomSubstitutesTooltip(cell.getValue()),

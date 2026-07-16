@@ -79,6 +79,7 @@ async function loadUsers() {
     // Clear Tabulator's "loading" state and tell the admin, rather than leaving
     // the table spinning forever on a network/parse failure.
     await usersTable.setData([]);
+    frameTable(usersTable); // shrink the frame back around the empty/error state
     alert("Could not load users — refresh to try again.");
   }
 }
