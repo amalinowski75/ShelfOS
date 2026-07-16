@@ -181,6 +181,22 @@ def test_mpn_match_is_case_insensitive(
     assert lines[0]["status"] == "ok"
 
 
+def test_report_footprint_strips_the_library_prefix(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    data = (
+        b"Reference,Qty,Value,Footprint\n"
+        b"R1,1,1k,Resistor_SMD:R_0402_1005Metric\n"
+        b"SP1,1,SPK,footprints:spk\n"
+        b"J1,1,CONN,NoColonFootprint\n"
+    )
+    bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+    lines = bs.build_bom_report(session, bom.id)["lines"]
+    assert lines[0]["footprint"] == "R_0402_1005Metric"  # library prefix dropped
+    assert lines[1]["footprint"] == "spk"
+    assert lines[2]["footprint"] == "NoColonFootprint"  # kept as-is when no ":"
+
+
 def test_create_bom_is_undone_when_the_attachment_fails(
     session: Session, store, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]

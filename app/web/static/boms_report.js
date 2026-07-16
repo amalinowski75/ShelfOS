@@ -94,6 +94,12 @@ function bomReportColumns() {
     },
     { title: "Value", field: "value", ...bomTextFilter("Value") },
     { title: "Category", field: "category", ...bomTextFilter("Category") },
+    {
+      title: "Footprint",
+      field: "footprint",
+      cssClass: "cell-mono",
+      ...bomTextFilter("Footprint"),
+    },
     { title: "Qty", field: "quantity", width: 80, hozAlign: "right", sorter: "number" },
     {
       title: "MPN",
