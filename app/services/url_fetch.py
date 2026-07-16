@@ -18,6 +18,7 @@ from __future__ import annotations
 import ipaddress
 import re
 import socket
+import threading
 import time
 from email.message import Message
 from urllib.parse import unquote, urljoin, urlsplit
@@ -30,6 +31,8 @@ from app.services.errors import ValidationError
 _ALLOWED_SCHEMES = {"http", "https"}
 _DEFAULT_FILENAME = "download"
 _MAX_FILENAME_LEN = 255
+# Process-wide cap on concurrent fetches (sync route runs on the shared threadpool).
+_FETCH_SLOTS = threading.BoundedSemaphore(config.ATTACHMENT_URL_MAX_CONCURRENCY)
 
 
 def _request_headers() -> dict[str, str]:
@@ -51,7 +54,7 @@ def _guard_host(host: str | None) -> None:
         raise _reject("missing host")
     try:
         infos = socket.getaddrinfo(host, None)
-    except OSError:
+    except (OSError, ValueError):
         raise _reject("host could not be resolved") from None
     for info in infos:
         ip = ipaddress.ip_address(info[4][0])
@@ -67,7 +70,10 @@ def _guard_host(host: str | None) -> None:
 
 def _guard_url(url: str) -> str:
     """Validate a URL's scheme and host; return it unchanged, or raise."""
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)  # e.g. an unbalanced-bracket IPv6 URL raises ValueError
+    except ValueError:
+        raise _reject("malformed URL") from None
     if parts.scheme not in _ALLOWED_SCHEMES:
         raise _reject("only http and https URLs are allowed")
     _guard_host(parts.hostname)
@@ -103,24 +109,39 @@ def fetch_url(
     ``transport`` is an injection point for tests.
     """
     cap = config.MAX_ATTACHMENT_BYTES
-    timeout = httpx.Timeout(config.ATTACHMENT_URL_TIMEOUT)
-    # A hard wall-clock deadline across ALL hops: the per-read timeout only bounds
-    # the gap between reads, so a server trickling bytes just under it could hold a
-    # worker thread open indefinitely. This caps the whole fetch.
-    deadline = time.monotonic() + config.ATTACHMENT_URL_TOTAL_TIMEOUT
-    current = _guard_url(url)
+    # Bound concurrent fetches so a burst of slow downloads can't exhaust the sync
+    # worker-thread pool and stall every other endpoint.
+    if not _FETCH_SLOTS.acquire(blocking=False):
+        raise _reject("too many downloads in progress — try again shortly")
+    try:
+        # A hard wall-clock deadline across ALL hops (connect + read): each hop's
+        # timeout is clamped to the remaining budget, so a server that stalls on
+        # connect or trickles bytes can't hold a worker thread past this ceiling.
+        deadline = time.monotonic() + config.ATTACHMENT_URL_TOTAL_TIMEOUT
+        current = _guard_url(url)
+        return _fetch(current, cap, deadline, transport)
+    finally:
+        _FETCH_SLOTS.release()
 
+
+def _fetch(
+    current: str,
+    cap: int,
+    deadline: float,
+    transport: httpx.BaseTransport | None,
+) -> tuple[bytes, str]:
     with httpx.Client(
         transport=transport,
-        timeout=timeout,
         follow_redirects=False,
         headers=_request_headers(),
     ) as client:
         for _ in range(config.ATTACHMENT_URL_MAX_REDIRECTS + 1):
-            if time.monotonic() > deadline:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 raise _reject("timed out")
+            hop_timeout = httpx.Timeout(min(config.ATTACHMENT_URL_TIMEOUT, remaining))
             try:
-                with client.stream("GET", current) as resp:
+                with client.stream("GET", current, timeout=hop_timeout) as resp:
                     if resp.is_redirect:
                         location = resp.headers.get("location")
                         if not location:

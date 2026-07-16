@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import socket
+import threading
 
 import httpx
 import pytest
@@ -28,6 +29,21 @@ def _ok(content: bytes = b"data", **headers: str):  # type: ignore[no-untyped-de
 def test_rejects_non_http_scheme() -> None:
     with pytest.raises(ValidationError):
         url_fetch.fetch_url("ftp://example.com/x")
+
+
+def test_rejects_malformed_url() -> None:
+    # Unbalanced IPv6 brackets make urlsplit raise ValueError → must be a 422, not 500.
+    with pytest.raises(ValidationError):
+        url_fetch.fetch_url("http://[::1/x")
+
+
+def test_rejects_when_no_free_slots(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    sem = threading.BoundedSemaphore(1)
+    sem.acquire()  # occupy the only slot
+    monkeypatch.setattr(url_fetch, "_FETCH_SLOTS", sem)
+    _resolve_to(monkeypatch, "93.184.216.34")
+    with pytest.raises(ValidationError):
+        url_fetch.fetch_url("https://example.com/x", transport=_ok())
 
 
 @pytest.mark.parametrize(
