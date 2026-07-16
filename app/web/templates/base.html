@@ -34,6 +34,7 @@
           <a href="/"{% if path == "/" or path.startswith("/components") %} aria-current="page"{% endif %}>Components</a>
           <a href="/locations"{% if path.startswith("/locations") %} aria-current="page"{% endif %}>Locations</a>
           <a href="/invoices"{% if path == "/invoices" or path.startswith("/invoices/") %} aria-current="page"{% endif %}>Invoices</a>
+          <a href="/boms"{% if path.startswith("/boms") %} aria-current="page"{% endif %}>BOMs</a>
           {% if current_user.role.value == "admin" %}
           <a href="/users"{% if path.startswith("/users") %} aria-current="page"{% endif %}>Users</a>
           {% endif %}

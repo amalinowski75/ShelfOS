@@ -26,6 +26,8 @@ from app.models.enums import (
     UserRole,
 )
 from app.models.user import User
+from app.services import attachment_service as ats
+from app.services import bom_service as boms_svc
 from app.services import component_service as cs
 from app.services import invoice_service as inv
 from app.services import location_service as ls
@@ -245,6 +247,45 @@ def users_page(
         request,
         "users.html",
         {"current_user": user, "roles": [role.value for role in UserRole]},
+    )
+
+
+@router.get("/boms", response_class=HTMLResponse)
+def boms_page(
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_web_user),
+) -> HTMLResponse:
+    """Saved BOMs + an upload control (writer); rows are server-rendered (§21)."""
+    return templates.TemplateResponse(
+        request,
+        "boms_list.html",
+        {"boms": boms_svc.list_boms(session), "current_user": user},
+    )
+
+
+@router.get("/boms/{bom_id}", response_class=HTMLResponse)
+def bom_report_page(
+    bom_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_web_user),
+) -> HTMLResponse:
+    """Live availability report for one BOM (§21). 404 if it doesn't exist."""
+    report = boms_svc.build_bom_report(session, bom_id)  # raises NotFound → 404
+    # The original CSV is the only thing attached to a bom, added first at import,
+    # so the oldest-first list's first entry is it (None if it was removed).
+    csv_attachments = ats.list_attachments(
+        session, entity_type="bom", entity_id=bom_id
+    )
+    return templates.TemplateResponse(
+        request,
+        "bom_report.html",
+        {
+            "report": report,
+            "csv_attachment": csv_attachments[0] if csv_attachments else None,
+            "current_user": user,
+        },
     )
 
 

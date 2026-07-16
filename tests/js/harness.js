@@ -187,6 +187,18 @@ export function componentImagesFixture() {
     </dialog>`;
 }
 
+// The BOM-import control + dialog on the BOMs list page (mirrors boms_list.html).
+export function bomUploadFixture() {
+  return `
+    <button id="bom-upload-btn"></button>
+    <dialog id="bom-upload-dialog"><form id="bom-upload-form">
+      <input name="name" />
+      <input type="file" name="file" />
+      <p id="bom-upload-error" hidden></p>
+      <button type="submit"></button>
+    </form></dialog>`;
+}
+
 // The global "Change password" control + dialog (mirrors base.html); present on
 // every authenticated page.
 export function passwordDialogFixture() {

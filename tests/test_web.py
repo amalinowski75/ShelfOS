@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+from app import config
 from app.models.component import ComponentParameter, ParameterDefinition
 from app.models.enums import ParameterDataType
 from app.web.presenter import (
@@ -920,3 +923,89 @@ def test_users_pages_require_login(anon_client: TestClient) -> None:
         resp = anon_client.get(path, follow_redirects=False)
         assert resp.status_code == 303
         assert resp.headers["location"] == "/login"
+
+
+_BOM_CSV = (Path(__file__).parent / "fixtures" / "kicad_bom.csv").read_bytes()
+
+
+def _upload_bom(client: TestClient, tmp_path, monkeypatch) -> int:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(config, "ATTACHMENTS_DIR", tmp_path)
+    resp = client.post(
+        "/api/boms",
+        files={"file": ("kicad_bom.csv", _BOM_CSV, "text/csv")},
+        data={"name": "hiduart"},
+    )
+    return resp.json()["id"]
+
+
+def test_boms_page_renders_with_upload_for_writer(client: TestClient) -> None:
+    html = client.get("/boms").text
+    assert "BOMs" in html
+    assert 'id="bom-upload-btn"' in html
+    assert 'id="bom-upload-form"' in html
+    assert "boms.js" in html
+
+
+def test_boms_page_has_no_upload_for_read_only(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    token = _non_admin_token(client, role="read-only", username="viewer")
+    html = anon_client.get(
+        "/boms", headers={"Authorization": f"Bearer {token}"}
+    ).text
+    assert "BOMs" in html
+    assert 'id="bom-upload-btn"' not in html
+    assert 'id="bom-upload-form"' not in html
+
+
+def test_bom_report_page_renders(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    bom_id = _upload_bom(client, tmp_path, monkeypatch)
+    html = client.get(f"/boms/{bom_id}").text
+    assert "hiduart" in html
+    assert "buildable" in html
+    assert "R3,R10,R26" in html  # a parsed line's references
+    assert "not in inventory" in html  # a status badge (fresh inventory → missing)
+    # The original CSV is downloadable.
+    assert "/api/attachments/" in html and "/download" in html
+
+
+def test_bom_report_unknown_returns_404(client: TestClient) -> None:
+    assert client.get("/boms/9999").status_code == 404
+
+
+def test_bom_report_escapes_untrusted_csv_content(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(config, "ATTACHMENTS_DIR", tmp_path)
+    evil = (
+        b"Reference,Qty,Value,MPN\n"
+        b'R1,1,"<script>alert(1)</script>","<img src=x onerror=1>"\n'
+    )
+    bom_id = client.post(
+        "/api/boms",
+        files={"file": ("evil.csv", evil, "text/csv")},
+        data={"name": "<b>pwn</b>"},
+    ).json()["id"]
+
+    html = client.get(f"/boms/{bom_id}").text
+    # Jinja autoescape neutralises the CSV fields and the BOM name.
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert "<img src=x onerror=1>" not in html
+    assert "<b>pwn</b>" not in html
+
+
+def test_bom_report_renders_without_a_csv_attachment(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    bom_id = _upload_bom(client, tmp_path, monkeypatch)
+    stored = client.get(
+        "/api/attachments", params={"entity_type": "bom", "entity_id": bom_id}
+    ).json()
+    client.delete(f"/api/attachments/{stored[0]['id']}")  # remove the CSV
+
+    resp = client.get(f"/boms/{bom_id}")
+    assert resp.status_code == 200
+    assert "Download CSV" not in resp.text

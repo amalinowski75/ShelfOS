@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}{{ report.bom.name }} — BOM — ShelfOS{% endblock %}
+
+{% macro status_badge(status) -%}
+  {%- set map = {
+    "ok": ["b-ok", "in stock"],
+    "short": ["b-warn", "short"],
+    "out": ["b-danger", "out of stock"],
+    "missing": ["b-danger", "not in inventory"],
+    "no_mpn": ["b-neutral", "no MPN"],
+  } -%}
+  {%- set cls, label = map.get(status, ["b-neutral", status]) -%}
+  <span class="badge {{ cls }}"><span class="dot"></span>{{ label }}</span>
+{%- endmacro %}
+
+{% block content %}
+<p class="crumb"><a href="/boms">&larr; Back to BOMs</a></p>
+
+<div class="head">
+  <div>
+    <h1>{{ report.bom.name }}</h1>
+    <p>{{ report.summary.lines }} lines · imported {{ report.bom.created_at[:16].replace("T", " ") }}</p>
+  </div>
+  {% if csv_attachment %}
+  <div class="head-actions">
+    <a class="btn btn-ghost btn-sm" href="/api/attachments/{{ csv_attachment.id }}/download">Download CSV</a>
+  </div>
+  {% endif %}
+</div>
+
+<div class="card card-pad" style="margin-bottom: 20px">
+  <p>
+    <strong>{{ report.summary.buildable if report.summary.buildable is not none else 0 }}</strong>
+    buildable board(s) from exact MPN matches —
+    {{ report.summary.ok }} in&nbsp;stock ·
+    {{ report.summary.short }} short ·
+    {{ report.summary.out }} out ·
+    {{ report.summary.missing }} not&nbsp;in&nbsp;inventory ·
+    {{ report.summary.no_mpn }} without&nbsp;MPN
+  </p>
+</div>
+
+<div class="card card-pad">
+  <div class="table-wrap">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>References</th><th>Value</th><th style="text-align:right">Qty</th>
+          <th>MPN</th><th>Status</th><th style="text-align:right">Stock</th>
+          <th>Substitutes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for line in report.lines %}
+        <tr>
+          <td class="mono">{{ line.references }}</td>
+          <td>{{ line.value or "—" }}{% if line.category %}
+            <span class="muted">({{ line.category }})</span>{% endif %}</td>
+          <td class="num">{{ line.quantity }}</td>
+          <td class="mono">{{ line.mpn or "—" }}</td>
+          <td>{{ status_badge(line.status) }}</td>
+          <td class="num">{% if line.mpn %}{{ line.stock }}{% else %}—{% endif %}</td>
+          <td>
+            {% if line.substitutes %}
+            <ul class="sub-list">
+              {% for s in line.substitutes %}
+              <li>
+                <a class="mono" href="/components/{{ s.component_id }}">{{ s.value }}</a>
+                <span class="muted">{{ s.mpn or "" }} · stock {{ s.stock }}{% if s.exact %} · exact{% endif %}</span>
+              </li>
+              {% endfor %}
+            </ul>
+            {% else %}<span class="muted">—</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

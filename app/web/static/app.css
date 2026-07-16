@@ -513,3 +513,7 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, .82); }
 .lightbox-next { right: 3vw; }
 .lightbox-close { top: 3vh; right: 3vw; width: 44px; height: 44px; font-size: 26px; border-radius: 50%; }
 .lightbox-nav:hover, .lightbox-close:hover { background: rgba(0, 0, 0, .78); }
+
+/* ---------- BOM report (§21) ---------- */
+.sub-list { list-style: none; display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
+.sub-list .muted { font-size: 12px; }
