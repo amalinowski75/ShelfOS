@@ -99,11 +99,24 @@ def test_fetch_without_a_key_is_rejected(monkeypatch) -> None:  # type: ignore[n
         )
 
 
-def test_fetch_reports_a_mouser_error(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_fetch_surfaces_the_mouser_error_message(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr(config, "MOUSER_API_KEY", "key")
-    body = {"Errors": [{"Message": "Invalid"}], "SearchResults": {"Parts": []}}
-    with pytest.raises(ValidationError):
+    # A wrong/Order-API key gives exactly this; without the text it's undiagnosable.
+    body = {
+        "Errors": [{"Message": "Invalid unique identifier."}],
+        "SearchResults": None,
+    }
+    with pytest.raises(ValidationError) as excinfo:
         MouserProvider().fetch("https://www.mouser.com/x", transport=_transport(body))
+    assert "Invalid unique identifier" in str(excinfo.value)
+
+
+def test_fetch_redacts_the_api_key_from_a_mouser_error(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(config, "MOUSER_API_KEY", "super-secret")
+    body = {"Errors": [{"Message": "bad key super-secret"}], "SearchResults": None}
+    with pytest.raises(ValidationError) as excinfo:
+        MouserProvider().fetch("https://www.mouser.com/x", transport=_transport(body))
+    assert "super-secret" not in str(excinfo.value)
 
 
 def test_fetch_when_no_product_found(monkeypatch) -> None:  # type: ignore[no-untyped-def]

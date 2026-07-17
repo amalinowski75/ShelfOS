@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from urllib.parse import unquote, urlsplit
 
 import httpx
@@ -11,6 +12,7 @@ from app.services.errors import ValidationError
 from app.services.shops.base import ProductData, infer_category
 
 _API_URL = "https://api.mouser.com/api/v1/search/partnumber"
+_logger = logging.getLogger("shelfos")
 
 
 def _host(url: str) -> str:
@@ -18,6 +20,28 @@ def _host(url: str) -> str:
         return (urlsplit(url).hostname or "").lower()
     except ValueError:  # e.g. an unbalanced-bracket IPv6 literal
         return ""
+
+
+def _redact(text: str) -> str:
+    """Never let the API key ride out in a message, however unlikely."""
+    key = config.MOUSER_API_KEY
+    return text.replace(key, "***") if key else text
+
+
+def _error_text(errors: object) -> str:
+    """Mouser's own error text (e.g. "Invalid unique identifier." for a bad key).
+
+    Surfaced to the user: it's the shop's message, not a secret, and without it a
+    misconfigured key is undiagnosable.
+    """
+    messages: list[str] = []
+    if isinstance(errors, list):
+        for err in errors:
+            if isinstance(err, dict):
+                message = err.get("Message") or err.get("message")
+                if message:
+                    messages.append(str(message))
+    return _redact("; ".join(messages)) or "unknown error"
 
 
 class MouserProvider:
@@ -46,12 +70,8 @@ class MouserProvider:
         if not part_number:
             raise ValidationError("could not read a part number from the URL")
 
-        body = {
-            "SearchByPartRequest": {
-                "mouserPartNumber": part_number,
-                "partSearchOptions": "1",
-            }
-        }
+        # partSearchOptions is optional; omit it rather than risk an invalid value.
+        body = {"SearchByPartRequest": {"mouserPartNumber": part_number}}
         # A network error, a non-2xx, a non-JSON body (JSONDecodeError → ValueError)
         # or an unexpected JSON shape (AttributeError) all become a clean 422 — never
         # a 500, and the exception (which could embed the api-key query string) never
@@ -73,7 +93,11 @@ class MouserProvider:
             raise ValidationError("could not read the Mouser response") from None
 
         if errors:
-            raise ValidationError("Mouser returned an error for this URL")
+            detail = _error_text(errors)
+            # Logged too: a bad/wrong-type key ("Invalid unique identifier.") is the
+            # usual cause, and Mouser issues separate Search and Order API keys.
+            _logger.warning("Mouser lookup failed: %s", detail)
+            raise ValidationError(f"Mouser rejected the request: {detail}")
         if not parts:
             raise ValidationError("no product found for this URL")
         part = parts[0]
