@@ -24,8 +24,13 @@ class MouserProvider:
     name = "Mouser"
 
     def matches(self, url: str) -> bool:
-        host = _host(url)
-        return host == "mouser.com" or host.endswith(".mouser.com")
+        # Mouser runs many country sites (mouser.pl, mouser.de, mouser.co.uk,
+        # eu.mouser.com …), so match "mouser" as a domain label rather than one
+        # fixed host. A false match (e.g. mouser.example.com) is harmless: the
+        # lookup still only ever calls the fixed api.mouser.com and would just
+        # report "no product found".
+        labels = _host(url).split(".")
+        return len(labels) > 1 and "mouser" in labels[:-1]
 
     def fetch(
         self, url: str, *, transport: httpx.BaseTransport | None = None

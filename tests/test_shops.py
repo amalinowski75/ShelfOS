@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 from app import config
@@ -36,11 +38,40 @@ def _transport(body: dict) -> httpx.MockTransport:  # type: ignore[type-arg]
     return httpx.MockTransport(lambda req: httpx.Response(200, json=body))
 
 
-def test_matches_mouser_host() -> None:
-    provider = MouserProvider()
-    assert provider.matches("https://www.mouser.com/ProductDetail/x")
-    assert provider.matches("https://mouser.com/x")
-    assert not provider.matches("https://www.digikey.com/x")
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.mouser.com/ProductDetail/x",
+        "https://mouser.com/x",
+        "https://www.mouser.pl/pl/ProductDetail/Walsin/MR04X1201FTL",  # country site
+        "https://www.mouser.co.uk/x",  # multi-part TLD
+        "https://eu.mouser.com/x",
+    ],
+)
+def test_matches_mouser_hosts(url: str) -> None:
+    assert MouserProvider().matches(url)
+
+
+def test_does_not_match_another_shop() -> None:
+    assert not MouserProvider().matches("https://www.digikey.com/x")
+
+
+def test_fetch_uses_the_part_number_from_the_url(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(config, "MOUSER_API_KEY", "key")
+    seen: dict[str, object] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(req.content)
+        return httpx.Response(200, json=_MOUSER_OK)
+
+    MouserProvider().fetch(
+        "https://www.mouser.pl/pl/ProductDetail/Walsin/MR04X1201FTL?qs=abc%3D%3D",
+        transport=httpx.MockTransport(handler),
+    )
+    body = seen["body"]
+    assert isinstance(body, dict)
+    # The last path segment, with the query stripped.
+    assert body["SearchByPartRequest"]["mouserPartNumber"] == "MR04X1201FTL"
 
 
 def test_fetch_normalises_a_mouser_product(monkeypatch) -> None:  # type: ignore[no-untyped-def]
