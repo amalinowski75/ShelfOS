@@ -61,6 +61,26 @@ export SHELFOS_ADMIN_USERNAME="admin"
 export SHELFOS_ADMIN_PASSWORD="change-me"
 ```
 
+### Shop integrations (optional)
+
+"Import from a shop URL" in the New Component dialog looks a part up via the
+distributor's API. Keys live in the environment (never in the database); each
+shop is independent and the feature stays disabled until its key is set.
+
+```bash
+# Mouser — a Search API key (their Order API key is a different one and is rejected)
+export SHELFOS_MOUSER_API_KEY="..."
+
+# Digi-Key — OAuth2 client credentials
+export SHELFOS_DIGIKEY_CLIENT_ID="..."
+export SHELFOS_DIGIKEY_CLIENT_SECRET="..."
+# optional: point at the sandbox, and set the locale used for the lookup
+export SHELFOS_DIGIKEY_API_BASE="https://sandbox-api.digikey.com"
+export SHELFOS_DIGIKEY_LOCALE_SITE="PL"
+export SHELFOS_DIGIKEY_LOCALE_LANGUAGE="pl"
+export SHELFOS_DIGIKEY_LOCALE_CURRENCY="PLN"
+```
+
 - **Web UI:** sign in at `/login` (session cookie).
 - **API:** `POST /api/auth/token` with `{"username", "password"}` returns a JWT;
   send it as `Authorization: Bearer <token>`.

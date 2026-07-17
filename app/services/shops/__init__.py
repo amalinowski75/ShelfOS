@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from app.services.errors import ValidationError
 from app.services.shops.base import ProductData, ShopProvider
+from app.services.shops.digikey import DigiKeyProvider
 from app.services.shops.mouser import MouserProvider
 
-_PROVIDERS: list[ShopProvider] = [MouserProvider()]
+_PROVIDERS: list[ShopProvider] = [MouserProvider(), DigiKeyProvider()]
 
 
 def resolve(url: str) -> ShopProvider | None:
