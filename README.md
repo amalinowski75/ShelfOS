@@ -74,10 +74,15 @@ export SHELFOS_MOUSER_API_KEY="..."
 # Digi-Key — OAuth2 client credentials
 export SHELFOS_DIGIKEY_CLIENT_ID="..."
 export SHELFOS_DIGIKEY_CLIENT_SECRET="..."
-# optional: point at the sandbox, and set the locale used for the lookup
+# optional: point at the sandbox
 export SHELFOS_DIGIKEY_API_BASE="https://sandbox-api.digikey.com"
+# optional locale. Site/currency only affect pricing and availability, which the
+# import doesn't read, so they rarely matter. Keep LANGUAGE at the default "en":
+# it controls the language of the *parameter names and values*, and the import
+# maps those against your parameter labels — a translated "Tolerancja" won't match
+# a "Tolerance" label, and translated values can be odd. Set it to your language
+# only if your own parameter labels are in that language too.
 export SHELFOS_DIGIKEY_LOCALE_SITE="PL"
-export SHELFOS_DIGIKEY_LOCALE_LANGUAGE="pl"
 export SHELFOS_DIGIKEY_LOCALE_CURRENCY="PLN"
 ```
 
