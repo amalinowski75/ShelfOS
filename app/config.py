@@ -87,5 +87,7 @@ ATTACHMENT_URL_USER_AGENT = os.environ.get(
 # Shop-integration API keys (spec: create component from a shop URL). Keys live in
 # the environment, never in the DB. The Mouser Search API key is optional; the
 # feature is disabled until it's set.
-MOUSER_API_KEY = os.environ.get("SHELFOS_MOUSER_API_KEY", "")
+# .strip() so a stray newline/space from `export` doesn't silently invalidate it
+# (Mouser answers "Invalid unique identifier." for any malformed key).
+MOUSER_API_KEY = os.environ.get("SHELFOS_MOUSER_API_KEY", "").strip()
 SHOP_API_TIMEOUT = float(os.environ.get("SHELFOS_SHOP_API_TIMEOUT", "10"))
