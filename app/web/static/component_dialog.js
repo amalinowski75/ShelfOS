@@ -22,6 +22,8 @@
   let currentDefinitions = [];
   // A datasheet URL from a shop import, attached to the component after it's created.
   let pendingDatasheetUrl = null;
+  // Bumped on every open so a slow shop-lookup can't prefill a reopened dialog.
+  let openToken = 0;
 
   // Build a value input for one effective parameter definition, keyed by its id
   // and data type so the payload can be assembled without another lookup.
@@ -229,9 +231,22 @@
     return String(name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
   }
 
+  // Turn a shop value like "10 kOhms" into "10k" for a NUMBER field (µ→u, K→k).
+  // Applied ONLY to number fields, so a matched text value (e.g. a marking code
+  // that starts with digits) isn't silently truncated.
+  const _MULTIPLIERS = new Set(["p", "n", "u", "k", "M", "G", "m"]);
+  function cleanNumberValue(raw) {
+    const text = String(raw ?? "").trim();
+    const m = text.match(/^[±\s]*([0-9]+(?:\.[0-9]+)?)\s*([A-Za-zµΩ]*)/);
+    if (!m) return text;
+    const first = { µ: "u", K: "k" }[m[2][0]] || m[2][0] || "";
+    return m[1] + (_MULTIPLIERS.has(first) ? first : "");
+  }
+
   // Fill each named shop parameter into the field of the matching definition
   // (by label or name). Only plain <input> fields (number/text) are set; enum/bool
-  // <select>s are left alone. Unmatched params are dropped — best-effort, reviewed.
+  // <select>s are left alone. NUMBER fields get engineering-cleaned; text fields get
+  // the raw value. Unmatched params are dropped — best-effort, reviewed.
   function setNamedParams(params) {
     for (const { name, value } of params) {
       const target = normalizeName(name);
@@ -241,7 +256,9 @@
       );
       if (!def) continue;
       const input = paramsBox.querySelector(`[data-definition-id="${def.id}"]`);
-      if (input && input.tagName === "INPUT") input.value = value;
+      if (input && input.tagName === "INPUT") {
+        input.value = def.data_type === "number" ? cleanNumberValue(value) : value;
+      }
     }
   }
 
@@ -287,6 +304,7 @@
       const url = importUrl.value.trim();
       if (!url || importing) return;
       importing = true;
+      const token = openToken; // ignore the result if the dialog is reopened
       importStatus.hidden = false;
       importStatus.className = "muted";
       importStatus.textContent = "Looking up…";
@@ -296,12 +314,14 @@
           headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
           body: JSON.stringify({ url }),
         });
+        if (token !== openToken) return; // a different dialog session is open now
         if (!resp.ok) {
           importStatus.className = "error";
           importStatus.textContent = await errorMessage(resp);
           return;
         }
         const product = await resp.json();
+        if (token !== openToken) return;
         await applyPrefill({
           category: product.category,
           mpn: product.mpn,
@@ -328,6 +348,7 @@
   // optional `prefill` seeds the fields from a BOM line.
   window.openComponentDialog = function (callback, prefill) {
     onCreated = callback || null;
+    openToken += 1; // invalidate any in-flight shop lookup from a prior open
     form.reset();
     errorEl.hidden = true;
     if (importStatus) importStatus.hidden = true;

@@ -9,7 +9,6 @@ review before creating — so imperfect guesses are corrected, not committed bli
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
@@ -62,25 +61,6 @@ def infer_category(*texts: str | None) -> str | None:
     return None
 
 
-_VALUE_RE = re.compile(r"^[±\s]*([0-9]+(?:\.[0-9]+)?)\s*([A-Za-zµΩ]*)")
-_MULTIPLIERS = {"p", "n", "u", "k", "M", "G", "m"}
-
-
-def clean_param_value(raw: str) -> str:
-    """Turn a shop value like "10 kOhms" into "10k" so a NUMBER field parses it.
-
-    Keeps the leading number and, if the trailing unit starts with an engineering
-    multiplier, that letter (normalising µ→u, K→k). A value it can't confidently
-    read (no leading number) is returned stripped, for the user to fix.
-    """
-    raw = (raw or "").strip()
-    match = _VALUE_RE.match(raw)
-    if not match:
-        return raw
-    number, unit = match.group(1), match.group(2)
-    mult = ""
-    if unit:
-        first = {"µ": "u", "K": "k"}.get(unit[0], unit[0])
-        if first in _MULTIPLIERS:
-            mult = first
-    return f"{number}{mult}"
+# Note: parameter values are returned RAW here. Engineering cleaning ("10 kOhms"
+# → "10k") happens client-side and ONLY for a NUMBER-typed field, so a matched
+# text field (e.g. a marking code starting with digits) isn't silently truncated.

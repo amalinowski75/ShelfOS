@@ -237,7 +237,8 @@ describe("component_dialog.js — shop import", () => {
     package: "0402",
     datasheet_url: "https://x/ds.pdf",
     parameters: [
-      { name: "Resistance", value: "10k" },
+      { name: "Resistance", value: "10 kOhms" }, // NUMBER field → cleaned to "10k"
+      { name: "Package", value: "1206 (3216 Metric)" }, // TEXT field → kept raw
       { name: "Tolerance", value: "1" }, // no matching def in DEFS → dropped
     ],
   };
@@ -266,10 +267,14 @@ describe("component_dialog.js — shop import", () => {
     expect(field("manufacturer")).toBe("YAGEO");
     expect(field("package")).toBe("0402");
     expect(field("notes")).toBe("10k 1% 0402 resistor");
-    // "Resistance" maps by label to the number field (DEFS id 10).
+    // "Resistance" → the NUMBER field (DEFS id 10), engineering-cleaned.
     expect(
       document.querySelector('#component-params [data-definition-id="10"]').value,
     ).toBe("10k");
+    // "Package" → the TEXT field (DEFS id 11), kept raw (not truncated).
+    expect(
+      document.querySelector('#component-params [data-definition-id="11"]').value,
+    ).toBe("1206 (3216 Metric)");
   });
 
   it("attaches the imported datasheet after the component is created", async () => {

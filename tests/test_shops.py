@@ -7,7 +7,7 @@ import pytest
 from app import config
 from app.services import shops
 from app.services.errors import ValidationError
-from app.services.shops.base import clean_param_value, infer_category
+from app.services.shops.base import infer_category
 from app.services.shops.mouser import MouserProvider
 
 _MOUSER_OK = {
@@ -53,10 +53,11 @@ def test_fetch_normalises_a_mouser_product(monkeypatch) -> None:  # type: ignore
     assert product.manufacturer == "Vishay / Dale"
     assert product.datasheet_url and product.datasheet_url.endswith(".pdf")
     assert product.category == "resistor"  # inferred from "Chip Resistor…"
+    # Values come through RAW; engineering cleaning is client-side and NUMBER-only.
     params = dict(product.parameters)
-    assert params["Resistance"] == "10k"
-    assert params["Tolerance"] == "1"
-    assert params["Power"] == "62.5m"
+    assert params["Resistance"] == "10 kOhms"
+    assert params["Tolerance"] == "±1%"
+    assert params["Power"] == "62.5 mW"
 
 
 def test_fetch_without_a_key_is_rejected(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -81,9 +82,34 @@ def test_fetch_when_no_product_found(monkeypatch) -> None:  # type: ignore[no-un
         MouserProvider().fetch("https://www.mouser.com/x", transport=_transport(body))
 
 
+def test_fetch_rejects_a_non_json_body(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(config, "MOUSER_API_KEY", "key")
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(200, text="<html>rate limited</html>")
+    )
+    with pytest.raises(ValidationError):  # JSONDecodeError → clean 422, not 500
+        MouserProvider().fetch("https://www.mouser.com/x", transport=transport)
+
+
+def test_fetch_rejects_a_non_dict_body(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(config, "MOUSER_API_KEY", "key")
+    transport = httpx.MockTransport(lambda req: httpx.Response(200, json=[1, 2, 3]))
+    with pytest.raises(ValidationError):
+        MouserProvider().fetch("https://www.mouser.com/x", transport=transport)
+
+
+def test_matches_is_false_for_a_malformed_url() -> None:
+    assert MouserProvider().matches("http://[::1/x") is False  # no crash
+
+
 def test_lookup_rejects_an_unsupported_shop() -> None:
     with pytest.raises(ValidationError):
         shops.lookup("https://www.example.com/product/x")
+
+
+def test_lookup_rejects_a_malformed_url() -> None:
+    with pytest.raises(ValidationError):  # must be 422, not an unhandled 500
+        shops.lookup("http://[::1/x")
 
 
 @pytest.mark.parametrize(
@@ -99,19 +125,3 @@ def test_lookup_rejects_an_unsupported_shop() -> None:
 )
 def test_infer_category(text: str, expected: str | None) -> None:
     assert infer_category(text) == expected
-
-
-@pytest.mark.parametrize(
-    "raw,expected",
-    [
-        ("10 kOhms", "10k"),
-        ("100 nF", "100n"),
-        ("50 V", "50"),
-        ("4.7 µF", "4.7u"),
-        ("±5%", "5"),
-        ("1 MHz", "1M"),
-        ("SMD", "SMD"),  # no leading number → passthrough for the user to fix
-    ],
-)
-def test_clean_param_value(raw: str, expected: str) -> None:
-    assert clean_param_value(raw) == expected
