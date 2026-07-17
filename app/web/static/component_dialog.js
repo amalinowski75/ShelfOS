@@ -261,17 +261,45 @@
     hz: "Hz",
   };
 
+  // A number, possibly a fraction: resistor power is quoted as "1/16W", and taking
+  // just the digits before the unit would read that as 16 W.
+  const _NUMBER = "\\d+(?:\\.\\d+)?(?:/\\d+(?:\\.\\d+)?)?";
+
   function findValueForUnit(text, unit) {
     const pattern = _UNIT_PATTERNS[String(unit || "").trim().toLowerCase()];
     if (!pattern) return null;
     // The multiplier stays case-sensitive (m = milli vs M = mega); the unit pattern
     // is written case-tolerantly. The lookahead stops "W" matching inside a word.
     const match = text.match(
-      new RegExp(`(\\d+(?:\\.\\d+)?)\\s*([pnµukKMGm])?\\s*${pattern}(?![A-Za-z])`),
+      new RegExp(`(${_NUMBER})\\s*([pnµukKMGm])?\\s*${pattern}(?![A-Za-z])`),
     );
     if (!match) return null;
+    let number = match[1];
+    if (number.includes("/")) {
+      const [top, bottom] = number.split("/").map(Number);
+      if (!bottom) return null;
+      number = String(top / bottom); // 1/16 W → 0.0625
+    }
     const mult = { µ: "u", K: "k" }[match[2]] || match[2] || "";
-    return match[1] + (_MULTIPLIERS.has(mult) ? mult : "");
+    return number + (_MULTIPLIERS.has(mult) ? mult : "");
+  }
+
+  // Some descriptions give the primary value with no unit at all ("Thin Film
+  // Resistors - SMD TNPW-0402 1.2K 0.1% T-9"). Fill the type's VALUE parameter
+  // (lowest (sort_order, id) NUMBER — the same one the BOM report uses) from the
+  // first bare engineering token. Deliberately limited to that one field: a bare
+  // number elsewhere is usually a package code or a temperature coefficient. A
+  // multiplier is required, so "0402" and "100 PPM" can't be mistaken for a value.
+  const _BARE_ENGINEERING = /(?:^|[\s\-])(\d+(?:\.\d+)?)([pnµukKMG])(?![A-Za-z0-9])/;
+
+  function setValueParamFromDescription(text) {
+    const id = valueParamId();
+    if (id == null) return;
+    const input = paramsBox.querySelector(`input[data-definition-id="${id}"]`);
+    if (!input || input.value) return; // a unit-matched value already won
+    const match = text.match(_BARE_ENGINEERING);
+    if (!match) return;
+    input.value = match[1] + ({ µ: "u", K: "k" }[match[2]] || match[2]);
   }
 
   const _EIA_PACKAGE = /\b(0201|0402|0603|0805|1206|1210|1812|2010|2512)\b/;
@@ -287,6 +315,8 @@
       const value = findValueForUnit(text, def.unit);
       if (value) input.value = value;
     }
+    setValueParamFromDescription(text); // last resort for a unitless value
+
     const pkg = form.querySelector('[name="package"]');
     const eia = text.match(_EIA_PACKAGE);
     if (pkg && !pkg.value && eia) pkg.value = eia[1];
