@@ -277,6 +277,38 @@ describe("component_dialog.js — shop import", () => {
     ).toBe("1206 (3216 Metric)");
   });
 
+  it("derives fields from the description when the API returns no specs", async () => {
+    // Mirrors a real Mouser response: ProductAttributes carry only logistics, so
+    // the specs must come out of the description.
+    const mouserish = {
+      category: "resistor",
+      mpn: "MR04X1201FTL",
+      manufacturer: "Walsin",
+      description:
+        "Thick Film Resistors - SMD 1.2 kOhms 50 V 100 mW 1 % 0402 100 PPM / C AEC-Q200",
+      datasheet_url: null,
+      parameters: [
+        { name: "Packaging", value: "Reel" },
+        { name: "Standard Pack Qty", value: "10000" },
+      ],
+    };
+    const { document } = loadPage(componentPageFixture(), SCRIPTS, {
+      fetchImpl: withLookup(mouserish),
+    });
+    await openAndImport(document);
+    // Resistance (unit Ω) read from the description; the stray "50 V" is ignored
+    // because this type has no volt parameter.
+    expect(
+      document.querySelector('#component-params [data-definition-id="10"]').value,
+    ).toBe("1.2k");
+    expect(document.querySelector('#component-form [name="package"]').value).toBe(
+      "0402",
+    );
+    expect(
+      document.querySelector('#component-form [name="mounting_type"]').value,
+    ).toBe("SMT");
+  });
+
   it("attaches the imported datasheet after the component is created", async () => {
     const { document, fetchMock } = loadPage(componentPageFixture(), SCRIPTS, {
       fetchImpl: withLookup(PRODUCT),

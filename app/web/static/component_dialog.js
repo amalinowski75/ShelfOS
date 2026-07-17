@@ -243,6 +243,63 @@
     return m[1] + (_MULTIPLIERS.has(first) ? first : "");
   }
 
+  // Some shops (Mouser) return only logistics in their attributes — the real specs
+  // sit in the free-text description ("Thick Film Resistors - SMD 1.2 kOhms 50 V
+  // 100 mW 1 % 0402"). Rather than a parser per category, scan the description with
+  // the TYPE'S OWN parameter units: a resistor's Ω/W/% params pick up their values
+  // and the stray "50 V" is ignored (it has no volt parameter), while a capacitor's
+  // F/V params pick up theirs. Units are keyed lowercase.
+  const _UNIT_PATTERNS = {
+    ohm: "(?:[Oo]hms?|Ω)",
+    ω: "(?:[Oo]hms?|Ω)",
+    "%": "%",
+    w: "W",
+    v: "V",
+    f: "F",
+    a: "A",
+    h: "H",
+    hz: "Hz",
+  };
+
+  function findValueForUnit(text, unit) {
+    const pattern = _UNIT_PATTERNS[String(unit || "").trim().toLowerCase()];
+    if (!pattern) return null;
+    // The multiplier stays case-sensitive (m = milli vs M = mega); the unit pattern
+    // is written case-tolerantly. The lookahead stops "W" matching inside a word.
+    const match = text.match(
+      new RegExp(`(\\d+(?:\\.\\d+)?)\\s*([pnµukKMGm])?\\s*${pattern}(?![A-Za-z])`),
+    );
+    if (!match) return null;
+    const mult = { µ: "u", K: "k" }[match[2]] || match[2] || "";
+    return match[1] + (_MULTIPLIERS.has(mult) ? mult : "");
+  }
+
+  const _EIA_PACKAGE = /\b(0201|0402|0603|0805|1206|1210|1812|2010|2512)\b/;
+
+  // Fill still-EMPTY fields from the description; never overwrite a structured
+  // value (a shop that returns real parameters always wins).
+  function setFromDescription(text) {
+    if (!text) return;
+    for (const def of currentDefinitions) {
+      if (def.data_type !== "number" || !def.unit) continue;
+      const input = paramsBox.querySelector(`input[data-definition-id="${def.id}"]`);
+      if (!input || input.value) continue;
+      const value = findValueForUnit(text, def.unit);
+      if (value) input.value = value;
+    }
+    const pkg = form.querySelector('[name="package"]');
+    const eia = text.match(_EIA_PACKAGE);
+    if (pkg && !pkg.value && eia) pkg.value = eia[1];
+
+    const mounting = form.querySelector('[name="mounting_type"]');
+    let wanted = null;
+    if (/\bSM[DT]\b/.test(text)) wanted = "SMT";
+    else if (/\bTHT\b/.test(text) || /through[- ]hole/i.test(text)) wanted = "THT";
+    if (mounting && wanted && [...mounting.options].some((o) => o.value === wanted)) {
+      mounting.value = wanted;
+    }
+  }
+
   // Fill each named shop parameter into the field of the matching definition
   // (by label or name). Only plain <input> fields (number/text) are set; enum/bool
   // <select>s are left alone. NUMBER fields get engineering-cleaned; text fields get
@@ -292,6 +349,7 @@
     if (typeSelect.value !== typeId) return;
     if (prefill.value) setValueParam(prefill.value); // BOM: single value param
     if (prefill.params) setNamedParams(prefill.params); // shop: named params
+    setFromDescription(prefill.notes); // last: fills only what's still empty
   }
 
   // "Import from a shop URL": look the part up via its shop's API and rich-prefill.
