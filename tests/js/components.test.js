@@ -277,6 +277,85 @@ describe("component_dialog.js — shop import", () => {
     ).toBe("1206 (3216 Metric)");
   });
 
+  it("derives fields from the description when the API returns no specs", async () => {
+    // Mirrors a real Mouser response: ProductAttributes carry only logistics, so
+    // the specs must come out of the description.
+    const mouserish = {
+      category: "resistor",
+      mpn: "MR04X1201FTL",
+      manufacturer: "Walsin",
+      description:
+        "Thick Film Resistors - SMD 1.2 kOhms 50 V 100 mW 1 % 0402 100 PPM / C AEC-Q200",
+      datasheet_url: null,
+      parameters: [
+        { name: "Packaging", value: "Reel" },
+        { name: "Standard Pack Qty", value: "10000" },
+      ],
+    };
+    const { document } = loadPage(componentPageFixture(), SCRIPTS, {
+      fetchImpl: withLookup(mouserish),
+    });
+    await openAndImport(document);
+    // Resistance (unit Ω) read from the description; the stray "50 V" is ignored
+    // because this type has no volt parameter.
+    expect(
+      document.querySelector('#component-params [data-definition-id="10"]').value,
+    ).toBe("1.2k");
+    expect(document.querySelector('#component-form [name="package"]').value).toBe(
+      "0402",
+    );
+    expect(
+      document.querySelector('#component-form [name="mounting_type"]').value,
+    ).toBe("SMT");
+  });
+
+  // A resistor type with both a Ω and a W parameter, to exercise the unit scan.
+  const RES_DEFS = [
+    { id: 10, label: "Resistance", data_type: "number", unit: "Ω", enum_values: [], sort_order: 0 },
+    { id: 14, label: "Power", data_type: "number", unit: "W", enum_values: [], sort_order: 2 },
+  ];
+  const withLookupAndResDefs = (product) => (url, opts) => {
+    if (url === "/api/shops/lookup") {
+      return Promise.resolve({ ok: true, json: async () => product });
+    }
+    if (url.startsWith("/api/types/") && url.endsWith("/parameters")) {
+      return Promise.resolve({ ok: true, json: async () => RES_DEFS });
+    }
+    return fetchImpl(url, opts);
+  };
+  const param = (document, id) =>
+    document.querySelector(`#component-params [data-definition-id="${id}"]`).value;
+
+  it("reads a fractional power rating (1/16W), not its denominator", async () => {
+    const { document } = loadPage(componentPageFixture(), SCRIPTS, {
+      fetchImpl: withLookupAndResDefs({
+        category: "resistor",
+        description: "Thick Film Resistors 1.2kOhms 1/16W 0402 5% AEC-Q200",
+        parameters: [],
+      }),
+    });
+    await openAndImport(document);
+    expect(param(document, 10)).toBe("1.2k");
+    expect(param(document, 14)).toBe("0.0625"); // 1/16 W, not 16 W
+  });
+
+  it("reads a unitless engineering value into the value parameter", async () => {
+    const { document } = loadPage(componentPageFixture(), SCRIPTS, {
+      fetchImpl: withLookupAndResDefs({
+        category: "resistor",
+        description: "Thin Film Resistors - SMD TNPW-0402 1.2K 0.1% T-9 RT7",
+        parameters: [],
+      }),
+    });
+    await openAndImport(document);
+    // "1.2K" carries no unit but is plainly the resistance…
+    expect(param(document, 10)).toBe("1.2k");
+    // …and the package code must not be mistaken for it.
+    expect(document.querySelector('#component-form [name="package"]').value).toBe(
+      "0402",
+    );
+  });
+
   it("attaches the imported datasheet after the component is created", async () => {
     const { document, fetchMock } = loadPage(componentPageFixture(), SCRIPTS, {
       fetchImpl: withLookup(PRODUCT),

@@ -91,3 +91,15 @@ ATTACHMENT_URL_USER_AGENT = os.environ.get(
 # (Mouser answers "Invalid unique identifier." for any malformed key).
 MOUSER_API_KEY = os.environ.get("SHELFOS_MOUSER_API_KEY", "").strip()
 SHOP_API_TIMEOUT = float(os.environ.get("SHELFOS_SHOP_API_TIMEOUT", "10"))
+
+# Digi-Key uses OAuth2 client-credentials: an ID/secret pair buys a short-lived
+# token. API_BASE is overridable to point at their sandbox; the locale headers are
+# required by the product endpoint and only affect pricing/description language.
+DIGIKEY_CLIENT_ID = os.environ.get("SHELFOS_DIGIKEY_CLIENT_ID", "").strip()
+DIGIKEY_CLIENT_SECRET = os.environ.get("SHELFOS_DIGIKEY_CLIENT_SECRET", "").strip()
+DIGIKEY_API_BASE = os.environ.get(
+    "SHELFOS_DIGIKEY_API_BASE", "https://api.digikey.com"
+).rstrip("/")
+DIGIKEY_LOCALE_SITE = os.environ.get("SHELFOS_DIGIKEY_LOCALE_SITE", "US")
+DIGIKEY_LOCALE_LANGUAGE = os.environ.get("SHELFOS_DIGIKEY_LOCALE_LANGUAGE", "en")
+DIGIKEY_LOCALE_CURRENCY = os.environ.get("SHELFOS_DIGIKEY_LOCALE_CURRENCY", "USD")
