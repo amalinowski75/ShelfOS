@@ -20,6 +20,8 @@
   let onCreated = null;
   // The effective parameter definitions currently rendered (for prefill lookups).
   let currentDefinitions = [];
+  // A datasheet URL from a shop import, attached to the component after it's created.
+  let pendingDatasheetUrl = null;
 
   // Build a value input for one effective parameter definition, keyed by its id
   // and data type so the payload can be assembled without another lookup.
@@ -154,6 +156,24 @@
         errorEl.hidden = false;
         return;
       }
+      // Attach an imported datasheet to the new component (best-effort: a failed
+      // fetch mustn't undo the create). Reuses the SSRF-guarded from-URL endpoint.
+      if (pendingDatasheetUrl && created && created.id) {
+        try {
+          await fetch("/api/attachments/from-url", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+            body: JSON.stringify({
+              entity_type: "component",
+              entity_id: created.id,
+              url: pendingDatasheetUrl,
+              kind: "datasheet",
+            }),
+          });
+        } catch {
+          /* the component exists; a datasheet fetch failure shouldn't block it */
+        }
+      }
       dialog.close();
       // A caller's DOM update must not become an unhandled rejection: the
       // component is already persisted (mirrors location_dialog.js).
@@ -204,17 +224,46 @@
     if (input) input.value = String(rawValue).split(/[\s/]/)[0];
   }
 
-  // Pre-fill from a BOM line: { category, value, mpn, manufacturer }. Runs async
-  // (loading the matched type's parameters); fired after the dialog is shown.
+  // Normalise a parameter name for matching (drop case and punctuation/spaces).
+  function normalizeName(name) {
+    return String(name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  }
+
+  // Fill each named shop parameter into the field of the matching definition
+  // (by label or name). Only plain <input> fields (number/text) are set; enum/bool
+  // <select>s are left alone. Unmatched params are dropped — best-effort, reviewed.
+  function setNamedParams(params) {
+    for (const { name, value } of params) {
+      const target = normalizeName(name);
+      if (!target) continue;
+      const def = currentDefinitions.find(
+        (d) => normalizeName(d.label) === target || normalizeName(d.name) === target,
+      );
+      if (!def) continue;
+      const input = paramsBox.querySelector(`[data-definition-id="${def.id}"]`);
+      if (input && input.tagName === "INPUT") input.value = value;
+    }
+  }
+
+  // Pre-fill the dialog. From a BOM line: { category, value, mpn, manufacturer }.
+  // From a shop import, additionally: { notes, package, params:[{name,value}],
+  // datasheetUrl }. Runs async (loads the matched type's parameters); fired after
+  // the dialog is shown or when Import completes.
   async function applyPrefill(prefill) {
+    pendingDatasheetUrl = null;
     if (!prefill) {
       loadParams(""); // clears the fields and shows the hint
       return;
     }
-    if (prefill.mpn) form.querySelector('[name="mpn"]').value = prefill.mpn;
-    if (prefill.manufacturer) {
-      form.querySelector('[name="manufacturer"]').value = prefill.manufacturer;
-    }
+    const set = (name, val) => {
+      if (val) form.querySelector(`[name="${name}"]`).value = val;
+    };
+    set("mpn", prefill.mpn);
+    set("manufacturer", prefill.manufacturer);
+    set("package", prefill.package);
+    set("notes", prefill.notes);
+    if (prefill.datasheetUrl) pendingDatasheetUrl = prefill.datasheetUrl;
+
     const typeId = matchTypeByName(prefill.category);
     if (!typeId) {
       loadParams(""); // no matching type — let the user pick one
@@ -222,8 +271,57 @@
     }
     typeSelect.value = typeId;
     await loadParams(typeId); // render the type's parameter fields
-    // Only fill the value if the user hasn't changed the type while we loaded.
-    if (prefill.value && typeSelect.value === typeId) setValueParam(prefill.value);
+    // Only fill parameters if the user hasn't changed the type while we loaded.
+    if (typeSelect.value !== typeId) return;
+    if (prefill.value) setValueParam(prefill.value); // BOM: single value param
+    if (prefill.params) setNamedParams(prefill.params); // shop: named params
+  }
+
+  // "Import from a shop URL": look the part up via its shop's API and rich-prefill.
+  const importUrl = document.getElementById("shop-import-url");
+  const importBtn = document.getElementById("shop-import-btn");
+  const importStatus = document.getElementById("shop-import-status");
+  if (importBtn) {
+    let importing = false;
+    importBtn.addEventListener("click", async () => {
+      const url = importUrl.value.trim();
+      if (!url || importing) return;
+      importing = true;
+      importStatus.hidden = false;
+      importStatus.className = "muted";
+      importStatus.textContent = "Looking up…";
+      try {
+        const resp = await fetch("/api/shops/lookup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+          body: JSON.stringify({ url }),
+        });
+        if (!resp.ok) {
+          importStatus.className = "error";
+          importStatus.textContent = await errorMessage(resp);
+          return;
+        }
+        const product = await resp.json();
+        await applyPrefill({
+          category: product.category,
+          mpn: product.mpn,
+          manufacturer: product.manufacturer,
+          notes: product.description,
+          package: product.package,
+          params: product.parameters,
+          datasheetUrl: product.datasheet_url,
+        });
+        importStatus.className = "muted";
+        importStatus.textContent = product.mpn
+          ? `Imported ${product.mpn} — review and Create.`
+          : "Imported — review and Create.";
+      } catch {
+        importStatus.className = "error";
+        importStatus.textContent = "Could not reach the server.";
+      } finally {
+        importing = false;
+      }
+    });
   }
 
   // Open the dialog; `callback(created)` runs after a successful create. An
@@ -232,6 +330,7 @@
     onCreated = callback || null;
     form.reset();
     errorEl.hidden = true;
+    if (importStatus) importStatus.hidden = true;
     dialog.showModal(); // open synchronously; fields fill in a tick later
     applyPrefill(prefill);
   };

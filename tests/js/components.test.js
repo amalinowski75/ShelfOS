@@ -228,6 +228,86 @@ describe("app.js — new component", () => {
   });
 });
 
+describe("component_dialog.js — shop import", () => {
+  const PRODUCT = {
+    category: "resistor",
+    mpn: "RES-10K",
+    manufacturer: "YAGEO",
+    description: "10k 1% 0402 resistor",
+    package: "0402",
+    datasheet_url: "https://x/ds.pdf",
+    parameters: [
+      { name: "Resistance", value: "10k" },
+      { name: "Tolerance", value: "1" }, // no matching def in DEFS → dropped
+    ],
+  };
+  const withLookup = (product) => (url, opts) =>
+    url === "/api/shops/lookup"
+      ? Promise.resolve({ ok: true, json: async () => product })
+      : fetchImpl(url, opts);
+
+  async function openAndImport(document) {
+    document.getElementById("new-component-btn").click();
+    document.getElementById("shop-import-url").value = "https://www.mouser.com/x";
+    document.getElementById("shop-import-btn").click();
+    await tick();
+    await tick(); // lookup, then the type's parameters
+  }
+
+  it("rich-prefills the dialog from a looked-up product", async () => {
+    const { document } = loadPage(componentPageFixture(), SCRIPTS, {
+      fetchImpl: withLookup(PRODUCT),
+    });
+    await openAndImport(document);
+    expect(document.getElementById("component-type").value).toBe("1"); // resistor
+    const field = (name) =>
+      document.querySelector(`#component-form [name="${name}"]`).value;
+    expect(field("mpn")).toBe("RES-10K");
+    expect(field("manufacturer")).toBe("YAGEO");
+    expect(field("package")).toBe("0402");
+    expect(field("notes")).toBe("10k 1% 0402 resistor");
+    // "Resistance" maps by label to the number field (DEFS id 10).
+    expect(
+      document.querySelector('#component-params [data-definition-id="10"]').value,
+    ).toBe("10k");
+  });
+
+  it("attaches the imported datasheet after the component is created", async () => {
+    const { document, fetchMock } = loadPage(componentPageFixture(), SCRIPTS, {
+      fetchImpl: withLookup(PRODUCT),
+    });
+    await openAndImport(document);
+    fire(document.getElementById("component-form"), "submit");
+    await tick();
+    const attach = fetchMock.mock.calls.find(
+      (c) => c[0] === "/api/attachments/from-url",
+    );
+    expect(attach).toBeTruthy();
+    expect(JSON.parse(attach[1].body)).toMatchObject({
+      entity_type: "component",
+      entity_id: 99,
+      url: "https://x/ds.pdf",
+      kind: "datasheet",
+    });
+  });
+
+  it("shows an error when the lookup fails", async () => {
+    const impl = (url, opts) =>
+      url === "/api/shops/lookup"
+        ? Promise.resolve({ ok: false, json: async () => ({ detail: "unsupported shop" }) })
+        : fetchImpl(url, opts);
+    const { document } = loadPage(componentPageFixture(), SCRIPTS, { fetchImpl: impl });
+    document.getElementById("new-component-btn").click();
+    document.getElementById("shop-import-url").value = "https://x";
+    document.getElementById("shop-import-btn").click();
+    await tick();
+    const status = document.getElementById("shop-import-status");
+    expect(status.hidden).toBe(false);
+    expect(status.textContent).toBe("unsupported shop");
+    expect(status.className).toBe("error");
+  });
+});
+
 describe("component_dialog.js — prefill (add from BOM)", () => {
   it("matches the type by category name and fills value/mpn/manufacturer", async () => {
     const { window, document } = loadPage(componentPageFixture(), SCRIPTS, { fetchImpl });

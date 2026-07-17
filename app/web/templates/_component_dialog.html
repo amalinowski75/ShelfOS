@@ -8,6 +8,17 @@
       <button class="close" aria-label="Close" data-close></button>
     </header>
     <form id="component-form">
+      <div class="field shop-import">
+        <label>Import from a shop URL</label>
+        <div class="shop-import-row">
+          <input class="control" id="shop-import-url" type="url"
+                 placeholder="https://www.mouser.com/ProductDetail/…" />
+          <button type="button" class="btn btn-secondary btn-sm" id="shop-import-btn">
+            Import
+          </button>
+        </div>
+        <p id="shop-import-status" hidden></p>
+      </div>
       <div class="field">
         <label>Type</label>
         <select class="control" name="type_id" id="component-type" required>
