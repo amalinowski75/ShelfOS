@@ -342,6 +342,9 @@ export function componentPageFixture(types = [{ id: 1, name: "resistor" }]) {
     <div id="components-table"></div>
     <dialog id="stock-dialog"><form id="stock-form"></form></dialog>
     <dialog id="component-dialog"><form id="component-form">
+      <input id="shop-import-url" type="url" />
+      <button type="button" id="shop-import-btn"></button>
+      <p id="shop-import-status" hidden></p>
       <select name="type_id" id="component-type">
         <option value="">Select a type…</option>${options}
       </select>

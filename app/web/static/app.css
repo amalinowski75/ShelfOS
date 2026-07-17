@@ -347,6 +347,11 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 #component-dialog > article { display: flex; flex-direction: column; max-height: calc(100vh - 48px); }
 #component-dialog article > header { flex: none; }
 #component-dialog form { overflow-y: auto; }
+.shop-import { border-bottom: 1px solid var(--border); padding-bottom: 14px; margin-bottom: 4px; }
+.shop-import-row { display: flex; gap: 8px; align-items: center; }
+.shop-import-row .control { flex: 1; }
+#shop-import-status { margin: 6px 0 0; font-size: 13px; }
+#shop-import-status.error { color: var(--danger); }
 
 /* ---------- new-type dialog (§13) ---------- */
 /* Widen the dialog itself (the base rule caps it at 440px); it holds a

@@ -27,6 +27,7 @@ from app.api.routes import (
     components,
     invoices,
     locations,
+    shops,
     stock,
     types,
 )
@@ -40,7 +41,16 @@ _STATIC_DIR = Path(__file__).parent / "web" / "static"
 _logger = logging.getLogger("shelfos")
 
 # Business routers require authentication and enforce read-only write blocking.
-_PROTECTED_ROUTERS = (types, components, locations, stock, invoices, attachments, boms)
+_PROTECTED_ROUTERS = (
+    types,
+    components,
+    locations,
+    stock,
+    invoices,
+    attachments,
+    boms,
+    shops,
+)
 
 
 def _bootstrap() -> None:

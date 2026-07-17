@@ -243,6 +243,29 @@ class AttachmentFromUrl(BaseModel):
     notes: str | None = None
 
 
+class ShopLookup(BaseModel):
+    """Look up a product by its shop URL (spec: create component from a shop URL)."""
+
+    url: str = Field(max_length=2048)
+
+
+class ShopParameter(BaseModel):
+    name: str
+    value: str
+
+
+class ShopProductRead(BaseModel):
+    """A distributor product normalised toward the New Component dialog's fields."""
+
+    category: str | None = None
+    mpn: str | None = None
+    manufacturer: str | None = None
+    description: str | None = None
+    package: str | None = None
+    datasheet_url: str | None = None
+    parameters: list[ShopParameter] = Field(default_factory=list)
+
+
 class BomLineRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
