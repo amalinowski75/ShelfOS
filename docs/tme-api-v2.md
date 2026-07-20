@@ -147,8 +147,9 @@ trusting a transcription.
 
 # Endpoints
 
-Generated from the specification. Response trees show every documented field; example
-payloads are collapsed.
+Generated from the specification. Field trees are fenced blocks rather than nested
+lists — these schemas reach ten levels, and deep two-space nesting is read
+inconsistently across Markdown renderers. Example payloads are collapsed.
 
 ### `POST /auth/token`
 
@@ -158,18 +159,22 @@ _No parameters._
 
 **Request body** (`application/x-www-form-urlencoded`)
 
-- *variant 1*
-  - `grant_type` *enum(client_credentials)* — Type of authorization flow.
-- *variant 2*
-  - `grant_type` *enum(refresh_token)* — Type of authorization flow.
-  - `refresh_token` *string* — Refresh token.
+```text
+— variant 1 —
+  grant_type     enum(client_credentials)   — Type of authorization flow.
+— variant 2 —
+  grant_type     enum(refresh_token)   — Type of authorization flow.
+  refresh_token  string   — Refresh token.
+```
 
 **Response**
 
-- `access_token` *string* — Token for authorizing API requests.
-- `token_type` *string* — Type of the returned token.
-- `expires_in` *number* — Token expiry time in seconds.
-- `refresh_token` *string* — Token for obtaining a new access token.
+```text
+access_token   string   — Token for authorizing API requests.
+token_type     string   — Type of the returned token.
+expires_in     number   — Token expiry time in seconds.
+refresh_token  string   — Token for obtaining a new access token.
+```
 
 <details><summary>Example response</summary>
 
@@ -197,45 +202,47 @@ _No parameters._
 
 **Response**
 
-- `status` *string* — Response status. "OK" indicates that the action was successful.
-- `data` *object* — Action response data.
-  - `elements` *array<object>*
-    - `product_status` *array<string>* — List of product statuses.
-    - `symbol` *string* — Unique product identifier.
-    - `ean` *string* — EAN number (barcode). Can be empty.
-    - `customer_symbol` *string* — Customer symbol for the product, if provided.
-    - `category` *object* — Product category details.
-      - `id` *number* — Category identifier.
-      - `name` *string* — Category name.
-    - `manufacturer_symbols` *array<string>* — List of manufacturer symbols for the product.
-    - `manufacturer` *object* — Product manufacturer details.
-      - `id` *number* — Manufacturer identifier.
-      - `name` *string* — Manufacturer name.
-    - `description` *string* — Product description.
-    - `multiples` *number* — Product multiplicity. Product quantity must be a multiple of this value.
-    - `minimal_amount` *number* — Minimal order quantity.
-    - `weight` *object* — Product weight details.
-      - `value` *number* — Product weight.
-      - `unit` *string* — Unit in which the weight is provided.
-    - `unit` *object* — Product unit details.
-      - `id` *string* — Unit identifier.
-      - `short_name` *string* — Short name of unit type e.g. 'pcs'.
-      - `singular_translation` *string | null* — Name of unit e.g. 'Piece'.
-      - `plural_translation` *string | null* — Plural translation e.g. 'Pieces'.
-    - `packing` *object* — List of available product packaging options.
-      - `elements` *array<object>*
-        - `id` *string* — Packaging type identifier.
-        - `translation` *string* — Packaging type name.
-        - `amount` *number* — Number of items in package.
-    - `assets` *object* — Product image assets.
-      - `primary_photo` *object | null* — Primary image with different resolutions.
-        - `prime` *string* — Main image URL.
-        - `thumbnail` *string* — Thumbnail image URL.
-        - `high_resolution` *string | null* — High-resolution image URL.
-    - `notification` *object | null* — Product availability notification settings.
-      - `any_increase` *boolean* — Indicates if notifications are triggered on any stock increase up to the `required_amount`.
-      - `created_at` *string* — Timestamp of the notification creation.
-      - `required_amount` *number* — Required product quantity.
+```text
+status                      string   — Response status. "OK" indicates that the action was successful.
+data                        object   — Action response data.
+  elements                  array<object>
+    product_status          array<string>   — List of product statuses.
+    symbol                  string   — Unique product identifier.
+    ean                     string   — EAN number (barcode). Can be empty.
+    customer_symbol         string   — Customer symbol for the product, if provided.
+    category                object   — Product category details.
+      id                    number   — Category identifier.
+      name                  string   — Category name.
+    manufacturer_symbols    array<string>   — List of manufacturer symbols for the product.
+    manufacturer            object   — Product manufacturer details.
+      id                    number   — Manufacturer identifier.
+      name                  string   — Manufacturer name.
+    description             string   — Product description.
+    multiples               number   — Product multiplicity. Product quantity must be a multiple of this value.
+    minimal_amount          number   — Minimal order quantity.
+    weight                  object   — Product weight details.
+      value                 number   — Product weight.
+      unit                  string   — Unit in which the weight is provided.
+    unit                    object   — Product unit details.
+      id                    string   — Unit identifier.
+      short_name            string   — Short name of unit type e.g. 'pcs'.
+      singular_translation  string|null   — Name of unit e.g. 'Piece'.
+      plural_translation    string|null   — Plural translation e.g. 'Pieces'.
+    packing                 object   — List of available product packaging options.
+      elements              array<object>
+        id                  string   — Packaging type identifier.
+        translation         string   — Packaging type name.
+        amount              number   — Number of items in package.
+    assets                  object   — Product image assets.
+      primary_photo         object|null   — Primary image with different resolutions.
+        prime               string   — Main image URL.
+        thumbnail           string   — Thumbnail image URL.
+        high_resolution     string|null   — High-resolution image URL.
+    notification            object|null   — Product availability notification settings.
+      any_increase          boolean   — Indicates if notifications are triggered on any stock increase up to the `required_amount`.
+      created_at            string   — Timestamp of the notification creation.
+      required_amount       number   — Required product quantity.
+```
 
 <details><summary>Example response</summary>
 
@@ -312,17 +319,19 @@ _No parameters._
 
 **Response**
 
-- `status` *string* — Response status. "OK" indicates that the action was successful.
-- `data` *object* — Action response data.
-  - `elements` *array<object>*
-    - `symbol` *string* — Product symbol.
-    - `parameters` *object* — List of product parameters.
-      - `elements` *array<object>*
-        - `id` *number* — Parameter identifier.
-        - `name` *string* — Parameter name.
-        - `values` *array<object>* — List of parameter values.
-          - `id` *number* — Value identifier.
-          - `value` *string* — Value label.
+```text
+status           string   — Response status. "OK" indicates that the action was successful.
+data             object   — Action response data.
+  elements       array<object>
+    symbol       string   — Product symbol.
+    parameters   object   — List of product parameters.
+      elements   array<object>
+        id       number   — Parameter identifier.
+        name     string   — Parameter name.
+        values   array<object>   — List of parameter values.
+          id     number   — Value identifier.
+          value  string   — Value label.
+```
 
 <details><summary>Example response</summary>
 
@@ -418,7 +427,7 @@ _No parameters._
 
 This action returns a list of additional photos and documents correlated with specified products. The method is limited by the maximum number of product symbols that can be submitted as an input to this action. The maximum number of symbols is equal to 50.
 
- Endpoint can return these types of documents:
+Endpoint can return these types of documents:
 
 - **INS** - Manual,
 - **DTE** - Documentation,
@@ -439,35 +448,37 @@ This action returns a list of additional photos and documents correlated with sp
 
 **Response**
 
-- `status` *string* — Response status. "OK" indicates that the action was successful.
-- `data` *object* — Action response data.
-  - `elements` *array<object>*
-    - `symbol` *string* — Product symbol.
-    - `assets` *object* — Product image assets.
-      - `primary_photo` *object | null* — Primary image with different resolutions.
-        - `prime` *string* — Main image URL.
-        - `thumbnail` *string* — Thumbnail image URL.
-        - `high_resolution` *string | null* — High-resolution image URL.
-      - `additional` *object* — List of additional images with different resolutions.
-        - `elements` *array<object>*
-          - `prime` *string* — Main image URL.
-          - `thumbnail` *string* — Thumbnail image URL.
-          - `high_resolution` *string | null* — High-resolution image URL.
-      - `presentation` *object* — List of images used for 360° product presentation.
-        - `elements` *array<object>*
-          - `photo` *string* — Image URL.
-          - `position` *number* — Image position number.
-    - `documents` *object* — List of product documents.
-      - `elements` *array<object>*
-        - `url` *string* — Document URL.
-        - `type` *string* — Document type.
-        - `size` *integer* — Document size.
-        - `file_name` *string* — File name.
-        - `language` *string* — Document language identifier.
-    - `parameter_images` *object*
-      - `elements` *array<object>*
-        - `name` *string* — Image name.
-        - `url` *string* — Image URL.
+```text
+status                     string   — Response status. "OK" indicates that the action was successful.
+data                       object   — Action response data.
+  elements                 array<object>
+    symbol                 string   — Product symbol.
+    assets                 object   — Product image assets.
+      primary_photo        object|null   — Primary image with different resolutions.
+        prime              string   — Main image URL.
+        thumbnail          string   — Thumbnail image URL.
+        high_resolution    string|null   — High-resolution image URL.
+      additional           object   — List of additional images with different resolutions.
+        elements           array<object>
+          prime            string   — Main image URL.
+          thumbnail        string   — Thumbnail image URL.
+          high_resolution  string|null   — High-resolution image URL.
+      presentation         object   — List of images used for 360° product presentation.
+        elements           array<object>
+          photo            string   — Image URL.
+          position         number   — Image position number.
+    documents              object   — List of product documents.
+      elements             array<object>
+        url                string   — Document URL.
+        type               string   — Document type.
+        size               integer   — Document size.
+        file_name          string   — File name.
+        language           string   — Document language identifier.
+    parameter_images       object
+      elements             array<object>
+        name               string   — Image name.
+        url                string   — Image URL.
+```
 
 <details><summary>Example response</summary>
 
@@ -511,7 +522,7 @@ This action returns a list of additional photos and documents correlated with sp
                 "photo": "//ce8dc832c.cloudimg.io/v7/_cdn_/4A/E0/C0/00/0/790180_4.jpg?width=640&height=480&wat=1&wat_url=_tme-wrk_%2Ftme_new.png&wat_scale=100p&ci_sign=44b71a8fc6942c1d2d7bc99eef78215ec448be22",
                 "position": 3
               },
-  
+
   … (truncated)
 ```
 </details>
@@ -539,65 +550,67 @@ This action returns a list of additional photos and documents correlated with sp
 
 **Response**
 
-- `status` *string* — Response status. "OK" indicates that the action was successful.
-- `data` *object* — Action response data.
-  - `products` *object | null* — List of products.
-    - `elements` *array<object>*
-      - `product_status` *array<string>* — List of product statuses.
-      - `symbol` *string* — Unique product identifier.
-      - `ean` *string* — EAN number (barcode). Can be empty.
-      - `customer_symbol` *string* — Customer symbol for the product, if provided.
-      - `category` *object* — Product category details.
-        - `id` *number* — Category identifier.
-        - `name` *string* — Category name.
-      - `manufacturer_symbols` *array<string>* — List of manufacturer symbols for the product.
-      - `manufacturer` *object* — Product manufacturer details.
-        - `id` *number* — Manufacturer identifier.
-        - `name` *string* — Manufacturer name.
-      - `description` *string* — Product description.
-      - `multiples` *number* — Product multiplicity. Product quantity must be a multiple of this value.
-      - `minimal_amount` *number* — Minimal order quantity.
-      - `weight` *object* — Product weight details.
-        - `value` *number* — Product weight.
-        - `unit` *string* — Unit in which the weight is provided.
-      - `unit` *object* — Product unit details.
-        - `id` *string* — Unit identifier.
-        - `short_name` *string* — Short name of unit type e.g. 'pcs'.
-        - `singular_translation` *string | null* — Name of unit e.g. 'Piece'.
-        - `plural_translation` *string | null* — Plural translation e.g. 'Pieces'.
-      - `packing` *object* — List of available product packaging options.
-        - `elements` *array<object>*
-          - `id` *string* — Packaging type identifier.
-          - `translation` *string* — Packaging type name.
-          - `amount` *number* — Number of items in package.
-      - `assets` *object* — Product image assets.
-        - `primary_photo` *object | null* — Primary image with different resolutions.
-          - `prime` *string* — Main image URL.
-          - `thumbnail` *string* — Thumbnail image URL.
-          - `high_resolution` *string | null* — High-resolution image URL.
-      - `notification` *object | null* — Product availability notification settings.
-        - `any_increase` *boolean* — Indicates if notifications are triggered on any stock increase up to the `required_amount`.
-        - `created_at` *string* — Timestamp of the notification creation.
-        - `required_amount` *number* — Required product quantity.
-  - `parameters` *object | null* — List of related filter parameters.
-    - `elements` *array<object>*
-      - `id` *number* — Parameter identifier.
-      - `name` *string* — Parameter name.
-      - `values` *array<object>* — List of parameter values.
-        - `id` *number* — Value identifier.
-        - `value` *string* — Value label.
-        - `products_count` *number* — Number of products with this value.
-        - `selected` *boolean* — Indicates if the value is selected.
-        - `is_active` *boolean* — Indicates if the value is active.
-      - `products_count` *number* — Number of products with this parameter.
-  - `counters` *object | null* — Pagination info and category counts.
-    - `pages` *number* — Total number of pages.
-    - `count` *number* — Total number of products.
-    - `page` *number* — Current page number.
-    - `categories` *object* — List of categories for returned products.
-      - `elements` *array<object>*
-        - `id` *number* — Category identifier.
-        - `products_count` *number* — Number of products in the category.
+```text
+status                        string   — Response status. "OK" indicates that the action was successful.
+data                          object   — Action response data.
+  products                    object|null   — List of products.
+    elements                  array<object>
+      product_status          array<string>   — List of product statuses.
+      symbol                  string   — Unique product identifier.
+      ean                     string   — EAN number (barcode). Can be empty.
+      customer_symbol         string   — Customer symbol for the product, if provided.
+      category                object   — Product category details.
+        id                    number   — Category identifier.
+        name                  string   — Category name.
+      manufacturer_symbols    array<string>   — List of manufacturer symbols for the product.
+      manufacturer            object   — Product manufacturer details.
+        id                    number   — Manufacturer identifier.
+        name                  string   — Manufacturer name.
+      description             string   — Product description.
+      multiples               number   — Product multiplicity. Product quantity must be a multiple of this value.
+      minimal_amount          number   — Minimal order quantity.
+      weight                  object   — Product weight details.
+        value                 number   — Product weight.
+        unit                  string   — Unit in which the weight is provided.
+      unit                    object   — Product unit details.
+        id                    string   — Unit identifier.
+        short_name            string   — Short name of unit type e.g. 'pcs'.
+        singular_translation  string|null   — Name of unit e.g. 'Piece'.
+        plural_translation    string|null   — Plural translation e.g. 'Pieces'.
+      packing                 object   — List of available product packaging options.
+        elements              array<object>
+          id                  string   — Packaging type identifier.
+          translation         string   — Packaging type name.
+          amount              number   — Number of items in package.
+      assets                  object   — Product image assets.
+        primary_photo         object|null   — Primary image with different resolutions.
+          prime               string   — Main image URL.
+          thumbnail           string   — Thumbnail image URL.
+          high_resolution     string|null   — High-resolution image URL.
+      notification            object|null   — Product availability notification settings.
+        any_increase          boolean   — Indicates if notifications are triggered on any stock increase up to the `required_amount`.
+        created_at            string   — Timestamp of the notification creation.
+        required_amount       number   — Required product quantity.
+  parameters                  object|null   — List of related filter parameters.
+    elements                  array<object>
+      id                      number   — Parameter identifier.
+      name                    string   — Parameter name.
+      values                  array<object>   — List of parameter values.
+        id                    number   — Value identifier.
+        value                 string   — Value label.
+        products_count        number   — Number of products with this value.
+        selected              boolean   — Indicates if the value is selected.
+        is_active             boolean   — Indicates if the value is active.
+      products_count          number   — Number of products with this parameter.
+  counters                    object|null   — Pagination info and category counts.
+    pages                     number   — Total number of pages.
+    count                     number   — Total number of products.
+    page                      number   — Current page number.
+    categories                object   — List of categories for returned products.
+      elements                array<object>
+        id                    number   — Category identifier.
+        products_count        number   — Number of products in the category.
+```
 
 <details><summary>Example response</summary>
 
@@ -701,34 +714,36 @@ This action returns a list of prices, stock levels and deliveries of products to
 
 **Response**
 
-- `status` *string* — Response status. "OK" indicates that the action was successful.
-- `data` *object* — Action response data.
-  - `elements` *array<object>*
-    - `stock_quantity` *number | null* — Number of products in stock. Returns null if only `prices` query parameter is selected.
-    - `symbol` *string* — Unique product identifier.
-    - `unit` *object* — Product unit details.
-      - `id` *string* — Unit identifier.
-      - `short_name` *string* — Short name of unit type e.g. 'pcs'.
-      - `singular_translation` *string | null* — Name of unit e.g. 'Piece'.
-      - `plural_translation` *string | null* — Plural translation e.g. 'Pieces'.
-    - `prices` *object | null* — Product pricing details. Returns null if `prices` query parameter is not selected.
-      - `elements` *array<object>* — List of quantity-based price tiers.
-      - `tax` *object* — Product tax details.
-        - `type` *string* — Tax type.
-        - `rate` *string* — Tax percentage rate.
-      - `currency` *string* — Currency of returned prices.
-      - `type` *enum(NET, GROSS)* — Product price type.
-    - `deliveries` *object | null* — List of product stock and delivery status details. Returns null if `delivery` or `delivery_confirmed` query parameter is not selected.
-      - `elements` *array<object>*
-        - `status` *string* — Information about availability: - **DS_AVAILABLE_IN_STOCK** - Product available in stock. - **DS_DATE_AS_WEEK** - Product ordered from supplier with confirmed delivery. - **DS_SUPPLIER_WAREHOUSE_DATE_AS_WEEK** - Product available from supplier. Minimum purchase quantities may apply. Estimated warehouse delivery is provided (for an order placed today). - **DS_WAITING_FOR_CONFIRMATION_FROM_VENDOR** - Product ordered from supplier, awaiting confirmation. - **DS_DELIVERY_NEEDS_CONFIRMATION** - Product not yet ordered from supplier. Please contact our sales department. For **DS_DATE_AS_WEEK** and **DS_SUPPLIER_WAREHOUSE_DATE_AS_WEEK** statuses, `data` returns `week`, `year`, `range_start`, `range_end` and `supply_date`. For **DS_DELIVERY_NEEDS_CONFIRMATION** status, `data` returns `waiting_period` and `supply_date`. For all other statuses, `data` is null.
-        - `amount` *number* — Number of items available for the status.
-        - `data` *object | null* — Estimated delivery date details based on the status.
-          - `week` *string* — ISO delivery week.
-          - `year` *string* — Delivery year.
-          - `range_start` *string* — Start of the delivery week.
-          - `range_end` *string* — End of the delivery week.
-          - `waiting_period` *string* — Standard manufacturer lead time in weeks.
-          - `supply_date` *string* — Estimated delivery date.
+```text
+status                      string   — Response status. "OK" indicates that the action was successful.
+data                        object   — Action response data.
+  elements                  array<object>
+    stock_quantity          number|null   — Number of products in stock. Returns null if only `prices` query parameter is selected.
+    symbol                  string   — Unique product identifier.
+    unit                    object   — Product unit details.
+      id                    string   — Unit identifier.
+      short_name            string   — Short name of unit type e.g. 'pcs'.
+      singular_translation  string|null   — Name of unit e.g. 'Piece'.
+      plural_translation    string|null   — Plural translation e.g. 'Pieces'.
+    prices                  object|null   — Product pricing details. Returns null if `prices` query parameter is not selected.
+      elements              array<object>   — List of quantity-based price tiers.
+      tax                   object   — Product tax details.
+        type                string   — Tax type.
+        rate                string   — Tax percentage rate.
+      currency              string   — Currency of returned prices.
+      type                  enum(NET, GROSS)   — Product price type.
+    deliveries              object|null   — List of product stock and delivery status details. Returns null if `delivery` or `delivery_confirmed` query parameter is not selected.
+      elements              array<object>
+        status              string   — Information about availability: - **DS_AVAILABLE_IN_STOCK** - Product available in stock. - **DS_DATE_AS_WEEK** - Product ordered from supplier with confirmed delivery. - **DS_SUPPLIER_WAREHOUSE_DATE_AS_WEEK** - Product available from supplier. Minimum purchase quantities may apply. Estimated warehouse delivery is provided (for an order placed today). - **DS_WAITING_FOR_CONFIRMATION_FROM_VENDOR** - Product ordered from supplier, awaiting confirmation. - **DS_DELIVERY_NEEDS_CONFIRMATION** - Product not yet ordered from supplier. Please contact our sales department. For **DS_DATE_AS_WEEK** and **DS_SUPPLIER_WAREHOUSE_DATE_AS_WEEK** statuses, `data` returns `week`, `year`, `range_start`, `range_end` and `supply_date`. For **DS_DELIVERY_NEEDS_CONFIRMATION** status, `data` returns `waiting_period` and `supply_date`. For all other statuses, `data` is null.
+        amount              number   — Number of items available for the status.
+        data                object|null   — Estimated delivery date details based on the status.
+          week              string   — ISO delivery week.
+          year              string   — Delivery year.
+          range_start       string   — Start of the delivery week.
+          range_end         string   — End of the delivery week.
+          waiting_period    string   — Standard manufacturer lead time in weeks.
+          supply_date       string   — Estimated delivery date.
+```
 
 <details><summary>Example response</summary>
 
@@ -805,10 +820,12 @@ The endpoint returns symbols for products active in TME.
 
 **Response**
 
-- `status` *string* — Response status. "OK" indicates that the action was successful.
-- `data` *object* — Action response data.
-  - `elements` *array<string>* — List of product symbols.
-  - `pages` *number* — Total number of pages.
+```text
+status      string   — Response status. "OK" indicates that the action was successful.
+data        object   — Action response data.
+  elements  array<string>   — List of product symbols.
+  pages     number   — Total number of pages.
+```
 
 <details><summary>Example response</summary>
 
@@ -858,9 +875,11 @@ This endpoint returns products related to the specified product symbol. Related 
 
 **Response**
 
-- `status` *string* — Response status. "OK" indicates that the action was successful.
-- `data` *object* — Action response data.
-  - `elements` *array<string>* — Symbols array of related products.
+```text
+status      string   — Response status. "OK" indicates that the action was successful.
+data        object   — Action response data.
+  elements  array<string>   — Symbols array of related products.
+```
 
 <details><summary>Example response</summary>
 
@@ -890,9 +909,11 @@ This endpoint returns products related to the specified product symbol. Related 
 
 **Response**
 
-- `status` *string* — Response status. "OK" indicates that the action was successful.
-- `data` *object* — Action response data.
-  - `elements` *array<string>* — Symbols array of similar products.
+```text
+status      string   — Response status. "OK" indicates that the action was successful.
+data        object   — Action response data.
+  elements  array<string>   — Symbols array of similar products.
+```
 
 <details><summary>Example response</summary>
 
@@ -922,14 +943,16 @@ This endpoint returns products related to the specified product symbol. Related 
 
 **Response**
 
-- `status` *string* — Response status. "OK" indicates that the action was successful.
-- `data` *object* — Action response data.
-  - `elements` *array<object>*
-    - `parent_id` *number* — Parent category identifier.
-    - `id` *number* — Category identifier.
-    - `products_count` *number* — Number of products in the category.
-    - `thumbnail` *string* — Category thumbnail image URL.
-    - `name` *string* — Category name.
+```text
+status              string   — Response status. "OK" indicates that the action was successful.
+data                object   — Action response data.
+  elements          array<object>
+    parent_id       number   — Parent category identifier.
+    id              number   — Category identifier.
+    products_count  number   — Number of products in the category.
+    thumbnail       string   — Category thumbnail image URL.
+    name            string   — Category name.
+```
 
 <details><summary>Example response</summary>
 
@@ -977,9 +1000,11 @@ This endpoint returns products related to the specified product symbol. Related 
 
 **Response**
 
-- `status` *string* — Response status. "OK" indicates that the action was successful.
-- `data` *object* — Action response data.
-  - `elements` *object*
+```text
+status      string   — Response status. "OK" indicates that the action was successful.
+data        object   — Action response data.
+  elements  object
+```
 
 <details><summary>Example response</summary>
 
@@ -1063,12 +1088,14 @@ This endpoint returns products related to the specified product symbol. Related 
 
 **Response**
 
-- `status` *string* — Response status. "OK" indicates that the action was successful.
-- `data` *object* — Action response data.
-  - `elements` *array<object>*
-    - `id` *number* — Manufacturer identifier.
-    - `name` *string* — Manufacturer name.
-    - `products_count` *number* — Number of products by manufacturer.
+```text
+status              string   — Response status. "OK" indicates that the action was successful.
+data                object   — Action response data.
+  elements          array<object>
+    id              number   — Manufacturer identifier.
+    name            string   — Manufacturer name.
+    products_count  number   — Number of products by manufacturer.
+```
 
 <details><summary>Example response</summary>
 
@@ -1131,11 +1158,13 @@ _No parameters._
 
 **Response**
 
-- `status` *string* — Response status. "OK" indicates that the action was successful.
-- `data` *object* — Action response data.
-  - `elements` *array<object>*
-    - `id` *string* — Country identifier.
-    - `name` *string* — Country name.
+```text
+status      string   — Response status. "OK" indicates that the action was successful.
+data        object   — Action response data.
+  elements  array<object>
+    id      string   — Country identifier.
+    name    string   — Country name.
+```
 
 <details><summary>Example response</summary>
 
@@ -1184,9 +1213,11 @@ _No parameters._
 
 **Response**
 
-- `status` *string* — Response status. "OK" indicates that the action was successful.
-- `data` *object* — Action response data.
-  - `currencies` *array<string>* — List of available currencies.
+```text
+status        string   — Response status. "OK" indicates that the action was successful.
+data          object   — Action response data.
+  currencies  array<string>   — List of available currencies.
+```
 
 <details><summary>Example response</summary>
 
@@ -1213,9 +1244,11 @@ _No parameters._
 
 **Response**
 
-- `status` *string* — Response status. "OK" indicates that the action was successful.
-- `data` *object* — Action response data.
-  - `languages` *array<string>* — List of language codes.
+```text
+status       string   — Response status. "OK" indicates that the action was successful.
+data         object   — Action response data.
+  languages  array<string>   — List of language codes.
+```
 
 <details><summary>Example response</summary>
 
