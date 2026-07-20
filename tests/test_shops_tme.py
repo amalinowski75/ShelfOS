@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 
@@ -620,3 +621,63 @@ def test_token_is_sent_as_http_basic() -> None:
     assert seen["/auth/token"].headers["Authorization"].startswith("Basic ")
     assert seen["/products"].headers["Authorization"] == "Bearer tok"
     assert seen["/products"].headers["Accept-Language"] == config.TME_LANGUAGE
+
+
+def test_a_zero_expiry_is_not_treated_as_a_full_lifetime() -> None:
+    calls = {"token": 0}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/auth/token"):
+            calls["token"] += 1
+            return httpx.Response(200, json={"access_token": "t", "expires_in": 0})
+        return httpx.Response(200, json=_PRODUCT)
+
+    transport = httpx.MockTransport(handler)
+    TmeProvider().fetch(_URL, transport=transport)
+    TmeProvider().fetch(_URL, transport=transport)
+    # 0 means "already expired" — a real OAuth answer, unlike NaN. Swallowing it
+    # into a full lifetime would serve a dead token for the whole default TTL.
+    assert calls["token"] == 2
+
+
+def test_a_non_finite_expiry_does_not_disable_caching() -> None:
+    calls = {"token": 0}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/auth/token"):
+            calls["token"] += 1
+            return httpx.Response(
+                200, content=b'{"access_token": "t", "expires_in": NaN}',
+                headers={"Content-Type": "application/json"},
+            )
+        return httpx.Response(200, json=_PRODUCT)
+
+    transport = httpx.MockTransport(handler)
+    TmeProvider().fetch(_URL, transport=transport)
+    TmeProvider().fetch(_URL, transport=transport)
+    # Python's json accepts the non-standard NaN literal, and NaN defeats min/max
+    # (every comparison is False), so an unchecked value would make the cache look
+    # permanently expired and silently disable caching for the process.
+    assert calls["token"] == 1
+    assert tme._token_cache is not None
+    assert math.isfinite(tme._token_cache[1])
+
+
+def test_eviction_does_not_discard_a_token_another_thread_just_cached() -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/auth/token"):
+            return httpx.Response(200, json={"access_token": "old", "expires_in": 300})
+        return httpx.Response(200, json=_PRODUCT)
+
+    transport = httpx.MockTransport(handler)
+    TmeProvider().fetch(_URL, transport=transport)
+    # Simulate a concurrent thread having refreshed the cache while ours was in
+    # flight with the older token.
+    tme._token_cache = ("newer", time.monotonic() + 600)
+    tme._forget_token("old")
+    # Compare-and-clear: the stale token is gone, but the newer one survives —
+    # otherwise a key rotation amplifies into a burst of redundant token requests.
+    assert tme._token_cache is not None
+    assert tme._token_cache[0] == "newer"
+    tme._forget_token("newer")
+    assert tme._token_cache is None
