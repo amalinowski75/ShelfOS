@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 
 import httpx
@@ -240,6 +241,112 @@ def test_fetch_sends_the_configured_country() -> None:
     TmeProvider().fetch(_URL, transport=_transport(seen=seen))
     for path in ("/products", "/products/parameters", "/products/files"):
         assert f"country={config.TME_COUNTRY}" in str(seen[path].url)
+
+
+def test_fetch_resolves_a_host_relative_document_url() -> None:
+    files = {
+        "status": "OK",
+        "data": {
+            "elements": [
+                {"documents": {"elements": [{"url": "/Document/x.pdf", "type": "DTE"}]}}
+            ]
+        },
+    }
+    product = TmeProvider().fetch(_URL, transport=_transport(files=files))
+    # Left unnormalised it would fail the SSRF guard for an empty scheme, and the
+    # user would be told the shop blocks downloads — which would be a lie.
+    assert product.datasheet_url == "https://www.tme.eu/Document/x.pdf"
+
+
+def test_the_manufacturer_parameter_is_filtered_whatever_type_its_id_has() -> None:
+    parameters = {
+        "status": "OK",
+        "data": {
+            "elements": [
+                {
+                    "parameters": {
+                        "elements": [
+                            # A JSON string id must filter the same as a number.
+                            {
+                                "id": "2",
+                                "name": "Manufacturer",
+                                "values": [{"value": "W"}],
+                            },
+                            {
+                                "id": 10,
+                                "name": "Resistance",
+                                "values": [{"value": "1k"}],
+                            },
+                        ]
+                    }
+                }
+            ]
+        },
+    }
+    product = TmeProvider().fetch(_URL, transport=_transport(parameters=parameters))
+    assert [n for n, _ in product.parameters] == ["Resistance"]
+
+
+@pytest.mark.parametrize("status", [401, 403, 500])
+def test_an_enrichment_call_failing_never_fails_the_import(status: int) -> None:
+    # Including 401/403: unlike the core lookup these deliberately do NOT retry with
+    # a fresh token — they degrade, because the core call already succeeded.
+    product = TmeProvider().fetch(
+        _URL,
+        transport=_transport(parameters_status=status, files_status=status),
+    )
+    assert product.mpn == "MR04X1201FTL"
+    assert product.parameters == []
+    assert product.datasheet_url is None
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        httpx.ConnectError("refused"),
+        httpx.ReadTimeout("slow"),
+        httpx.ConnectTimeout("x"),
+    ],
+)
+def test_a_network_failure_becomes_a_readable_error(exc: Exception) -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        raise exc
+
+    with pytest.raises(ValidationError) as excinfo:
+        TmeProvider().fetch(_URL, transport=httpx.MockTransport(handler))
+    # Never an unhandled 500, and never the exception text (it can embed the request).
+    assert "could not reach TME" in str(excinfo.value)
+
+
+def test_concurrent_fetches_share_one_consistent_token() -> None:
+    calls: list[int] = []
+    lock = threading.Lock()
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/auth/token"):
+            with lock:
+                calls.append(1)
+            time.sleep(0.01)  # widen the window for the accepted cold-start race
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 300})
+        return httpx.Response(200, json=_PRODUCT)
+
+    transport = httpx.MockTransport(handler)
+    results: list[str | None] = []
+
+    def run() -> None:
+        results.append(TmeProvider().fetch(_URL, transport=transport).mpn)
+
+    threads = [threading.Thread(target=run) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # The cold-start race (several threads buying a token at once) is accepted, but
+    # it must stay harmless: every caller succeeds and the cache ends up coherent.
+    assert results == ["MR04X1201FTL"] * 8
+    assert len(calls) <= 8
+    assert tme._token_cache is not None and tme._token_cache[0] == "tok"
 
 
 @pytest.mark.parametrize("missing", ["TME_TOKEN", "TME_SECRET"])

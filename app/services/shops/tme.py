@@ -16,7 +16,7 @@ import logging
 import threading
 import time
 from typing import Any
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit
 
 import httpx
 
@@ -33,9 +33,13 @@ _token_cache: tuple[str, float] | None = None  # (access_token, expires_at monot
 # datasheet; there is no dedicated datasheet type.
 _DATASHEET_TYPE = "DTE"
 
+# Documents live on the storefront host, not the API host, so a host-relative
+# document path resolves against this rather than TME_API_BASE.
+_DOCUMENT_BASE = "https://www.tme.eu/"
+
 # The "Manufacturer" parameter duplicates a first-class field, so it's dropped rather
 # than offered as a component parameter.
-_MANUFACTURER_PARAMETER_ID = 2
+_MANUFACTURER_PARAMETER_ID = "2"
 
 
 def _redact(text: str) -> str:
@@ -167,14 +171,19 @@ def _nested_name(container: object) -> str | None:
 
 
 def _absolute(url: str) -> str:
-    """TME returns protocol-relative asset URLs; url_fetch needs a real scheme.
+    """Give a document URL a scheme and host; url_fetch rejects anything without.
+
+    Observed values are protocol-relative ("//www.tme.eu/Document/…"), but urljoin
+    also covers a host-relative "/Document/…" — which would otherwise reach the user
+    as the misleading "the shop blocks automated downloads" notice when the real
+    cause is a URL we failed to normalise. An already-absolute URL is left alone.
 
     This does NOT sanitise the URL, and must not be relied on to: the value is
     shop-controlled and is only ever handed to ``POST /api/attachments/from-url``,
     which validates the scheme and guards against SSRF (``app/services/url_fetch``).
     If this field ever becomes something rendered as an href, it needs escaping there.
     """
-    return f"https:{url}" if url.startswith("//") else url
+    return urljoin(_DOCUMENT_BASE, url)
 
 
 def _parameters(payload: object) -> list[tuple[str, str]]:
@@ -184,7 +193,11 @@ def _parameters(payload: object) -> list[tuple[str, str]]:
     entries = container.get("elements") if isinstance(container, dict) else None
     parameters: list[tuple[str, str]] = []
     for entry in entries or []:
-        if not isinstance(entry, dict) or entry.get("id") == _MANUFACTURER_PARAMETER_ID:
+        # Compared as text: TME returns the id as a number today, but a JSON
+        # "2" must filter the same or the row leaks through as a duplicate.
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("id")) == _MANUFACTURER_PARAMETER_ID:
             continue
         name = str(entry.get("name") or "").strip()
         values = [
