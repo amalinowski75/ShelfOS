@@ -21,6 +21,7 @@ def lookup_product(payload: ShopLookup) -> ShopProductRead:
     product = shops.lookup(payload.url)  # ValidationError → 422; key never leaks
     return ShopProductRead(
         category=product.category,
+        shop_category=product.shop_category,
         mpn=product.mpn,
         manufacturer=product.manufacturer,
         description=product.description,

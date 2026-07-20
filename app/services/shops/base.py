@@ -22,6 +22,11 @@ class ProductData:
     description: str | None = None
     package: str | None = None
     category: str | None = None  # a ShelfOS type name if we could infer one
+    # The shop's OWN category text, kept verbatim alongside the inferred type. It
+    # often carries facts the description omits — TME files a 100nF part under "MLCC
+    # SMD capacitors" while its description never says SMD — so the dialog folds it
+    # into the same best-effort inference it runs over the description.
+    shop_category: str | None = None
     datasheet_url: str | None = None
     parameters: list[tuple[str, str]] = field(default_factory=list)  # (label, value)
 

@@ -258,6 +258,10 @@ class ShopProductRead(BaseModel):
     """A distributor product normalised toward the New Component dialog's fields."""
 
     category: str | None = None
+    # The shop's own category text; the dialog mines it for facts the description
+    # leaves out (mounting, case size). Distinct from `category`, which is already
+    # resolved to a ShelfOS type name.
+    shop_category: str | None = None
     mpn: str | None = None
     manufacturer: str | None = None
     description: str | None = None

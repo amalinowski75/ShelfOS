@@ -160,9 +160,14 @@
       }
       // Attach an imported datasheet to the new component (best-effort: a failed
       // fetch mustn't undo the create). Reuses the SSRF-guarded from-URL endpoint.
+      // Some shops sit behind a bot challenge (TME's document host answers a
+      // server-side GET with a Cloudflare 403), so failure here is expected rather
+      // than exceptional — but it is reported, never swallowed: a silently missing
+      // datasheet is indistinguishable from a part that simply hasn't got one.
+      let datasheetFailed = false;
       if (pendingDatasheetUrl && created && created.id) {
         try {
-          await fetch("/api/attachments/from-url", {
+          const attached = await fetch("/api/attachments/from-url", {
             method: "POST",
             headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
             body: JSON.stringify({
@@ -172,11 +177,18 @@
               kind: "datasheet",
             }),
           });
+          datasheetFailed = !attached.ok; // a non-2xx does NOT throw
         } catch {
-          /* the component exists; a datasheet fetch failure shouldn't block it */
+          datasheetFailed = true; // the component exists; only the datasheet is lost
         }
       }
       dialog.close();
+      if (datasheetFailed) {
+        showToast(
+          "Component created, but its datasheet could not be downloaded — " +
+            "the shop blocks automated downloads. Attach it by hand if you need it.",
+        );
+      }
       // A caller's DOM update must not become an unhandled rejection: the
       // component is already persisted (mirrors location_dialog.js).
       if (onCreated) {
@@ -306,25 +318,34 @@
 
   // Fill still-EMPTY fields from the description; never overwrite a structured
   // value (a shop that returns real parameters always wins).
-  function setFromDescription(text) {
-    if (!text) return;
-    for (const def of currentDefinitions) {
-      if (def.data_type !== "number" || !def.unit) continue;
-      const input = paramsBox.querySelector(`input[data-definition-id="${def.id}"]`);
-      if (!input || input.value) continue;
-      const value = findValueForUnit(text, def.unit);
-      if (value) input.value = value;
+  // `hints` is extra free text that is NOT the description — currently the shop's
+  // own category name. It joins the package/mounting scan (TME files a 100nF part
+  // under "MLCC SMD capacitors" while its description never says SMD) but is kept
+  // out of the unit scan, where a category's stray digits could land in a number
+  // field as a bogus measurement.
+  function setFromDescription(text, hints) {
+    const scan = [text, hints].filter(Boolean).join(" ");
+    if (!scan) return;
+    if (text) {
+      for (const def of currentDefinitions) {
+        if (def.data_type !== "number" || !def.unit) continue;
+        const input = paramsBox.querySelector(`input[data-definition-id="${def.id}"]`);
+        if (!input || input.value) continue;
+        const value = findValueForUnit(text, def.unit);
+        if (value) input.value = value;
+      }
+      setValueParamFromDescription(text); // last resort for a unitless value
     }
-    setValueParamFromDescription(text); // last resort for a unitless value
 
     const pkg = form.querySelector('[name="package"]');
-    const eia = text.match(_EIA_PACKAGE);
+    const eia = scan.match(_EIA_PACKAGE);
     if (pkg && !pkg.value && eia) pkg.value = eia[1];
 
     const mounting = form.querySelector('[name="mounting_type"]');
     let wanted = null;
-    if (/\bSM[DT]\b/.test(text)) wanted = "SMT";
-    else if (/\bTHT\b/.test(text) || /through[- ]hole/i.test(text)) wanted = "THT";
+    // Digi-Key spells it out ("Chip Resistor - Surface Mount") where TME abbreviates.
+    if (/\bSM[DT]\b/.test(scan) || /surface[- ]mount/i.test(scan)) wanted = "SMT";
+    else if (/\bTHT\b/.test(scan) || /through[- ]hole/i.test(scan)) wanted = "THT";
     if (mounting && wanted && [...mounting.options].some((o) => o.value === wanted)) {
       mounting.value = wanted;
     }
@@ -379,7 +400,9 @@
     if (typeSelect.value !== typeId) return;
     if (prefill.value) setValueParam(prefill.value); // BOM: single value param
     if (prefill.params) setNamedParams(prefill.params); // shop: named params
-    setFromDescription(prefill.notes); // last: fills only what's still empty
+    // Last: fills only what's still empty, from the description plus the shop's
+    // own category text.
+    setFromDescription(prefill.notes, prefill.shopCategory);
   }
 
   // "Import from a shop URL": look the part up via its shop's API and rich-prefill.
@@ -415,6 +438,7 @@
           mpn: product.mpn,
           manufacturer: product.manufacturer,
           notes: product.description,
+          shopCategory: product.shop_category,
           package: product.package,
           params: product.parameters,
           datasheetUrl: product.datasheet_url,

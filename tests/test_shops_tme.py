@@ -137,6 +137,9 @@ def test_fetch_normalises_a_product() -> None:
     assert product.mpn == "MR04X1201FTL"
     assert product.manufacturer == "Walsin Technology Corporation"
     assert product.category == "resistor"  # inferred from "Resistors SMD 0402"
+    # The raw category is kept too: it often states the mounting where the
+    # description doesn't (TME files 100nF parts under "MLCC SMD capacitors").
+    assert product.shop_category == "Resistors SMD 0402"
     # Values stay RAW; cleaning is client-side and NUMBER-only.
     assert dict(product.parameters)["Resistance"] == "1.2kΩ"
     # A multi-value parameter is joined rather than silently truncated.

@@ -121,3 +121,25 @@ document
   .forEach((btn) =>
     btn.addEventListener("click", () => btn.closest("dialog")?.close()),
   );
+
+// A short-lived, non-blocking notice. Used when a background step fails after the
+// user's dialog has already closed — e.g. the component was created but its
+// datasheet couldn't be downloaded — where an alert() would be an interruption and
+// silence would be a lie. Stacks if several fire; click to dismiss early.
+function showToast(message, { tone = "warn", timeout = 5000 } = {}) {
+  let tray = document.querySelector(".toast-tray");
+  if (!tray) {
+    tray = document.createElement("div");
+    tray.className = "toast-tray";
+    document.body.appendChild(tray);
+  }
+  const toast = document.createElement("div");
+  toast.className = `toast toast-${tone}`;
+  toast.setAttribute("role", "status");
+  toast.textContent = message; // textContent, never innerHTML: callers pass shop text
+  const dismiss = () => toast.remove();
+  toast.addEventListener("click", dismiss);
+  tray.appendChild(toast);
+  if (timeout) setTimeout(dismiss, timeout);
+  return toast;
+}

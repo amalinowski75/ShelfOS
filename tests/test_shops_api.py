@@ -45,6 +45,7 @@ def test_lookup_returns_a_normalised_product(
             manufacturer="ACME",
             description="desc",
             category="resistor",
+            shop_category="Chip Resistor - Surface Mount",
             datasheet_url="https://x/d.pdf",
             parameters=[("Resistance", "10k")],
         ),
@@ -54,6 +55,8 @@ def test_lookup_returns_a_normalised_product(
     body = resp.json()
     assert body["mpn"] == "MPN-1"
     assert body["category"] == "resistor"
+    # The raw shop category rides along; the dialog mines it for the mounting type.
+    assert body["shop_category"] == "Chip Resistor - Surface Mount"
     assert body["datasheet_url"] == "https://x/d.pdf"
     assert body["parameters"] == [{"name": "Resistance", "value": "10k"}]
 

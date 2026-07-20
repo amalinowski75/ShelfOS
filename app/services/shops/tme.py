@@ -279,11 +279,11 @@ class TmeProvider:
                 try:
                     parameters = _parameters(_extra("/products/parameters"))
                 except (httpx.HTTPError, ValueError, ValidationError) as exc:
-                    _logger.info("TME parameters skipped for %s: %s", symbol, exc)
+                    _logger.warning("TME parameters skipped for %s: %s", symbol, exc)
                 try:
                     datasheet_url = _datasheet_url(_extra("/products/files"))
                 except (httpx.HTTPError, ValueError, ValidationError) as exc:
-                    _logger.info("TME documents skipped for %s: %s", symbol, exc)
+                    _logger.warning("TME documents skipped for %s: %s", symbol, exc)
         except httpx.HTTPError:
             # Never surface the exception itself — it can embed request details.
             raise ValidationError("could not reach TME") from None
@@ -306,5 +306,6 @@ class TmeProvider:
             description=description,
             datasheet_url=datasheet_url,
             category=infer_category(category, description),
+            shop_category=category,
             parameters=parameters,
         )

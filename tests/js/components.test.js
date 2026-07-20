@@ -375,6 +375,92 @@ describe("component_dialog.js — shop import", () => {
     });
   });
 
+  it("reads the mounting type from the shop's category, not just the description", async () => {
+    // A real TME capacitor: the description never says SMD — only the shop's own
+    // category does. Before shop_category reached the client this was lost.
+    const tmeish = {
+      category: "capacitor",
+      shop_category: "MLCC SMD capacitors",
+      mpn: "0603B104K500CT",
+      manufacturer: "WALSIN",
+      description: "Capacitor: ceramic; 100nF; 50V; X7R; ±10%; 0603",
+      datasheet_url: null,
+      parameters: [],
+    };
+    const { document } = loadPage(componentPageFixture(), SCRIPTS, {
+      fetchImpl: withLookup(tmeish),
+    });
+    await openAndImport(document);
+    expect(
+      document.querySelector('#component-form [name="mounting_type"]').value,
+    ).toBe("SMT");
+  });
+
+  it("reads a spelled-out surface mount category", async () => {
+    // Digi-Key writes it out in full where TME abbreviates.
+    const digikeyish = {
+      category: "resistor",
+      shop_category: "Chip Resistor - Surface Mount",
+      mpn: "R-1",
+      description: "RES 1.2K OHM 1%",
+      parameters: [],
+    };
+    const { document } = loadPage(componentPageFixture(), SCRIPTS, {
+      fetchImpl: withLookup(digikeyish),
+    });
+    await openAndImport(document);
+    expect(
+      document.querySelector('#component-form [name="mounting_type"]').value,
+    ).toBe("SMT");
+  });
+
+  it("does not mine numbers out of the category into parameter fields", async () => {
+    // The category joins the package/mounting scan only: its digits must never be
+    // read as a measurement.
+    const noisy = {
+      category: "resistor",
+      shop_category: "Resistors 100 Ohm series",
+      mpn: "R-2",
+      description: "Resistor without a stated value",
+      parameters: [],
+    };
+    const { document } = loadPage(componentPageFixture(), SCRIPTS, {
+      fetchImpl: withLookup(noisy),
+    });
+    await openAndImport(document);
+    expect(
+      document.querySelector('#component-params [data-definition-id="10"]').value,
+    ).toBe("");
+  });
+
+  it("warns instead of failing silently when the datasheet can't be downloaded", async () => {
+    // TME's document host answers a server-side GET with a Cloudflare challenge, so
+    // the attach 422s. A silently missing datasheet reads as "this part has none".
+    const impl = (url, opts) =>
+      url === "/api/attachments/from-url"
+        ? Promise.resolve({ ok: false, json: async () => ({ detail: "nope" }) })
+        : withLookup(PRODUCT)(url, opts);
+    const { document } = loadPage(componentPageFixture(), SCRIPTS, { fetchImpl: impl });
+    await openAndImport(document);
+    fire(document.getElementById("component-form"), "submit");
+    await tick();
+    const toast = document.querySelector(".toast");
+    expect(toast).toBeTruthy();
+    expect(toast.textContent).toMatch(/datasheet could not be downloaded/);
+    // The component itself still exists — only the datasheet was lost.
+    expect(document.getElementById("component-dialog").open).toBe(false);
+  });
+
+  it("shows no warning when the datasheet attaches", async () => {
+    const { document } = loadPage(componentPageFixture(), SCRIPTS, {
+      fetchImpl: withLookup(PRODUCT),
+    });
+    await openAndImport(document);
+    fire(document.getElementById("component-form"), "submit");
+    await tick();
+    expect(document.querySelector(".toast")).toBeNull();
+  });
+
   it("shows an error when the lookup fails", async () => {
     const impl = (url, opts) =>
       url === "/api/shops/lookup"
