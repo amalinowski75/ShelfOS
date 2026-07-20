@@ -7,6 +7,20 @@ from app.services.shops.base import ProductData
 from fastapi.testclient import TestClient
 
 
+def test_registry_dispatches_each_shop_by_host() -> None:
+    """Registering a provider is the whole integration surface — check it took."""
+    resolved = {
+        url: getattr(shops.resolve(url), "name", None)
+        for url in (
+            "https://www.mouser.pl/pl/ProductDetail/Walsin/MR04X1201FTL",
+            "https://www.digikey.pl/pl/products/detail/walsin/MR04X1201FTL/13908146",
+            "https://www.tme.eu/pl/details/mr04x1201ftl/rezystory-smd-0402/walsin/",
+            "https://example.com/part/1",
+        )
+    }
+    assert list(resolved.values()) == ["Mouser", "Digi-Key", "TME", None]
+
+
 def _read_only_headers(
     client: TestClient, anon_client: TestClient
 ) -> dict[str, str]:
@@ -31,6 +45,7 @@ def test_lookup_returns_a_normalised_product(
             manufacturer="ACME",
             description="desc",
             category="resistor",
+            shop_category="Chip Resistor - Surface Mount",
             datasheet_url="https://x/d.pdf",
             parameters=[("Resistance", "10k")],
         ),
@@ -40,6 +55,8 @@ def test_lookup_returns_a_normalised_product(
     body = resp.json()
     assert body["mpn"] == "MPN-1"
     assert body["category"] == "resistor"
+    # The raw shop category rides along; the dialog mines it for the mounting type.
+    assert body["shop_category"] == "Chip Resistor - Surface Mount"
     assert body["datasheet_url"] == "https://x/d.pdf"
     assert body["parameters"] == [{"name": "Resistance", "value": "10k"}]
 

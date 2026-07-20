@@ -170,5 +170,6 @@ class DigiKeyProvider:
             description=description,
             datasheet_url=product.get("DatasheetUrl") or None,
             category=infer_category(category, description),
+            shop_category=category,
             parameters=parameters,
         )

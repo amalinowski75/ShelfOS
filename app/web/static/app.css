@@ -545,3 +545,31 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, .82); }
 /* Substitutes stay on one line (uniform row height keeps Tabulator fast); links
    are dot-separated and the cell truncates, with full detail in the tooltip. */
 .subs-inline a + a { margin-left: 2px; }
+
+/* Transient notices (see showToast). Fixed to the viewport corner so they never
+   shift page content, and above dialogs so a notice raised as one closes is seen. */
+.toast-tray {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+  max-width: min(28rem, calc(100vw - 2rem));
+}
+.toast {
+  padding: .7rem .9rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  font-size: .92rem;
+}
+.toast-warn {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
