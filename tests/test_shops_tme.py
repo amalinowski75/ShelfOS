@@ -169,14 +169,80 @@ def test_fetch_falls_back_to_the_first_document_without_a_documentation_type() -
     assert product.datasheet_url == "https://tme.eu/m.pdf"
 
 
-def test_fetch_uppercases_the_symbol_from_the_url() -> None:
+def test_fetch_offers_every_url_segment_upper_cased_as_a_symbol() -> None:
+    seen: dict[str, httpx.Request] = {}
+    TmeProvider().fetch(_URL, transport=_transport(seen=seen))
+    query = str(seen["/products"].url)
+    # The URL carries the symbol lower-cased; the API expects it upper-cased. Its
+    # POSITION is not fixed, so every plausible segment is offered at once and the
+    # API decides which is real.
+    assert "symbols%5B%5D=MR04X1201FTL" in query
+    assert "symbols%5B%5D=WALSIN" in query
+    # Over-long segments are dropped: TME fails the WHOLE request on one of them,
+    # so "rezystory-smd-0402" (18) is fine but a longer slug would not be.
+    assert "REZYSTORY-SMD-0402" in query
+    # The enrichment calls use the RESOLVED symbol, never the candidate list.
+    assert seen["/products/parameters"].url.params["symbols[]"] == "MR04X1201FTL"
+
+
+def test_fetch_drops_segments_outside_tmes_symbol_length_limits() -> None:
     seen: dict[str, httpx.Request] = {}
     TmeProvider().fetch(
-        "https://www.tme.eu/pl/details/1n4007-dio/diody/diotec/",
+        "https://www.tme.eu/pl/details/mr04x1201ftl/kondensatory-mlcc-smd/x/",
         transport=_transport(seen=seen),
     )
-    # The URL carries the symbol lower-cased; the API expects it upper-cased.
-    assert "symbols%5B%5D=1N4007-DIO" in str(seen["/products"].url)
+    query = str(seen["/products"].url)
+    # 21 characters: sending it would fail the whole lookup with a validation error
+    # ("Product symbol should contain between 2 to 18 characters"), not just be
+    # ignored — so the good symbol beside it would be lost too.
+    assert "KONDENSATORY" not in query
+    assert "symbols%5B%5D=X" not in query  # 1 character, below the minimum
+    assert "symbols%5B%5D=MR04X1201FTL" in query
+
+
+def test_fetch_finds_a_symbol_that_is_not_the_first_url_segment() -> None:
+    # A real URL whose symbol sits SECOND; the first segment ("mpp2") is not a
+    # symbol at all, and the last one is the manufacturer's part number.
+    url = "https://www.tme.eu/pl/details/mpp2/681kd20jp10-yag/yageo/681kd20j-p10/"
+    product = {
+        "status": "OK",
+        "data": {
+            "elements": [
+                {
+                    "symbol": "681KD20JP10-YAG",
+                    "manufacturer_symbols": ["681KD20J-P10"],
+                    "manufacturer": {"name": "YAGEO"},
+                    "description": "Diode: TVS",
+                    "category": {"name": "TVS diodes"},
+                }
+            ]
+        },
+    }
+    imported = TmeProvider().fetch(url, transport=_transport(product=product))
+    assert imported.mpn == "681KD20J-P10"
+    assert imported.category == "diode"
+
+
+def test_an_ambiguous_url_prefers_the_product_whose_mpn_is_also_in_the_url() -> None:
+    url = "https://www.tme.eu/pl/details/mpp2/681kd20jp10-yag/yageo/681kd20j-p10/"
+    product = {
+        "status": "OK",
+        "data": {
+            "elements": [
+                # Both segments are live symbols. The tie-break is the MPN, which
+                # the URL also carries — so the second element must win despite
+                # coming later and its symbol appearing later in the URL.
+                {"symbol": "MPP2", "manufacturer_symbols": ["SOMETHING-ELSE"]},
+                {
+                    "symbol": "681KD20JP10-YAG",
+                    "manufacturer_symbols": ["681KD20J-P10"],
+                    "description": "Diode: TVS",
+                },
+            ]
+        },
+    }
+    imported = TmeProvider().fetch(url, transport=_transport(product=product))
+    assert imported.mpn == "681KD20J-P10"
 
 
 def test_fetch_falls_back_to_the_tme_symbol_for_the_mpn() -> None:
@@ -193,7 +259,10 @@ def test_fetch_falls_back_to_the_tme_symbol_for_the_mpn() -> None:
             ]
         },
     }
-    imported = TmeProvider().fetch(_URL, transport=_transport(product=product))
+    imported = TmeProvider().fetch(
+        "https://www.tme.eu/pl/details/ax-100/mierniki/axiomet/",
+        transport=_transport(product=product),
+    )
     assert imported.mpn == "AX-100"
 
 

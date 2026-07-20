@@ -41,6 +41,12 @@ _DOCUMENT_BASE = "https://www.tme.eu/"
 # than offered as a component parameter.
 _MANUFACTURER_PARAMETER_ID = "2"
 
+# TME rejects the whole request — not just the offending entry — when any symbol
+# falls outside this range ("Product symbol should contain between 2 to 18
+# characters"), so candidates are filtered before they are sent.
+_MIN_SYMBOL = 2
+_MAX_SYMBOL = 18
+
 
 def _redact(text: str) -> str:
     """Never let either half of the credential pair ride out in a message.
@@ -119,13 +125,24 @@ def _access_token(client: httpx.Client) -> str:
     return token
 
 
-def _symbol(url: str) -> str:
-    """The TME symbol from a product URL.
+def _symbol_candidates(url: str) -> list[str]:
+    """Every path segment that could be the TME symbol, in URL order.
 
-    They look like /pl/details/<symbol>/<category-slug>/<producer-slug>/, and the URL
-    carries the symbol lower-cased while the API expects it upper-cased
-    ("…/details/1n4007-dio/" → "1N4007-DIO"). Note this is TME's own symbol, not the
-    manufacturer's part number — that comes back from the API.
+    The symbol's POSITION is not fixed. Both of these are real product URLs, with
+    the symbol first in one and second in the other:
+
+        /pl/details/0603b104k500ct/kondensatory-mlcc-smd/walsin/
+        /pl/details/mpp2/681kd20jp10-yag/yageo/681kd20j-p10/
+
+    So rather than guess an index, every segment is offered to the API at once — it
+    accepts up to 50 symbols and silently omits the ones that don't exist, which
+    makes it a far better oracle than any parsing rule. Segments are upper-cased
+    (URLs carry the symbol lower-cased) and filtered to TME's documented 2..18
+    characters: an over-long segment such as "kondensatory-mlcc-smd" is not merely
+    ignored by the API, it fails the WHOLE request with a validation error.
+
+    Note the symbol is TME's own, not the manufacturer's part number — the URL's
+    last segment is often the MPN and is deliberately not treated as a symbol.
     """
     try:
         path = urlsplit(url).path
@@ -135,15 +152,45 @@ def _symbol(url: str) -> str:
     try:
         index = segments.index("details")
     except ValueError:
-        raise ValidationError(
-            "could not read a product symbol from the URL"
-        ) from None
-    if index + 1 >= len(segments):
+        raise ValidationError("could not read a product symbol from the URL") from None
+
+    candidates: list[str] = []
+    for segment in segments[index + 1 :]:
+        symbol = unquote(segment).upper()
+        if _MIN_SYMBOL <= len(symbol) <= _MAX_SYMBOL and symbol not in candidates:
+            candidates.append(symbol)
+    if not candidates:
         raise ValidationError("could not read a product symbol from the URL")
-    symbol = unquote(segments[index + 1]).upper()
-    if not symbol:
-        raise ValidationError("could not read a product symbol from the URL")
-    return symbol
+    return candidates
+
+
+def _pick_product(payload: object, candidates: list[str]) -> dict[str, Any]:
+    """The one real product among the candidates we offered.
+
+    Ambiguity is possible in principle (two segments both being live symbols), so
+    the tie-break is deterministic: prefer a product whose manufacturer part number
+    also appears in the URL — a strong signal, since these URLs carry both — and
+    otherwise take the earliest candidate in URL order.
+    """
+    if not isinstance(payload, dict):
+        raise ValidationError("could not read the TME response")
+    data = payload.get("data")
+    elements = data.get("elements") if isinstance(data, dict) else None
+    found = {
+        str(e["symbol"]).upper(): e
+        for e in elements or []
+        if isinstance(e, dict) and e.get("symbol")
+    }
+    matched = [c for c in candidates if c in found]
+    if not matched:
+        raise ValidationError("no product found for this URL")
+    for candidate in matched:
+        mpns = found[candidate].get("manufacturer_symbols")
+        if isinstance(mpns, list) and any(
+            isinstance(m, str) and m.upper() in candidates for m in mpns
+        ):
+            return found[candidate]
+    return found[matched[0]]
 
 
 def _first_element(payload: object) -> dict[str, Any]:
@@ -247,8 +294,12 @@ class TmeProvider:
     ) -> ProductData:
         if not (config.TME_TOKEN and config.TME_SECRET):
             raise ValidationError("TME integration is not configured")
-        symbol = _symbol(url)
-        params = {"symbols[]": symbol, "country": config.TME_COUNTRY}
+        candidates = _symbol_candidates(url)
+        # A list of pairs, not a dict: the same key repeats once per candidate.
+        lookup_params: list[tuple[str, str | int | float | bool | None]] = [
+            ("symbols[]", c) for c in candidates
+        ]
+        lookup_params.append(("country", config.TME_COUNTRY))
 
         try:
             with httpx.Client(
@@ -262,7 +313,9 @@ class TmeProvider:
 
                 headers = _headers()
                 resp = client.get(
-                    f"{config.TME_API_BASE}/products", params=params, headers=headers
+                    f"{config.TME_API_BASE}/products",
+                    params=lookup_params,
+                    headers=headers,
                 )
                 if resp.status_code in (401, 403):
                     # The cached token died early (rotated or revoked). Without this
@@ -271,12 +324,16 @@ class TmeProvider:
                     headers = _headers()
                     resp = client.get(
                         f"{config.TME_API_BASE}/products",
-                        params=params,
+                        params=lookup_params,
                         headers=headers,
                     )
                 if resp.status_code >= 400:
                     raise _api_error(resp, "product lookup")
-                product = _first_element(resp.json())
+                product = _pick_product(resp.json(), candidates)
+                # Which candidate was real is only known now; the enrichment calls
+                # must use that resolved symbol, not the ones we guessed.
+                symbol = str(product.get("symbol") or "")
+                params = {"symbols[]": symbol, "country": config.TME_COUNTRY}
 
                 def _extra(path: str) -> Any:
                     resp = client.get(
