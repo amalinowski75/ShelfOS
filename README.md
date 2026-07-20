@@ -18,6 +18,8 @@ It is intentionally **not** an ERP, accounting, or advanced warehouse system.
 - [`docs/DECISIONS.md`](docs/DECISIONS.md) — architectural decisions
 - [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) — concrete data model
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — implementation roadmap
+- [`docs/tme-api-v2.md`](docs/tme-api-v2.md) — TME API reference (their docs are
+  behind a login), for extending the TME shop integration
 
 ## Development
 
