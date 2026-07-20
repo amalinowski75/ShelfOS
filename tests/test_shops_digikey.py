@@ -249,16 +249,19 @@ def test_the_token_lock_is_not_held_across_the_network_call() -> None:
     assert held == [False]
 
 
-def test_concurrent_fetches_share_one_consistent_token() -> None:
-    calls: list[int] = []
+def test_concurrent_fetches_leave_a_coherent_cache() -> None:
+    issued: list[str] = []
     lock = threading.Lock()
 
     def handler(req: httpx.Request) -> httpx.Response:
         if req.url.path.endswith("/oauth2/token"):
             with lock:
-                calls.append(1)
+                # A DISTINCT token per POST: with one shared value the test could
+                # not tell a coherent cache from an incoherent one.
+                token = f"tok{len(issued) + 1}"
+                issued.append(token)
             time.sleep(0.01)  # widen the window for the accepted cold-start race
-            return httpx.Response(200, json={"access_token": "tok", "expires_in": 600})
+            return httpx.Response(200, json={"access_token": token, "expires_in": 600})
         return httpx.Response(200, json=_PRODUCT)
 
     transport = httpx.MockTransport(handler)
@@ -277,12 +280,20 @@ def test_concurrent_fetches_share_one_consistent_token() -> None:
     for t in threads:
         t.join()
 
-    # The token POST no longer happens under the lock, so a tarpitting Digi-Key
-    # can't serialise every waiter. The resulting cold-start race must stay
-    # harmless: every caller succeeds and the cache ends up coherent.
+    # Releasing the lock around the POST admits a cold-start race where several
+    # threads buy a token at once and a later write can be overwritten by an
+    # earlier one. That is the accepted cost, and this pins that it stays benign:
+    # every caller succeeds, and the cache holds a token that was really issued
+    # rather than a torn or stale value.
     assert results == ["MR04X1201FTL"] * 8
-    assert len(calls) <= 8
-    assert digikey._token_cache is not None and digikey._token_cache[0] == "tok"
+    assert issued, "no token was ever requested"
+    assert digikey._token_cache is not None
+    assert digikey._token_cache[0] in issued
+
+    # And the cache is actually used: once warm, no further token is bought.
+    before = len(issued)
+    DigiKeyProvider().fetch("https://www.digikey.com/x", transport=transport)
+    assert len(issued) == before
 
 
 def test_token_is_cached_across_fetches() -> None:
