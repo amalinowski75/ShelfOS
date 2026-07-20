@@ -387,6 +387,28 @@ def test_a_network_failure_becomes_a_readable_error(exc: Exception) -> None:
     assert "could not reach TME" in str(excinfo.value)
 
 
+def test_the_token_lock_is_not_held_across_the_network_call() -> None:
+    """Asserts the property `_access_token`'s docstring claims.
+
+    Holding the lock across the POST is not incorrect, just starving: every waiter
+    serialises behind a full timeout when TME tarpits, stalling the shared sync
+    worker pool. No behavioural test can see that, so check it directly.
+    """
+    held: list[bool] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/auth/token"):
+            acquired = tme._token_lock.acquire(blocking=False)
+            held.append(not acquired)
+            if acquired:
+                tme._token_lock.release()
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 300})
+        return httpx.Response(200, json=_PRODUCT)
+
+    TmeProvider().fetch(_URL, transport=httpx.MockTransport(handler))
+    assert held == [False]
+
+
 def test_concurrent_fetches_share_one_consistent_token() -> None:
     calls: list[int] = []
     lock = threading.Lock()

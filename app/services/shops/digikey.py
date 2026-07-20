@@ -55,33 +55,51 @@ def _api_error(resp: httpx.Response, what: str) -> ValidationError:
     return ValidationError(f"Digi-Key rejected the request: {detail}")
 
 
-def _access_token(client: httpx.Client) -> str:
-    """A cached client-credentials token (Digi-Key's last ~10 minutes)."""
+def _forget_token() -> None:
+    """Drop the cached token so the next call buys a fresh one."""
     global _token_cache
     with _token_lock:
-        now = time.monotonic()
-        if _token_cache and _token_cache[1] > now + 30:  # small safety margin
-            return _token_cache[0]
-        resp = client.post(
-            f"{config.DIGIKEY_API_BASE}/v1/oauth2/token",
-            data={
-                "client_id": config.DIGIKEY_CLIENT_ID,
-                "client_secret": config.DIGIKEY_CLIENT_SECRET,
-                "grant_type": "client_credentials",
-            },
-        )
-        if resp.status_code >= 400:
-            raise _api_error(resp, "token request")
-        try:
-            payload = resp.json()
-            token = str(payload["access_token"])
-            expires_in = float(payload.get("expires_in", 600))
-        except (ValueError, KeyError, TypeError):
-            raise ValidationError(
-                "could not read the Digi-Key token response"
-            ) from None
-        _token_cache = (token, now + expires_in)
-        return token
+        _token_cache = None
+
+
+def _access_token(client: httpx.Client) -> str:
+    """A cached client-credentials token (Digi-Key's last ~10 minutes).
+
+    The network call deliberately happens OUTSIDE the lock: holding it across a POST
+    means that when Digi-Key is tarpitting, every waiting thread serialises behind a
+    full-timeout request, and since the lookup runs on the shared sync worker pool
+    that stalls unrelated endpoints too. The cost is that a cold start may buy two
+    tokens concurrently, which is harmless.
+    """
+    global _token_cache
+    with _token_lock:
+        cached = _token_cache
+    if cached and cached[1] > time.monotonic() + 30:  # small safety margin
+        return cached[0]
+
+    resp = client.post(
+        f"{config.DIGIKEY_API_BASE}/v1/oauth2/token",
+        data={
+            "client_id": config.DIGIKEY_CLIENT_ID,
+            "client_secret": config.DIGIKEY_CLIENT_SECRET,
+            "grant_type": "client_credentials",
+        },
+    )
+    if resp.status_code >= 400:
+        raise _api_error(resp, "token request")
+    try:
+        payload = resp.json()
+        token = str(payload["access_token"])
+        # `or` not a get() default: an explicit "expires_in": null would otherwise
+        # reach float() and throw away a perfectly good token.
+        expires_in = float(payload.get("expires_in") or 600)
+    except (ValueError, KeyError, TypeError):
+        raise ValidationError("could not read the Digi-Key token response") from None
+    # Clamped: an absurd expiry would pin a token Digi-Key has long since rotated.
+    expires_in = min(max(expires_in, 0.0), 3600.0)
+    with _token_lock:
+        _token_cache = (token, time.monotonic() + expires_in)
+    return token
 
 
 def _part_number(url: str) -> str:
@@ -125,18 +143,26 @@ class DigiKeyProvider:
             with httpx.Client(
                 timeout=config.SHOP_API_TIMEOUT, transport=transport
             ) as client:
-                token = _access_token(client)
-                resp = client.get(
+                product_url = (
                     f"{config.DIGIKEY_API_BASE}/products/v4/search/"
-                    f"{quote(part_number, safe='')}/productdetails",
-                    headers={
-                        "Authorization": f"Bearer {token}",
+                    f"{quote(part_number, safe='')}/productdetails"
+                )
+
+                def _headers() -> dict[str, str]:
+                    return {
+                        "Authorization": f"Bearer {_access_token(client)}",
                         "X-DIGIKEY-Client-Id": config.DIGIKEY_CLIENT_ID,
                         "X-DIGIKEY-Locale-Site": config.DIGIKEY_LOCALE_SITE,
                         "X-DIGIKEY-Locale-Language": config.DIGIKEY_LOCALE_LANGUAGE,
                         "X-DIGIKEY-Locale-Currency": config.DIGIKEY_LOCALE_CURRENCY,
-                    },
-                )
+                    }
+
+                resp = client.get(product_url, headers=_headers())
+                if resp.status_code in (401, 403):
+                    # The cached token died early (rotated or revoked). Without this
+                    # every import would fail until the cached expiry lapsed.
+                    _forget_token()
+                    resp = client.get(product_url, headers=_headers())
                 if resp.status_code >= 400:
                     raise _api_error(resp, "product lookup")
                 payload = resp.json()
