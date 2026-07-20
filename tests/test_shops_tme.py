@@ -387,16 +387,41 @@ def test_a_network_failure_becomes_a_readable_error(exc: Exception) -> None:
     assert "could not reach TME" in str(excinfo.value)
 
 
-def test_concurrent_fetches_share_one_consistent_token() -> None:
-    calls: list[int] = []
+def test_the_token_lock_is_not_held_across_the_network_call() -> None:
+    """Asserts the property `_access_token`'s docstring claims.
+
+    Holding the lock across the POST is not incorrect, just starving: every waiter
+    serialises behind a full timeout when TME tarpits, stalling the shared sync
+    worker pool. No behavioural test can see that, so check it directly.
+    """
+    held: list[bool] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/auth/token"):
+            acquired = tme._token_lock.acquire(blocking=False)
+            held.append(not acquired)
+            if acquired:
+                tme._token_lock.release()
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 300})
+        return httpx.Response(200, json=_PRODUCT)
+
+    TmeProvider().fetch(_URL, transport=httpx.MockTransport(handler))
+    assert held == [False]
+
+
+def test_concurrent_fetches_leave_a_coherent_cache() -> None:
+    issued: list[str] = []
     lock = threading.Lock()
 
     def handler(req: httpx.Request) -> httpx.Response:
         if req.url.path.endswith("/auth/token"):
             with lock:
-                calls.append(1)
+                # A DISTINCT token per POST: with one shared value the test could
+                # not tell a coherent cache from an incoherent one.
+                token = f"tok{len(issued) + 1}"
+                issued.append(token)
             time.sleep(0.01)  # widen the window for the accepted cold-start race
-            return httpx.Response(200, json={"access_token": "tok", "expires_in": 300})
+            return httpx.Response(200, json={"access_token": token, "expires_in": 300})
         return httpx.Response(200, json=_PRODUCT)
 
     transport = httpx.MockTransport(handler)
@@ -411,11 +436,19 @@ def test_concurrent_fetches_share_one_consistent_token() -> None:
     for t in threads:
         t.join()
 
-    # The cold-start race (several threads buying a token at once) is accepted, but
-    # it must stay harmless: every caller succeeds and the cache ends up coherent.
+    # The cold-start race (several threads buying a token at once, a later write
+    # possibly overwritten by an earlier one) is the accepted cost of releasing the
+    # lock around the POST. It must stay benign: every caller succeeds and the cache
+    # holds a token that was really issued, not a torn or stale value.
     assert results == ["MR04X1201FTL"] * 8
-    assert len(calls) <= 8
-    assert tme._token_cache is not None and tme._token_cache[0] == "tok"
+    assert issued, "no token was ever requested"
+    assert tme._token_cache is not None
+    assert tme._token_cache[0] in issued
+
+    # And the cache is actually used: once warm, no further token is bought.
+    before = len(issued)
+    TmeProvider().fetch(_URL, transport=transport)
+    assert len(issued) == before
 
 
 @pytest.mark.parametrize("missing", ["TME_TOKEN", "TME_SECRET"])

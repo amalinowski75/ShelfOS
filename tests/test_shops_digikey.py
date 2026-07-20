@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import threading
+import time
+
 import httpx
 import pytest
 from app import config
@@ -133,6 +136,164 @@ def test_fetch_rejects_a_non_dict_body() -> None:
         DigiKeyProvider().fetch(
             "https://www.digikey.com/x", transport=_transport(product=[1, 2])
         )
+
+
+def test_token_is_refetched_once_it_expires() -> None:
+    calls = {"token": 0}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/oauth2/token"):
+            calls["token"] += 1
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 600})
+        return httpx.Response(200, json=_PRODUCT)
+
+    transport = httpx.MockTransport(handler)
+    url = "https://www.digikey.com/en/products/detail/w/MR04X1201FTL/13908146"
+    DigiKeyProvider().fetch(url, transport=transport)
+    # Pretend the cached token is inside the 30s safety margin: it must not be reused.
+    assert digikey._token_cache is not None
+    digikey._token_cache = (digikey._token_cache[0], time.monotonic() + 5)
+    DigiKeyProvider().fetch(url, transport=transport)
+    assert calls["token"] == 2
+
+
+def test_an_absurd_expiry_is_clamped() -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/oauth2/token"):
+            return httpx.Response(200, json={"access_token": "t", "expires_in": 1e12})
+        return httpx.Response(200, json=_PRODUCT)
+
+    DigiKeyProvider().fetch(
+        "https://www.digikey.com/x", transport=httpx.MockTransport(handler)
+    )
+    assert digikey._token_cache is not None
+    # Otherwise a bogus expiry would pin a token Digi-Key has long since rotated.
+    assert digikey._token_cache[1] <= time.monotonic() + 3600
+
+
+def test_a_null_expiry_still_yields_a_usable_token() -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/oauth2/token"):
+            return httpx.Response(200, json={"access_token": "t", "expires_in": None})
+        return httpx.Response(200, json=_PRODUCT)
+
+    # An explicit null must not throw a perfectly good token away.
+    product = DigiKeyProvider().fetch(
+        "https://www.digikey.com/x", transport=httpx.MockTransport(handler)
+    )
+    assert product.mpn == "MR04X1201FTL"
+
+
+def test_a_revoked_token_is_dropped_and_the_lookup_retried() -> None:
+    calls = {"token": 0, "products": 0}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/oauth2/token"):
+            calls["token"] += 1
+            return httpx.Response(
+                200, json={"access_token": f"tok{calls['token']}", "expires_in": 600}
+            )
+        calls["products"] += 1
+        if req.headers["Authorization"] == "Bearer tok1":
+            return httpx.Response(401, json={"detail": "token revoked"})
+        return httpx.Response(200, json=_PRODUCT)
+
+    # Without eviction every import would fail until the cached expiry lapsed —
+    # up to ten minutes after a provider-side key rotation.
+    product = DigiKeyProvider().fetch(
+        "https://www.digikey.com/x", transport=httpx.MockTransport(handler)
+    )
+    assert product.mpn == "MR04X1201FTL"
+    assert (calls["token"], calls["products"]) == (2, 2)
+
+
+def test_a_persistent_401_is_surfaced_not_retried_forever() -> None:
+    calls = {"products": 0}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/oauth2/token"):
+            return httpx.Response(200, json={"access_token": "t", "expires_in": 600})
+        calls["products"] += 1
+        return httpx.Response(401, json={"detail": "nope"})
+
+    with pytest.raises(ValidationError):
+        DigiKeyProvider().fetch(
+            "https://www.digikey.com/x", transport=httpx.MockTransport(handler)
+        )
+    assert calls["products"] == 2  # one retry, then give up
+
+
+def test_the_token_lock_is_not_held_across_the_network_call() -> None:
+    """The actual regression this backport is for.
+
+    Holding the module lock across the token POST is not *incorrect* — it just
+    serialises every waiter behind a full timeout when the shop tarpits, and since
+    the lookup runs on the shared sync worker pool, that stalls unrelated endpoints.
+    No behavioural test can see that, so assert the property directly: while the POST
+    is in flight, the lock must be free.
+    """
+    held: list[bool] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/oauth2/token"):
+            acquired = digikey._token_lock.acquire(blocking=False)
+            held.append(not acquired)
+            if acquired:
+                digikey._token_lock.release()
+            return httpx.Response(200, json={"access_token": "t", "expires_in": 600})
+        return httpx.Response(200, json=_PRODUCT)
+
+    DigiKeyProvider().fetch(
+        "https://www.digikey.com/x", transport=httpx.MockTransport(handler)
+    )
+    assert held == [False]
+
+
+def test_concurrent_fetches_leave_a_coherent_cache() -> None:
+    issued: list[str] = []
+    lock = threading.Lock()
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/oauth2/token"):
+            with lock:
+                # A DISTINCT token per POST: with one shared value the test could
+                # not tell a coherent cache from an incoherent one.
+                token = f"tok{len(issued) + 1}"
+                issued.append(token)
+            time.sleep(0.01)  # widen the window for the accepted cold-start race
+            return httpx.Response(200, json={"access_token": token, "expires_in": 600})
+        return httpx.Response(200, json=_PRODUCT)
+
+    transport = httpx.MockTransport(handler)
+    results: list[str | None] = []
+
+    def run() -> None:
+        results.append(
+            DigiKeyProvider().fetch(
+                "https://www.digikey.com/x", transport=transport
+            ).mpn
+        )
+
+    threads = [threading.Thread(target=run) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # Releasing the lock around the POST admits a cold-start race where several
+    # threads buy a token at once and a later write can be overwritten by an
+    # earlier one. That is the accepted cost, and this pins that it stays benign:
+    # every caller succeeds, and the cache holds a token that was really issued
+    # rather than a torn or stale value.
+    assert results == ["MR04X1201FTL"] * 8
+    assert issued, "no token was ever requested"
+    assert digikey._token_cache is not None
+    assert digikey._token_cache[0] in issued
+
+    # And the cache is actually used: once warm, no further token is bought.
+    before = len(issued)
+    DigiKeyProvider().fetch("https://www.digikey.com/x", transport=transport)
+    assert len(issued) == before
 
 
 def test_token_is_cached_across_fetches() -> None:
