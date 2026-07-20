@@ -7,6 +7,20 @@ from app.services.shops.base import ProductData
 from fastapi.testclient import TestClient
 
 
+def test_registry_dispatches_each_shop_by_host() -> None:
+    """Registering a provider is the whole integration surface — check it took."""
+    resolved = {
+        url: getattr(shops.resolve(url), "name", None)
+        for url in (
+            "https://www.mouser.pl/pl/ProductDetail/Walsin/MR04X1201FTL",
+            "https://www.digikey.pl/pl/products/detail/walsin/MR04X1201FTL/13908146",
+            "https://www.tme.eu/pl/details/mr04x1201ftl/rezystory-smd-0402/walsin/",
+            "https://example.com/part/1",
+        )
+    }
+    assert list(resolved.values()) == ["Mouser", "Digi-Key", "TME", None]
+
+
 def _read_only_headers(
     client: TestClient, anon_client: TestClient
 ) -> dict[str, str]:

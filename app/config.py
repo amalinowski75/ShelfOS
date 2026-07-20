@@ -103,3 +103,15 @@ DIGIKEY_API_BASE = os.environ.get(
 DIGIKEY_LOCALE_SITE = os.environ.get("SHELFOS_DIGIKEY_LOCALE_SITE", "US")
 DIGIKEY_LOCALE_LANGUAGE = os.environ.get("SHELFOS_DIGIKEY_LOCALE_LANGUAGE", "en")
 DIGIKEY_LOCALE_CURRENCY = os.environ.get("SHELFOS_DIGIKEY_LOCALE_CURRENCY", "USD")
+
+# TME API v2: OAuth2 client-credentials, but the pair goes out as HTTP Basic (the
+# 50-character token is the username, the 20-character application secret the
+# password). Both are generated at developers.tme.eu.
+TME_TOKEN = os.environ.get("SHELFOS_TME_TOKEN", "").strip()
+TME_SECRET = os.environ.get("SHELFOS_TME_SECRET", "").strip()
+TME_API_BASE = os.environ.get("SHELFOS_TME_API_BASE", "https://api.tme.eu").rstrip("/")
+TME_COUNTRY = os.environ.get("SHELFOS_TME_COUNTRY", "PL")
+# Sent as Accept-Language. Keep "en": a translated locale also translates parameter
+# *names*, which then stop matching ShelfOS's English parameter labels and get
+# dropped (the same trap Digi-Key's locale language has).
+TME_LANGUAGE = os.environ.get("SHELFOS_TME_LANGUAGE", "en")

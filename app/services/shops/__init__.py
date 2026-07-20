@@ -10,8 +10,9 @@ from app.services.errors import ValidationError
 from app.services.shops.base import ProductData, ShopProvider
 from app.services.shops.digikey import DigiKeyProvider
 from app.services.shops.mouser import MouserProvider
+from app.services.shops.tme import TmeProvider
 
-_PROVIDERS: list[ShopProvider] = [MouserProvider(), DigiKeyProvider()]
+_PROVIDERS: list[ShopProvider] = [MouserProvider(), DigiKeyProvider(), TmeProvider()]
 
 
 def resolve(url: str) -> ShopProvider | None:

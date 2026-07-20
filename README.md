@@ -84,7 +84,23 @@ export SHELFOS_DIGIKEY_API_BASE="https://sandbox-api.digikey.com"
 # your own parameter labels are in that language too.
 export SHELFOS_DIGIKEY_LOCALE_SITE="PL"
 export SHELFOS_DIGIKEY_LOCALE_CURRENCY="PLN"
+
+# TME (tme.eu / tme.pl) — API v2. Register an application in your tme.eu customer
+# panel, then generate the private key at developers.tme.eu; the pair below is the
+# 50-character token and the 20-character application secret from the app details.
+export SHELFOS_TME_TOKEN="..."
+export SHELFOS_TME_SECRET="..."
+# optional: the country used for the catalogue lookup
+export SHELFOS_TME_COUNTRY="PL"
+# optional. Same caveat as Digi-Key's LANGUAGE above — this translates the parameter
+# NAMES, so a non-English value only helps if your own parameter labels match it.
+export SHELFOS_TME_LANGUAGE="en"
 ```
+
+TME returns structured parameters, so its imports are the richest of the three;
+Mouser exposes specs only inside the free-text description, which the dialog parses
+best-effort. Whatever a shop returns is pre-filled for review — nothing is saved
+until you confirm the dialog.
 
 - **Web UI:** sign in at `/login` (session cookie).
 - **API:** `POST /api/auth/token` with `{"username", "password"}` returns a JWT;
