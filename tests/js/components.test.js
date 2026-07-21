@@ -10,7 +10,7 @@ import {
 } from "./harness.js";
 
 // The dialog logic lives in component_dialog.js; app.js only wires the button.
-const SCRIPTS = ["shared.js", "component_dialog.js", "app.js"];
+const SCRIPTS = ["shared.js", "component_dialog.js", "type_dialog.js", "app.js"];
 
 const DEFS = [
   { id: 10, label: "Resistance", data_type: "number", unit: "Ω", enum_values: [] },

@@ -3,7 +3,7 @@ import { loadPage, tick, typePageFixture } from "./harness.js";
 
 // app.js drives the component table, the stock dialog and the New Type builder;
 // location_tree.js enhances the stock dialog's location picker.
-const SCRIPTS = ["shared.js", "location_tree.js", "app.js"];
+const SCRIPTS = ["shared.js", "location_tree.js", "type_dialog.js", "app.js"];
 
 function fire(el, type) {
   el.dispatchEvent(

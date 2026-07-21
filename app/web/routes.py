@@ -357,6 +357,9 @@ def invoice_detail(
             "location_options": _location_options(tree) if can_edit else [],
             "types": cs.list_types(session) if can_edit else [],
             "mounting_types": [mt.value for mt in MountingType],
+            # For the New Type builder reachable via "+ New type" in the component
+            # dialog on this page.
+            "data_types": [dt.value for dt in ParameterDataType] if can_edit else [],
             "attachment_kinds": [k.value for k in AttachmentKind],
             "current_user": user,
         },

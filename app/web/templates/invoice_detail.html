@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "_location_picker.html" import location_picker %}
 {% from "_attachments.html" import attachments_card %}
+{% from "_type_dialog.html" import type_dialog %}
 {% block title %}{{ invoice.invoice_number }} — ShelfOS{% endblock %}
 
 {% set can_edit = current_user.role.value != "read-only" and not invoice.is_finalized %}
@@ -192,6 +193,9 @@
 {# The shared "New component" dialog, reachable from the add-line picker. #}
 {% include "_component_dialog.html" %}
 
+{# The New Type builder, so "+ New type" in the component dialog works here too. #}
+{{ type_dialog(types, data_types) }}
+
 {# The shared "New location" dialog, reachable inline from the line picker. #}
 {% include "_location_dialog.html" %}
 
@@ -221,6 +225,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/type_dialog.js?v={{ static_version() }}"></script>
 <script src="/static/invoices.js?v={{ static_version() }}"></script>
 <script src="/static/attachments.js?v={{ static_version() }}"></script>
 {% endblock %}
