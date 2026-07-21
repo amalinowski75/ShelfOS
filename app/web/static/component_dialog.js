@@ -476,6 +476,31 @@
     setFromDescription(prefill.notes, prefill.shopCategory);
   }
 
+  // "+ New type": open the New Type dialog (stacked on this one) and, on create,
+  // add the new type to the select, choose it, and render its parameter fields.
+  // Gated on the type dialog being ON THE PAGE (not on window.openTypeDialog, which
+  // app.js may define after this script runs) so the button hides on pages — the
+  // invoice line, the BOM report — that reuse this dialog without a type builder.
+  const newTypeBtn = document.getElementById("component-new-type");
+  if (newTypeBtn && document.getElementById("type-dialog")) {
+    newTypeBtn.hidden = false;
+    newTypeBtn.addEventListener("click", () => {
+      window.openTypeDialog?.((created) => {
+        let option = [...typeSelect.options].find(
+          (o) => o.value === String(created.id),
+        );
+        if (!option) {
+          option = document.createElement("option");
+          option.value = created.id;
+          option.textContent = created.name;
+          typeSelect.appendChild(option);
+        }
+        typeSelect.value = String(created.id);
+        loadParams(String(created.id));
+      });
+    });
+  }
+
   // "Import from a shop URL": look the part up via its shop's API and rich-prefill.
   const importUrl = document.getElementById("shop-import-url");
   const importBtn = document.getElementById("shop-import-btn");

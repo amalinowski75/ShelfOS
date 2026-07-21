@@ -347,10 +347,28 @@ if (typeDialog && newTypeBtn) {
     if (selected) select.value = String(type.id);
   }
 
-  newTypeBtn.addEventListener("click", () => {
+  // Open the New Type dialog; on a successful create, `onCreated(createdType)`
+  // fires. Exposed on window so the New Component dialog can offer "+ New type"
+  // and react to the result (select the new type). Mirrors openComponentDialog.
+  let onTypeCreated = null;
+  function openTypeDialog(onCreated) {
+    // showModal() on an already-open dialog throws (and would have wiped the form
+    // first). Native modal backdrops make a double-open hard to reach, but guard
+    // rather than reset-then-throw.
+    if (typeDialog.open) return;
+    onTypeCreated = onCreated || null;
     resetTypeForm();
     typeDialog.showModal();
-  });
+  }
+  window.openTypeDialog = openTypeDialog;
+
+  newTypeBtn.addEventListener("click", () =>
+    openTypeDialog((created) => {
+      // The new type becomes the active filter (spec §13, step 4); the table reloads.
+      upsertTypeOption(typeFilter, created, true);
+      return loadTable();
+    }),
+  );
   document.getElementById("add-param").addEventListener("click", addParamRow);
   typeForm
     .querySelector('[name="parent-id"]')
@@ -376,12 +394,14 @@ if (typeDialog && newTypeBtn) {
       });
       if (resp.ok) {
         const created = await resp.json();
-        // The new type becomes the active filter (spec §13, step 4) and a valid
-        // parent for the next one.
-        upsertTypeOption(typeFilter, created, true);
+        // Always a valid parent for the next type created this session; the
+        // caller's onCreated handles the rest (filter+reload, or select in the
+        // component dialog).
         upsertTypeOption(typeForm.querySelector('[name="parent-id"]'), created, false);
         typeDialog.close();
-        await loadTable();
+        const callback = onTypeCreated;
+        onTypeCreated = null; // consume it, so it can't fire against a later open
+        if (callback) await callback(created);
       } else {
         const el = document.getElementById("type-error");
         el.textContent = await errorMessage(resp);

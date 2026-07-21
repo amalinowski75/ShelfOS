@@ -190,6 +190,10 @@ select.control {
 }
 .btn:active { transform: translateY(1px); }
 .btn svg { width: 16px; height: 16px; }
+/* .btn sets display, which overrides the UA [hidden] { display: none } — so a
+   hidden .btn (e.g. "+ New type" on pages without the type builder) would still
+   show. Restore the attribute's authority app-wide (cf. .loc-picker-new[hidden]). */
+.btn[hidden] { display: none; }
 .btn-primary { background: var(--accent); color: var(--on-accent); box-shadow: var(--shadow-sm); }
 .btn-primary:hover { background: var(--accent-strong); }
 .btn-secondary { background: var(--surface); color: var(--text); border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
@@ -350,6 +354,9 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 .shop-import { border-bottom: 1px solid var(--border); padding-bottom: 14px; margin-bottom: 4px; }
 .shop-import-row { display: flex; gap: 8px; align-items: center; }
 .shop-import-row .control { flex: 1; }
+.type-row { display: flex; gap: 8px; align-items: center; }
+.type-row .control { flex: 1; }
+.type-row .btn { white-space: nowrap; }
 #shop-import-status { margin: 6px 0 0; font-size: 13px; }
 #shop-import-status.error { color: var(--danger); }
 

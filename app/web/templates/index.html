@@ -57,6 +57,11 @@
   </article>
 </dialog>
 
+{# Gated on the same role as its "New Type" trigger (and app.js's openTypeDialog),
+   so the dialog, its trigger, and the "+ New type" button in the component dialog
+   are all present-or-absent together — no dead dialog for read-only users, and the
+   component dialog's gate on this element's presence is correct by construction. #}
+{% if current_user.role.value != "read-only" %}
 <dialog id="type-dialog">
   <article>
     <header>
@@ -138,6 +143,7 @@
     </div>
   </div>
 </template>
+{% endif %}
 
 {% if current_user.role.value != "read-only" %}
 {% include "_component_dialog.html" %}
