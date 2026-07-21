@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { JSDOM } from "jsdom";
 import { describe, it, expect } from "vitest";
 import {
   loadPage,
@@ -261,12 +263,52 @@ describe("app.js — new component", () => {
 
   it("hides + New type where the page has no type builder", () => {
     // The invoice add-line reuse: the component dialog is present, the New Type
-    // dialog is not, so the button must stay hidden.
+    // dialog is not, so the JS leaves the button's hidden attribute in place and
+    // wires no handler.
     const { document } = loadPage(componentDialogFixture(), [
       "shared.js",
       "component_dialog.js",
     ]);
     expect(document.getElementById("component-new-type").hidden).toBe(true);
+  });
+
+  it("a hidden .btn is actually not displayed under the real app.css", () => {
+    // The attribute alone isn't enough: .btn sets `display`, which overrides the
+    // UA [hidden] rule, so a real .btn[hidden] rule is needed. Assert computed
+    // display against the real stylesheet — this fails if that rule is dropped.
+    const css = readFileSync(
+      new URL("../../app/web/static/app.css", import.meta.url),
+      "utf8",
+    );
+    const dom = new JSDOM(
+      `<style>${css}</style><button class="btn" id="x" hidden></button>`,
+    );
+    const btn = dom.window.document.getElementById("x");
+    expect(dom.window.getComputedStyle(btn).display).toBe("none");
+  });
+
+  it("a type created from the list after opening + New type uses the list flow", async () => {
+    // Regression for the callback-overwrite safety: opening + New type arms the
+    // dialog's "select the type" callback; creating instead from the list's New
+    // Type button must run the LIST flow (filter + reload), not the dialog's.
+    const impl = (url, opts) =>
+      url === "/api/types" && opts?.method === "POST"
+        ? Promise.resolve({ ok: true, json: async () => ({ id: 8, name: "inductor" }) })
+        : fetchImpl(url, opts);
+    const { document } = loadPage(componentPageFixture(), SCRIPTS, { fetchImpl: impl });
+
+    document.getElementById("new-component-btn").click();
+    document.getElementById("component-new-type").click(); // arms the dialog callback
+    document.getElementById("new-type-btn").click(); // …but create from the list
+    document.getElementById("type-form").querySelector('[name="type-name"]').value =
+      "inductor";
+    fire(document.getElementById("type-form"), "submit");
+    await tick();
+
+    // The list's callback ran (new type is the active filter)…
+    expect(document.getElementById("type-filter").value).toBe("8");
+    // …and the dialog's did not (its type select wasn't switched to the new type).
+    expect(document.getElementById("component-type").value).not.toBe("8");
   });
 
   it("loads cleanly when the create controls are absent (read-only)", () => {

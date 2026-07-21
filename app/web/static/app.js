@@ -352,6 +352,10 @@ if (typeDialog && newTypeBtn) {
   // and react to the result (select the new type). Mirrors openComponentDialog.
   let onTypeCreated = null;
   function openTypeDialog(onCreated) {
+    // showModal() on an already-open dialog throws (and would have wiped the form
+    // first). Native modal backdrops make a double-open hard to reach, but guard
+    // rather than reset-then-throw.
+    if (typeDialog.open) return;
     onTypeCreated = onCreated || null;
     resetTypeForm();
     typeDialog.showModal();
