@@ -398,8 +398,11 @@ def create_component_with_values(
     require_entity(session, ComponentType, type_id, "component type")
     component = Component(
         type_id=type_id,
-        manufacturer=manufacturer,
-        mpn=mpn,
+        # Normalise so blanks and surrounding whitespace never reach the store: a
+        # stray " " or "" would otherwise slip past the (MPN, manufacturer) de-dup
+        # (which compares trimmed) and confuse case/whitespace-sensitive lookups.
+        manufacturer=_blank_to_none(manufacturer),
+        mpn=_blank_to_none(mpn),
         package=package,
         mounting_type=mounting_type,
         notes=notes,
@@ -505,6 +508,46 @@ def find_components_by_mpn(session: Session, mpn: str) -> list[Component]:
             .order_by(col(Component.id))
         ).all()
     )
+
+
+def _blank_to_none(text: str | None) -> str | None:
+    """A trimmed non-empty string, or None for a blank/whitespace-only value."""
+    if text is None:
+        return None
+    stripped = text.strip()
+    return stripped or None
+
+
+def find_duplicate_component(
+    session: Session, *, mpn: str | None, manufacturer: str | None
+) -> Component | None:
+    """The existing non-deleted component with the same (MPN, manufacturer), or None.
+
+    Both are matched case-insensitively and whitespace-insensitively. A blank MPN is
+    exempt: a part with no MPN can't be de-duplicated (generic passives, BOM lines
+    without a part number), and two such parts must be allowed to coexist. The
+    manufacturer is matched null-aware — a blank manufacturer matches only other
+    blank ones (NULL *or* a legacy empty string) — so the same MPN from two different
+    manufacturers is not a duplicate.
+    """
+    mpn = _blank_to_none(mpn)
+    if mpn is None:
+        return None
+    # trim() on the stored side too, so a legacy row with stray whitespace (created
+    # before normalisation, or by a direct client) is still caught.
+    stored_mpn = func.lower(func.trim(col(Component.mpn)))
+    stored_mfr = func.trim(func.coalesce(col(Component.manufacturer), ""))
+    statement = (
+        select(Component)
+        .where(stored_mpn == mpn.lower())
+        .where(col(Component.deleted_at).is_(None))
+    )
+    manufacturer = _blank_to_none(manufacturer)
+    if manufacturer is not None:
+        statement = statement.where(func.lower(stored_mfr) == manufacturer.lower())
+    else:
+        statement = statement.where(stored_mfr == "")  # matches NULL and ""
+    return session.exec(statement.order_by(col(Component.id))).first()
 
 
 def list_types(session: Session) -> list[ComponentType]:
