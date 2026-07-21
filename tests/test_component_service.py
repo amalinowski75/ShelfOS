@@ -1050,3 +1050,39 @@ def test_update_component_validates_an_enum_value(session: Session) -> None:
     # …a token outside the allowed set is rejected.
     with pytest.raises(ValidationError):
         cs.update_component(session, component.id, values=[(dielectric.id, "NP0")])
+
+
+def test_update_component_allows_a_pure_case_change_of_own_manufacturer(
+    session: Session,
+) -> None:
+    ctype, _, _ = _resistor_with_params(session)
+    component = cs.create_component(session, ctype.id, mpn="R-1", manufacturer="YAGEO")
+    # Recasing the same row's manufacturer matches self (excluded) — not a duplicate.
+    cs.update_component(session, component.id, manufacturer="yageo")
+    session.refresh(component)
+    assert component.manufacturer == "yageo"
+
+
+def test_update_component_blocks_a_case_folded_manufacturer_collision(
+    session: Session,
+) -> None:
+    from app.services.errors import DuplicateComponentError
+
+    ctype, _, _ = _resistor_with_params(session)
+    cs.create_component(session, ctype.id, mpn="R-9", manufacturer="ÉCLAIR")
+    other = cs.create_component(session, ctype.id, mpn="R-9", manufacturer="TDK")
+    # Editing TDK's part to "éclair" collides with "ÉCLAIR" under casefold — blocked
+    # (the hardened matcher from #51 is reused through the edit path).
+    with pytest.raises(DuplicateComponentError):
+        cs.update_component(session, other.id, manufacturer="éclair")
+
+
+def test_update_component_trims_a_text_parameter(session: Session) -> None:
+    ctype, _, tolerance = _resistor_with_params(session)
+    component = cs.create_component(session, ctype.id)
+    cs.update_component(session, component.id, values=[(tolerance.id, "  5%  ")])
+    values = {
+        v.parameter_definition_id: cs._current_value(v)
+        for v in cs.list_parameter_values(session, component.id)
+    }
+    assert values[tolerance.id] == "5%"  # stored trimmed, not "  5%  "

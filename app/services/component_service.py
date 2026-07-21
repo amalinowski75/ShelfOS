@@ -729,6 +729,13 @@ def update_component(
     clears (deletes) that value; each parameter definition must be in the type's
     effective set (D3). Every change is recorded in the audit log (§19) when
     ``user_id`` is given, matching the create/set-value paths.
+
+    Concurrency is last-write-wins: there is no version check, so two admins editing
+    the same component at once means the later Save overwrites the earlier one
+    (consistent with the create-race stance). Acceptable for this app's single-writer
+    use. ``require_entity`` intentionally fetches by id without a ``deleted_at``
+    filter — no soft-delete path exists today (only ``hard_delete_component``); if one
+    is ever added, guard against editing a deleted component here.
     """
     component = require_entity(session, Component, component_id, "component")
     pairs = list(values)
@@ -884,7 +891,7 @@ def _assign_value(
         case ParameterDataType.TEXT:
             if not isinstance(value, str):
                 raise ValidationError(f"expected text for {definition.name!r}")
-            param.value_text = value
+            param.value_text = value.strip()  # store trimmed, not as-typed
         case ParameterDataType.ENUM:
             if not isinstance(value, str):
                 raise ValidationError(f"expected an enum token for {definition.name!r}")
