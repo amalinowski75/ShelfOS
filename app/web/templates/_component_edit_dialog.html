@@ -1,0 +1,48 @@
+{# Admin-only "Edit component" dialog (§12). Scalar fields are pre-filled here;
+   parameter fields are built and pre-filled by component_edit.js from the current
+   values. Type and MPN are shown read-only — they are immutable. #}
+{% macro component_edit_dialog(component, type_name, mounting_types) %}
+<dialog id="component-edit-dialog"
+        data-component-id="{{ component.id }}"
+        data-type-id="{{ component.type_id }}">
+  <article>
+    <header>
+      <strong>Edit component</strong>
+      <button type="button" class="close" aria-label="Close" data-close></button>
+    </header>
+    <form id="component-edit-form">
+      <div class="edit-readonly">
+        <div class="field"><label>Type</label><span>{{ type_name }}</span></div>
+        <div class="field"><label>MPN</label><span class="mono">{{ component.mpn or "—" }}</span></div>
+      </div>
+      <div class="field">
+        <label>Manufacturer</label>
+        <input class="control" name="manufacturer" value="{{ component.manufacturer or '' }}" />
+      </div>
+      <div class="field">
+        <label>Package</label>
+        <input class="control" name="package" value="{{ component.package or '' }}" />
+      </div>
+      <div class="field">
+        <label>Mounting</label>
+        <select class="control" name="mounting_type">
+          {% for mt in mounting_types %}
+          <option value="{{ mt }}"{% if mt == component.mounting_type.value %} selected{% endif %}>{{ mt }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label>Notes</label>
+        <input class="control" name="notes" value="{{ component.notes or '' }}" />
+      </div>
+      <div class="params-head"><label>Parameters</label></div>
+      <div class="params" id="component-edit-params"></div>
+      <p id="component-edit-error" class="error" hidden></p>
+      <footer>
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" class="btn btn-primary">Save changes</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+{% endmacro %}

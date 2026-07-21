@@ -385,6 +385,31 @@ def test_component_detail_page(client: TestClient) -> None:
     assert "image_gallery.js" in html
 
 
+def test_component_detail_admin_sees_the_edit_dialog(client: TestClient) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "RC0603"}
+    ).json()
+    html = client.get(f"/components/{component['id']}").text  # client is admin
+    assert 'id="component-edit-btn"' in html
+    assert 'id="component-edit-dialog"' in html
+    assert "component_edit.js" in html
+
+
+def test_component_detail_non_admin_has_no_edit_affordance(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    token = _non_admin_token(client, role="user", username="editor")
+    headers = {"Authorization": f"Bearer {token}"}
+    html = anon_client.get(f"/components/{component['id']}", headers=headers).text
+    # A plain writer can create components but not edit them — no button, no dialog.
+    assert 'id="component-edit-btn"' not in html
+    assert 'id="component-edit-dialog"' not in html
+    assert "component_edit.js" not in html
+
+
 def test_component_detail_attachments_read_only_has_no_upload_form(
     client: TestClient, anon_client: TestClient
 ) -> None:

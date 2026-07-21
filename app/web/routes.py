@@ -429,6 +429,7 @@ def component_detail(
             "all_locations": ls.list_all(session),
             "attachment_kinds": [k.value for k in AttachmentKind],
             "link_kinds": [k.value for k in LinkKind],
+            "mounting_types": [mt.value for mt in MountingType],
             "current_user": user,
         },
     )

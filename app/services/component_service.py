@@ -30,7 +30,7 @@ from app.models.enums import MountingType, ParameterDataType
 from app.models.location import ComponentLocation
 from app.services import attachment_service, audit_service, link_service
 from app.services._common import require_entity
-from app.services.errors import ValidationError
+from app.services.errors import DuplicateComponentError, ValidationError
 from app.units import UnitParseError, parse_engineering
 
 ParameterValue = float | int | str | bool
@@ -680,6 +680,179 @@ def set_parameter_value(
     return param
 
 
+def _apply_scalar(
+    session: Session,
+    component: Component,
+    attr: str,
+    new_value: str | None,
+    field: str,
+    user_id: int | None,
+) -> None:
+    """Set one scalar component field, auditing the change (no-ops skipped)."""
+    old_value = getattr(component, attr)
+    if old_value == new_value:
+        return
+    setattr(component, attr, new_value)
+    if user_id is not None:
+        audit_service.record_change(
+            session,
+            entity_type="component",
+            entity_id=cast(int, component.id),
+            field=field,
+            old_value=old_value,
+            new_value=new_value,
+            user_id=user_id,
+        )
+
+
+def _is_blank(value: ParameterValue | None) -> bool:
+    """A parameter edit value that means 'clear' — None or an all-whitespace string."""
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def update_component(
+    session: Session,
+    component_id: int,
+    *,
+    manufacturer: str | None = None,
+    package: str | None = None,
+    mounting_type: MountingType = MountingType.OTHER,
+    notes: str | None = None,
+    values: Iterable[tuple[int, ParameterValue | None]] = (),
+    user_id: int | None = None,
+) -> Component:
+    """Edit a component's mutable fields and parameter values (admin only, §12).
+
+    Type and MPN are immutable and are not accepted here. The scalar fields and the
+    parameter values are updated in ONE transaction — a bad value aborts the whole
+    edit, so the component is never left half-changed. A blank/None parameter value
+    clears (deletes) that value; each parameter definition must be in the type's
+    effective set (D3). Every change is recorded in the audit log (§19) when
+    ``user_id`` is given, matching the create/set-value paths.
+
+    Concurrency is last-write-wins: there is no version check, so two admins editing
+    the same component at once means the later Save overwrites the earlier one
+    (consistent with the create-race stance). Acceptable for this app's single-writer
+    use. ``require_entity`` intentionally fetches by id without a ``deleted_at``
+    filter — no soft-delete path exists today (only ``hard_delete_component``); if one
+    is ever added, guard against editing a deleted component here.
+    """
+    component = require_entity(session, Component, component_id, "component")
+    pairs = list(values)
+    # MPN is immutable but manufacturer is editable, so an edit can still collide with
+    # another part — apply the same (MPN, manufacturer) guard as create, excluding
+    # this component itself. Reuses DuplicateComponentError so the dialog links to the
+    # existing part just as the create flow does.
+    new_manufacturer = _blank_to_none(manufacturer)
+    duplicate = find_duplicate_component(
+        session, mpn=component.mpn, manufacturer=new_manufacturer
+    )
+    if duplicate is not None and duplicate.id != component_id:
+        origin = f" from {new_manufacturer}" if new_manufacturer else ""
+        raise DuplicateComponentError(
+            f"A component with MPN {component.mpn}{origin} already exists.",
+            existing_id=cast(int, duplicate.id),
+        )
+    try:
+        _apply_scalar(
+            session, component, "manufacturer", new_manufacturer,
+            audit_service.FIELD_MANUFACTURER, user_id,
+        )
+        _apply_scalar(
+            session, component, "package", _blank_to_none(package),
+            audit_service.FIELD_PACKAGE, user_id,
+        )
+        _apply_scalar(
+            session, component, "notes", _blank_to_none(notes),
+            audit_service.FIELD_NOTES, user_id,
+        )
+        if component.mounting_type != mounting_type:
+            old_mount = component.mounting_type
+            component.mounting_type = mounting_type
+            if user_id is not None:
+                audit_service.record_change(
+                    session,
+                    entity_type="component",
+                    entity_id=component_id,
+                    field=audit_service.FIELD_MOUNTING_TYPE,
+                    old_value=old_mount.value,
+                    new_value=mounting_type.value,
+                    user_id=user_id,
+                )
+        session.add(component)
+
+        definitions = {
+            d.id: d
+            for d in get_effective_parameter_definitions(session, component.type_id)
+        }
+        enum_ids = [
+            definition_id
+            for definition_id, value in pairs
+            if not _is_blank(value)
+            and (d := definitions.get(definition_id)) is not None
+            and d.data_type is ParameterDataType.ENUM
+        ]
+        allowed_enums = {
+            definition_id: set(tokens)
+            for definition_id, tokens in enum_values_by_definition(
+                session, enum_ids
+            ).items()
+        }
+        existing = {
+            p.parameter_definition_id: p
+            for p in list_parameter_values(session, component_id)
+        }
+        seen: set[int] = set()
+        for definition_id, value in pairs:
+            if definition_id in seen:
+                raise ValidationError(
+                    f"parameter definition {definition_id} given more than once"
+                )
+            seen.add(definition_id)
+            definition = definitions.get(definition_id)
+            if definition is None:
+                raise ValidationError(
+                    "parameter definition does not apply to this component's type"
+                )
+            param = existing.get(definition_id)
+            old_value = _current_value(param) if param is not None else None
+            if _is_blank(value):
+                new_value: ParameterValue | None = None
+                if param is not None:
+                    session.delete(param)
+            else:
+                if param is None:
+                    param = ComponentParameter(
+                        component_id=component_id,
+                        parameter_definition_id=definition_id,
+                    )
+                _assign_value(
+                    session, param, definition, cast(ParameterValue, value),
+                    allowed_enum=allowed_enums.get(definition_id, set())
+                    if definition.data_type is ParameterDataType.ENUM
+                    else None,
+                )
+                new_value = _current_value(param)
+                session.add(param)
+            if user_id is not None and new_value != old_value:
+                audit_service.record_change(
+                    session,
+                    entity_type="component",
+                    entity_id=component_id,
+                    field=audit_service.parameter_field(definition.name),
+                    old_value=old_value,
+                    new_value=new_value,
+                    user_id=user_id,
+                )
+
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    session.refresh(component)
+    return component
+
+
 def _current_value(param: ComponentParameter) -> ParameterValue | None:
     """Return the currently populated EAV value of a parameter row, if any."""
     if param.value_num is not None:
@@ -718,7 +891,7 @@ def _assign_value(
         case ParameterDataType.TEXT:
             if not isinstance(value, str):
                 raise ValidationError(f"expected text for {definition.name!r}")
-            param.value_text = value
+            param.value_text = value.strip()  # store trimmed, not as-typed
         case ParameterDataType.ENUM:
             if not isinstance(value, str):
                 raise ValidationError(f"expected an enum token for {definition.name!r}")

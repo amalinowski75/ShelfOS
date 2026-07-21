@@ -996,3 +996,121 @@ def test_a_deleted_component_frees_its_mpn_for_re_add(client: TestClient) -> Non
         json={"type_id": type_id, "mpn": "R-2", "manufacturer": "YAGEO"},
     )
     assert again.status_code == 201
+
+
+def _number_type_and_component(client: TestClient) -> tuple[int, int]:
+    ctype = client.post(
+        "/api/types",
+        json={
+            "name": "resistor",
+            "parameters": [
+                {"name": "resistance", "label": "R", "data_type": "number",
+                 "unit": "Ω", "sort_order": 0},
+            ],
+        },
+    ).json()
+    definition_id = ctype["parameters"][0]["id"]
+    component = client.post(
+        "/api/components",
+        json={
+            "type_id": ctype["id"], "mpn": "R-1", "manufacturer": "YAGEO",
+            "parameters": [{"parameter_definition_id": definition_id, "value": "1k"}],
+        },
+    ).json()
+    return component["id"], definition_id
+
+
+def _edit_body(**overrides: object) -> dict[str, object]:
+    """A full ComponentUpdate body (all scalar fields required)."""
+    return {
+        "manufacturer": "YAGEO", "package": None, "mounting_type": "Other",
+        "notes": None, "parameters": [], **overrides,
+    }
+
+
+def test_admin_can_edit_a_component(client: TestClient) -> None:
+    component_id, definition_id = _number_type_and_component(client)
+    resp = client.patch(
+        f"/api/components/{component_id}",
+        json=_edit_body(
+            manufacturer="TDK", mounting_type="SMT",
+            parameters=[{"parameter_definition_id": definition_id, "value": "2k2"}],
+        ),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["manufacturer"] == "TDK"
+    assert body["mounting_type"] == "SMT"
+    params = client.get(f"/api/components/{component_id}/parameters").json()
+    assert params[0]["value_num"] == 2200.0
+
+
+def test_edit_cannot_change_mpn_and_preserves_sent_fields(client: TestClient) -> None:
+    component_id, _ = _number_type_and_component(client)
+    resp = client.patch(
+        f"/api/components/{component_id}",
+        # "mpn" is an extra field Pydantic ignores; the sent scalars are honoured.
+        json=_edit_body(mpn="HACKED", manufacturer="TDK", package="0402"),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["mpn"] == "R-1"  # immutable
+    assert body["manufacturer"] == "TDK" and body["package"] == "0402"
+
+
+def test_edit_requires_the_full_scalar_set(client: TestClient) -> None:
+    component_id, _ = _number_type_and_component(client)
+    # A partial body (only notes) is a 422, not a silent wipe of the other fields.
+    resp = client.patch(
+        f"/api/components/{component_id}", json={"notes": "just this"}
+    )
+    assert resp.status_code == 422
+
+
+def test_editing_manufacturer_into_a_duplicate_is_blocked(client: TestClient) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    client.post(
+        "/api/components",
+        json={"type_id": ctype["id"], "mpn": "R-9", "manufacturer": "YAGEO"},
+    )
+    other = client.post(
+        "/api/components",
+        json={"type_id": ctype["id"], "mpn": "R-9", "manufacturer": "TDK"},
+    ).json()
+    # Editing TDK's part to YAGEO would collide with the first — blocked, with a link.
+    resp = client.patch(
+        f"/api/components/{other['id']}", json=_edit_body(manufacturer="YAGEO")
+    )
+    assert resp.status_code == 409
+    assert "existing_id" in resp.json()
+
+
+def test_non_admin_writer_cannot_edit_a_component(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    component_id, definition_id = _number_type_and_component(client)
+    headers = _account_headers(client, anon_client)  # a "user" (writer, not admin)
+    resp = anon_client.patch(
+        f"/api/components/{component_id}", json=_edit_body(), headers=headers
+    )
+    assert resp.status_code == 403
+    # …and the single-value parameter path is admin-only too (was writer-level).
+    put = anon_client.put(
+        f"/api/components/{component_id}/parameters",
+        json={"parameter_definition_id": definition_id, "value": "9k"},
+        headers=headers,
+    )
+    assert put.status_code == 403
+
+
+def test_read_only_cannot_edit_a_component(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    component_id, _ = _number_type_and_component(client)
+    headers = _account_headers(
+        client, anon_client, username="viewer", role="read-only"
+    )
+    resp = anon_client.patch(
+        f"/api/components/{component_id}", json=_edit_body(), headers=headers
+    )
+    assert resp.status_code == 403

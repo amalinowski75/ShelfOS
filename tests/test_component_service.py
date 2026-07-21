@@ -902,3 +902,187 @@ def test_find_duplicate_component_ignores_soft_deleted(session: Session) -> None
     assert (
         cs.find_duplicate_component(session, mpn="R-9", manufacturer="YAGEO") is None
     )
+
+
+def _resistor_with_params(session: Session):  # type: ignore[no-untyped-def]
+    ctype = cs.create_type(session, "resistor")
+    resistance = cs.add_parameter_definition(
+        session, ctype.id, name="resistance", label="R",
+        data_type=ParameterDataType.NUMBER, unit="Ω",
+    )
+    tolerance = cs.add_parameter_definition(
+        session, ctype.id, name="tolerance", label="Tol",
+        data_type=ParameterDataType.TEXT,
+    )
+    return ctype, resistance, tolerance
+
+
+def test_update_component_edits_fields_and_values(session: Session) -> None:
+    from app.models.enums import MountingType
+
+    ctype, resistance, tolerance = _resistor_with_params(session)
+    component = cs.create_component_with_values(
+        session, ctype.id, mpn="R-1", manufacturer="YAGEO",
+        values=[(resistance.id, "1k"), (tolerance.id, "5%")],
+    )
+    cs.update_component(
+        session, component.id, manufacturer="TDK", package="0402",
+        mounting_type=MountingType.SMT, notes="edited",
+        values=[(resistance.id, "2k2"), (tolerance.id, "1%")],
+    )
+    session.refresh(component)
+    assert (component.manufacturer, component.package) == ("TDK", "0402")
+    assert component.mounting_type is MountingType.SMT
+    assert component.notes == "edited"
+    values = {
+        v.parameter_definition_id: cs._current_value(v)
+        for v in cs.list_parameter_values(session, component.id)
+    }
+    assert values[resistance.id] == 2200.0
+    assert values[tolerance.id] == "1%"
+
+
+def test_update_component_leaves_type_and_mpn_untouched(session: Session) -> None:
+    ctype, resistance, _ = _resistor_with_params(session)
+    component = cs.create_component_with_values(session, ctype.id, mpn="R-1")
+    cs.update_component(session, component.id, manufacturer="TDK")
+    session.refresh(component)
+    # update_component has no type/mpn parameter, so they can never change here.
+    assert component.mpn == "R-1"
+    assert component.type_id == ctype.id
+
+
+def test_update_component_clears_a_blank_parameter(session: Session) -> None:
+    ctype, resistance, tolerance = _resistor_with_params(session)
+    component = cs.create_component_with_values(
+        session, ctype.id, values=[(tolerance.id, "5%")],
+    )
+    cs.update_component(session, component.id, values=[(tolerance.id, None)])
+    stored = {
+        v.parameter_definition_id
+        for v in cs.list_parameter_values(session, component.id)
+    }
+    assert tolerance.id not in stored  # the value row is deleted
+
+
+def test_update_component_is_atomic_on_a_bad_value(session: Session) -> None:
+    from app.models.component import Component
+
+    ctype, resistance, _ = _resistor_with_params(session)
+    component = cs.create_component_with_values(
+        session, ctype.id, manufacturer="YAGEO", values=[(resistance.id, "1k")],
+    )
+    # A non-numeric resistance aborts the whole edit — the manufacturer change with it.
+    with pytest.raises(ValidationError):
+        cs.update_component(
+            session, component.id, manufacturer="TDK",
+            values=[(resistance.id, "not-a-number")],
+        )
+    fresh = session.get(Component, component.id)
+    assert fresh is not None and fresh.manufacturer == "YAGEO"
+
+
+def test_update_component_rejects_a_foreign_parameter(session: Session) -> None:
+    ctype, _, _ = _resistor_with_params(session)
+    other = cs.create_type(session, "capacitor")
+    foreign = cs.add_parameter_definition(
+        session, other.id, name="capacitance", label="C",
+        data_type=ParameterDataType.NUMBER, unit="F",
+    )
+    component = cs.create_component(session, ctype.id)
+    with pytest.raises(ValidationError):
+        cs.update_component(session, component.id, values=[(foreign.id, "1n")])
+
+
+def test_update_component_audits_each_change(session: Session) -> None:
+    from app.services import audit_service as audit
+
+    ctype, resistance, _ = _resistor_with_params(session)
+    component = cs.create_component_with_values(
+        session, ctype.id, manufacturer="YAGEO", values=[(resistance.id, "1k")],
+    )
+    cs.update_component(
+        session, component.id, manufacturer="TDK",
+        values=[(resistance.id, "2k")], user_id=7,
+    )
+    fields = {
+        e.field
+        for e in audit.list_entries(
+            session, entity_type="component", entity_id=component.id
+        )
+    }
+    assert "manufacturer" in fields
+    assert audit.parameter_field("resistance") in fields
+
+
+def test_update_component_skips_audit_for_an_unchanged_field(session: Session) -> None:
+    from app.services import audit_service as audit
+
+    ctype, _, _ = _resistor_with_params(session)
+    component = cs.create_component(session, ctype.id, manufacturer="YAGEO")
+    # Re-set the same manufacturer — a no-op must not write a phantom audit row.
+    cs.update_component(session, component.id, manufacturer="YAGEO", user_id=7)
+    fields = [
+        e.field
+        for e in audit.list_entries(
+            session, entity_type="component", entity_id=component.id
+        )
+    ]
+    assert "manufacturer" not in fields
+
+
+def test_update_component_validates_an_enum_value(session: Session) -> None:
+    ctype = cs.create_type(session, "capacitor")
+    dielectric = cs.add_parameter_definition(
+        session, ctype.id, name="dielectric", label="Dielectric",
+        data_type=ParameterDataType.ENUM, enum_values=["X7R", "C0G"],
+    )
+    component = cs.create_component_with_values(
+        session, ctype.id, values=[(dielectric.id, "X7R")],
+    )
+    # A valid token is accepted…
+    cs.update_component(session, component.id, values=[(dielectric.id, "C0G")])
+    values = {
+        v.parameter_definition_id: cs._current_value(v)
+        for v in cs.list_parameter_values(session, component.id)
+    }
+    assert values[dielectric.id] == "C0G"
+    # …a token outside the allowed set is rejected.
+    with pytest.raises(ValidationError):
+        cs.update_component(session, component.id, values=[(dielectric.id, "NP0")])
+
+
+def test_update_component_allows_a_pure_case_change_of_own_manufacturer(
+    session: Session,
+) -> None:
+    ctype, _, _ = _resistor_with_params(session)
+    component = cs.create_component(session, ctype.id, mpn="R-1", manufacturer="YAGEO")
+    # Recasing the same row's manufacturer matches self (excluded) — not a duplicate.
+    cs.update_component(session, component.id, manufacturer="yageo")
+    session.refresh(component)
+    assert component.manufacturer == "yageo"
+
+
+def test_update_component_blocks_a_case_folded_manufacturer_collision(
+    session: Session,
+) -> None:
+    from app.services.errors import DuplicateComponentError
+
+    ctype, _, _ = _resistor_with_params(session)
+    cs.create_component(session, ctype.id, mpn="R-9", manufacturer="ÉCLAIR")
+    other = cs.create_component(session, ctype.id, mpn="R-9", manufacturer="TDK")
+    # Editing TDK's part to "éclair" collides with "ÉCLAIR" under casefold — blocked
+    # (the hardened matcher from #51 is reused through the edit path).
+    with pytest.raises(DuplicateComponentError):
+        cs.update_component(session, other.id, manufacturer="éclair")
+
+
+def test_update_component_trims_a_text_parameter(session: Session) -> None:
+    ctype, _, tolerance = _resistor_with_params(session)
+    component = cs.create_component(session, ctype.id)
+    cs.update_component(session, component.id, values=[(tolerance.id, "  5%  ")])
+    values = {
+        v.parameter_definition_id: cs._current_value(v)
+        for v in cs.list_parameter_values(session, component.id)
+    }
+    assert values[tolerance.id] == "5%"  # stored trimmed, not "  5%  "
