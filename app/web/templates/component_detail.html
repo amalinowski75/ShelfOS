@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% from "_attachments.html" import attachments_card %}
 {% from "_links.html" import links_card %}
+{% from "_component_edit_dialog.html" import component_edit_dialog %}
+{% set is_admin = current_user.role.value == "admin" %}
 {% block title %}{{ component.mpn or "Component" }} — ShelfOS{% endblock %}
 
 {% macro status_badge(status) -%}
@@ -28,7 +30,12 @@
 
 <div class="grid2">
   <div class="card card-pad">
-    <h2>Overview</h2>
+    <div class="widget-head">
+      <h2>Overview</h2>
+      {% if is_admin %}
+      <button type="button" class="btn btn-secondary btn-sm" id="component-edit-btn">Edit</button>
+      {% endif %}
+    </div>
     <table class="kv">
       <tbody>
         <tr><th>Type</th><td>{{ type_name }}</td></tr>
@@ -141,6 +148,10 @@
                 current_user.role.value != "read-only", link_kinds) }}
 </div>
 
+{% if is_admin %}
+{{ component_edit_dialog(component, type_name, mounting_types) }}
+{% endif %}
+
 {# Full-size viewer for the header thumbnails, with prev/next navigation. #}
 <dialog id="image-lightbox" class="lightbox">
   <button type="button" class="lightbox-nav lightbox-prev" aria-label="Previous image">&lsaquo;</button>
@@ -154,4 +165,7 @@
 <script src="/static/attachments.js?v={{ static_version() }}"></script>
 <script src="/static/links.js?v={{ static_version() }}"></script>
 <script src="/static/image_gallery.js?v={{ static_version() }}"></script>
+{% if is_admin %}
+<script src="/static/component_edit.js?v={{ static_version() }}"></script>
+{% endif %}
 {% endblock %}

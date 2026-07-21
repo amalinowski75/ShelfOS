@@ -521,6 +521,29 @@ export function typePageFixture(types = [{ id: 1, name: "resistor" }]) {
     </template>`;
 }
 
+// The admin-only "Edit component" dialog (mirrors _component_edit_dialog.html) plus
+// its trigger button. Scalar fields are pre-filled as the server would render them;
+// component_edit.js fills #component-edit-params from the live values.
+export function componentEditFixture() {
+  return `
+    <button type="button" id="component-edit-btn"></button>
+    <dialog id="component-edit-dialog" data-component-id="5" data-type-id="3">
+      <form id="component-edit-form">
+        <span class="mono">R-1</span>
+        <input name="manufacturer" value="YAGEO" />
+        <input name="package" value="0402" />
+        <select name="mounting_type">
+          <option value="Other">Other</option>
+          <option value="SMT" selected>SMT</option>
+        </select>
+        <input name="notes" value="hi" />
+        <div class="params" id="component-edit-params"></div>
+        <p id="component-edit-error" hidden></p>
+        <button type="submit"></button>
+      </form>
+    </dialog>`;
+}
+
 // Parse the JSON body of the Nth fetch call.
 export function fetchBody(fetchMock, call = 0) {
   return JSON.parse(fetchMock.mock.calls[call][1].body);

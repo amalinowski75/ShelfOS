@@ -24,6 +24,12 @@ FIELD_DELETED: Final = "deleted"
 FIELD_LOCATION_ID: Final = "location_id"
 FIELD_IS_FINALIZED: Final = "is_finalized"
 FIELD_TOTAL_GROSS: Final = "total_gross"
+# A component's editable scalar fields (admin edit, §12). Type and MPN are
+# immutable, so they have no audit field.
+FIELD_MANUFACTURER: Final = "manufacturer"
+FIELD_PACKAGE: Final = "package"
+FIELD_MOUNTING_TYPE: Final = "mounting_type"
+FIELD_NOTES: Final = "notes"
 
 _PARAMETER_PREFIX: Final = "parameter:"
 _QUANTITY_PREFIX: Final = "quantity@location:"

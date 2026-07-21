@@ -94,6 +94,29 @@ class ComponentCreate(BaseModel):
     parameters: list[ParameterValueSet] = Field(default_factory=list)
 
 
+class ParameterValueEdit(BaseModel):
+    parameter_definition_id: int
+    # A null (or blank) value clears the parameter; otherwise it is set.
+    value: ParameterValue | None = None
+
+
+class ComponentUpdate(BaseModel):
+    """Admin edit of a component (§12). Type and MPN are immutable — omitted here so
+    they can't be changed; the scalar fields and parameter values are replaced.
+
+    The scalar fields are REQUIRED (no defaults): this replaces the full editable
+    set, so an omitted field is a 422, never a silent wipe. A field may still be
+    explicitly ``null`` to clear it. ``parameters`` is the full effective set the
+    dialog renders; an empty list leaves parameters untouched.
+    """
+
+    manufacturer: str | None
+    package: str | None
+    mounting_type: MountingType
+    notes: str | None
+    parameters: list[ParameterValueEdit] = Field(default_factory=list)
+
+
 class LocationCreate(BaseModel):
     type: LocationType
     name: str

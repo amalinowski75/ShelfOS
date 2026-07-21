@@ -490,12 +490,16 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
   * { transition: none !important; }
 }
 
-/* A panel card header: the title and its "+ Add" button on one row. */
+/* A panel card header: the title and its "+ Add"/"Edit" button on one row. */
 .widget-head {
   display: flex; align-items: center; justify-content: space-between;
   gap: 10px; margin-bottom: 14px;
 }
 .widget-head h2 { margin: 0; }
+
+/* The immutable Type/MPN shown at the top of the edit dialog. */
+.edit-readonly { display: flex; gap: 20px; }
+.edit-readonly .field span { font-size: 14px; padding: 2px 0; }
 
 /* ---------- attachments panel (§10) ---------- */
 /* The add form lives in a dialog now (dialog form supplies the column layout), so
