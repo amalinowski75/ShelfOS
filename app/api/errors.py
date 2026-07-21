@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
 from app.services.errors import (
+    DuplicateComponentError,
     InsufficientStockError,
     InvoiceFinalizedError,
     NotFoundError,
@@ -37,6 +38,17 @@ def register_error_handlers(app: FastAPI) -> None:
 
     for error_type, status_code in _STATUS_BY_ERROR:
         app.add_exception_handler(error_type, make_handler(status_code))
+
+    async def duplicate_handler(_request: Request, exc: Exception) -> JSONResponse:
+        # A duplicate carries the existing component's id so the client can link to
+        # it, not just show text. 409 Conflict — it's an existing-resource clash.
+        assert isinstance(exc, DuplicateComponentError)
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": str(exc), "existing_id": exc.existing_id},
+        )
+
+    app.add_exception_handler(DuplicateComponentError, duplicate_handler)
 
     async def integrity_handler(_request: Request, _exc: Exception) -> JSONResponse:
         # A DB constraint violation that slipped past an app-level check — e.g.

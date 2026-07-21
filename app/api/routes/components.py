@@ -10,6 +10,7 @@ from app.api.schemas import ComponentCreate, ParameterValueSet
 from app.auth.deps import current_user_id
 from app.models.component import Component, ComponentParameter
 from app.services import component_service as cs
+from app.services.errors import DuplicateComponentError
 
 router = APIRouter(prefix="/api/components", tags=["components"])
 
@@ -20,6 +21,24 @@ def create_component(
     session: Session = Depends(get_session),
     user_id: int = Depends(current_user_id),
 ) -> Component:
+    # Refuse a re-add of a part already in inventory (same MPN + manufacturer). The
+    # lookup lives in the service so it stays testable and reusable; enforcement is
+    # here rather than in the service so demo-data seeding and direct-service tests,
+    # which legitimately create bare/duplicate rows, aren't blocked. This is a
+    # best-effort app-level check (like the type/parameter-name uniqueness checks) —
+    # there's no DB unique constraint, so two truly-concurrent creates could race;
+    # acceptable for this app's single-writer usage.
+    existing = cs.find_duplicate_component(
+        session, mpn=payload.mpn, manufacturer=payload.manufacturer
+    )
+    if existing is not None:
+        mpn = (payload.mpn or "").strip()
+        manufacturer = (payload.manufacturer or "").strip()
+        origin = f" from {manufacturer}" if manufacturer else ""
+        raise DuplicateComponentError(
+            f"A component with MPN {mpn}{origin} already exists.",
+            existing_id=existing.id,  # type: ignore[arg-type]
+        )
     return cs.create_component_with_values(
         session,
         payload.type_id,

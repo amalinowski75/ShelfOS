@@ -93,16 +93,9 @@ function frameTable(table) {
   fit();
 }
 
-// A readable message from a failed JSON API response. Tolerates a non-JSON body
-// (proxy/500 HTML, network error) and FastAPI's list-shaped 422 `detail` so the
-// user never sees an unhandled rejection or "[object Object]".
-async function errorMessage(resp, fallback = "Request failed") {
-  let body;
-  try {
-    body = await resp.json();
-  } catch {
-    return fallback;
-  }
+// A readable message from an already-parsed API error body. Tolerates FastAPI's
+// list-shaped 422 `detail` so the user never sees "[object Object]".
+function errorTextFromBody(body, fallback = "Request failed") {
   const detail = body?.detail;
   if (typeof detail === "string") return detail;
   if (Array.isArray(detail)) {
@@ -113,6 +106,20 @@ async function errorMessage(resp, fallback = "Request failed") {
     if (joined) return joined;
   }
   return fallback;
+}
+
+// A readable message from a failed JSON API response. Tolerates a non-JSON body
+// (proxy/500 HTML, network error). Use when only the text is needed; when the
+// caller also needs a structured field (e.g. existing_id), read the body itself
+// and call errorTextFromBody.
+async function errorMessage(resp, fallback = "Request failed") {
+  let body;
+  try {
+    body = await resp.json();
+  } catch {
+    return fallback;
+  }
+  return errorTextFromBody(body, fallback);
 }
 
 // Every dialog closes via a [data-close] button; wire them once for the page.

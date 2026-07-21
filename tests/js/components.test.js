@@ -101,6 +101,30 @@ describe("app.js — new component", () => {
     const error = document.getElementById("component-error");
     expect(error.hidden).toBe(false);
     expect(error.textContent).toBe("duplicate");
+    expect(error.querySelector("a")).toBeNull(); // a plain error has no link
+  });
+
+  it("links to the existing component when create is a duplicate", async () => {
+    const dupImpl = (url, opts) =>
+      url === "/api/components" && opts?.method === "POST"
+        ? Promise.resolve({
+            ok: false,
+            json: async () => ({
+              detail: "A component with MPN R-100 from YAGEO already exists.",
+              existing_id: 42,
+            }),
+          })
+        : fetchImpl(url, opts);
+    const { document } = await openWithType(dupImpl);
+    fire(document.getElementById("component-form"), "submit");
+    await tick();
+
+    const error = document.getElementById("component-error");
+    expect(error.hidden).toBe(false);
+    expect(error.textContent).toContain("already exists");
+    const link = error.querySelector("a");
+    expect(link).toBeTruthy();
+    expect(link.getAttribute("href")).toBe("/components/42");
   });
 
   it("ignores a second submit while the create is in flight", async () => {

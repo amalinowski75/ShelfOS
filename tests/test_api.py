@@ -917,3 +917,82 @@ def test_change_password_requires_authentication(anon_client: TestClient) -> Non
         json={"current_password": "x", "new_password": "y"},
     )
     assert resp.status_code == 401
+
+
+def _resistor_type_id(client: TestClient) -> int:
+    return client.post("/api/types", json={"name": "resistor"}).json()["id"]
+
+
+def test_create_duplicate_component_is_blocked_with_a_link(client: TestClient) -> None:
+    type_id = _resistor_type_id(client)
+    first = client.post(
+        "/api/components",
+        json={"type_id": type_id, "mpn": "R-100", "manufacturer": "YAGEO"},
+    )
+    assert first.status_code == 201
+    existing_id = first.json()["id"]
+
+    # A second create with the same (MPN, manufacturer) — any case — is refused.
+    dup = client.post(
+        "/api/components",
+        json={"type_id": type_id, "mpn": "r-100", "manufacturer": "yageo"},
+    )
+    assert dup.status_code == 409  # Conflict
+    body = dup.json()
+    assert body["existing_id"] == existing_id  # so the UI can link to it
+    assert "already exists" in body["detail"]
+
+
+def test_same_mpn_different_manufacturer_is_allowed(client: TestClient) -> None:
+    type_id = _resistor_type_id(client)
+    client.post(
+        "/api/components",
+        json={"type_id": type_id, "mpn": "R-100", "manufacturer": "YAGEO"},
+    )
+    other = client.post(
+        "/api/components",
+        json={"type_id": type_id, "mpn": "R-100", "manufacturer": "TDK"},
+    )
+    assert other.status_code == 201
+
+
+def test_components_without_an_mpn_do_not_collide(client: TestClient) -> None:
+    type_id = _resistor_type_id(client)
+    a = client.post("/api/components", json={"type_id": type_id})
+    b = client.post("/api/components", json={"type_id": type_id})
+    assert a.status_code == 201 and b.status_code == 201  # two MPN-less parts coexist
+
+
+def test_duplicate_check_ignores_case_whitespace_and_blank_manufacturer(
+    client: TestClient,
+) -> None:
+    type_id = _resistor_type_id(client)
+    # An empty-string manufacturer normalises to None, same as omitting it.
+    client.post(
+        "/api/components",
+        json={"type_id": type_id, "mpn": "R-1", "manufacturer": ""},
+    )
+    # A whitespace-padded, differently-cased re-add of the same blank-manufacturer
+    # part is still caught.
+    dup = client.post(
+        "/api/components",
+        json={"type_id": type_id, "mpn": "  r-1  "},
+    )
+    assert dup.status_code == 409
+
+
+def test_a_deleted_component_frees_its_mpn_for_re_add(client: TestClient) -> None:
+    type_id = _resistor_type_id(client)
+    created = client.post(
+        "/api/components",
+        json={"type_id": type_id, "mpn": "R-2", "manufacturer": "YAGEO"},
+    ).json()
+    # After the part is deleted (admin), the same (MPN, manufacturer) may be added
+    # again — the duplicate check must not count a removed component. (The
+    # deleted_at filter itself is unit-tested against a soft-deleted row.)
+    assert client.delete(f"/api/admin/components/{created['id']}").status_code == 204
+    again = client.post(
+        "/api/components",
+        json={"type_id": type_id, "mpn": "R-2", "manufacturer": "YAGEO"},
+    )
+    assert again.status_code == 201

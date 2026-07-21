@@ -800,3 +800,105 @@ def test_create_component_with_values_skips_audit_without_user(
         audit.list_entries(session, entity_type="component", entity_id=component.id)
         == []
     )
+
+
+def test_find_duplicate_component_matches_case_insensitively(session: Session) -> None:
+    ctype = cs.create_type(session, "resistor")
+    cs.create_component(session, ctype.id, mpn="R-100", manufacturer="YAGEO")
+    # Same pair in any case is a duplicate.
+    assert (
+        cs.find_duplicate_component(session, mpn="r-100", manufacturer="yageo")
+        is not None
+    )
+    # A different manufacturer with the same MPN is NOT a duplicate.
+    assert (
+        cs.find_duplicate_component(session, mpn="R-100", manufacturer="TDK") is None
+    )
+
+
+def test_find_duplicate_component_exempts_a_blank_mpn(session: Session) -> None:
+    ctype = cs.create_type(session, "resistor")
+    cs.create_component(session, ctype.id, manufacturer="YAGEO")  # no MPN
+    # A part with no MPN can't be de-duplicated — two must be allowed to coexist.
+    for mpn in (None, "", "   "):
+        assert (
+            cs.find_duplicate_component(session, mpn=mpn, manufacturer="YAGEO") is None
+        )
+
+
+def test_find_duplicate_component_is_manufacturer_null_aware(session: Session) -> None:
+    ctype = cs.create_type(session, "resistor")
+    cs.create_component(session, ctype.id, mpn="C-5")  # MPN, no manufacturer
+    # A blank manufacturer matches only another blank one.
+    assert (
+        cs.find_duplicate_component(session, mpn="C-5", manufacturer=None) is not None
+    )
+    assert cs.find_duplicate_component(session, mpn="C-5", manufacturer="TDK") is None
+    # …and a set manufacturer does not match the MPN-only row.
+    cs.create_component(session, ctype.id, mpn="C-6", manufacturer="TDK")
+    assert cs.find_duplicate_component(session, mpn="C-6", manufacturer=None) is None
+
+
+def test_find_duplicate_component_folds_non_ascii_case(session: Session) -> None:
+    # SQLite's lower() is ASCII-only, so folding must happen in Python or an
+    # uppercase-accented manufacturer escapes the check.
+    ctype = cs.create_type(session, "resistor")
+    cs.create_component(session, ctype.id, mpn="R-1", manufacturer="ÉCLAIR")
+    assert (
+        cs.find_duplicate_component(session, mpn="R-1", manufacturer="éclair")
+        is not None
+    )
+
+
+def test_find_duplicate_component_catches_legacy_non_space_whitespace(
+    session: Session,
+) -> None:
+    from sqlalchemy import text
+
+    # A row created before normalisation (or by a direct client) with tab/NBSP
+    # padding. SQLite's trim() strips only 0x20, so the stored side must be folded
+    # in Python for this to be caught.
+    ctype = cs.create_type(session, "resistor")
+    session.connection().execute(
+        text(
+            "INSERT INTO components (type_id, mpn, manufacturer, mounting_type, "
+            "status) VALUES (:t, :m, NULL, 'Other', 'active')"
+        ),
+        {"t": ctype.id, "m": "\tR-9 "},  # tab + non-breaking space
+    )
+    session.commit()
+    assert (
+        cs.find_duplicate_component(session, mpn="R-9", manufacturer=None) is not None
+    )
+
+
+def test_create_normalises_blank_and_whitespace_mpn_manufacturer(
+    session: Session,
+) -> None:
+    ctype = cs.create_type(session, "resistor")
+    component = cs.create_component(
+        session, ctype.id, mpn="  R-100  ", manufacturer="   "
+    )
+    # Trimmed, and a whitespace-only manufacturer becomes None — so it can't slip
+    # past the de-dup, which compares trimmed values.
+    assert component.mpn == "R-100"
+    assert component.manufacturer is None
+    # A blank ("" / whitespace) manufacturer matches the normalised row.
+    assert (
+        cs.find_duplicate_component(session, mpn=" r-100 ", manufacturer="")
+        is not None
+    )
+
+
+def test_find_duplicate_component_ignores_soft_deleted(session: Session) -> None:
+    from datetime import UTC, datetime
+
+    ctype = cs.create_type(session, "resistor")
+    component = cs.create_component(session, ctype.id, mpn="R-9", manufacturer="YAGEO")
+    component.deleted_at = datetime.now(UTC)
+    session.add(component)
+    session.commit()
+    # A deleted part doesn't block re-adding it.
+    assert (
+        cs.find_duplicate_component(session, mpn="R-9", manufacturer="YAGEO") is None
+    )

@@ -398,8 +398,11 @@ def create_component_with_values(
     require_entity(session, ComponentType, type_id, "component type")
     component = Component(
         type_id=type_id,
-        manufacturer=manufacturer,
-        mpn=mpn,
+        # Normalise so blanks and surrounding whitespace never reach the store: a
+        # stray " " or "" would otherwise slip past the (MPN, manufacturer) de-dup
+        # (which compares trimmed) and confuse case/whitespace-sensitive lookups.
+        manufacturer=_blank_to_none(manufacturer),
+        mpn=_blank_to_none(mpn),
         package=package,
         mounting_type=mounting_type,
         notes=notes,
@@ -505,6 +508,55 @@ def find_components_by_mpn(session: Session, mpn: str) -> list[Component]:
             .order_by(col(Component.id))
         ).all()
     )
+
+
+def _blank_to_none(text: str | None) -> str | None:
+    """A trimmed non-empty string, or None for a blank/whitespace-only value."""
+    if text is None:
+        return None
+    stripped = text.strip()
+    return stripped or None
+
+
+def _match_key(text: str | None) -> str:
+    """A trimmed, case-folded key for duplicate matching (``None`` → ``""``)."""
+    return (text or "").strip().casefold()
+
+
+def find_duplicate_component(
+    session: Session, *, mpn: str | None, manufacturer: str | None
+) -> Component | None:
+    """The existing non-deleted component with the same (MPN, manufacturer), or None.
+
+    Both are matched case-insensitively and whitespace-insensitively. A blank MPN is
+    exempt: a part with no MPN can't be de-duplicated (generic passives, BOM lines
+    without a part number), and two such parts must be allowed to coexist. The
+    manufacturer is matched null-aware — a blank manufacturer matches only other
+    blank ones (NULL *or* a legacy empty string) — so the same MPN from two different
+    manufacturers is not a duplicate.
+
+    Normalisation is done in Python on both sides, deliberately not in SQL: SQLite's
+    built-in ``lower()``/``trim()`` are ASCII- and space-only, so a non-ASCII
+    manufacturer ("ÉCLAIR" vs "éclair") or a tab/NBSP-padded legacy value would
+    escape a DB-folded comparison while a Python one catches it. This runs once per
+    create (not per row of a listing), so scanning the component table is fine.
+    """
+    if _blank_to_none(mpn) is None:
+        return None
+    mpn_key, mfr_key = _match_key(mpn), _match_key(manufacturer)
+    candidates = session.exec(
+        select(Component)
+        .where(col(Component.deleted_at).is_(None))
+        .where(col(Component.mpn).is_not(None))
+        .order_by(col(Component.id))
+    )
+    for component in candidates:
+        if (
+            _match_key(component.mpn) == mpn_key
+            and _match_key(component.manufacturer) == mfr_key
+        ):
+            return component
+    return None
 
 
 def list_types(session: Session) -> list[ComponentType]:

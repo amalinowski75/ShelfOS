@@ -25,3 +25,15 @@ class InsufficientStockError(ShelfOSError):
 
 class InvoiceFinalizedError(ShelfOSError):
     """An attempt was made to modify a finalized (read-only) invoice."""
+
+
+class DuplicateComponentError(ShelfOSError):
+    """A component with the same (MPN, manufacturer) already exists.
+
+    Carries the existing component's id so the API can hand the client a link to
+    it rather than only a message.
+    """
+
+    def __init__(self, message: str, *, existing_id: int) -> None:
+        super().__init__(message)
+        self.existing_id = existing_id

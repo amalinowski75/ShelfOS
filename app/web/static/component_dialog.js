@@ -160,6 +160,27 @@
     }
   }
 
+  // Render a failed-create response. A duplicate (409) carries `existing_id`, so
+  // the message gets a clickable link to the component that already exists; every
+  // other failure is plain text. Built with DOM nodes (not innerHTML) so the
+  // server text can't inject markup.
+  function showCreateError(body) {
+    errorEl.replaceChildren();
+    // Number(...) guards the href: existing_id is always a server-issued int, but
+    // never build a path from an unchecked value.
+    const existingId = body && Number(body.existing_id);
+    if (existingId) {
+      errorEl.append(document.createTextNode(errorTextFromBody(body) + " "));
+      const link = document.createElement("a");
+      link.href = `/components/${existingId}`;
+      link.textContent = "View the existing component";
+      errorEl.append(link);
+    } else {
+      errorEl.textContent = errorTextFromBody(body, "Could not create the component.");
+    }
+    errorEl.hidden = false;
+  }
+
   // Ignore a re-entrant submit while a create is in flight, so a fast
   // double-click can't POST two components.
   let submitting = false;
@@ -191,8 +212,7 @@
           body,
         });
         if (!resp.ok) {
-          errorEl.textContent = await errorMessage(resp);
-          errorEl.hidden = false;
+          showCreateError(await resp.json().catch(() => null));
           return;
         }
         created = await resp.json();
