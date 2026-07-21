@@ -28,6 +28,8 @@ function setupLinks(widget) {
   const list = widget.querySelector(".link-list");
   const empty = widget.querySelector(".link-empty");
   const form = widget.querySelector(".link-form");
+  const dialog = widget.querySelector(".link-dialog");
+  const addBtn = widget.querySelector(".link-add");
   const feed =
     `/api/links?entity_type=${encodeURIComponent(entityType)}` +
     `&entity_id=${encodeURIComponent(entityId)}`;
@@ -105,6 +107,16 @@ function setupLinks(widget) {
     const error = form.querySelector(".link-error");
     let submitting = false;
 
+    // The form lives in a dialog opened from the card header, so the panel stays a
+    // clean list. Open with a fresh form; the shared [data-close] handler closes it.
+    if (addBtn && dialog) {
+      addBtn.addEventListener("click", () => {
+        form.reset();
+        error.hidden = true;
+        dialog.showModal();
+      });
+    }
+
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       if (submitting) return;
@@ -135,6 +147,7 @@ function setupLinks(widget) {
           if (resp.ok) {
             form.reset();
             error.hidden = true;
+            dialog?.close();
             await load();
           } else {
             error.textContent = await errorMessage(resp);

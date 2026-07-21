@@ -155,44 +155,54 @@ export function usersPageFixture() {
 }
 
 // The reusable attachments panel (mirrors _attachments.html). `withForm` renders
-// the writer-only upload form; omit it for the read-only view.
+// the writer-only "+ Add" button and its dialog form; omit it for the read-only view.
 export function attachmentsWidgetFixture({ withForm = true } = {}) {
-  const form = withForm
-    ? `<form class="attachment-form">
+  const addBtn = withForm
+    ? `<button type="button" class="btn attachment-add"></button>`
+    : "";
+  const dialog = withForm
+    ? `<dialog class="attachment-dialog"><form class="attachment-form">
          <input type="file" name="file" />
          <input type="url" name="url" />
          <select name="kind"><option value="datasheet">datasheet</option></select>
          <input name="notes" />
-         <button type="submit"></button>
          <p class="error attachment-error" hidden></p>
-       </form>`
+         <button type="button" data-close></button>
+         <button type="submit"></button>
+       </form></dialog>`
     : "";
   return `
     <div class="attachments-widget" data-entity-type="component" data-entity-id="7">
+      <div class="widget-head"><h2>Attachments</h2>${addBtn}</div>
       <ul class="attachment-list"></ul>
       <p class="empty attachment-empty" hidden></p>
-      ${form}
+      ${dialog}
     </div>`;
 }
 
 // The reusable external-links panel (mirrors _links.html). `withForm` renders the
-// writer-only add form; omit it for the read-only view.
+// writer-only "+ Add" button and its dialog form; omit it for the read-only view.
 export function linksWidgetFixture({ withForm = true } = {}) {
-  const form = withForm
-    ? `<form class="link-form">
+  const addBtn = withForm
+    ? `<button type="button" class="btn link-add"></button>`
+    : "";
+  const dialog = withForm
+    ? `<dialog class="link-dialog"><form class="link-form">
          <input type="url" name="url" />
          <select name="kind"><option value="shop">shop</option></select>
          <input name="label" />
          <input name="notes" />
-         <button type="submit"></button>
          <p class="error link-error" hidden></p>
-       </form>`
+         <button type="button" data-close></button>
+         <button type="submit"></button>
+       </form></dialog>`
     : "";
   return `
     <div class="links-widget" data-entity-type="component" data-entity-id="7">
+      <div class="widget-head"><h2>Links</h2>${addBtn}</div>
       <ul class="link-list"></ul>
       <p class="empty link-empty" hidden></p>
-      ${form}
+      ${dialog}
     </div>`;
 }
 

@@ -186,6 +186,9 @@ describe("attachments.js", () => {
     expect(document.querySelectorAll(".attachment-item")).toHaveLength(1);
     expect(document.querySelector(".attachment-item button")).toBeNull();
     expect(document.querySelector(".attachment-form")).toBeNull();
+    // The add affordance is writer-only too — no "+ Add" button, no dialog.
+    expect(document.querySelector(".attachment-add")).toBeNull();
+    expect(document.querySelector(".attachment-dialog")).toBeNull();
   });
 
   function submitForm(document, window) {
@@ -193,6 +196,60 @@ describe("attachments.js", () => {
       new window.Event("submit", { cancelable: true, bubbles: true }),
     );
   }
+
+  it("opens the add dialog from the + Add button", async () => {
+    const { document } = loadPage(attachmentsWidgetFixture(), SCRIPTS, {
+      fetchImpl: feedImpl([]),
+    });
+    await tick();
+    const dialog = document.querySelector(".attachment-dialog");
+    dialog.showModal = vi.fn();
+    document.querySelector(".attachment-add").click();
+    expect(dialog.showModal).toHaveBeenCalled();
+  });
+
+  it("closes the add dialog after a successful add", async () => {
+    const { window, document } = loadPage(attachmentsWidgetFixture(), SCRIPTS, {
+      fetchImpl: feedImpl([]),
+    });
+    await tick();
+    const dialog = document.querySelector(".attachment-dialog");
+    dialog.close = vi.fn();
+    const form = document.querySelector(".attachment-form");
+    form.elements.url.value = "https://example.com/d.pdf";
+    submitForm(document, window);
+    await tick();
+    expect(dialog.close).toHaveBeenCalled();
+  });
+
+  it("keeps the dialog open and shows the error when the add fails", async () => {
+    const impl = (url, opts) =>
+      (opts?.method || "GET") === "POST"
+        ? Promise.resolve({ ok: false, json: async () => ({ detail: "too big" }) })
+        : feedImpl([])(url, opts);
+    const { window, document } = loadPage(attachmentsWidgetFixture(), SCRIPTS, {
+      fetchImpl: impl,
+    });
+    await tick();
+    const dialog = document.querySelector(".attachment-dialog");
+    dialog.close = vi.fn();
+    document.querySelector(".attachment-form").elements.url.value = "https://x/d.pdf";
+    submitForm(document, window);
+    await tick();
+    expect(dialog.close).not.toHaveBeenCalled(); // stays open to fix and retry
+    expect(document.querySelector(".attachment-error").hidden).toBe(false);
+  });
+
+  it("closes the dialog via the shared [data-close] control", async () => {
+    const { document } = loadPage(attachmentsWidgetFixture(), SCRIPTS, {
+      fetchImpl: feedImpl([]),
+    });
+    await tick();
+    const dialog = document.querySelector(".attachment-dialog");
+    dialog.close = vi.fn();
+    document.querySelector(".attachment-dialog [data-close]").click();
+    expect(dialog.close).toHaveBeenCalled();
+  });
 
   it("fetches from a URL (JSON + CSRF) when only the URL field is filled", async () => {
     const { window, document, fetchMock } = loadPage(attachmentsWidgetFixture(), SCRIPTS, {

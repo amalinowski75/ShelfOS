@@ -1,6 +1,7 @@
-{# Reusable external-links panel. Rows load from /api/links via links.js; the add
-   form only renders for writers. `can_write` gates the form here; links.js gates
-   the per-row Delete button on the same role (canWrite from shared.js).
+{# Reusable external-links panel. Rows load from /api/links via links.js. For
+   writers the card header carries a "+ Add" button that opens the add-link dialog
+   (kept out of the card so the panel stays a clean list); links.js gates the
+   per-row Delete button on the same role.
 
    Distinct from _attachments.html: a link is a URL the browser opens, not a stored
    file — so there is no file input, no download, just a categorized clickable URL. #}
@@ -8,20 +9,48 @@
 <div class="card card-pad links-widget"
      data-entity-type="{{ entity_type }}"
      data-entity-id="{{ entity_id }}">
-  <h2>Links</h2>
+  <div class="widget-head">
+    <h2>Links</h2>
+    {% if can_write %}
+    <button type="button" class="btn btn-secondary btn-sm link-add">+ Add</button>
+    {% endif %}
+  </div>
   <ul class="link-list"></ul>
   <p class="empty link-empty" hidden>No links.</p>
   {% if can_write %}
-  <form class="link-form">
-    <input type="url" name="url" class="control" placeholder="https://…" required />
-    <select name="kind" class="control">
-      {% for kind in kinds %}<option value="{{ kind }}">{{ kind }}</option>{% endfor %}
-    </select>
-    <input class="control" name="label" placeholder="label (optional)" />
-    <input class="control" name="notes" placeholder="notes (optional)" />
-    <button type="submit" class="btn btn-secondary btn-sm">Add</button>
-    <p class="error link-error" hidden></p>
-  </form>
+  <dialog class="link-dialog">
+    <article>
+      <header>
+        <strong>Add link</strong>
+        <button type="button" class="close" aria-label="Close" data-close></button>
+      </header>
+      <form class="link-form">
+        <div class="field">
+          <label>URL</label>
+          <input type="url" name="url" class="control" placeholder="https://…" required />
+        </div>
+        <div class="field">
+          <label>Kind</label>
+          <select name="kind" class="control">
+            {% for kind in kinds %}<option value="{{ kind }}">{{ kind }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label>Label</label>
+          <input class="control" name="label" placeholder="optional" />
+        </div>
+        <div class="field">
+          <label>Notes</label>
+          <input class="control" name="notes" placeholder="optional" />
+        </div>
+        <p class="error link-error" hidden></p>
+        <footer>
+          <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+          <button type="submit" class="btn btn-primary">Add</button>
+        </footer>
+      </form>
+    </article>
+  </dialog>
   {% endif %}
 </div>
 {% endmacro %}

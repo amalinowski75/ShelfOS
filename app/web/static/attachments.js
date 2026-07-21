@@ -9,6 +9,8 @@ function setupAttachments(widget) {
   const list = widget.querySelector(".attachment-list");
   const empty = widget.querySelector(".attachment-empty");
   const form = widget.querySelector(".attachment-form");
+  const dialog = widget.querySelector(".attachment-dialog");
+  const addBtn = widget.querySelector(".attachment-add");
   const feed =
     `/api/attachments?entity_type=${encodeURIComponent(entityType)}` +
     `&entity_id=${encodeURIComponent(entityId)}`;
@@ -84,6 +86,16 @@ function setupAttachments(widget) {
     const error = form.querySelector(".attachment-error");
     let submitting = false;
 
+    // The form lives in a dialog opened from the card header, so the panel stays a
+    // clean list. Open with a fresh form; the shared [data-close] handler closes it.
+    if (addBtn && dialog) {
+      addBtn.addEventListener("click", () => {
+        form.reset();
+        error.hidden = true;
+        dialog.showModal();
+      });
+    }
+
     function uploadFile() {
       // FormData drives the multipart request; do NOT set Content-Type — the
       // browser adds it with the correct boundary. (An empty url field rides
@@ -139,6 +151,7 @@ function setupAttachments(widget) {
           if (resp.ok) {
             form.reset();
             error.hidden = true;
+            dialog?.close();
             await load(true);
           } else {
             error.textContent = await errorMessage(resp);
