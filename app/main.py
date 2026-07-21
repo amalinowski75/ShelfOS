@@ -26,6 +26,7 @@ from app.api.routes import (
     boms,
     components,
     invoices,
+    links,
     locations,
     shops,
     stock,
@@ -50,6 +51,7 @@ _PROTECTED_ROUTERS = (
     attachments,
     boms,
     shops,
+    links,
 )
 
 

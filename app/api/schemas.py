@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.models.enums import (
     AttachmentKind,
     ContainerType,
+    LinkKind,
     LocationType,
     MountingType,
     ParameterDataType,
@@ -241,6 +242,35 @@ class AttachmentFromUrl(BaseModel):
     url: str = Field(max_length=2048)
     kind: AttachmentKind = AttachmentKind.OTHER
     notes: str | None = None
+
+
+class LinkCreate(BaseModel):
+    """Attach an external clickable URL to an entity (a link, not a stored file)."""
+
+    entity_type: str
+    entity_id: int
+    kind: LinkKind = LinkKind.OTHER
+    url: str = Field(max_length=2048)
+    label: str | None = None
+    notes: str | None = None
+
+
+class LinkRead(BaseModel):
+    """External-link metadata for the API.
+
+    Unlike ``AttachmentRead``, the ``url`` IS returned — a link is the URL, and the
+    client renders it as a clickable anchor.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    entity_type: str
+    entity_id: int
+    kind: LinkKind
+    url: str
+    label: str | None
+    notes: str | None
 
 
 class ShopLookup(BaseModel):

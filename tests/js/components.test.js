@@ -433,32 +433,90 @@ describe("component_dialog.js — shop import", () => {
     ).toBe("");
   });
 
-  it("warns instead of failing silently when the datasheet can't be downloaded", async () => {
+  it("saves the shop URL the component was imported from as a link", async () => {
+    const { document, fetchMock } = loadPage(componentPageFixture(), SCRIPTS, {
+      fetchImpl: withLookup(PRODUCT),
+    });
+    await openAndImport(document); // pastes https://www.mouser.com/x
+    fire(document.getElementById("component-form"), "submit");
+    await tick();
+    const link = fetchMock.mock.calls.find(
+      (c) =>
+        c[0] === "/api/links" && JSON.parse(c[1].body).kind === "shop",
+    );
+    expect(link).toBeTruthy();
+    expect(JSON.parse(link[1].body)).toMatchObject({
+      entity_type: "component",
+      entity_id: 99,
+      url: "https://www.mouser.com/x",
+      kind: "shop",
+    });
+  });
+
+  it("saves the datasheet as a link when it can't be downloaded, and says so", async () => {
     // TME's document host answers a server-side GET with a Cloudflare challenge, so
-    // the attach 422s. A silently missing datasheet reads as "this part has none".
+    // the download 422s. The datasheet must not be lost: it becomes a link instead.
     const impl = (url, opts) =>
       url === "/api/attachments/from-url"
         ? Promise.resolve({ ok: false, json: async () => ({ detail: "nope" }) })
         : withLookup(PRODUCT)(url, opts);
+    const { document, fetchMock } = loadPage(componentPageFixture(), SCRIPTS, {
+      fetchImpl: impl,
+    });
+    await openAndImport(document);
+    fire(document.getElementById("component-form"), "submit");
+    await tick();
+
+    const link = fetchMock.mock.calls.find(
+      (c) =>
+        c[0] === "/api/links" && JSON.parse(c[1].body).kind === "datasheet",
+    );
+    expect(link).toBeTruthy();
+    expect(JSON.parse(link[1].body).url).toBe("https://x/ds.pdf");
+    const toast = document.querySelector(".toast");
+    expect(toast.textContent).toMatch(/saved as a link/);
+    // The component itself still exists.
+    expect(document.getElementById("component-dialog").open).toBe(false);
+  });
+
+  it("warns when the datasheet can be neither downloaded nor linked", async () => {
+    // Both the download and the link fallback fail — the datasheet is genuinely
+    // lost, and that must be reported rather than swallowed.
+    const impl = (url, opts) => {
+      if (url === "/api/attachments/from-url" || url === "/api/links") {
+        return Promise.resolve({ ok: false, json: async () => ({ detail: "no" }) });
+      }
+      return withLookup(PRODUCT)(url, opts);
+    };
     const { document } = loadPage(componentPageFixture(), SCRIPTS, { fetchImpl: impl });
     await openAndImport(document);
     fire(document.getElementById("component-form"), "submit");
     await tick();
     const toast = document.querySelector(".toast");
     expect(toast).toBeTruthy();
-    expect(toast.textContent).toMatch(/datasheet could not be downloaded/);
-    // The component itself still exists — only the datasheet was lost.
-    expect(document.getElementById("component-dialog").open).toBe(false);
+    expect(toast.textContent).toMatch(/couldn't save/);
+    expect(toast.textContent).toMatch(/datasheet/);
   });
 
-  it("shows no warning when the datasheet attaches", async () => {
-    const { document } = loadPage(componentPageFixture(), SCRIPTS, {
+  it("shows no warning and adds no datasheet link when the datasheet downloads", async () => {
+    const { document, fetchMock } = loadPage(componentPageFixture(), SCRIPTS, {
       fetchImpl: withLookup(PRODUCT),
     });
     await openAndImport(document);
     fire(document.getElementById("component-form"), "submit");
     await tick();
     expect(document.querySelector(".toast")).toBeNull();
+    // The datasheet was downloaded as a file, so no datasheet LINK is created…
+    const dsLink = fetchMock.mock.calls.find(
+      (c) => c[0] === "/api/links" && JSON.parse(c[1].body).kind === "datasheet",
+    );
+    expect(dsLink).toBeFalsy();
+    // …but the shop link is still saved.
+    expect(
+      fetchMock.mock.calls.some(
+        (c) => c[0] === "/api/links" && JSON.parse(c[1].body).kind === "shop",
+      ),
+    ).toBe(true);
   });
 
   it("shows an error when the lookup fails", async () => {

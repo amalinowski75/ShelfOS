@@ -84,6 +84,16 @@ class AttachmentKind(enum.StrEnum):
     OTHER = "other"
 
 
+class LinkKind(enum.StrEnum):
+    """Category of an external URL linked to an entity (a component's shop page,
+    product page, or a datasheet the vendor blocks from server-side download)."""
+
+    DATASHEET = "datasheet"
+    SHOP = "shop"
+    PRODUCT = "product"
+    OTHER = "other"
+
+
 class UserRole(enum.StrEnum):
     """Access role of a user (spec §18)."""
 
