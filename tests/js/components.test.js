@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { loadPage, tick, CSRF, componentPageFixture } from "./harness.js";
+import {
+  loadPage,
+  tick,
+  CSRF,
+  componentPageFixture,
+  componentDialogFixture,
+} from "./harness.js";
 
 // The dialog logic lives in component_dialog.js; app.js only wires the button.
 const SCRIPTS = ["shared.js", "component_dialog.js", "app.js"];
@@ -211,6 +217,56 @@ describe("app.js — new component", () => {
       document.querySelectorAll("#component-params [data-definition-id]").length,
     ).toBe(0);
     expect(document.getElementById("component-type").value).toBe("");
+  });
+
+  it("adds a type via the New Type dialog and selects it in the component dialog", async () => {
+    // The new type (id 7) has its own parameter definition, so we can assert the
+    // component dialog rendered its fields — not just that it was selected.
+    const impl = (url, opts) => {
+      if (url === "/api/types" && opts?.method === "POST") {
+        return Promise.resolve({ ok: true, json: async () => ({ id: 7, name: "capacitor" }) });
+      }
+      if (url === "/api/types/7/parameters") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [
+            { id: 30, label: "Capacitance", data_type: "number", unit: "F", enum_values: [] },
+          ],
+        });
+      }
+      return fetchImpl(url, opts);
+    };
+    const { document } = loadPage(componentPageFixture(), SCRIPTS, { fetchImpl: impl });
+
+    document.getElementById("new-component-btn").click();
+    const newTypeBtn = document.getElementById("component-new-type");
+    expect(newTypeBtn.hidden).toBe(false); // the type builder is on this page
+    newTypeBtn.click(); // opens the New Type dialog (stacked)
+
+    const typeForm = document.getElementById("type-form");
+    typeForm.querySelector('[name="type-name"]').value = "capacitor";
+    fire(typeForm, "submit");
+    await tick();
+
+    const select = document.getElementById("component-type");
+    const option = [...select.options].find((o) => o.value === "7");
+    expect(option).toBeTruthy();
+    expect(option.textContent).toBe("capacitor");
+    expect(select.value).toBe("7"); // the new type is selected…
+    // …and its parameter fields are loaded, ready to fill.
+    expect(
+      document.querySelector('#component-params [data-definition-id="30"]'),
+    ).toBeTruthy();
+  });
+
+  it("hides + New type where the page has no type builder", () => {
+    // The invoice add-line reuse: the component dialog is present, the New Type
+    // dialog is not, so the button must stay hidden.
+    const { document } = loadPage(componentDialogFixture(), [
+      "shared.js",
+      "component_dialog.js",
+    ]);
+    expect(document.getElementById("component-new-type").hidden).toBe(true);
   });
 
   it("loads cleanly when the create controls are absent (read-only)", () => {

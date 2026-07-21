@@ -21,12 +21,20 @@
       </div>
       <div class="field">
         <label>Type</label>
-        <select class="control" name="type_id" id="component-type" required>
-          <option value="">Select a type…</option>
-          {% for t in types %}
-          <option value="{{ t.id }}">{{ t.name }}</option>
-          {% endfor %}
-        </select>
+        {# The "+ New type" button is unhidden by component_dialog.js only where the
+           New Type dialog is on the page (the components list); it opens that dialog
+           and selects the type it creates. #}
+        <div class="type-row">
+          <select class="control" name="type_id" id="component-type" required>
+            <option value="">Select a type…</option>
+            {% for t in types %}
+            <option value="{{ t.id }}">{{ t.name }}</option>
+            {% endfor %}
+          </select>
+          <button type="button" class="btn btn-secondary btn-sm" id="component-new-type" hidden>
+            + New type
+          </button>
+        </div>
       </div>
       <div class="field">
         <label>Manufacturer</label>

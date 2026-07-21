@@ -369,6 +369,7 @@ export function componentPageFixture(types = [{ id: 1, name: "resistor" }]) {
       <select name="type_id" id="component-type">
         <option value="">Select a type…</option>${options}
       </select>
+      <button type="button" id="component-new-type" hidden></button>
       <input name="manufacturer" />
       <input name="mpn" />
       <input name="package" />
@@ -381,7 +382,45 @@ export function componentPageFixture(types = [{ id: 1, name: "resistor" }]) {
       <div id="component-params"></div>
       <p id="component-error" hidden></p>
       <button type="submit"></button>
-    </form></dialog>`;
+    </form></dialog>
+    ${_typeBuilderMarkup(options)}`;
+}
+
+// The New Type dialog + its param-row template and trigger button, as they sit on
+// the components page (index.html). Shared by the component and type fixtures.
+function _typeBuilderMarkup(options) {
+  return `
+    <button id="new-type-btn"></button>
+    <dialog id="type-dialog">
+      <form id="type-form">
+        <input name="type-name" />
+        <select name="parent-id"><option value="">None (top level)</option>${options}</select>
+        <button type="button" id="add-param"></button>
+        <p class="params-empty" id="params-empty"></p>
+        <div class="params" id="params"></div>
+        <p id="type-error" hidden></p>
+        <button type="submit"></button>
+      </form>
+      <p id="inherited-hint"></p>
+      <ul id="inherited-list"></ul>
+    </dialog>
+    <template id="param-row-template">
+      <div class="param-row">
+        <input name="p-name" />
+        <input name="p-label" />
+        <select name="p-data-type">
+          <option value="number">number</option>
+          <option value="text">text</option>
+          <option value="bool">bool</option>
+          <option value="enum">enum</option>
+        </select>
+        <input name="p-unit" />
+        <div class="param-enum" hidden><input name="p-enum" /></div>
+        <label><input type="checkbox" name="p-table" /></label>
+        <label><input type="checkbox" name="p-filter" /></label>
+        <button type="button" class="param-remove"></button>
+      </div>
+    </template>`;
 }
 
 // The shared "New component" dialog markup (mirrors _component_dialog.html),
@@ -395,6 +434,7 @@ export function componentDialogFixture(types = [{ id: 1, name: "resistor" }]) {
       <select name="type_id" id="component-type">
         <option value="">Select a type…</option>${options}
       </select>
+      <button type="button" id="component-new-type" hidden></button>
       <input name="manufacturer" />
       <input name="mpn" />
       <input name="package" />
