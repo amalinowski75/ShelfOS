@@ -230,7 +230,9 @@
       pendingDatasheetUrl = null;
       dialog.close();
       if (lost.length) {
-        showToast(`Component created, but couldn't save ${lost.join(" or ")}.`);
+        // "and", not "or": with both items lost, "or" would read as though one of
+        // them was saved.
+        showToast(`Component created, but couldn't save ${lost.join(" and ")}.`);
       } else if (datasheetLinked) {
         showToast(
           "Component created. Its datasheet couldn't be downloaded (the shop blocks " +

@@ -58,10 +58,16 @@ describe("links.js", () => {
     );
   });
 
-  it("renders a non-http(s) URL as inert text, never a live link", async () => {
-    // The server rejects these on create, but the renderer is the second layer:
-    // a bad row (however stored) must not become a live javascript: link.
-    const rows = [{ id: 1, url: "javascript:alert(1)", label: "click me", kind: "other" }];
+  // The server rejects these on create; the renderer is the second layer, so it must
+  // hold for a row that (however it got there) bypassed server validation — including
+  // the cases where the renderer's rule differs from the server's.
+  it.each([
+    ["a javascript: scheme", "javascript:alert(1)"],
+    ["a data: scheme", "data:text/html,<b>x</b>"],
+    ["a leading control char", "\x01https://x.io"],
+    ["a scheme-relative URL", "//evil.example.com"],
+  ])("renders %s as inert text, never a live link", async (_name, url) => {
+    const rows = [{ id: 1, url, label: "click me", kind: "other" }];
     const { document } = loadPage(linksWidgetFixture(), SCRIPTS, {
       fetchImpl: feedImpl(rows),
     });
@@ -69,6 +75,19 @@ describe("links.js", () => {
     const item = document.querySelector(".link-item");
     expect(item.querySelector("a")).toBeNull();
     expect(item.querySelector("span.cell-mono").textContent).toBe("click me");
+  });
+
+  it("still renders a mixed-case http(s) scheme as a live link", async () => {
+    // The renderer's check is case-insensitive, matching the browser (and the
+    // server, which lowercases the scheme in urlsplit) — so this must stay clickable.
+    const rows = [{ id: 1, url: "HTTPS://x.io/a", kind: "other" }];
+    const { document } = loadPage(linksWidgetFixture(), SCRIPTS, {
+      fetchImpl: feedImpl(rows),
+    });
+    await tick();
+    expect(document.querySelector(".link-item a").getAttribute("href")).toBe(
+      "HTTPS://x.io/a",
+    );
   });
 
   it("escapes url, label and notes", async () => {

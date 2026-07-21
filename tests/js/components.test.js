@@ -479,6 +479,40 @@ describe("component_dialog.js — shop import", () => {
     expect(document.getElementById("component-dialog").open).toBe(false);
   });
 
+  it("warns when the shop link can't be saved", async () => {
+    // Only the shop-link POST fails; the datasheet still downloads.
+    const impl = (url, opts) => {
+      if (url === "/api/links" && JSON.parse(opts.body).kind === "shop") {
+        return Promise.resolve({ ok: false, json: async () => ({ detail: "no" }) });
+      }
+      return withLookup(PRODUCT)(url, opts);
+    };
+    const { document } = loadPage(componentPageFixture(), SCRIPTS, { fetchImpl: impl });
+    await openAndImport(document);
+    fire(document.getElementById("component-form"), "submit");
+    await tick();
+    const toast = document.querySelector(".toast");
+    expect(toast.textContent).toMatch(/couldn't save the shop link/);
+  });
+
+  it("joins both losses with 'and', not 'or'", async () => {
+    // Both the shop link and the datasheet are lost — the message must not read as
+    // though one of them survived.
+    const impl = (url, opts) => {
+      if (url === "/api/links" || url === "/api/attachments/from-url") {
+        return Promise.resolve({ ok: false, json: async () => ({ detail: "no" }) });
+      }
+      return withLookup(PRODUCT)(url, opts);
+    };
+    const { document } = loadPage(componentPageFixture(), SCRIPTS, { fetchImpl: impl });
+    await openAndImport(document);
+    fire(document.getElementById("component-form"), "submit");
+    await tick();
+    expect(document.querySelector(".toast").textContent).toContain(
+      "the shop link and the datasheet",
+    );
+  });
+
   it("warns when the datasheet can be neither downloaded nor linked", async () => {
     // Both the download and the link fallback fail — the datasheet is genuinely
     // lost, and that must be reported rather than swallowed.

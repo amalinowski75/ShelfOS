@@ -5,7 +5,10 @@ no downloaded bytes, no on-disk file, and no thumbnail. It exists so a component
 keep the shop/product page it came from and a datasheet that the vendor blocks from
 server-side download (see the TME Cloudflare challenge). The generic
 ``entity_type``/``entity_id`` pair mirrors :class:`~app.models.attachment.Attachment`
-so the same entity dispatch is reused.
+so the same entity dispatch is reused. That dispatch (and the delete-cascade wiring)
+accepts ``component``/``invoice``/``bom`` deliberately, even though only the component
+page currently mounts a links panel — the backend is wired wider than the UI on
+purpose, so an invoice/BOM panel is later a template change alone.
 """
 
 from __future__ import annotations

@@ -83,6 +83,26 @@ def test_delete_removes_a_link(client: TestClient) -> None:
     assert listed == []
 
 
+def test_create_on_a_missing_entity_is_404(client: TestClient) -> None:
+    resp = client.post(
+        "/api/links",
+        json={"entity_type": "component", "entity_id": 9999, "url": "https://x.io"},
+    )
+    assert resp.status_code == 404  # NotFoundError → 404
+
+
+def test_create_with_an_unknown_entity_type_is_422(client: TestClient) -> None:
+    resp = client.post(
+        "/api/links",
+        json={"entity_type": "widget", "entity_id": 1, "url": "https://x.io"},
+    )
+    assert resp.status_code == 422  # ValidationError → 422
+
+
+def test_delete_of_a_missing_link_is_404(client: TestClient) -> None:
+    assert client.delete("/api/links/9999").status_code == 404
+
+
 def test_read_only_can_list_but_not_create(
     client: TestClient, anon_client: TestClient
 ) -> None:
