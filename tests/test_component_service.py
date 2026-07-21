@@ -619,6 +619,30 @@ def test_hard_delete_component_removes_parameters_and_stock(
         cs.list_parameter_values(session, component.id)
 
 
+def test_hard_delete_component_removes_its_links(session: Session) -> None:
+    """Links have no FK cascade, so the hard delete must clear them explicitly."""
+    from app.models.enums import LinkKind
+    from app.models.link import Link
+    from app.services import link_service as ls
+    from sqlmodel import select
+
+    ctype = cs.create_type(session, "resistor")
+    component = cs.create_component(session, ctype.id)
+    ls.create_link(
+        session,
+        entity_type="component",
+        entity_id=component.id,
+        kind=LinkKind.SHOP,
+        url="https://www.tme.eu/pl/details/x/y/",
+    )
+
+    cs.hard_delete_component(session, component.id)
+    remaining = session.exec(
+        select(Link).where(Link.entity_id == component.id)
+    ).all()
+    assert remaining == []
+
+
 def _number_component(session: Session, unit: str):  # type: ignore[no-untyped-def]
     """A component whose type has one NUMBER parameter with the given unit."""
     ctype = cs.create_type(session, "part")

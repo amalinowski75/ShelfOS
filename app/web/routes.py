@@ -20,6 +20,7 @@ from app.auth.deps import get_optional_user, issue_csrf_token
 from app.models.component import ComponentType
 from app.models.enums import (
     AttachmentKind,
+    LinkKind,
     LocationType,
     MountingType,
     ParameterDataType,
@@ -427,6 +428,7 @@ def component_detail(
             "movements": movements,
             "all_locations": ls.list_all(session),
             "attachment_kinds": [k.value for k in AttachmentKind],
+            "link_kinds": [k.value for k in LinkKind],
             "current_user": user,
         },
     )

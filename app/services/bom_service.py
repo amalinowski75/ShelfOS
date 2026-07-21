@@ -25,7 +25,7 @@ from app.models.component import (
     ParameterDefinition,
 )
 from app.models.enums import AttachmentKind, ParameterDataType
-from app.services import attachment_service
+from app.services import attachment_service, link_service
 from app.services import component_service as cs
 from app.services import stock_service as ss
 from app.services._common import require_entity
@@ -235,6 +235,7 @@ def delete_bom(session: Session, bom_id: int) -> None:
     attachment_service.delete_attachments_for(
         session, entity_type="bom", entity_id=bom_id
     )
+    link_service.delete_links_for(session, entity_type="bom", entity_id=bom_id)
     for line in get_bom_lines(session, bom_id):
         session.delete(line)
     session.delete(bom)

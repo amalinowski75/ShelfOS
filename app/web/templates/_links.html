@@ -1,0 +1,27 @@
+{# Reusable external-links panel. Rows load from /api/links via links.js; the add
+   form only renders for writers. `can_write` gates the form here; links.js gates
+   the per-row Delete button on the same role (canWrite from shared.js).
+
+   Distinct from _attachments.html: a link is a URL the browser opens, not a stored
+   file — so there is no file input, no download, just a categorized clickable URL. #}
+{% macro links_card(entity_type, entity_id, can_write, kinds) %}
+<div class="card card-pad links-widget"
+     data-entity-type="{{ entity_type }}"
+     data-entity-id="{{ entity_id }}">
+  <h2>Links</h2>
+  <ul class="link-list"></ul>
+  <p class="empty link-empty" hidden>No links.</p>
+  {% if can_write %}
+  <form class="link-form">
+    <input type="url" name="url" class="control" placeholder="https://…" required />
+    <select name="kind" class="control">
+      {% for kind in kinds %}<option value="{{ kind }}">{{ kind }}</option>{% endfor %}
+    </select>
+    <input class="control" name="label" placeholder="label (optional)" />
+    <input class="control" name="notes" placeholder="notes (optional)" />
+    <button type="submit" class="btn btn-secondary btn-sm">Add</button>
+    <p class="error link-error" hidden></p>
+  </form>
+  {% endif %}
+</div>
+{% endmacro %}

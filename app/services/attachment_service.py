@@ -14,24 +14,14 @@ from pathlib import Path
 from uuid import uuid4
 
 from PIL import Image, ImageOps
-from sqlmodel import Session, SQLModel, col, select
+from sqlmodel import Session, col, select
 
 from app import config
 from app.models.attachment import Attachment
-from app.models.bom import Bom
-from app.models.component import Component
 from app.models.enums import AttachmentKind
-from app.models.invoice import Invoice
+from app.services._common import entity_model as _entity_model
 from app.services._common import require_entity
 from app.services.errors import NotFoundError, ValidationError
-
-# Which entity a ``(entity_type, entity_id)`` pair points at. Anything else is
-# rejected, so an attachment can never dangle off a type we don't recognise.
-_ENTITY_MODELS: dict[str, type[SQLModel]] = {
-    "component": Component,
-    "invoice": Invoice,
-    "bom": Bom,
-}
 
 # A short, alphanumeric file extension, e.g. ".pdf" / ".jpg".
 _SAFE_EXTENSION = re.compile(r"\.[a-z0-9]{1,10}")
@@ -50,12 +40,6 @@ _MAX_FILENAME_LEN = 255
 _MAX_NOTES_LEN = 2000
 
 
-def _entity_model(entity_type: str) -> type[SQLModel]:
-    """Return the model for a known ``entity_type`` or raise ``ValidationError``."""
-    model = _ENTITY_MODELS.get(entity_type)
-    if model is None:
-        raise ValidationError(f"unknown entity_type {entity_type!r}")
-    return model
 
 
 def _safe_extension(filename: str) -> str:

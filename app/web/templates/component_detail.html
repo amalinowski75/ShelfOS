@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_attachments.html" import attachments_card %}
+{% from "_links.html" import links_card %}
 {% block title %}{{ component.mpn or "Component" }} — ShelfOS{% endblock %}
 
 {% macro status_badge(status) -%}
@@ -135,6 +136,9 @@
 
   {{ attachments_card("component", component.id,
                       current_user.role.value != "read-only", attachment_kinds) }}
+
+  {{ links_card("component", component.id,
+                current_user.role.value != "read-only", link_kinds) }}
 </div>
 
 {# Full-size viewer for the header thumbnails, with prev/next navigation. #}
@@ -148,5 +152,6 @@
 
 {% block scripts %}
 <script src="/static/attachments.js?v={{ static_version() }}"></script>
+<script src="/static/links.js?v={{ static_version() }}"></script>
 <script src="/static/image_gallery.js?v={{ static_version() }}"></script>
 {% endblock %}

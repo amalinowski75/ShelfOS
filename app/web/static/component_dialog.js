@@ -20,8 +20,11 @@
   let onCreated = null;
   // The effective parameter definitions currently rendered (for prefill lookups).
   let currentDefinitions = [];
-  // A datasheet URL from a shop import, attached to the component after it's created.
+  // A datasheet URL from a shop import, attached to the component after it's created
+  // (downloaded as a file if the shop allows it, else kept as a link).
   let pendingDatasheetUrl = null;
+  // The shop URL the component was imported from, saved as a `shop` link on create.
+  let pendingShopUrl = null;
   // Bumped on every open so a slow shop-lookup can't prefill a reopened dialog.
   let openToken = 0;
 
@@ -117,6 +120,46 @@
 
   typeSelect.addEventListener("change", (event) => loadParams(event.target.value));
 
+  // Download a datasheet URL as a file attachment via the SSRF-guarded endpoint.
+  // Returns true on success; a non-2xx or a network error is a handled false, never
+  // an exception (the component already exists).
+  async function attachDatasheet(componentId, url) {
+    try {
+      const resp = await fetch("/api/attachments/from-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body: JSON.stringify({
+          entity_type: "component",
+          entity_id: componentId,
+          url,
+          kind: "datasheet",
+        }),
+      });
+      return resp.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  // Save an external link on the component. Best-effort like the datasheet download.
+  async function addLink(componentId, kind, url) {
+    try {
+      const resp = await fetch("/api/links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body: JSON.stringify({
+          entity_type: "component",
+          entity_id: componentId,
+          kind,
+          url,
+        }),
+      });
+      return resp.ok;
+    } catch {
+      return false;
+    }
+  }
+
   // Ignore a re-entrant submit while a create is in flight, so a fast
   // double-click can't POST two components.
   let submitting = false;
@@ -158,35 +201,42 @@
         errorEl.hidden = false;
         return;
       }
-      // Attach an imported datasheet to the new component (best-effort: a failed
-      // fetch mustn't undo the create). Reuses the SSRF-guarded from-URL endpoint.
-      // Some shops sit behind a bot challenge (TME's document host answers a
-      // server-side GET with a Cloudflare 403), so failure here is expected rather
-      // than exceptional — but it is reported, never swallowed: a silently missing
-      // datasheet is indistinguishable from a part that simply hasn't got one.
-      let datasheetFailed = false;
-      if (pendingDatasheetUrl && created && created.id) {
-        try {
-          const attached = await fetch("/api/attachments/from-url", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-            body: JSON.stringify({
-              entity_type: "component",
-              entity_id: created.id,
-              url: pendingDatasheetUrl,
-              kind: "datasheet",
-            }),
-          });
-          datasheetFailed = !attached.ok; // a non-2xx does NOT throw
-        } catch {
-          datasheetFailed = true; // the component exists; only the datasheet is lost
+      // Capture what a shop import gave us. Each step is best-effort — none may undo
+      // the already-created component — but nothing is lost silently: a step that
+      // fails outright is reported, and a datasheet kept as a link is reported too.
+      let datasheetLinked = false;
+      const lost = [];
+      if (created && created.id) {
+        // Keep the shop page the part came from as a link (the original motivation).
+        if (pendingShopUrl && !(await addLink(created.id, "shop", pendingShopUrl))) {
+          lost.push("the shop link");
+        }
+        // Try to download the datasheet as a file (Mouser/Digi-Key allow it). If the
+        // shop blocks server-side fetches — TME's document host answers a Cloudflare
+        // challenge — keep it as a datasheet LINK instead. Only if BOTH fail is it
+        // lost, and even then the user is told.
+        if (pendingDatasheetUrl) {
+          if (await attachDatasheet(created.id, pendingDatasheetUrl)) {
+            // Downloaded as a file — nothing to report.
+          } else if (await addLink(created.id, "datasheet", pendingDatasheetUrl)) {
+            datasheetLinked = true;
+          } else {
+            lost.push("the datasheet");
+          }
         }
       }
+      // Used; clear so a later manual (non-import) create can't reuse a stale URL.
+      pendingShopUrl = null;
+      pendingDatasheetUrl = null;
       dialog.close();
-      if (datasheetFailed) {
+      if (lost.length) {
+        // "and", not "or": with both items lost, "or" would read as though one of
+        // them was saved.
+        showToast(`Component created, but couldn't save ${lost.join(" and ")}.`);
+      } else if (datasheetLinked) {
         showToast(
-          "Component created, but its datasheet could not be downloaded — " +
-            "the shop blocks automated downloads. Attach it by hand if you need it.",
+          "Component created. Its datasheet couldn't be downloaded (the shop blocks " +
+            "automated downloads), so it was saved as a link instead.",
         );
       }
       // A caller's DOM update must not become an unhandled rejection: the
@@ -376,6 +426,7 @@
   // the dialog is shown or when Import completes.
   async function applyPrefill(prefill) {
     pendingDatasheetUrl = null;
+    pendingShopUrl = null; // a non-shop prefill (e.g. from a BOM) has no shop URL
     if (!prefill) {
       loadParams(""); // clears the fields and shows the hint
       return;
@@ -443,6 +494,8 @@
           params: product.parameters,
           datasheetUrl: product.datasheet_url,
         });
+        // applyPrefill cleared it; the URL the user pasted is the shop link to keep.
+        pendingShopUrl = url;
         importStatus.className = "muted";
         importStatus.textContent = product.mpn
           ? `Imported ${product.mpn} — review and Create.`

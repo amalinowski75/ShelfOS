@@ -175,6 +175,27 @@ export function attachmentsWidgetFixture({ withForm = true } = {}) {
     </div>`;
 }
 
+// The reusable external-links panel (mirrors _links.html). `withForm` renders the
+// writer-only add form; omit it for the read-only view.
+export function linksWidgetFixture({ withForm = true } = {}) {
+  const form = withForm
+    ? `<form class="link-form">
+         <input type="url" name="url" />
+         <select name="kind"><option value="shop">shop</option></select>
+         <input name="label" />
+         <input name="notes" />
+         <button type="submit"></button>
+         <p class="error link-error" hidden></p>
+       </form>`
+    : "";
+  return `
+    <div class="links-widget" data-entity-type="component" data-entity-id="7">
+      <ul class="link-list"></ul>
+      <p class="empty link-empty" hidden></p>
+      ${form}
+    </div>`;
+}
+
 // The component-detail image gallery: the header thumbnail strip + the lightbox
 // dialog (mirrors component_detail.html).
 export function componentImagesFixture() {

@@ -18,6 +18,7 @@ from app.models.enums import (
     AttachmentKind,
     ComponentStatus,
     ContainerType,
+    LinkKind,
     LocationType,
     MountingType,
     ParameterDataType,
@@ -25,6 +26,7 @@ from app.models.enums import (
     UserRole,
 )
 from app.models.invoice import Invoice, InvoiceLine
+from app.models.link import Link
 from app.models.location import ComponentLocation, Location
 from app.models.stock import StockMovement
 from app.models.user import User
@@ -43,6 +45,8 @@ __all__ = [
     "ContainerType",
     "Invoice",
     "InvoiceLine",
+    "Link",
+    "LinkKind",
     "Location",
     "LocationType",
     "MountingType",
