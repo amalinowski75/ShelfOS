@@ -106,6 +106,17 @@ function setupLinks(widget) {
   if (form) {
     const error = form.querySelector(".link-error");
     let submitting = false;
+    // Bumped on every submit and on every close; an in-flight submit only touches
+    // the dialog if its token is still current (see attachments.js for the race).
+    let submitToken = 0;
+
+    // Closing abandons any in-flight submit: clear the guard so a reopened dialog
+    // can submit again, and bump the token so a stale request's completion can't
+    // reset/close/error the reopened dialog.
+    dialog?.addEventListener("close", () => {
+      submitting = false;
+      submitToken += 1;
+    });
 
     // The form lives in a dialog opened from the card header, so the panel stays a
     // clean list. Open with a fresh form; the shared [data-close] handler closes it.
@@ -127,6 +138,7 @@ function setupLinks(widget) {
         return;
       }
       submitting = true;
+      const token = ++submitToken;
       (async () => {
         try {
           const resp = await fetch("/api/links", {
@@ -144,6 +156,7 @@ function setupLinks(widget) {
               notes: form.elements.notes.value.trim() || null,
             }),
           });
+          if (token !== submitToken) return; // dialog closed/reopened meanwhile
           if (resp.ok) {
             form.reset();
             error.hidden = true;
@@ -154,10 +167,11 @@ function setupLinks(widget) {
             error.hidden = false;
           }
         } catch {
+          if (token !== submitToken) return;
           error.textContent = "Could not reach the server.";
           error.hidden = false;
         } finally {
-          submitting = false;
+          if (token === submitToken) submitting = false;
         }
       })();
     });

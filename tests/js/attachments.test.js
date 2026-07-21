@@ -251,6 +251,55 @@ describe("attachments.js", () => {
     expect(dialog.close).toHaveBeenCalled();
   });
 
+  it("a submit abandoned by a close cannot clobber the reopened dialog", async () => {
+    // The realistic trigger is a tarpitting from-url fetch: submit, close/cancel
+    // while it's in flight, reopen and start over — the stale request settling must
+    // not reset or close the dialog under the user.
+    let resolvePost;
+    const impl = (url, opts) =>
+      (opts?.method || "GET") === "POST"
+        ? new Promise((r) => (resolvePost = r))
+        : feedImpl([])(url, opts);
+    const { window, document } = loadPage(attachmentsWidgetFixture(), SCRIPTS, {
+      fetchImpl: impl,
+    });
+    await tick();
+    const dialog = document.querySelector(".attachment-dialog");
+    dialog.close = vi.fn();
+    const form = document.querySelector(".attachment-form");
+    form.elements.url.value = "https://slow.example/d.pdf";
+    submitForm(document, window); // request now pending
+
+    dialog.dispatchEvent(new window.Event("close")); // user cancels/Esc
+    form.elements.url.value = "https://fresh.example/x.pdf"; // reopened, retyping
+    resolvePost({ ok: true, json: async () => ({}) }); // the old request finally lands
+    await tick();
+
+    expect(dialog.close).not.toHaveBeenCalled(); // didn't close the reopened dialog
+    expect(form.elements.url.value).toBe("https://fresh.example/x.pdf"); // not reset
+  });
+
+  it("+ Add reopens with a fresh form after a previous failure", async () => {
+    const impl = (url, opts) =>
+      (opts?.method || "GET") === "POST"
+        ? Promise.resolve({ ok: false, json: async () => ({ detail: "nope" }) })
+        : feedImpl([])(url, opts);
+    const { window, document } = loadPage(attachmentsWidgetFixture(), SCRIPTS, {
+      fetchImpl: impl,
+    });
+    await tick();
+    const form = document.querySelector(".attachment-form");
+    const error = document.querySelector(".attachment-error");
+    form.elements.url.value = "https://x/d.pdf";
+    submitForm(document, window);
+    await tick();
+    expect(error.hidden).toBe(false); // a failure left the error and the value
+
+    document.querySelector(".attachment-add").click(); // reopen
+    expect(error.hidden).toBe(true);
+    expect(form.elements.url.value).toBe("");
+  });
+
   it("fetches from a URL (JSON + CSRF) when only the URL field is filled", async () => {
     const { window, document, fetchMock } = loadPage(attachmentsWidgetFixture(), SCRIPTS, {
       fetchImpl: feedImpl([]),
