@@ -393,13 +393,15 @@ if (typeDialog && newTypeBtn) {
 
 // ---- New Component trigger (spec §16.5) -----------------------------------
 // The dialog lives in component_dialog.js (shared with the invoice line flow);
-// here we just open it and, on success, reveal the new component in the table.
+// here we open it and, on success, go straight to the new component's detail page
+// (mirrors the invoice flow). Only this standalone caller navigates — the invoice
+// line and BOM "add to inventory" reuses stay put, since they create a component
+// mid-task and must return to what the user was doing.
 const newComponentBtn = document.getElementById("new-component-btn");
 if (newComponentBtn && window.openComponentDialog) {
   newComponentBtn.addEventListener("click", () =>
     openComponentDialog((created) => {
-      typeFilter.value = String(created.type_id);
-      loadTable();
+      window.location = `/components/${created.id}`;
     }),
   );
 }
