@@ -135,6 +135,30 @@ describe("links.js", () => {
     expect(document.querySelectorAll(".link-item")).toHaveLength(0);
   });
 
+  it("opens the add dialog from the + Add button", async () => {
+    const { document } = loadPage(linksWidgetFixture(), SCRIPTS, {
+      fetchImpl: feedImpl([]),
+    });
+    await tick();
+    const dialog = document.querySelector(".link-dialog");
+    dialog.showModal = vi.fn();
+    document.querySelector(".link-add").click();
+    expect(dialog.showModal).toHaveBeenCalled();
+  });
+
+  it("closes the add dialog after a successful add", async () => {
+    const { window, document } = loadPage(linksWidgetFixture(), SCRIPTS, {
+      fetchImpl: feedImpl([]),
+    });
+    await tick();
+    const dialog = document.querySelector(".link-dialog");
+    dialog.close = vi.fn();
+    document.querySelector(".link-form").elements.url.value = "https://x.io";
+    submitForm(document, window);
+    await tick();
+    expect(dialog.close).toHaveBeenCalled();
+  });
+
   it("posts JSON with the CSRF token when the form is submitted", async () => {
     const { window, document, fetchMock } = loadPage(linksWidgetFixture(), SCRIPTS, {
       fetchImpl: feedImpl([]),
@@ -182,12 +206,26 @@ describe("links.js", () => {
       ),
     });
     await tick();
+    const dialog = document.querySelector(".link-dialog");
+    dialog.close = vi.fn();
     document.querySelector(".link-form").elements.url.value = "https://x.io";
     submitForm(document, window);
     await tick();
     const error = document.querySelector(".link-error");
     expect(error.hidden).toBe(false);
     expect(error.textContent).toBe("only http and https links are allowed");
+    expect(dialog.close).not.toHaveBeenCalled(); // stays open to fix and retry
+  });
+
+  it("closes the dialog via the shared [data-close] control", async () => {
+    const { document } = loadPage(linksWidgetFixture(), SCRIPTS, {
+      fetchImpl: feedImpl([]),
+    });
+    await tick();
+    const dialog = document.querySelector(".link-dialog");
+    dialog.close = vi.fn();
+    document.querySelector(".link-dialog [data-close]").click();
+    expect(dialog.close).toHaveBeenCalled();
   });
 
   it("deletes after confirmation, with the CSRF token", async () => {
@@ -228,5 +266,8 @@ describe("links.js", () => {
     expect(document.querySelectorAll(".link-item")).toHaveLength(1);
     expect(document.querySelector(".link-item button")).toBeNull();
     expect(document.querySelector(".link-form")).toBeNull();
+    // The add affordance is writer-only too — no "+ Add" button, no dialog.
+    expect(document.querySelector(".link-add")).toBeNull();
+    expect(document.querySelector(".link-dialog")).toBeNull();
   });
 });

@@ -9,6 +9,8 @@ function setupAttachments(widget) {
   const list = widget.querySelector(".attachment-list");
   const empty = widget.querySelector(".attachment-empty");
   const form = widget.querySelector(".attachment-form");
+  const dialog = widget.querySelector(".attachment-dialog");
+  const addBtn = widget.querySelector(".attachment-add");
   const feed =
     `/api/attachments?entity_type=${encodeURIComponent(entityType)}` +
     `&entity_id=${encodeURIComponent(entityId)}`;
@@ -83,6 +85,28 @@ function setupAttachments(widget) {
   if (form) {
     const error = form.querySelector(".attachment-error");
     let submitting = false;
+    // Bumped on every submit and on every close; an in-flight submit only touches
+    // the dialog if its token is still current.
+    let submitToken = 0;
+
+    // Closing — Cancel, ×, Esc, or our own close-on-success — abandons any in-flight
+    // submit: clear the guard so a reopened dialog can submit again (even if the old
+    // request is still hung, e.g. a tarpitting from-url fetch), and bump the token so
+    // that request's completion can't reset/close/error the reopened dialog.
+    dialog?.addEventListener("close", () => {
+      submitting = false;
+      submitToken += 1;
+    });
+
+    // The form lives in a dialog opened from the card header, so the panel stays a
+    // clean list. Open with a fresh form; the shared [data-close] handler closes it.
+    if (addBtn && dialog) {
+      addBtn.addEventListener("click", () => {
+        form.reset();
+        error.hidden = true;
+        dialog.showModal();
+      });
+    }
 
     function uploadFile() {
       // FormData drives the multipart request; do NOT set Content-Type — the
@@ -133,22 +157,26 @@ function setupAttachments(widget) {
         return;
       }
       submitting = true;
+      const token = ++submitToken;
       (async () => {
         try {
           const resp = useUrl ? await fetchFromUrl(url) : await uploadFile();
+          if (token !== submitToken) return; // dialog closed/reopened meanwhile
           if (resp.ok) {
             form.reset();
             error.hidden = true;
+            dialog?.close();
             await load(true);
           } else {
             error.textContent = await errorMessage(resp);
             error.hidden = false;
           }
         } catch {
+          if (token !== submitToken) return;
           error.textContent = "Could not reach the server.";
           error.hidden = false;
         } finally {
-          submitting = false;
+          if (token === submitToken) submitting = false;
         }
       })();
     });

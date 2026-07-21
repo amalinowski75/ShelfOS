@@ -490,7 +490,16 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
   * { transition: none !important; }
 }
 
+/* A panel card header: the title and its "+ Add" button on one row. */
+.widget-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-bottom: 14px;
+}
+.widget-head h2 { margin: 0; }
+
 /* ---------- attachments panel (§10) ---------- */
+/* The add form lives in a dialog now (dialog form supplies the column layout), so
+   the panel itself is just the list. */
 .attachment-list { list-style: none; display: flex; flex-direction: column; gap: 8px; }
 .attachment-item {
   display: flex; align-items: center; gap: 10px;
@@ -499,13 +508,6 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 .attachment-item:last-child { border-bottom: none; }
 .attachment-notes { font-size: 13px; }
 .attachment-item .btn { margin-left: auto; }
-.attachment-form {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px;
-}
-.attachment-form input[type="file"] { flex: 1 1 200px; }
-.attachment-form input[type="url"] { flex: 1 1 200px; }
-.attachment-form input[name="notes"] { flex: 1 1 160px; }
-.attachment-form .attachment-error { flex-basis: 100%; margin: 0; }
 
 /* ---------- links panel (external clickable URLs) ---------- */
 .link-list { list-style: none; display: flex; flex-direction: column; gap: 8px; }
@@ -517,13 +519,6 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 .link-item a { overflow-wrap: anywhere; }
 .link-notes { font-size: 13px; }
 .link-item .btn { margin-left: auto; }
-.link-form {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px;
-}
-.link-form input[type="url"] { flex: 1 1 220px; }
-.link-form input[name="label"] { flex: 1 1 140px; }
-.link-form input[name="notes"] { flex: 1 1 140px; }
-.link-form .link-error { flex-basis: 100%; margin: 0; }
 
 /* ---------- component image gallery + lightbox (§10) ---------- */
 .component-images {

@@ -1,27 +1,55 @@
 {# Reusable attachments panel (spec §10). Rows load from /api/attachments via
-   attachments.js; the upload form only renders for writers. `can_write` gates
-   the form here; attachments.js gates the per-row Delete button on the same
-   role (canWrite from shared.js). #}
+   attachments.js. For writers the card header carries a "+ Add" button that opens
+   the upload dialog (kept out of the card so the panel stays a clean list);
+   attachments.js gates the per-row Delete button on the same role. #}
 {% macro attachments_card(entity_type, entity_id, can_write, kinds) %}
 <div class="card card-pad attachments-widget"
      data-entity-type="{{ entity_type }}"
      data-entity-id="{{ entity_id }}">
-  <h2>Attachments</h2>
+  <div class="widget-head">
+    <h2>Attachments</h2>
+    {% if can_write %}
+    <button type="button" class="btn btn-secondary btn-sm attachment-add">+ Add</button>
+    {% endif %}
+  </div>
   <ul class="attachment-list"></ul>
   <p class="empty attachment-empty" hidden>No attachments.</p>
   {% if can_write %}
-  {# One form for both sources: pick a file OR paste a URL (the server fetches it).
-     If both are filled the submit handler asks which to use. #}
-  <form class="attachment-form">
-    <input type="file" name="file" class="control" />
-    <input type="url" name="url" class="control" placeholder="…or paste a file URL" />
-    <select name="kind" class="control">
-      {% for kind in kinds %}<option value="{{ kind }}">{{ kind }}</option>{% endfor %}
-    </select>
-    <input class="control" name="notes" placeholder="notes (optional)" />
-    <button type="submit" class="btn btn-secondary btn-sm">Add</button>
-    <p class="error attachment-error" hidden></p>
-  </form>
+  <dialog class="attachment-dialog">
+    <article>
+      <header>
+        <strong>Add attachment</strong>
+        <button type="button" class="close" aria-label="Close" data-close></button>
+      </header>
+      {# One form for both sources: pick a file OR paste a URL (the server fetches
+         it). If both are filled the submit handler asks which to use. #}
+      <form class="attachment-form">
+        <div class="field">
+          <label>File</label>
+          <input type="file" name="file" class="control" />
+        </div>
+        <div class="field">
+          <label>…or a file URL</label>
+          <input type="url" name="url" class="control" placeholder="https://…" />
+        </div>
+        <div class="field">
+          <label>Kind</label>
+          <select name="kind" class="control">
+            {% for kind in kinds %}<option value="{{ kind }}">{{ kind }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label>Notes</label>
+          <input class="control" name="notes" placeholder="optional" />
+        </div>
+        <p class="error attachment-error" hidden></p>
+        <footer>
+          <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+          <button type="submit" class="btn btn-primary">Add</button>
+        </footer>
+      </form>
+    </article>
+  </dialog>
   {% endif %}
 </div>
 {% endmacro %}
