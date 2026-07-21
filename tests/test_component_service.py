@@ -839,6 +839,39 @@ def test_find_duplicate_component_is_manufacturer_null_aware(session: Session) -
     assert cs.find_duplicate_component(session, mpn="C-6", manufacturer=None) is None
 
 
+def test_find_duplicate_component_folds_non_ascii_case(session: Session) -> None:
+    # SQLite's lower() is ASCII-only, so folding must happen in Python or an
+    # uppercase-accented manufacturer escapes the check.
+    ctype = cs.create_type(session, "resistor")
+    cs.create_component(session, ctype.id, mpn="R-1", manufacturer="ÉCLAIR")
+    assert (
+        cs.find_duplicate_component(session, mpn="R-1", manufacturer="éclair")
+        is not None
+    )
+
+
+def test_find_duplicate_component_catches_legacy_non_space_whitespace(
+    session: Session,
+) -> None:
+    from sqlalchemy import text
+
+    # A row created before normalisation (or by a direct client) with tab/NBSP
+    # padding. SQLite's trim() strips only 0x20, so the stored side must be folded
+    # in Python for this to be caught.
+    ctype = cs.create_type(session, "resistor")
+    session.connection().execute(
+        text(
+            "INSERT INTO components (type_id, mpn, manufacturer, mounting_type, "
+            "status) VALUES (:t, :m, NULL, 'Other', 'active')"
+        ),
+        {"t": ctype.id, "m": "\tR-9 "},  # tab + non-breaking space
+    )
+    session.commit()
+    assert (
+        cs.find_duplicate_component(session, mpn="R-9", manufacturer=None) is not None
+    )
+
+
 def test_create_normalises_blank_and_whitespace_mpn_manufacturer(
     session: Session,
 ) -> None:

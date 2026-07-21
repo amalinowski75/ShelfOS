@@ -32,9 +32,11 @@ def create_component(
         session, mpn=payload.mpn, manufacturer=payload.manufacturer
     )
     if existing is not None:
-        origin = f" from {payload.manufacturer}" if payload.manufacturer else ""
+        mpn = (payload.mpn or "").strip()
+        manufacturer = (payload.manufacturer or "").strip()
+        origin = f" from {manufacturer}" if manufacturer else ""
         raise DuplicateComponentError(
-            f"A component with MPN {payload.mpn}{origin} already exists.",
+            f"A component with MPN {mpn}{origin} already exists.",
             existing_id=existing.id,  # type: ignore[arg-type]
         )
     return cs.create_component_with_values(

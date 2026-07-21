@@ -518,6 +518,11 @@ def _blank_to_none(text: str | None) -> str | None:
     return stripped or None
 
 
+def _match_key(text: str | None) -> str:
+    """A trimmed, case-folded key for duplicate matching (``None`` → ``""``)."""
+    return (text or "").strip().casefold()
+
+
 def find_duplicate_component(
     session: Session, *, mpn: str | None, manufacturer: str | None
 ) -> Component | None:
@@ -529,25 +534,29 @@ def find_duplicate_component(
     manufacturer is matched null-aware — a blank manufacturer matches only other
     blank ones (NULL *or* a legacy empty string) — so the same MPN from two different
     manufacturers is not a duplicate.
+
+    Normalisation is done in Python on both sides, deliberately not in SQL: SQLite's
+    built-in ``lower()``/``trim()`` are ASCII- and space-only, so a non-ASCII
+    manufacturer ("ÉCLAIR" vs "éclair") or a tab/NBSP-padded legacy value would
+    escape a DB-folded comparison while a Python one catches it. This runs once per
+    create (not per row of a listing), so scanning the component table is fine.
     """
-    mpn = _blank_to_none(mpn)
-    if mpn is None:
+    if _blank_to_none(mpn) is None:
         return None
-    # trim() on the stored side too, so a legacy row with stray whitespace (created
-    # before normalisation, or by a direct client) is still caught.
-    stored_mpn = func.lower(func.trim(col(Component.mpn)))
-    stored_mfr = func.trim(func.coalesce(col(Component.manufacturer), ""))
-    statement = (
+    mpn_key, mfr_key = _match_key(mpn), _match_key(manufacturer)
+    candidates = session.exec(
         select(Component)
-        .where(stored_mpn == mpn.lower())
         .where(col(Component.deleted_at).is_(None))
+        .where(col(Component.mpn).is_not(None))
+        .order_by(col(Component.id))
     )
-    manufacturer = _blank_to_none(manufacturer)
-    if manufacturer is not None:
-        statement = statement.where(func.lower(stored_mfr) == manufacturer.lower())
-    else:
-        statement = statement.where(stored_mfr == "")  # matches NULL and ""
-    return session.exec(statement.order_by(col(Component.id))).first()
+    for component in candidates:
+        if (
+            _match_key(component.mpn) == mpn_key
+            and _match_key(component.manufacturer) == mfr_key
+        ):
+            return component
+    return None
 
 
 def list_types(session: Session) -> list[ComponentType]:
