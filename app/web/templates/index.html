@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_location_picker.html" import location_picker %}
+{% from "_stock_dialog.html" import stock_dialog %}
 {% from "_type_dialog.html" import type_dialog %}
 {% block title %}Components — ShelfOS{% endblock %}
 
@@ -28,35 +28,11 @@
 
 <div id="components-table"></div>
 
-<dialog id="stock-dialog">
-  <article>
-    <header>
-      <strong id="stock-dialog-title">Add stock</strong>
-      <button class="close" aria-label="Close" data-close></button>
-    </header>
-    <form id="stock-form">
-      <input type="hidden" name="component_id" />
-      <input type="hidden" name="mode" />
-      <div class="field">
-        <label>Quantity</label>
-        <input class="control mono" type="number" name="quantity" min="1" value="1" required />
-      </div>
-      <div class="field">
-        <label>Location</label>
-        {{ location_picker(location_tree, name="location_id") }}
-      </div>
-      <div class="field">
-        <label>Note</label>
-        <input class="control" type="text" name="note" placeholder="optional" />
-      </div>
-      <p id="stock-error" class="error" hidden></p>
-      <footer>
-        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
-        <button type="submit" class="btn btn-primary">Save</button>
-      </footer>
-    </form>
-  </article>
-</dialog>
+{# Add/Take stock. Gated on the same role as the row actions that open it, so the
+   dialog and its triggers are present-or-absent together. #}
+{% if current_user.role.value != "read-only" %}
+{{ stock_dialog(location_tree) }}
+{% endif %}
 
 {# The New Type builder (extracted to _type_dialog.html). Gated on the same role
    as its trigger, so the dialog, its "New Type" button, and the "+ New type"

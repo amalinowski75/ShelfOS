@@ -3,7 +3,13 @@ import { loadPage, tick, typePageFixture } from "./harness.js";
 
 // app.js drives the component table, the stock dialog and the New Type builder;
 // location_tree.js enhances the stock dialog's location picker.
-const SCRIPTS = ["shared.js", "location_tree.js", "type_dialog.js", "app.js"];
+const SCRIPTS = [
+  "shared.js",
+  "location_tree.js",
+  "type_dialog.js",
+  "stock_dialog.js",
+  "app.js",
+];
 
 function fire(el, type) {
   el.dispatchEvent(
@@ -156,6 +162,19 @@ describe("app.js — row actions", () => {
     expect(window.HTMLDialogElement.prototype.showModal).toHaveBeenCalled();
   });
 
+  it("boots on a read-only page, where the stock dialog isn't rendered at all", () => {
+    // The dialog markup is now gated on the role, so app.js runs on a page where
+    // stock_dialog.js bailed out and `openStockDialog` was never defined. The table
+    // must still come up — and a read-only account has no button to reach it with.
+    const { window } = loadPage(
+      `<select id="type-filter"></select><div id="components-table"></div>`,
+      ["shared.js", "stock_dialog.js", "app.js"],
+      { role: "read-only" },
+    );
+    expect(window.openStockDialog).toBeUndefined();
+    expect(window.actionColumn().formatter()).not.toContain('data-act="add"');
+  });
+
   it("hides the write actions for a read-only account, keeping Details", () => {
     const { window } = loadPage(typePageFixture(), SCRIPTS, { role: "read-only" });
     const col = window.actionColumn();
@@ -200,7 +219,7 @@ describe("app.js — row actions", () => {
 
   it("titles the dialog 'Take from stock' in take mode", () => {
     const { window, document } = loadPage(typePageFixture(), SCRIPTS);
-    window.openStockDialog("take", { id: 3 });
+    window.openStockDialog("take", 3);
     expect(document.getElementById("stock-dialog-title").textContent).toBe(
       "Take from stock",
     );
@@ -367,7 +386,7 @@ describe("app.js — New Type dialog", () => {
     });
     // Leave a stock POST in flight (set the picker's hidden input directly since
     // this fixture's stock picker has no selectable node).
-    window.openStockDialog("add", { id: 7 });
+    window.openStockDialog("add", 7);
     document.querySelector("#stock-form [name='location_id']").value = "5";
     fire(document.getElementById("stock-form"), "submit");
 

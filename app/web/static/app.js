@@ -1,8 +1,8 @@
-// Component table + stock dialogs (spec §11, §14-15).
+// Component table (spec §11) and the triggers for the shared dialogs.
 // Data mutations reuse the JSON API via fetch.
-// `csrfToken`, `esc` and `errorMessage` come from shared.js.
+// `esc` comes from shared.js; the stock dialog itself lives in stock_dialog.js
+// (shared with the component detail page), which exposes openStockDialog.
 
-const dialog = document.getElementById("stock-dialog");
 const typeFilter = document.getElementById("type-filter");
 
 const table = new Tabulator("#components-table", {
@@ -122,7 +122,8 @@ function actionColumn() {
       if (act === "details") {
         window.location = `/components/${row.id}`;
       } else {
-        openStockDialog(act, row);
+        // This page HAS a JSON feed, so it re-pulls the table instead of reloading.
+        openStockDialog(act, row.id, loadTable);
       }
     },
   };
@@ -143,73 +144,6 @@ async function loadTable() {
   await table.setData(payload.data);
   frameTable(table);
 }
-
-function openStockDialog(mode, row) {
-  const form = document.getElementById("stock-form");
-  form.component_id.value = row.id;
-  form.mode.value = mode;
-  document.getElementById("stock-dialog-title").textContent =
-    mode === "add" ? "Add stock" : "Take from stock";
-  document.getElementById("stock-error").hidden = true;
-  form.quantity.value = 1;
-  form.querySelector(".loc-picker")?.reset();
-  dialog.showModal();
-}
-
-// [data-close] buttons are wired once in shared.js.
-
-// Ignore a re-entrant submit while that form's write is in flight, enough to
-// stop a fast double-click sending a duplicate POST. Each form gets its OWN
-// flag: the stock and New Type dialogs are independent, so an in-flight (or
-// post-success loadTable) on one must never swallow the other's submit.
-function makeGuard() {
-  let inFlight = false;
-  return async (run) => {
-    if (inFlight) return;
-    inFlight = true;
-    try {
-      await run();
-    } finally {
-      inFlight = false;
-    }
-  };
-}
-
-const guardStock = makeGuard();
-document.getElementById("stock-form").addEventListener("submit", (event) => {
-  event.preventDefault();
-  const form = event.target;
-  guardStock(async () => {
-    // The tree-picker is backed by a hidden input, so enforce the required
-    // location here (there's no native `required` to lean on).
-    if (form.location_id.value === "") {
-      const el = document.getElementById("stock-error");
-      el.textContent = "Choose a location.";
-      el.hidden = false;
-      return;
-    }
-    const body = JSON.stringify({
-      component_id: Number(form.component_id.value),
-      location_id: Number(form.location_id.value),
-      quantity: Number(form.quantity.value),
-      note: form.note.value || null,
-    });
-    const url = form.mode.value === "add" ? "/api/stock/add" : "/api/stock/remove";
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-      body,
-    });
-    if (resp.ok) {
-      dialog.close();
-      await loadTable();
-    } else {
-      const el = document.getElementById("stock-error");
-      el.textContent = await errorMessage(resp);
-      el.hidden = false;
-    }
-  });
-});
 
 typeFilter.addEventListener("change", loadTable);
 table.on("tableBuilt", loadTable);

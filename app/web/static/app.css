@@ -499,6 +499,9 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
   gap: 10px; margin-bottom: 14px;
 }
 .widget-head h2 { margin: 0; }
+/* Several buttons on the right of a card header. Deliberately NOT .row-actions:
+   that one is opacity-0 until its table row is hovered. */
+.widget-actions { display: inline-flex; gap: 6px; }
 
 /* The immutable Type/MPN shown at the top of the edit dialog. */
 .edit-readonly { display: flex; gap: 20px; }

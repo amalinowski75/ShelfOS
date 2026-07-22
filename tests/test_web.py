@@ -107,6 +107,7 @@ def test_new_component_control_hidden_for_read_only(client: TestClient) -> None:
     # The dialog markup itself is gated too, not just the button.
     assert 'id="component-dialog"' not in html
     # The stock dialog (and so its inline New Location dialog) is gated as well.
+    assert 'id="stock-dialog"' not in html
     assert 'id="location-dialog"' not in html
     # The role is exposed so app.js can hide the table's Add/Take row buttons.
     assert 'name="user-role" content="read-only"' in html
@@ -408,6 +409,40 @@ def test_component_detail_non_admin_has_no_edit_affordance(
     assert 'id="component-edit-btn"' not in html
     assert 'id="component-edit-dialog"' not in html
     assert "component_edit.js" not in html
+
+
+def test_component_detail_writer_can_add_and_take_stock(client: TestClient) -> None:
+    """The list's row actions, replicated on the detail page (same shared dialog)."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    html = client.get(f"/components/{component['id']}").text
+
+    assert f'data-stock-act="add" data-component-id="{component["id"]}"' in html
+    assert f'data-stock-act="take" data-component-id="{component["id"]}"' in html
+    assert 'id="stock-dialog"' in html
+    # The picker offers "+ New location" inline, so that dialog must be there too.
+    assert 'id="location-dialog"' in html
+    # The picker is populated: without `location_tree` in this route's context the
+    # dialog would render "No locations yet" and be permanently unsubmittable, and
+    # an id-only assertion would still pass.
+    client.post("/api/locations", json={"name": "Drawer 5", "type": "drawer"})
+    html = client.get(f"/components/{component['id']}").text
+    assert 'class="loc-picker-node"' in html
+    assert "Drawer 5" in html
+
+
+def test_component_detail_read_only_cannot_move_stock(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    token = _non_admin_token(client, role="read-only", username="viewer2")
+    headers = {"Authorization": f"Bearer {token}"}
+    html = anon_client.get(f"/components/{component['id']}", headers=headers).text
+
+    # Buttons AND dialog absent together — a hidden trigger isn't the boundary.
+    assert "data-stock-act" not in html
+    assert 'id="stock-dialog"' not in html
 
 
 def test_component_detail_attachments_read_only_has_no_upload_form(
