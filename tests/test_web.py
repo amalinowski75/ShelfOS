@@ -458,6 +458,19 @@ def test_location_usage_feed_drives_the_stock_dialog_filter(
     assert free["id"] not in usage["occupied"]
 
 
+def test_location_picker_announces_its_filter_notice(client: TestClient) -> None:
+    """The notice appears/changes as the filter does, so it must be announced.
+
+    Asserted on the rendered template rather than a jsdom fixture — a fixture
+    would only prove the fixture carries the attribute.
+    """
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    part = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    html = client.get(f"/components/{part['id']}").text
+    assert 'class="loc-picker-nomatch" role="status" aria-live="polite"' in html
+    assert 'class="loc-picker-showall"' in html
+
+
 def test_location_usage_for_an_unknown_component_is_404(client: TestClient) -> None:
     assert client.get("/web/api/components/999/location-usage").status_code == 404
 

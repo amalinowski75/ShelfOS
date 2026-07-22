@@ -25,6 +25,10 @@
   // Monotonic: a location-usage lookup that lands after the dialog was reopened for
   // a different component (or mode) must not apply its filter.
   let openToken = 0;
+  // How long to wait for the location-usage lookup before giving up and showing
+  // the whole tree. Long enough not to fire on a merely slow answer, short enough
+  // that a hang doesn't read as "the dialog is broken".
+  const USAGE_TIMEOUT_MS = 5000;
 
   // …but a requested reload isn't guaranteed to land either: Stop/Esc, a dropped
   // connection, or a back/forward-cache restore all leave this page rendered and
@@ -63,11 +67,32 @@
     if (!picker?.setFilter) return;
     picker.setBusy?.(true);
     let usage;
+    // fetch has no timeout of its own, and a HANG is worse here than a failure:
+    // the picker would stay disabled forever, so no location could be chosen and
+    // no stock could be moved until the user reloaded — the write held hostage by
+    // a convenience. A tarpitting proxy or a captive portal does exactly that.
+    // The race (not just the abort) is what guarantees this resolves, whatever the
+    // request ends up doing.
+    const controller = new AbortController();
+    let expire;
+    const expired = new Promise((resolve) => {
+      expire = setTimeout(() => {
+        controller.abort();
+        resolve(undefined);
+      }, USAGE_TIMEOUT_MS);
+    });
     try {
-      const resp = await fetch(`/web/api/components/${componentId}/location-usage`);
-      if (resp.ok) usage = await resp.json();
+      const resp = await Promise.race([
+        fetch(`/web/api/components/${componentId}/location-usage`, {
+          signal: controller.signal,
+        }),
+        expired,
+      ]);
+      if (resp?.ok) usage = await resp.json();
     } catch {
       usage = undefined;
+    } finally {
+      clearTimeout(expire);
     }
     // A slow answer must not filter (or un-busy) a dialog reopened since.
     if (token !== openToken) return;

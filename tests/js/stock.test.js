@@ -344,7 +344,6 @@ describe("stock_dialog.js — [data-stock-act] triggers (component detail page)"
   });
 
   it("renders the detail-page buttons visibly under the real app.css", () => {
-
     // .row-actions is opacity-0 until its Tabulator row is hovered, so reusing it
     // outside the table would ship two invisible (but clickable) buttons. The
     // attribute assertions in test_web.py can't see that; computed style can.
@@ -537,6 +536,61 @@ describe("stock_dialog.js — the location filter", () => {
   it("re-enables the picker even when the lookup fails", async () => {
     const h = await open("take", () => Promise.reject(new Error("offline")));
     expect(h.document.querySelector(".loc-picker-toggle").disabled).toBe(false);
+  });
+
+  it("gives up on a lookup that never answers", async () => {
+    // A hang is worse than a failure: fetch has no timeout, so without the race
+    // the picker stays disabled forever and NO stock can be moved until reload.
+    const { window, document } = loadPage(stockPageFixture(nestedTree()), SCRIPTS, {
+      fetchImpl: () => new Promise(() => {}), // never settles, never rejects
+    });
+    // Capture the give-up timer instead of waiting five real seconds for it.
+    const pending = [];
+    window.setTimeout = (fn, ms) => pending.push({ fn, ms });
+
+    window.openStockDialog("take", 7);
+    const toggle = document.querySelector(".loc-picker-toggle");
+    expect(toggle.disabled).toBe(true);
+
+    pending.filter((t) => t.ms === 5000).forEach((t) => t.fn());
+    await tick();
+    await tick();
+    expect(toggle.disabled).toBe(false);
+    // …and the full tree is usable, so the write is still possible.
+    const d9 = document.querySelector('.loc-picker-node[data-loc-id="9"]');
+    expect(d9.disabled).toBe(false);
+    expect(d9.closest("li").hidden).toBe(false);
+  });
+
+  it("explains a dropped selection rather than silently blanking the toggle", async () => {
+    const h = await open("take", usage([6], [6, 9]));
+    const box = h.document.querySelector(".loc-picker-showall-box");
+    const toggleShowAll = (checked) => {
+      box.checked = checked;
+      box.dispatchEvent(new h.window.Event("change", { bubbles: true }));
+    };
+    toggleShowAll(true);
+    h.node(9).click();
+    toggleShowAll(false);
+
+    const notice = h.document.querySelector(".loc-picker-nomatch");
+    expect(notice.hidden).toBe(false);
+    expect(notice.textContent).toMatch(/isn't offered here/);
+  });
+
+  it("says nothing extra when there are no locations at all", async () => {
+    // "No matching locations" + "show all" would both be answering a question the
+    // macro's own "No locations yet" line has already answered.
+    const empty = `<p class="loc-picker-empty">No locations yet — add one.</p>`;
+    const { window, document } = loadPage(stockPageFixture(empty), SCRIPTS, {
+      fetchImpl: usage([], []),
+    });
+    window.openStockDialog("take", 7);
+    await tick();
+    await tick();
+    expect(document.querySelector(".loc-picker-empty").hidden).toBe(false);
+    expect(document.querySelector(".loc-picker-nomatch").hidden).toBe(true);
+    expect(document.querySelector(".loc-picker-showall").hidden).toBe(true);
   });
 
   it("does not submit the form on Enter in 'show all'", async () => {

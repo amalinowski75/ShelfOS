@@ -120,13 +120,18 @@
     const showAllWrap = picker.querySelector(".loc-picker-showall");
     const showAllBox = picker.querySelector(".loc-picker-showall-box");
     const noMatch = picker.querySelector(".loc-picker-nomatch");
+    const noMatchDefault = noMatch?.textContent.trim();
+    // A picker with no locations at all: "no matching locations" and "show all"
+    // would both be answering a question the empty tree has already answered, and
+    // would sit right above the macro's own "No locations yet" line contradicting it.
+    const isEmptyTree = !!menu.querySelector(":scope > .loc-picker-empty");
     let accepts = null;
     // Locations created through "+ New location" while a filter is on: the user
     // just made this one on purpose, so it must be pickable whatever the filter says.
     let justCreated = new Set();
 
     function applyFilter() {
-      const active = accepts && !showAllBox?.checked;
+      const active = accepts && !isEmptyTree && !showAllBox?.checked;
       const allowed = (node) =>
         !active ||
         justCreated.has(node.dataset.locId) ||
@@ -169,15 +174,28 @@
       // above something perfectly pickable.
       const none = menu.querySelector(":scope > .loc-picker-none");
       if (none && !none.hidden) visible = true;
-      if (noMatch) noMatch.hidden = !active || visible;
 
       // Drop a selection the filter has just taken away. Without this the toggle
       // keeps showing a location the tree no longer offers and the form still
-      // POSTs it — reachable by picking before the filter lands, or by picking
-      // under "show all" and then unticking it.
+      // POSTs it — reachable by picking under "show all" and then unticking it.
       const chosen = input.value ? nodeById(input.value) : null;
-      if (chosen && (chosen.disabled || chosen.closest("li")?.hidden)) {
-        selectNode("", "");
+      const dropped = !!chosen && (chosen.disabled || !!chosen.closest("li")?.hidden);
+      if (dropped) selectNode("", "");
+
+      // Say which of the two things happened. Dropping a pick silently is the
+      // worse one: unticking "show all" is a deliberate action, and the next thing
+      // the user would otherwise learn is "Choose a location." after pressing Save.
+      if (noMatch) {
+        const message = !active
+          ? null
+          : !visible
+            ? noMatchDefault
+            : dropped
+              ? "That location isn't offered here — pick another, or tick " +
+                '"show all locations".'
+              : null;
+        if (message) noMatch.textContent = message;
+        noMatch.hidden = !message;
       }
     }
 
@@ -208,7 +226,7 @@
       accepts = typeof fn === "function" ? fn : null;
       justCreated = new Set();
       if (showAllBox) showAllBox.checked = false;
-      if (showAllWrap) showAllWrap.hidden = !accepts;
+      if (showAllWrap) showAllWrap.hidden = !accepts || isEmptyTree;
       applyFilter();
     };
 
