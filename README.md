@@ -130,7 +130,8 @@ export SHELFOS_SCAN_SEPARATOR="|"
 
 It must be a single character that can't occur inside a field — a letter, a digit or
 one of `-._/+` is ignored, since splitting on `-` would cut `1PESQ-106-33-T-S` into
-three "fields" and import confidently wrong data.
+three "fields" and import confidently wrong data. An ignored setting is named in a
+startup warning, so it doesn't look like the feature is simply broken.
 
 If a shop's API can't enrich the scan (its key isn't set, or the lookup fails), the
 dialog is still pre-filled with the part number and manufacturer read off the label,

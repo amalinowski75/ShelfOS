@@ -36,6 +36,7 @@ from app.auth.deps import require_access, require_admin, require_csrf
 from app.db import engine, init_db
 from app.seed import ensure_system_user
 from app.services import user_service as us
+from app.services.shops import scan
 from app.web import routes as web_routes
 
 _STATIC_DIR = Path(__file__).parent / "web" / "static"
@@ -58,6 +59,7 @@ _PROTECTED_ROUTERS = (
 def _bootstrap() -> None:
     """Create the schema and seed the system user and bootstrap admin (D11)."""
     _check_insecure_defaults()
+    _check_scan_separator()
     init_db()
     with Session(engine) as session:
         ensure_system_user(session)
@@ -65,6 +67,22 @@ def _bootstrap() -> None:
             session,
             username=config.ADMIN_USERNAME,
             password=config.ADMIN_PASSWORD,
+        )
+
+
+def _check_scan_separator() -> None:
+    """Say when a configured barcode separator is being ignored.
+
+    The parser refuses a separator that could occur inside a field, because
+    splitting on one would import confidently wrong data. Doing that silently is
+    indistinguishable from the setting having no effect, so name it once at startup.
+    """
+    if config.SCAN_SEPARATOR and scan.configured_separator() is None:
+        _logger.warning(
+            "Ignoring SHELFOS_SCAN_SEPARATOR=%r: it must be a single character that "
+            "cannot occur inside a barcode field (not a letter, digit, or -._/+). "
+            "Scans will still be split on the standard GS/RS separators.",
+            config.SCAN_SEPARATOR,
         )
 
 

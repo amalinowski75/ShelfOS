@@ -147,6 +147,22 @@ def test_an_unsafe_configured_separator_is_ignored(monkeypatch) -> None:  # type
     assert scan.mpn == "ESQ-106-33-T-S"  # not truncated at the first hyphen
 
 
+def test_an_ignored_separator_is_reported_at_startup(monkeypatch, caplog) -> None:  # type: ignore[no-untyped-def]
+    """Silently doing nothing looks exactly like the feature being broken."""
+    from app.main import _check_scan_separator
+
+    monkeypatch.setattr(config, "SCAN_SEPARATOR", "-")
+    with caplog.at_level("WARNING", logger="shelfos"):
+        _check_scan_separator()
+    assert "SHELFOS_SCAN_SEPARATOR" in caplog.text
+
+    caplog.clear()
+    monkeypatch.setattr(config, "SCAN_SEPARATOR", "|")  # a usable one says nothing
+    with caplog.at_level("WARNING", logger="shelfos"):
+        _check_scan_separator()
+    assert caplog.text == ""
+
+
 def test_a_separator_flush_against_the_url_is_not_swallowed_into_it() -> None:
     scan = parse_scan("QTY:5 PN:MIC334\x1d https://www.tme.eu/details/MIC334\x1d")
     assert scan.url == "https://www.tme.eu/details/MIC334"

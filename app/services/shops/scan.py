@@ -74,12 +74,15 @@ def parse_scan(code: str) -> ScanResult:
     raise ValidationError("unrecognised code — expected a shop URL or a barcode")
 
 
-def _configured_separator() -> str | None:
+def configured_separator() -> str | None:
     """The visible separator from the environment, if it is safe to split on.
 
     A separator that can occur *inside* a field would shred a real label into
     confidently-wrong values ("-" turns 1PESQ-106-33-T-S into three fields), so an
     unusable setting is ignored rather than trusted — the GS/RS split still works.
+
+    Public so startup can warn about a setting that is being ignored; silently
+    doing nothing is indistinguishable from the feature being broken.
     """
     separator = config.SCAN_SEPARATOR
     if len(separator) != 1 or separator.isalnum() or separator in "-._/+":
@@ -89,7 +92,7 @@ def _configured_separator() -> str | None:
 
 def _parse_datamatrix(text: str) -> ScanResult:
     separators = ["\x1d", "\x1e"]  # GS, RS
-    configured = _configured_separator()
+    configured = configured_separator()
     if configured:
         separators.append(configured)
     pattern = "|".join(re.escape(s) for s in separators)

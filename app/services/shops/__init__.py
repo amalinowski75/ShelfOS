@@ -1,8 +1,9 @@
 """Shop-provider registry (spec: create a component from a shop URL).
 
 Adding a distributor = a new module implementing ``ShopProvider`` + one entry in
-``_PROVIDERS``. ``lookup`` dispatches by URL host; ``import_code`` is the entry the
-dialog uses and additionally accepts a scanned barcode (see ``scan``).
+``_PROVIDERS``. ``import_code`` is the single entry point: it takes a shop URL or a
+scanned barcode (see ``scan``) and dispatches by URL host or by the shop the label
+names.
 """
 
 from __future__ import annotations
@@ -43,14 +44,6 @@ def resolve(url: str) -> ShopProvider | None:
         if provider.matches(url):
             return provider
     return None
-
-
-def lookup(url: str) -> ProductData:
-    """Look a product up via its shop's API. Raises ValidationError on failure."""
-    provider = resolve(url)
-    if provider is None:
-        raise ValidationError("unsupported shop — no provider for this URL")
-    return provider.fetch(url)
 
 
 def _fallback(
@@ -118,4 +111,4 @@ def import_code(code: str) -> ProductData:
         return _fallback(scan, exc)
 
 
-__all__ = ["ProductData", "ShopProvider", "import_code", "lookup", "resolve"]
+__all__ = ["ProductData", "ShopProvider", "import_code", "resolve"]
