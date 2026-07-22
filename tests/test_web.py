@@ -242,7 +242,12 @@ def test_components_feed_generic_view(client: TestClient) -> None:
     ctype = client.post("/api/types", json={"name": "resistor"}).json()
     client.post(
         "/api/components",
-        json={"type_id": ctype["id"], "manufacturer": "Yageo", "mpn": "RC0603"},
+        json={
+            "type_id": ctype["id"],
+            "manufacturer": "Yageo",
+            "mpn": "RC0603",
+            "notes": "Thick Film Resistors - SMD 10Kohms 1%",
+        },
     )
 
     feed = client.get("/web/api/components").json()
@@ -251,12 +256,80 @@ def test_components_feed_generic_view(client: TestClient) -> None:
         "type",
         "manufacturer",
         "mpn",
+        "notes",
         "package",
         "mounting_type",
         "quantity",
     ]
+    # Titled for what it holds — a shop import puts the product description here.
+    assert [c["title"] for c in feed["columns"]][3] == "Description"
     assert len(feed["data"]) == 1
     assert feed["data"][0]["manufacturer"] == "Yageo"
+    assert feed["data"][0]["notes"] == "Thick Film Resistors - SMD 10Kohms 1%"
+
+
+def test_components_feed_sends_an_empty_string_for_a_missing_description(
+    client: TestClient,
+) -> None:
+    """Never None: the client escapes and ellipsises it as text."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    client.post("/api/components", json={"type_id": ctype["id"]})
+    assert client.get("/web/api/components").json()["data"][0]["notes"] == ""
+
+
+def test_components_feed_trims_a_long_description(client: TestClient) -> None:
+    """`notes` is uncapped free text and this feed loads on every page view.
+
+    Without a trim one component with a novel in it would be downloaded in full
+    every time — including by the invoice line dialog, which only wants the MPN.
+    """
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    client.post(
+        "/api/components", json={"type_id": ctype["id"], "notes": "x" * 5000}
+    )
+    shipped = client.get("/web/api/components").json()["data"][0]["notes"]
+    assert len(shipped) < 250
+    assert shipped.endswith("…")
+
+
+def test_component_detail_shows_the_full_description(client: TestClient) -> None:
+    """The table trims; the detail page is where the whole text lives."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    long_text = "Thick Film Resistors " * 30
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "notes": long_text}
+    ).json()
+    html = client.get(f"/components/{component['id']}").text
+    assert long_text.strip() in html
+    # Labelled, matching the table column and both dialogs — but outside table.kv,
+    # whose label column would leave the page's longest field the least room.
+    assert "<span>Description</span>" in html
+    assert '<div class="kv-long">' in html
+    assert "<th>Description</th>" not in html
+
+
+def test_component_dialogs_call_the_field_description(client: TestClient) -> None:
+    """One field, one name — it was "Notes" in the dialogs and unnamed elsewhere.
+
+    Scoped to the component forms: attachments, links and invoices also render a
+    ``name="notes"`` input on these pages, and "Notes" is still the right word
+    there, so a page-wide search would be testing the wrong field.
+    """
+    import re
+
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    labelled = re.compile(r"<label>(\w+)</label>\s*<input[^>]*\bname=\"notes\"")
+
+    pages = {
+        "/": "component-form",  # the New Component dialog
+        f"/components/{component['id']}": "component-edit-form",
+    }
+    for path, form_id in pages.items():
+        html = client.get(path).text
+        start = html.index(f'<form id="{form_id}"')
+        form = html[start : html.index("</form>", start)]
+        assert labelled.findall(form) == ["Description"]
 
 
 def test_components_feed_type_specific_adds_parameter_columns(

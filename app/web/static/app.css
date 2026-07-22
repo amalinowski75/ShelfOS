@@ -241,6 +241,15 @@ table.kv td { padding: 9px 0; border-bottom: 1px solid var(--border); }
 table.kv th { border-bottom: 1px solid var(--border); }
 table.kv tr:last-child th, table.kv tr:last-child td { border-bottom: none; }
 
+/* A labelled field too long for table.kv's 42/58 split: the label sits above the
+   value so the value gets the card's full measure. pre-wrap keeps the line breaks
+   of a description someone typed by hand. */
+.kv-long { margin-top: 14px; font-size: 14px; }
+.kv-long > span {
+  display: block; font-weight: 600; color: var(--muted); margin-bottom: 4px;
+}
+.kv-long p { margin: 0; white-space: pre-wrap; }
+
 .empty { color: var(--muted); font-size: 14px; margin: 0; }
 
 /* ---------- location tree (§7) ---------- */
@@ -502,6 +511,13 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 .cell-mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .cell-qty { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .cell-qty.is-zero { color: var(--danger); }
+/* Truncate rather than wrap. Tabulator's own .tabulator-cell already clips, but
+   `display: block` is what makes the ellipsis apply to this inline span, and
+   stating the rest keeps the behaviour ours rather than the vendor's. NOT muted:
+   the description is often the only text that identifies a part at a glance. */
+.cell-desc {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* row actions: quiet until the row is hovered (spec §15) */
 .row-actions { display: inline-flex; gap: 4px; opacity: 0; transition: opacity .12s; }

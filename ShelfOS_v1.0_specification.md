@@ -311,6 +311,9 @@ Show only common columns:
 - type
 - manufacturer
 - MPN
+- description (the component's `notes`, which is also where a shop import puts the
+  manufacturer's product description; truncated in the table, full text on the
+  component's detail page)
 - package
 - mounting_type
 - quantity

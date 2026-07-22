@@ -13,6 +13,54 @@ const table = new Tabulator("#components-table", {
   placeholder: "No components",
 });
 
+// ---- remembered column widths ---------------------------------------------
+// Tabulator columns are drag-resizable, but loadTable rebuilds them from scratch
+// on every type-filter change AND after every stock write — so without this a
+// widened column snaps back within seconds of being widened. Keyed by field, so
+// a per-type parameter column keeps its width too.
+const COLUMN_WIDTHS_KEY = "shelfos.columnWidths";
+// Widest width worth restoring. Dragging a column to 1200px on a big monitor and
+// then opening the page on a laptop would otherwise recreate exactly the problem
+// the compact default avoids — Qty and the row's Add/Take buttons pushed off-screen
+// — on every later visit, with nothing on screen explaining why.
+const MAX_REMEMBERED_WIDTH = 600;
+
+// Read once per rebuild rather than once per column: a type-specific view has a
+// dozen columns and loadTable runs on every filter change and stock write.
+let columnWidths = readColumnWidths();
+
+function readColumnWidths() {
+  let stored;
+  try {
+    stored = JSON.parse(localStorage.getItem(COLUMN_WIDTHS_KEY));
+  } catch {
+    return {}; // unparseable, or storage unavailable (private mode): just don't
+  }
+  if (!stored || typeof stored !== "object") return {};
+  // Validate on READ too, not only on write: this store is editable from devtools
+  // and outlives any change to the key's shape, and a bad value here goes straight
+  // to Tabulator as a column width.
+  return Object.fromEntries(
+    Object.entries(stored).filter(
+      ([, width]) =>
+        typeof width === "number" && width > 0 && width <= MAX_REMEMBERED_WIDTH,
+    ),
+  );
+}
+
+function rememberColumnWidth(field, width) {
+  if (!field || !(width > 0)) return;
+  columnWidths = {
+    ...columnWidths,
+    [field]: Math.min(Math.round(width), MAX_REMEMBERED_WIDTH),
+  };
+  try {
+    localStorage.setItem(COLUMN_WIDTHS_KEY, JSON.stringify(columnWidths));
+  } catch {
+    // Storage full or blocked — the width just won't survive a reload.
+  }
+}
+
 // Fields the presenter always emits get bespoke formatting; anything else
 // (type, manufacturer, per-type parameter columns) renders as plain text.
 //
@@ -36,9 +84,12 @@ function numericParamSorter(field) {
 }
 
 function columnDef(column) {
+  const remembered = columnWidths[column.field];
   const base = {
     title: column.title,
     field: column.field,
+    // A width the user dragged wins over any default below.
+    ...(remembered ? { width: remembered } : {}),
     headerFilter: "input",
     // Name each filter after its column so the placeholder and the screen-reader
     // label distinguish otherwise-identical inputs.
@@ -52,6 +103,24 @@ function columnDef(column) {
       return {
         ...base,
         formatter: (cell) => `<span class="cell-mpn">${esc(cell.getValue())}</span>`,
+      };
+    case "notes":
+      return {
+        ...base,
+        // A STARTING width, not a maximum: fitDataFill sizes to content, so an
+        // unconstrained column of free text would push Qty and the row's Add/Take
+        // buttons off-screen — but a maxWidth also caps the drag handle, which
+        // leaves a long description permanently unreadable in the table. This way
+        // it starts compact and the user can widen it, and the width sticks.
+        //
+        // Hovering shows as much as the feed sent — which is trimmed, so for the
+        // very longest descriptions the tooltip is no fuller than the cell. The
+        // component's detail page is the one that always has it whole.
+        width: base.width ?? 260,
+        formatter: (cell) => {
+          const value = esc(cell.getValue());
+          return `<span class="cell-desc" title="${value}">${value}</span>`;
+        },
       };
     case "package":
       return {
@@ -135,6 +204,7 @@ function currentTypeQuery() {
 }
 
 async function loadTable() {
+  columnWidths = readColumnWidths(); // another tab may have resized since
   const payload = await fetch(
     `/web/api/components${currentTypeQuery()}`,
   ).then((r) => r.json());
@@ -147,6 +217,9 @@ async function loadTable() {
 
 typeFilter.addEventListener("change", loadTable);
 table.on("tableBuilt", loadTable);
+table.on("columnResized", (column) =>
+  rememberColumnWidth(column.getField(), column.getWidth()),
+);
 
 // ---- New Type trigger (spec §13) ------------------------------------------
 // The dialog itself lives in type_dialog.js (shared with the invoice line flow),

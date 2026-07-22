@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { JSDOM } from "jsdom";
 import { describe, it, expect, vi } from "vitest";
 import { loadPage, tick, typePageFixture } from "./harness.js";
 
@@ -37,6 +39,18 @@ describe("app.js — table formatting", () => {
     expect(mt.formatter(cell("THT"))).toContain("b-accent");
     expect(mt.formatter(cell("SMT"))).toContain("b-neutral");
 
+    const desc = window.columnDef({ field: "notes", title: "Description" });
+    // Escaped in BOTH places — the title attribute is as injectable as the body,
+    // and a quote in a description would otherwise break out of it.
+    expect(desc.formatter(cell('10k 1% "tight"'))).toBe(
+      '<span class="cell-desc" title="10k 1% &quot;tight&quot;">' +
+        "10k 1% &quot;tight&quot;</span>",
+    );
+    // A starting width, NOT a maximum: a maxWidth also caps the drag handle,
+    // which would leave a long description permanently unreadable in the table.
+    expect(desc.width).toBe(260);
+    expect(desc.maxWidth).toBeUndefined();
+
     const qty = window.columnDef({ field: "quantity", title: "Qty" });
     expect(qty.formatter(cell(0))).toContain("is-zero");
     expect(qty.formatter(cell(5))).toBe('<span class="cell-qty">5</span>');
@@ -47,7 +61,7 @@ describe("app.js — table formatting", () => {
 
   it("gives every data column a live text header filter, but not the actions column", () => {
     const { window } = loadPage(typePageFixture(), SCRIPTS);
-    for (const field of ["mpn", "package", "mounting_type", "quantity", "type"]) {
+    for (const field of ["mpn", "notes", "package", "mounting_type", "quantity", "type"]) {
       const col = window.columnDef({ field, title: `Col ${field}` });
       // "input" + Tabulator's default "like" func = case-insensitive substring
       // filter applied live; multiple active filters AND together. That runtime
@@ -61,6 +75,81 @@ describe("app.js — table formatting", () => {
     }
     // The row-action buttons column is not filterable.
     expect(window.actionColumn().headerFilter).toBeUndefined();
+  });
+
+  it("remembers a dragged column width across table rebuilds", () => {
+    // loadTable rebuilds the columns on every filter change AND after every stock
+    // write, so without this a widened column snaps back within seconds.
+    const { window } = loadPage(typePageFixture(), SCRIPTS);
+    expect(window.columnDef({ field: "notes", title: "Description" }).width).toBe(260);
+
+    window.rememberColumnWidth("notes", 520);
+    expect(window.columnDef({ field: "notes", title: "Description" }).width).toBe(520);
+    // Any column, not just the description one.
+    window.rememberColumnWidth("param_7", 180);
+    expect(window.columnDef({ field: "param_7", title: "R" }).width).toBe(180);
+    // Untouched columns stay auto-sized.
+    expect(window.columnDef({ field: "mpn", title: "MPN" }).width).toBeUndefined();
+  });
+
+  it("saves the width Tabulator reports when a column is resized", () => {
+    // The half that makes the remembering reachable: without this subscription
+    // nothing ever calls rememberColumnWidth, and the tests above would pass on a
+    // feature the user can't trigger.
+    const { window } = loadPage(typePageFixture(), SCRIPTS);
+    const onResized = window.Tabulator.handlers.columnResized;
+    expect(onResized).toBeTypeOf("function");
+
+    onResized({ getField: () => "notes", getWidth: () => 512 });
+    expect(window.columnDef({ field: "notes", title: "Description" }).width).toBe(512);
+  });
+
+  it("ignores unusable stored widths instead of breaking the table", () => {
+    const { window } = loadPage(typePageFixture(), SCRIPTS);
+    window.rememberColumnWidth("notes", 0); // a collapsed drag must not stick
+    window.rememberColumnWidth(undefined, 300);
+    expect(window.columnDef({ field: "notes", title: "Description" }).width).toBe(260);
+  });
+
+  it("validates stored widths on read, not only on write", () => {
+    // The store is editable from devtools and outlives any change to this key's
+    // shape, and a bad value goes straight to Tabulator as a column width.
+    const width = (stored) => {
+      const { window } = loadPage(typePageFixture(), SCRIPTS, {
+        localStorage: { "shelfos.columnWidths": stored },
+      });
+      return window.columnDef({ field: "notes", title: "Description" }).width;
+    };
+    expect(width("not json")).toBe(260);
+    expect(width(JSON.stringify("a string"))).toBe(260);
+    expect(width(JSON.stringify({ notes: -20 }))).toBe(260);
+    expect(width(JSON.stringify({ notes: "wide" }))).toBe(260);
+    expect(width(JSON.stringify({ notes: 5000 }))).toBe(260); // past the bound
+    expect(width(JSON.stringify({ notes: 420 }))).toBe(420); // a sane one survives
+  });
+
+  it("bounds a remembered width so it can't wreck a narrower screen", () => {
+    // Dragging to 1200px on a big monitor and then opening the page on a laptop
+    // would otherwise push Qty and the row's Add/Take buttons off-screen on every
+    // later visit, with nothing on screen explaining why.
+    const { window } = loadPage(typePageFixture(), SCRIPTS);
+    window.rememberColumnWidth("notes", 1200);
+    expect(window.columnDef({ field: "notes", title: "Description" }).width).toBe(600);
+  });
+
+  it("a description cell ellipsises rather than wrapping, under the real app.css", () => {
+    const css = readFileSync(
+      new URL("../../app/web/static/app.css", import.meta.url),
+      "utf8",
+    );
+    const dom = new JSDOM(`<style>${css}</style><span class="cell-desc" id="d"></span>`);
+    const style = dom.window.getComputedStyle(dom.window.document.getElementById("d"));
+    // `display: block` is the load-bearing one: text-overflow does nothing on an
+    // inline span, so without it the ellipsis would silently be the vendor's job.
+    expect(style.display).toBe("block");
+    expect(style.textOverflow).toBe("ellipsis");
+    expect(style.overflow).toBe("hidden");
+    expect(style.whiteSpace).toBe("nowrap");
   });
 
   it("quantity filter matches both the raw and thousands-separated number", () => {

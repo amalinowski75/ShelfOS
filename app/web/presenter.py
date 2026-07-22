@@ -24,10 +24,34 @@ _BASE_COLUMNS: list[dict[str, object]] = [
     {"title": "Type", "field": "type"},
     {"title": "Manufacturer", "field": "manufacturer"},
     {"title": "MPN", "field": "mpn"},
+    # The component's own free text (`notes`), which is also where a shop import
+    # puts the manufacturer's product description — so it reads as the part's
+    # description and is titled that way, next to the MPN it describes.
+    {"title": "Description", "field": "notes"},
     {"title": "Package", "field": "package"},
     {"title": "Mounting", "field": "mounting_type"},
     {"title": "Qty", "field": "quantity"},
 ]
+
+
+# Longest description shipped in a table row. `notes` is uncapped free text, and
+# this feed is fetched on every load of the components page AND by the invoice
+# line dialog, so one component with a novel in it would be downloaded in full
+# every time. The detail page has the whole thing.
+#
+# This also bounds what the table's Description filter can find: that filter runs
+# CLIENT-side over what this ships, so text past the cut is unsearchable there
+# while the detail page still shows it. Rare at 200 characters, and the honest fix
+# if it ever bites is server-side filtering for that column — not a fatter payload.
+_TABLE_NOTES_CHARS = 200
+
+
+def _short(text: str | None) -> str:
+    """A description trimmed to table length, with an ellipsis when it was cut."""
+    value = (text or "").strip()
+    if len(value) <= _TABLE_NOTES_CHARS:
+        return value
+    return value[:_TABLE_NOTES_CHARS].rstrip() + "…"
 
 
 def format_money(amount: Decimal) -> str:
@@ -146,6 +170,7 @@ def build_component_table(
             "type": type_names.get(component.type_id, ""),
             "manufacturer": component.manufacturer or "",
             "mpn": component.mpn or "",
+            "notes": _short(component.notes),
             "package": component.package or "",
             "mounting_type": component.mounting_type.value,
             "quantity": totals.get(component_id, 0),

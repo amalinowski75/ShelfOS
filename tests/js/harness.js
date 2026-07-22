@@ -24,7 +24,11 @@ const readStatic = (name) => readFileSync(join(STATIC, name), "utf8");
 
 export const CSRF = "csrf-test-token";
 
-export function loadPage(bodyHtml, scripts, { fetchImpl, role = "user" } = {}) {
+export function loadPage(
+  bodyHtml,
+  scripts,
+  { fetchImpl, role = "user", localStorage: storage } = {},
+) {
   const virtualConsole = new VirtualConsole();
   // jsdom logs a "Not implemented: navigation" error for the reload/redirect
   // the scripts do on success; swallow only that specific message, and surface
@@ -59,7 +63,13 @@ export function loadPage(bodyHtml, scripts, { fetchImpl, role = "user" } = {}) {
     setData() {
       return Promise.resolve();
     }
-    on() {}
+    // Handlers are recorded on the CLASS, not the instance: app.js keeps its table
+    // in a top-level `const`, which (unlike `var`) never lands on `window`, so a
+    // test has no other way to reach what the script subscribed to.
+    on(event, handler) {
+      window.Tabulator.handlers[event] = handler;
+    }
+    static handlers = {};
   };
 
   // Browsers expose form controls as named properties on the form
@@ -68,6 +78,12 @@ export function loadPage(bodyHtml, scripts, { fetchImpl, role = "user" } = {}) {
   // since some scripts capture a control (e.g. the component <select>) into a
   // module-level const at load time.
   patchFormNamedAccess(window.document);
+
+  // Seeded before the scripts run: app.js reads its remembered column widths into
+  // a module-level variable at load, so setting them afterwards would be too late.
+  for (const [key, value] of Object.entries(storage ?? {})) {
+    window.localStorage.setItem(key, value);
+  }
 
   for (const name of scripts) {
     const el = window.document.createElement("script");
