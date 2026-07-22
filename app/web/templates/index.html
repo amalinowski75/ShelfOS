@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_location_picker.html" import location_picker %}
+{% from "_type_dialog.html" import type_dialog %}
 {% block title %}Components — ShelfOS{% endblock %}
 
 {% block content %}
@@ -57,92 +58,11 @@
   </article>
 </dialog>
 
-{# Gated on the same role as its "New Type" trigger (and app.js's openTypeDialog),
-   so the dialog, its trigger, and the "+ New type" button in the component dialog
-   are all present-or-absent together — no dead dialog for read-only users, and the
-   component dialog's gate on this element's presence is correct by construction. #}
+{# The New Type builder (extracted to _type_dialog.html). Gated on the same role
+   as its trigger, so the dialog, its "New Type" button, and the "+ New type"
+   button in the component dialog are present-or-absent together. #}
 {% if current_user.role.value != "read-only" %}
-<dialog id="type-dialog">
-  <article>
-    <header>
-      <strong>New component type</strong>
-      <button class="close" aria-label="Close" data-close></button>
-    </header>
-    <div class="type-body">
-      <form id="type-form" class="type-main">
-        <div class="field">
-          <label>Name</label>
-          <input class="control" name="type-name" placeholder="e.g. resistor" required />
-        </div>
-        <div class="field">
-          <label>Parent type</label>
-          <select class="control" name="parent-id">
-            <option value="">None (top level)</option>
-            {% for t in types %}
-            <option value="{{ t.id }}">{{ t.name }}</option>
-            {% endfor %}
-          </select>
-        </div>
-
-        <div class="params-head">
-          <label>Parameters</label>
-          <button type="button" class="btn btn-ghost btn-sm" id="add-param">+ Add parameter</button>
-        </div>
-        <p class="params-empty" id="params-empty">No parameters yet — inherited ones still apply.</p>
-        <div class="params" id="params"></div>
-
-        <p id="type-error" class="error" hidden></p>
-        <footer>
-          <button type="button" class="btn btn-ghost" data-close>Cancel</button>
-          <button type="submit" class="btn btn-primary">Create type</button>
-        </footer>
-      </form>
-      <aside class="type-inherited">
-        <div class="inherited-head">Inherited from parent</div>
-        <p class="inherited-hint" id="inherited-hint">
-          Select a parent type to see the parameters this type will inherit.
-        </p>
-        <ul class="inherited-list" id="inherited-list"></ul>
-      </aside>
-    </div>
-  </article>
-</dialog>
-
-<template id="param-row-template">
-  <div class="param-row">
-    <div class="param-grid">
-      <div class="field">
-        <label>Name</label>
-        <input class="control" name="p-name" placeholder="resistance" required />
-      </div>
-      <div class="field">
-        <label>Label</label>
-        <input class="control" name="p-label" placeholder="Resistance" required />
-      </div>
-      <div class="field">
-        <label>Data type</label>
-        <select class="control" name="p-data-type">
-          {% for dt in data_types %}
-          <option value="{{ dt }}">{{ dt }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="field">
-        <label>Unit</label>
-        <input class="control" name="p-unit" placeholder="optional" />
-      </div>
-    </div>
-    <div class="field param-enum" hidden>
-      <label>Allowed values (comma-separated)</label>
-      <input class="control" name="p-enum" placeholder="e.g. X7R, C0G, Y5V" />
-    </div>
-    <div class="param-flags">
-      <label class="check"><input type="checkbox" name="p-table" /> Table column</label>
-      <label class="check"><input type="checkbox" name="p-filter" /> Filterable</label>
-      <button type="button" class="btn btn-danger btn-sm param-remove">Remove</button>
-    </div>
-  </div>
-</template>
+{{ type_dialog(types, data_types) }}
 {% endif %}
 
 {% if current_user.role.value != "read-only" %}
@@ -153,5 +73,6 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/type_dialog.js?v={{ static_version() }}"></script>
 <script src="/static/app.js?v={{ static_version() }}"></script>
 {% endblock %}

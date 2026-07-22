@@ -746,6 +746,9 @@ def test_invoice_detail_draft_shows_write_controls(client: TestClient) -> None:
     assert 'id="invoice-add-component-btn"' in html
     assert 'id="component-dialog"' in html
     assert "/static/component_dialog.js" in html
+    # …and the New Type builder is here too, so "+ New type" in that dialog works.
+    assert 'id="type-dialog"' in html
+    assert "/static/type_dialog.js" in html
     # The line's location field is the (optional) tree-picker.
     assert 'class="loc-picker"' in html
     assert 'data-loc-path="D1"' in html  # the seeded location
@@ -768,6 +771,7 @@ def test_invoice_detail_finalized_is_read_only(client: TestClient) -> None:
         'id="invoice-line-dialog"',
         'id="invoice-finalize-dialog"',
         'id="component-dialog"',
+        'id="type-dialog"',
         'id="location-dialog"',
         'id="invoice-add-component-btn"',
         'data-act="edit-line"',
@@ -813,6 +817,9 @@ def test_invoice_detail_read_only_account_has_no_controls(
     assert 'data-act="edit-line"' not in html
     assert 'id="invoice-line-dialog"' not in html
     assert 'id="location-dialog"' not in html
+    # The New component + New type builders are writer-gated too.
+    assert 'id="component-dialog"' not in html
+    assert 'id="type-dialog"' not in html
 
 
 def test_locations_page_renders_tree(client: TestClient) -> None:
