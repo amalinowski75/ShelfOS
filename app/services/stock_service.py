@@ -166,6 +166,21 @@ def list_component_locations(
     )
 
 
+def stock_by_location(session: Session) -> dict[int, list[ComponentLocation]]:
+    """Every stocked slot (qty > 0) grouped by its location, in one query.
+
+    The locations page needs the whole map at once to render the tree, so this is
+    deliberately not a per-location lookup — that would be one query per node.
+    """
+    grouped: dict[int, list[ComponentLocation]] = {}
+    rows = session.exec(
+        select(ComponentLocation).where(ComponentLocation.quantity > 0)
+    ).all()
+    for row in rows:
+        grouped.setdefault(row.location_id, []).append(row)
+    return grouped
+
+
 def occupied_location_ids(session: Session) -> list[int]:
     """Locations currently holding at least one component (any component, qty > 0).
 

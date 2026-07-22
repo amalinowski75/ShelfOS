@@ -38,6 +38,7 @@ from app.services._common import require_entity
 from app.web.presenter import (
     build_component_table,
     build_invoice_table,
+    build_location_stock,
     format_money,
     format_parameter_value,
 )
@@ -45,6 +46,15 @@ from app.web.presenter import (
 # Cap the invoice list until real pagination lands; the template shows a hint
 # when the cap is hit so older invoices are not dropped silently.
 _INVOICE_LIST_LIMIT = 200
+
+# Most parts listed inside ONE location on the Locations page. The whole tree is
+# rendered up front (collapsed, but present), so without this a single location
+# holding thousands of distinct parts would weigh down every visit. The template
+# says how many it left out rather than truncating silently.
+#
+# It bounds one location, not the page: nothing caps the number of locations, and
+# build_location_stock loads every stocked slot regardless. See its docstring.
+_PARTS_PER_LOCATION = 50
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -217,6 +227,10 @@ def locations_page(
             "location_tree": tree,
             "location_types": [lt.value for lt in LocationType],
             "location_options": _location_options(tree),
+            # What each location holds, so the tree can show its contents and mark
+            # itself empty or occupied for the page's two filters.
+            "location_stock": build_location_stock(session),
+            "parts_per_location": _PARTS_PER_LOCATION,
             "current_user": user,
         },
     )

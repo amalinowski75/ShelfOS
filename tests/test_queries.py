@@ -129,3 +129,77 @@ def test_list_purchase_history(session: Session) -> None:
     line, loaded_invoice = history[0]
     assert line.quantity == 100
     assert loaded_invoice.supplier == "Mouser"
+
+
+def test_build_location_stock_groups_sorts_and_drops_depleted(
+    session: Session,
+) -> None:
+    """What the locations page renders inside each location."""
+    from app.web.presenter import build_location_stock
+
+    user = ensure_system_user(session)
+    ctype = cs.create_type(session, "resistor")
+    zed = cs.create_component(session, ctype.id, mpn="ZZ-1", manufacturer="Yageo")
+    alpha = cs.create_component(session, ctype.id, mpn="AA-1")
+    nameless = cs.create_component(session, ctype.id)  # no MPN
+    drawer = ls.create_location(session, type=LocationType.DRAWER, name="D5")
+    other = ls.create_location(session, type=LocationType.DRAWER, name="D9")
+
+    for component, location in ((zed, drawer), (alpha, drawer), (nameless, other)):
+        ss.add_stock(
+            session,
+            component_id=component.id,
+            location_id=location.id,
+            quantity=5,
+            user_id=user.id,
+        )
+    # A slot emptied back to zero is not "contents".
+    ss.remove_stock(
+        session,
+        component_id=nameless.id,
+        location_id=other.id,
+        quantity=5,
+        user_id=user.id,
+    )
+
+    stock = build_location_stock(session)
+    assert set(stock) == {drawer.id}  # the depleted location is absent entirely
+    rows = stock[drawer.id]
+    # Sorted by MPN, so a drawer's contents read in a stable order.
+    assert [row["mpn"] for row in rows] == ["AA-1", "ZZ-1"]
+    assert rows[1] == {
+        "component_id": zed.id,
+        "mpn": "ZZ-1",
+        "manufacturer": "Yageo",
+        "quantity": 5,
+        "container": "loose",
+    }
+
+
+def test_build_location_stock_labels_a_component_with_no_mpn(
+    session: Session,
+) -> None:
+    """The label is a link's text, so it can never be blank."""
+    from app.web.presenter import build_location_stock
+
+    user = ensure_system_user(session)
+    ctype = cs.create_type(session, "resistor")
+    component = cs.create_component(session, ctype.id)
+    drawer = ls.create_location(session, type=LocationType.DRAWER, name="D5")
+    ss.add_stock(
+        session,
+        component_id=component.id,
+        location_id=drawer.id,
+        quantity=1,
+        user_id=user.id,
+    )
+    assert build_location_stock(session)[drawer.id][0]["mpn"] == (
+        f"Component #{component.id}"
+    )
+
+
+def test_build_location_stock_is_empty_without_stock(session: Session) -> None:
+    ls.create_location(session, type=LocationType.DRAWER, name="D5")
+    from app.web.presenter import build_location_stock
+
+    assert build_location_stock(session) == {}

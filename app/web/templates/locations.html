@@ -1,14 +1,59 @@
 {% extends "base.html" %}
 {% block title %}Locations — ShelfOS{% endblock %}
+{% set can_write = current_user.role.value != "read-only" %}
 
+{# One node: a row (caret + name + type + how much it holds) and, hidden until the
+   caret is clicked, its contents — this location's components first, then its child
+   locations. `data-occupied` is the location's OWN stock only: a rack holding
+   nothing directly is empty even when a drawer under it is full, and locations.js
+   keeps such a rack on screen as the path to that drawer. #}
 {% macro location_node(node) %}
-<li>
-  <span class="loc-name">{{ node.location.name }}</span>
-  <span class="badge b-neutral"><span class="dot"></span>{{ node.location.type.value }}</span>
-  {% if node.children %}
-  <ul class="loc-tree">
-    {% for child in node.children %}{{ location_node(child) }}{% endfor %}
-  </ul>
+{% set contents = location_stock.get(node.location.id, []) %}
+{% set expandable = node.children or contents %}
+<li class="loc-item" data-occupied="{{ 'true' if contents else 'false' }}">
+  <div class="loc-row">
+    {% if expandable %}
+    {# Named by the visible label rather than a copy of it: a fixed "Expand X"
+       would announce "Expand Lab, expanded" once open, and repeating the name in
+       an aria-label makes a screen reader read "Lab, collapsed, Lab, room".
+       aria-expanded already carries the state. #}
+    <button type="button" class="tree-caret" aria-expanded="false"
+            aria-labelledby="loc-name-{{ node.location.id }}"></button>
+    {% else %}
+    <span class="tree-caret-spacer"></span>
+    {% endif %}
+    <span class="loc-name" id="loc-name-{{ node.location.id }}">{{ node.location.name }}</span>
+    <span class="badge b-neutral"><span class="dot"></span>{{ node.location.type.value }}</span>
+    {% if contents %}
+    <span class="badge b-accent loc-count">{{ contents | length }}
+      {{ "part" if contents | length == 1 else "parts" }}</span>
+    {% endif %}
+  </div>
+  {% if expandable %}
+  <div class="tree-children" hidden>
+    {% if contents %}
+    <ul class="loc-parts">
+      {% for part in contents[:parts_per_location] %}
+      <li>
+        <a class="cell-mpn" href="/components/{{ part.component_id }}">{{ part.mpn }}</a>
+        {% if part.manufacturer %}<span class="muted">{{ part.manufacturer }}</span>{% endif %}
+        <span class="cell-qty">&times;&nbsp;{{ part.quantity }}</span>
+        <span class="badge b-neutral">{{ part.container }}</span>
+      </li>
+      {% endfor %}
+      {# Never truncate silently: the whole page is rendered up front, so one
+         enormous location would otherwise bloat every visit. #}
+      {% if contents | length > parts_per_location %}
+      <li class="muted">+ {{ contents | length - parts_per_location }} more not shown</li>
+      {% endif %}
+    </ul>
+    {% endif %}
+    {% if node.children %}
+    <ul class="loc-tree">
+      {% for child in node.children %}{{ location_node(child) }}{% endfor %}
+    </ul>
+    {% endif %}
+  </div>
   {% endif %}
 </li>
 {% endmacro %}
@@ -19,26 +64,40 @@
     <h1>Locations</h1>
     <p>Storage hierarchy for stock (spec §7).</p>
   </div>
-  {% if current_user.role.value != "read-only" %}
   <div class="head-actions">
+    {# Both ticked shows everything; neither shows nothing. A location counts as
+       occupied when it holds stock of its own. Only where there's a tree to
+       filter — otherwise they'd sit there looking live but wired to nothing. #}
+    {% if location_tree %}
+    <label class="check"><input type="checkbox" id="show-empty" checked /> Show empty</label>
+    <label class="check"><input type="checkbox" id="show-occupied" checked /> Show occupied</label>
+    {% endif %}
+    {% if can_write %}
     <button type="button" class="btn btn-primary" id="new-location-btn">New Location</button>
+    {% endif %}
   </div>
-  {% endif %}
 </div>
 
 {% if location_tree %}
 <div class="card card-pad">
-  <ul class="loc-tree loc-tree-root">
+  <ul class="loc-tree loc-tree-root" id="location-tree">
     {% for node in location_tree %}{{ location_node(node) }}{% endfor %}
   </ul>
+  <p class="empty" id="location-tree-empty" hidden>
+    Nothing to show — tick “Show empty” or “Show occupied”.
+  </p>
 </div>
 {% else %}
 <div class="card card-pad">
-  <p class="empty">No locations yet.{% if current_user.role.value != "read-only" %} Use “New Location” to add one.{% endif %}</p>
+  <p class="empty">No locations yet.{% if can_write %} Use “New Location” to add one.{% endif %}</p>
 </div>
 {% endif %}
 
-{% if current_user.role.value != "read-only" %}
+{% if can_write %}
 {% include "_location_dialog.html" %}
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/locations.js?v={{ static_version() }}"></script>
 {% endblock %}
