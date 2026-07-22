@@ -352,6 +352,11 @@ table.kv tr:last-child th, table.kv tr:last-child td { border-bottom: none; }
   display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600;
   padding: 3px 9px; border-radius: 999px; line-height: 1.4; white-space: nowrap;
 }
+/* .badge sets `display`, so it beats the UA `[hidden] { display: none }` and a
+   hidden badge would stay on screen. Same trap (and same one-line remedy) as
+   .btn[hidden] above — generalised to every badge, since the next one someone
+   hides would hit it too. */
+.badge[hidden] { display: none; }
 .badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
 .b-accent { background: var(--accent-soft); color: var(--accent-ink); }
 .b-ok { background: var(--ok-soft); color: var(--ok); }

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { JSDOM } from "jsdom";
 import { describe, it, expect } from "vitest";
 import { loadPage } from "./harness.js";
 
@@ -213,6 +215,53 @@ describe("locations.js — the empty/occupied filters", () => {
 
     h.setFiltersAtOnce({ empty: true, occupied: true });
     expect(h.expanded("Store")).toBe(true);
+  });
+
+  it("a hidden badge is actually not displayed under the real app.css", () => {
+    // .badge sets `display`, which beats the UA `[hidden] { display: none }` — so
+    // setting the attribute on the count badge did nothing, and a location kept as
+    // a path still advertised "N parts" on a page filtered to show empty ones.
+    // Asserting the `hidden` PROPERTY can't see this; computed style can.
+    const css = readFileSync(
+      new URL("../../app/web/static/app.css", import.meta.url),
+      "utf8",
+    );
+    const dom = new JSDOM(
+      `<style>${css}</style>
+       <span class="badge b-accent loc-count" id="count" hidden>1 part</span>
+       <span class="badge b-neutral" id="plain" hidden>drawer</span>`,
+    );
+    const display = (id) =>
+      dom.window.getComputedStyle(dom.window.document.getElementById(id)).display;
+    expect(display("count")).toBe("none");
+    expect(display("plain")).toBe("none"); // generalised, not just this one badge
+  });
+
+  it("names what came up empty, not a box the user already ticked", () => {
+    // "Tick Show empty or Show occupied" is only the answer when neither is on.
+    // With one on and nothing matching, it tells the user to do what they've done.
+    const h = open();
+    const hint = h.document.getElementById("location-tree-empty");
+
+    // No location in the fixture is occupied once we filter to occupied-only… use
+    // a tree that is entirely empty locations to reach the state.
+    const bare = open(`
+      <input type="checkbox" id="show-empty" checked />
+      <input type="checkbox" id="show-occupied" checked />
+      <ul class="loc-tree" id="location-tree">
+        <li class="loc-item" data-occupied="false" data-name="D1">
+          <div class="loc-row"><span class="tree-caret-spacer"></span></div>
+        </li>
+      </ul>
+      <p class="empty" id="location-tree-empty" hidden></p>`);
+    bare.setFilters({ empty: false, occupied: true });
+    const bareHint = bare.document.getElementById("location-tree-empty");
+    expect(bareHint.hidden).toBe(false);
+    expect(bareHint.textContent).toBe("No occupied locations.");
+
+    // …and the both-off wording still points at the boxes.
+    h.setFiltersAtOnce({ empty: false, occupied: false });
+    expect(hint.textContent).toMatch(/tick/);
   });
 
   it("neither ticked: says so instead of showing a blank card", () => {

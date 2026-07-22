@@ -7,10 +7,13 @@
 
 (function () {
   const tree = document.getElementById("location-tree");
-  if (!tree) return; // no locations yet
   const emptyHint = document.getElementById("location-tree-empty");
   const showEmpty = document.getElementById("show-empty");
   const showOccupied = document.getElementById("show-occupied");
+  // All three or none: the template gates them on the same condition (there being
+  // any locations), but relying on two conditions happening to agree would fail
+  // as a TypeError that takes the whole page's filtering out on load.
+  if (!tree || !showEmpty || !showOccupied) return;
 
   const branchOf = (item) => item.querySelector(":scope > .tree-children");
   const caretOf = (item) => item.querySelector(":scope > .loc-row > .tree-caret");
@@ -44,7 +47,7 @@
       // Nothing to show. Return WITHOUT walking, so the expansion the user built
       // up survives ticking a box off and on again.
       tree.hidden = true;
-      if (emptyHint) emptyHint.hidden = false;
+      say("Nothing to show — tick “Show empty” or “Show occupied”.");
       return;
     }
 
@@ -84,8 +87,17 @@
     }
 
     const visible = walk(tree);
-    if (emptyHint) emptyHint.hidden = visible;
     tree.hidden = !visible;
+    // Getting here with nothing visible means exactly one box is ticked (with
+    // both, every location matches one of them). So name what came up empty
+    // rather than telling the user to tick a box they already have ticked.
+    say(visible ? null : occupied ? "No occupied locations." : "No empty locations.");
+  }
+
+  function say(message) {
+    if (!emptyHint) return;
+    if (message) emptyHint.textContent = message;
+    emptyHint.hidden = !message;
   }
 
   showEmpty.addEventListener("change", applyFilters);

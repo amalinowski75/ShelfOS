@@ -1061,7 +1061,9 @@ def test_locations_page_shows_what_each_location_holds(client: TestClient) -> No
     # The rendered cell, not a bare "40": the page carries a cache-busting epoch
     # in every asset URL, so a loose substring would pass on noise alone.
     assert "&times;&nbsp;40" in html
-    assert "1\n      part" in html  # singular count badge
+    # Whitespace-normalised: the count and its noun sit on separate lines in the
+    # macro, so a literal match would break on a reindent that changed nothing.
+    assert "1 part<" in " ".join(html.split())
     # The drawer holding it is occupied; the room above it is NOT — it holds
     # nothing of its own, which is what the filters judge each location on.
     assert html.count('data-occupied="true"') == 1
@@ -1097,7 +1099,7 @@ def test_locations_page_caps_one_location_s_contents(client: TestClient) -> None
     assert html.count('class="cell-mpn"') == _PARTS_PER_LOCATION
     assert f"+ {over} more not shown" in html
     # The badge still reports the true total, not the truncated one.
-    assert f"{_PARTS_PER_LOCATION + over}\n      parts" in html
+    assert f"{_PARTS_PER_LOCATION + over} parts<" in " ".join(html.split())
 
 
 def test_locations_page_empty(client: TestClient) -> None:
@@ -1112,9 +1114,8 @@ def test_locations_page_empty(client: TestClient) -> None:
 def test_location_name_is_html_escaped(client: TestClient) -> None:
     """Every user/shop-supplied string on this page renders escaped.
 
-    The name now also lands in the caret's ``aria-label``, and a location's
-    contents put an MPN and a manufacturer on the page — so the location must
-    hold something, or the interesting markup is never emitted at all.
+    A location's contents put an MPN and a manufacturer on the page, so the
+    location must hold something or the interesting markup is never emitted.
     """
     evil = 'Evil"><script>x</script>'
     ctype = client.post("/api/types", json={"name": "resistor"}).json()
@@ -1131,9 +1132,13 @@ def test_location_name_is_html_escaped(client: TestClient) -> None:
     html = client.get("/locations").text
     assert "<script>x</script>" not in html
     assert "&lt;script&gt;" in html
-    # The caret is only emitted for an expandable location, which is why this test
-    # stocks the box; assert the attribute really carries the escaped name.
-    assert 'aria-label="Evil&#34;&gt;&lt;script&gt;' in html
+    # The name reaches the page three times over (location row, MPN link,
+    # manufacturer); none of them may be raw.
+    assert html.count("&lt;script&gt;") >= 3
+    # The caret names itself by pointing at the label element rather than copying
+    # the text — no second, unescaped copy of the name in an attribute.
+    assert f'aria-labelledby="loc-name-{box["id"]}"' in html
+    assert f'id="loc-name-{box["id"]}"' in html
 
 
 def test_new_location_control_hidden_for_read_only(client: TestClient) -> None:

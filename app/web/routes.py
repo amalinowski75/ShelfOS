@@ -47,10 +47,13 @@ from app.web.presenter import (
 # when the cap is hit so older invoices are not dropped silently.
 _INVOICE_LIST_LIMIT = 200
 
-# Most parts listed inside one location on the Locations page. The whole tree is
-# rendered up front (collapsed, but present), so without a cap a single location
+# Most parts listed inside ONE location on the Locations page. The whole tree is
+# rendered up front (collapsed, but present), so without this a single location
 # holding thousands of distinct parts would weigh down every visit. The template
 # says how many it left out rather than truncating silently.
+#
+# It bounds one location, not the page: nothing caps the number of locations, and
+# build_location_stock loads every stocked slot regardless. See its docstring.
 _PARTS_PER_LOCATION = 50
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"

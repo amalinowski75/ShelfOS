@@ -216,6 +216,11 @@ def build_location_stock(session: Session) -> dict[int, list[dict[str, Any]]]:
     What the locations page shows *inside* each location. Built from two queries
     (the slots, then the components they name) rather than a lookup per node, and
     sorted by MPN so a drawer's contents read in a stable order.
+
+    Note this is the WHOLE inventory: ``_PARTS_PER_LOCATION`` bounds how much of one
+    location gets rendered, not how much is loaded here, and nothing bounds the
+    number of locations. Fine at a workshop's scale; the thing to reach for if it
+    ever isn't is fetching a location's contents when it is first expanded.
     """
     from app.models.component import Component
 
@@ -225,10 +230,15 @@ def build_location_stock(session: Session) -> dict[int, list[dict[str, Any]]]:
     }
     if not component_ids:
         return {}
-    components = {
-        cast(int, c.id): c
-        for c in session.exec(
-            select(Component).where(col(Component.id).in_(component_ids))
+    # Three columns, not whole entities: a Component drags `notes` along, which is
+    # uncapped free text that #59 went to some trouble NOT to ship where nobody
+    # reads it. Nobody reads it here either.
+    named = {
+        component_id: (mpn, manufacturer)
+        for component_id, mpn, manufacturer in session.exec(
+            select(
+                Component.id, Component.mpn, Component.manufacturer
+            ).where(col(Component.id).in_(component_ids))
         ).all()
     }
 
@@ -236,16 +246,14 @@ def build_location_stock(session: Session) -> dict[int, list[dict[str, Any]]]:
     for location_id, slots in by_location.items():
         rows = []
         for slot in slots:
-            component = components.get(slot.component_id)
-            if component is None:  # pragma: no cover - FK makes this unreachable
-                continue
+            mpn, manufacturer = named.get(slot.component_id, (None, None))
             rows.append(
                 {
                     "component_id": slot.component_id,
                     # Never blank: a component may have no MPN, and an empty link
                     # would be unclickable.
-                    "mpn": component.mpn or f"Component #{slot.component_id}",
-                    "manufacturer": component.manufacturer or "",
+                    "mpn": mpn or f"Component #{slot.component_id}",
+                    "manufacturer": manufacturer or "",
                     "quantity": slot.quantity,
                     "container": slot.container_type.value,
                 }

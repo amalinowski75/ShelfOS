@@ -13,14 +13,16 @@
 <li class="loc-item" data-occupied="{{ 'true' if contents else 'false' }}">
   <div class="loc-row">
     {% if expandable %}
-    {# Named by the location alone: aria-expanded already carries open/shut, and a
-       fixed "Expand X" would announce "Expand Lab, expanded" once it was open. #}
+    {# Named by the visible label rather than a copy of it: a fixed "Expand X"
+       would announce "Expand Lab, expanded" once open, and repeating the name in
+       an aria-label makes a screen reader read "Lab, collapsed, Lab, room".
+       aria-expanded already carries the state. #}
     <button type="button" class="tree-caret" aria-expanded="false"
-            aria-label="{{ node.location.name }}"></button>
+            aria-labelledby="loc-name-{{ node.location.id }}"></button>
     {% else %}
     <span class="tree-caret-spacer"></span>
     {% endif %}
-    <span class="loc-name">{{ node.location.name }}</span>
+    <span class="loc-name" id="loc-name-{{ node.location.id }}">{{ node.location.name }}</span>
     <span class="badge b-neutral"><span class="dot"></span>{{ node.location.type.value }}</span>
     {% if contents %}
     <span class="badge b-accent loc-count">{{ contents | length }}
