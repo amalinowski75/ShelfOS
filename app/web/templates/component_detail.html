@@ -128,9 +128,12 @@
          hovered, so outside the table it would render an invisible hit target. #}
       {% if can_write %}
       <div class="widget-actions">
-        <button type="button" class="btn btn-secondary btn-sm"
+        {# aria-label because a screen reader announces the name on its own, away
+           from the heading that makes a bare "Add" on this page unambiguous. #}
+        <button type="button" class="btn btn-secondary btn-sm" aria-label="Add stock"
                 data-stock-act="add" data-component-id="{{ component.id }}">Add</button>
         <button type="button" class="btn btn-secondary btn-sm"
+                aria-label="Take from stock"
                 data-stock-act="take" data-component-id="{{ component.id }}">Take</button>
       </div>
       {% endif %}

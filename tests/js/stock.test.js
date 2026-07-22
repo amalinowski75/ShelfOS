@@ -152,6 +152,22 @@ describe("stock_dialog.js — the shared Add/Take dialog", () => {
     expect(error.textContent).toMatch(/Could not reach the server/);
   });
 
+  it("toasts when the write landed but the refresh failed", async () => {
+    // The dialog is already closed by then, so an inline error would be written
+    // into something nobody can see — and "could not reach the server" would be a
+    // lie: the movement IS saved, it's the table that's stale.
+    const { window, document } = loadPage(stockPageFixture(), SCRIPTS);
+    window.openStockDialog("add", 7, () => Promise.reject(new Error("feed down")));
+    document.querySelector(".loc-picker-node").click();
+    submitStock(document);
+    await tick();
+    const toast = document.querySelector(".toast");
+    expect(toast).toBeTruthy();
+    expect(toast.textContent).toMatch(/Stock saved/);
+    // Not mislabelled as a network failure on a closed dialog.
+    expect(document.getElementById("stock-error").hidden).toBe(true);
+  });
+
   it("clears the note between opens so it can't leak into the next movement", () => {
     const { window, document } = loadPage(stockPageFixture(), SCRIPTS);
     window.openStockDialog("add", 7);
@@ -256,6 +272,30 @@ describe("stock_dialog.js — [data-stock-act] triggers (component detail page)"
     submitStock(document);
     await tick();
     expect(fetchMock.mock.calls.filter(([u]) => u === "/api/stock/add").length).toBe(1);
+  });
+
+  it("keeps working after a reload that never lands", async () => {
+    // Stop/Esc, a dropped connection or a bfcache restore all leave this page
+    // rendered and interactive. A one-way navigation latch would silently kill
+    // every stock action from then on, with nothing to say why.
+    const { window, document, fetchMock } = loadPage(detailFixture(), SCRIPTS);
+    const addStock = () => {
+      document.querySelector('[data-stock-act="add"]').click();
+      document.querySelector(".loc-picker-node").click();
+      submitStock(document);
+    };
+    const posts = () =>
+      fetchMock.mock.calls.filter(([u]) => u === "/api/stock/add").length;
+
+    addStock(); // this one requests a reload
+    await tick();
+    expect(posts()).toBe(1);
+
+    // The page is still here, and pageshow is how it says so.
+    window.dispatchEvent(new window.Event("pageshow"));
+    addStock();
+    await tick();
+    expect(posts()).toBe(2);
   });
 
   it("renders the detail-page buttons visibly under the real app.css", () => {
