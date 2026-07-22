@@ -1021,20 +1021,119 @@ def test_locations_page_renders_tree(client: TestClient) -> None:
     assert "Lab / Rack A / Shelf 1" in html
     # The nav links to the page.
     assert 'href="/locations"' in html
+    # Collapsible, not the old always-expanded wall: branches ship hidden with a
+    # caret, and locations.js is what opens them.
+    assert 'class="tree-caret"' in html
+    assert '<div class="tree-children" hidden>' in html
+    assert "/static/locations.js" in html
+    # The two filters, both on by default so the page opens showing everything.
+    assert 'id="show-empty"' in html
+    assert 'id="show-occupied"' in html
+
+
+def test_locations_page_shows_what_each_location_holds(client: TestClient) -> None:
+    """Contents inline, and the empty/occupied flag the filters key on."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    part = client.post(
+        "/api/components",
+        json={"type_id": ctype["id"], "mpn": "RC0603", "manufacturer": "Yageo"},
+    ).json()
+    room = client.post("/api/locations", json={"type": "room", "name": "Lab"}).json()
+    drawer = client.post(
+        "/api/locations",
+        json={"type": "drawer", "name": "D5", "parent_id": room["id"]},
+    ).json()
+    client.post("/api/locations", json={"type": "drawer", "name": "D9"})
+    client.post(
+        "/api/stock/add",
+        json={
+            "component_id": part["id"],
+            "location_id": drawer["id"],
+            "quantity": 40,
+        },
+    )
+
+    html = client.get("/locations").text
+    # The part is listed under its location, linked, with its quantity.
+    assert f'href="/components/{part["id"]}"' in html
+    assert "RC0603" in html
+    assert "Yageo" in html
+    # The rendered cell, not a bare "40": the page carries a cache-busting epoch
+    # in every asset URL, so a loose substring would pass on noise alone.
+    assert "&times;&nbsp;40" in html
+    assert "1\n      part" in html  # singular count badge
+    # The drawer holding it is occupied; the room above it is NOT — it holds
+    # nothing of its own, which is what the filters judge each location on.
+    assert html.count('data-occupied="true"') == 1
+    assert html.count('data-occupied="false"') == 2
+
+
+def test_locations_page_caps_one_location_s_contents(client: TestClient) -> None:
+    """The whole tree ships up front, so a huge location must not bloat every visit.
+
+    Capped, but never silently: the page says how many it left out.
+    """
+    from app.web.routes import _PARTS_PER_LOCATION
+
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    drawer = client.post(
+        "/api/locations", json={"type": "drawer", "name": "D5"}
+    ).json()
+    over = 3
+    for i in range(_PARTS_PER_LOCATION + over):
+        part = client.post(
+            "/api/components", json={"type_id": ctype["id"], "mpn": f"PN-{i:04d}"}
+        ).json()
+        client.post(
+            "/api/stock/add",
+            json={
+                "component_id": part["id"],
+                "location_id": drawer["id"],
+                "quantity": 1,
+            },
+        )
+
+    html = client.get("/locations").text
+    assert html.count('class="cell-mpn"') == _PARTS_PER_LOCATION
+    assert f"+ {over} more not shown" in html
+    # The badge still reports the true total, not the truncated one.
+    assert f"{_PARTS_PER_LOCATION + over}\n      parts" in html
 
 
 def test_locations_page_empty(client: TestClient) -> None:
-    assert "No locations yet." in client.get("/locations").text
+    html = client.get("/locations").text
+    assert "No locations yet." in html
+    # No tree means no filters to apply and nothing for the script to enhance.
+    assert 'id="location-tree"' not in html
+    # …and no filter checkboxes sitting there looking live but wired to nothing.
+    assert 'id="show-empty"' not in html
 
 
 def test_location_name_is_html_escaped(client: TestClient) -> None:
-    """A location name with HTML metacharacters renders escaped (no injection)."""
+    """Every user/shop-supplied string on this page renders escaped.
+
+    The name now also lands in the caret's ``aria-label``, and a location's
+    contents put an MPN and a manufacturer on the page — so the location must
+    hold something, or the interesting markup is never emitted at all.
+    """
+    evil = 'Evil"><script>x</script>'
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    part = client.post(
+        "/api/components",
+        json={"type_id": ctype["id"], "mpn": evil, "manufacturer": evil},
+    ).json()
+    box = client.post("/api/locations", json={"type": "box", "name": evil}).json()
     client.post(
-        "/api/locations", json={"type": "box", "name": 'Evil"><script>x</script>'}
+        "/api/stock/add",
+        json={"component_id": part["id"], "location_id": box["id"], "quantity": 1},
     )
+
     html = client.get("/locations").text
     assert "<script>x</script>" not in html
     assert "&lt;script&gt;" in html
+    # The caret is only emitted for an expandable location, which is why this test
+    # stocks the box; assert the attribute really carries the escaped name.
+    assert 'aria-label="Evil&#34;&gt;&lt;script&gt;' in html
 
 
 def test_new_location_control_hidden_for_read_only(client: TestClient) -> None:

@@ -257,6 +257,32 @@ table.kv tr:last-child th, table.kv tr:last-child td { border-bottom: none; }
 .loc-tree li { padding: 5px 0; }
 .loc-tree .loc-tree { margin: 4px 0 0 10px; padding-left: 14px; border-left: 1px solid var(--border); }
 .loc-tree .loc-name { font-weight: 550; margin-right: 8px; }
+.loc-row { display: flex; align-items: center; gap: 8px; }
+/* Same caret as the picker's, and deliberately the same shape: one visual idea
+   for "expand this branch" across the app. */
+.tree-caret, .tree-caret-spacer { width: 20px; height: 24px; flex: none; }
+.tree-caret {
+  border: none; background: transparent; color: var(--muted);
+  cursor: pointer; border-radius: 5px; padding: 0; font: inherit;
+}
+.tree-caret::before { content: "▸"; }
+.tree-caret[aria-expanded="true"]::before { content: "▾"; }
+.tree-caret:hover { background: var(--surface-2); color: var(--text); }
+.tree-children { margin-top: 2px; }
+/* A location kept on screen only as the path to a match below it. */
+.loc-item.is-path > .loc-row { opacity: .6; }
+/* What a location holds. Indented like a child branch so contents and sub-
+   locations read as one nesting, and laid out as rows of small facts. */
+.loc-parts { list-style: none; margin: 4px 0 0 10px; padding-left: 14px;
+  border-left: 1px solid var(--border); }
+.loc-parts li { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.loc-parts .muted { font-size: 13px; }
+
+/* A checkbox with its label, for filter bars. */
+.check {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 14px; color: var(--text); cursor: pointer; white-space: nowrap;
+}
 
 /* ---------- location tree-picker (§7) ---------- */
 .loc-picker-toggle { display: flex; align-items: center; text-align: left; cursor: pointer; }

@@ -208,3 +208,48 @@ def _load_parameter_values(
             param.parameter_definition_id
         ] = param
     return grouped
+
+
+def build_location_stock(session: Session) -> dict[int, list[dict[str, Any]]]:
+    """``{location_id: [{component_id, mpn, manufacturer, quantity, container}]}``.
+
+    What the locations page shows *inside* each location. Built from two queries
+    (the slots, then the components they name) rather than a lookup per node, and
+    sorted by MPN so a drawer's contents read in a stable order.
+    """
+    from app.models.component import Component
+
+    by_location = ss.stock_by_location(session)
+    component_ids = {
+        slot.component_id for slots in by_location.values() for slot in slots
+    }
+    if not component_ids:
+        return {}
+    components = {
+        cast(int, c.id): c
+        for c in session.exec(
+            select(Component).where(col(Component.id).in_(component_ids))
+        ).all()
+    }
+
+    contents: dict[int, list[dict[str, Any]]] = {}
+    for location_id, slots in by_location.items():
+        rows = []
+        for slot in slots:
+            component = components.get(slot.component_id)
+            if component is None:  # pragma: no cover - FK makes this unreachable
+                continue
+            rows.append(
+                {
+                    "component_id": slot.component_id,
+                    # Never blank: a component may have no MPN, and an empty link
+                    # would be unclickable.
+                    "mpn": component.mpn or f"Component #{slot.component_id}",
+                    "manufacturer": component.manufacturer or "",
+                    "quantity": slot.quantity,
+                    "container": slot.container_type.value,
+                }
+            )
+        rows.sort(key=lambda row: str(row["mpn"]).casefold())
+        contents[location_id] = rows
+    return contents
