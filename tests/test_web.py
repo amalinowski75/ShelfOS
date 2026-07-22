@@ -301,8 +301,11 @@ def test_component_detail_shows_the_full_description(client: TestClient) -> None
     ).json()
     html = client.get(f"/components/{component['id']}").text
     assert long_text.strip() in html
-    # Labelled, matching the table column and both dialogs.
-    assert "<th>Description</th>" in html
+    # Labelled, matching the table column and both dialogs — but outside table.kv,
+    # whose label column would leave the page's longest field the least room.
+    assert "<span>Description</span>" in html
+    assert '<div class="kv-long">' in html
+    assert "<th>Description</th>" not in html
 
 
 def test_component_dialogs_call_the_field_description(client: TestClient) -> None:

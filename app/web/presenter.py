@@ -37,8 +37,12 @@ _BASE_COLUMNS: list[dict[str, object]] = [
 # Longest description shipped in a table row. `notes` is uncapped free text, and
 # this feed is fetched on every load of the components page AND by the invoice
 # line dialog, so one component with a novel in it would be downloaded in full
-# every time. The cell ellipsises around 220px anyway; the detail page has the
-# whole thing.
+# every time. The detail page has the whole thing.
+#
+# This also bounds what the table's Description filter can find: that filter runs
+# CLIENT-side over what this ships, so text past the cut is unsearchable there
+# while the detail page still shows it. Rare at 200 characters, and the honest fix
+# if it ever bites is server-side filtering for that column — not a fatter payload.
 _TABLE_NOTES_CHARS = 200
 
 

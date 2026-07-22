@@ -83,8 +83,8 @@ describe("app.js — table formatting", () => {
     const { window } = loadPage(typePageFixture(), SCRIPTS);
     expect(window.columnDef({ field: "notes", title: "Description" }).width).toBe(260);
 
-    window.rememberColumnWidth("notes", 640);
-    expect(window.columnDef({ field: "notes", title: "Description" }).width).toBe(640);
+    window.rememberColumnWidth("notes", 520);
+    expect(window.columnDef({ field: "notes", title: "Description" }).width).toBe(520);
     // Any column, not just the description one.
     window.rememberColumnWidth("param_7", 180);
     expect(window.columnDef({ field: "param_7", title: "R" }).width).toBe(180);
@@ -106,12 +106,35 @@ describe("app.js — table formatting", () => {
 
   it("ignores unusable stored widths instead of breaking the table", () => {
     const { window } = loadPage(typePageFixture(), SCRIPTS);
-    window.localStorage.setItem("shelfos.columnWidths", "not json");
-    expect(window.columnDef({ field: "notes", title: "Description" }).width).toBe(260);
-
     window.rememberColumnWidth("notes", 0); // a collapsed drag must not stick
     window.rememberColumnWidth(undefined, 300);
     expect(window.columnDef({ field: "notes", title: "Description" }).width).toBe(260);
+  });
+
+  it("validates stored widths on read, not only on write", () => {
+    // The store is editable from devtools and outlives any change to this key's
+    // shape, and a bad value goes straight to Tabulator as a column width.
+    const width = (stored) => {
+      const { window } = loadPage(typePageFixture(), SCRIPTS, {
+        localStorage: { "shelfos.columnWidths": stored },
+      });
+      return window.columnDef({ field: "notes", title: "Description" }).width;
+    };
+    expect(width("not json")).toBe(260);
+    expect(width(JSON.stringify("a string"))).toBe(260);
+    expect(width(JSON.stringify({ notes: -20 }))).toBe(260);
+    expect(width(JSON.stringify({ notes: "wide" }))).toBe(260);
+    expect(width(JSON.stringify({ notes: 5000 }))).toBe(260); // past the bound
+    expect(width(JSON.stringify({ notes: 420 }))).toBe(420); // a sane one survives
+  });
+
+  it("bounds a remembered width so it can't wreck a narrower screen", () => {
+    // Dragging to 1200px on a big monitor and then opening the page on a laptop
+    // would otherwise push Qty and the row's Add/Take buttons off-screen on every
+    // later visit, with nothing on screen explaining why.
+    const { window } = loadPage(typePageFixture(), SCRIPTS);
+    window.rememberColumnWidth("notes", 1200);
+    expect(window.columnDef({ field: "notes", title: "Description" }).width).toBe(600);
   });
 
   it("a description cell ellipsises rather than wrapping, under the real app.css", () => {

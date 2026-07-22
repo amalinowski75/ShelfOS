@@ -46,12 +46,17 @@
         <tr><th>Package</th><td class="mono">{{ component.package or "—" }}</td></tr>
         <tr><th>Mounting</th><td>{{ mount_badge(component.mounting_type.value) }}</td></tr>
         <tr><th>Status</th><td>{{ status_badge(component.status.value) }}</td></tr>
-        {# Labelled, and in the table: the components list and both dialogs call
-           this field "Description", so the page that shows its value shouldn't be
-           the one place it goes unnamed. Full text here — the table trims it. #}
-        <tr><th>Description</th><td>{{ component.notes or "—" }}</td></tr>
       </tbody>
     </table>
+    {# Labelled — the list column and both dialogs call this "Description", so the
+       page that shows its value shouldn't be the one place it goes unnamed. But
+       OUTSIDE table.kv: its label column takes 42% of a card that is already half
+       the grid, and this is the longest field on the page. Full text here; the
+       table trims it. #}
+    <div class="kv-long">
+      <span>Description</span>
+      <p>{{ component.notes or "—" }}</p>
+    </div>
   </div>
 
   <div class="card card-pad">

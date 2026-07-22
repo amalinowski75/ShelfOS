@@ -19,25 +19,45 @@ const table = new Tabulator("#components-table", {
 // widened column snaps back within seconds of being widened. Keyed by field, so
 // a per-type parameter column keeps its width too.
 const COLUMN_WIDTHS_KEY = "shelfos.columnWidths";
+// Widest width worth restoring. Dragging a column to 1200px on a big monitor and
+// then opening the page on a laptop would otherwise recreate exactly the problem
+// the compact default avoids — Qty and the row's Add/Take buttons pushed off-screen
+// — on every later visit, with nothing on screen explaining why.
+const MAX_REMEMBERED_WIDTH = 600;
 
-function savedColumnWidths() {
+// Read once per rebuild rather than once per column: a type-specific view has a
+// dozen columns and loadTable runs on every filter change and stock write.
+let columnWidths = readColumnWidths();
+
+function readColumnWidths() {
+  let stored;
   try {
-    const stored = JSON.parse(localStorage.getItem(COLUMN_WIDTHS_KEY));
-    return stored && typeof stored === "object" ? stored : {};
+    stored = JSON.parse(localStorage.getItem(COLUMN_WIDTHS_KEY));
   } catch {
-    return {}; // unparseable or storage unavailable (private mode): just don't
+    return {}; // unparseable, or storage unavailable (private mode): just don't
   }
+  if (!stored || typeof stored !== "object") return {};
+  // Validate on READ too, not only on write: this store is editable from devtools
+  // and outlives any change to the key's shape, and a bad value here goes straight
+  // to Tabulator as a column width.
+  return Object.fromEntries(
+    Object.entries(stored).filter(
+      ([, width]) =>
+        typeof width === "number" && width > 0 && width <= MAX_REMEMBERED_WIDTH,
+    ),
+  );
 }
 
 function rememberColumnWidth(field, width) {
   if (!field || !(width > 0)) return;
+  columnWidths = {
+    ...columnWidths,
+    [field]: Math.min(Math.round(width), MAX_REMEMBERED_WIDTH),
+  };
   try {
-    localStorage.setItem(
-      COLUMN_WIDTHS_KEY,
-      JSON.stringify({ ...savedColumnWidths(), [field]: Math.round(width) }),
-    );
+    localStorage.setItem(COLUMN_WIDTHS_KEY, JSON.stringify(columnWidths));
   } catch {
-    // Storage full or blocked — the width just won't survive a rebuild.
+    // Storage full or blocked — the width just won't survive a reload.
   }
 }
 
@@ -64,7 +84,7 @@ function numericParamSorter(field) {
 }
 
 function columnDef(column) {
-  const remembered = savedColumnWidths()[column.field];
+  const remembered = columnWidths[column.field];
   const base = {
     title: column.title,
     field: column.field,
@@ -93,8 +113,9 @@ function columnDef(column) {
         // leaves a long description permanently unreadable in the table. This way
         // it starts compact and the user can widen it, and the width sticks.
         //
-        // Hovering shows the full text too (title), and the component's detail
-        // page always has it in full.
+        // Hovering shows as much as the feed sent — which is trimmed, so for the
+        // very longest descriptions the tooltip is no fuller than the cell. The
+        // component's detail page is the one that always has it whole.
         width: base.width ?? 260,
         formatter: (cell) => {
           const value = esc(cell.getValue());
@@ -183,6 +204,7 @@ function currentTypeQuery() {
 }
 
 async function loadTable() {
+  columnWidths = readColumnWidths(); // another tab may have resized since
   const payload = await fetch(
     `/web/api/components${currentTypeQuery()}`,
   ).then((r) => r.json());
