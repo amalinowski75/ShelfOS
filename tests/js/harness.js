@@ -59,7 +59,13 @@ export function loadPage(bodyHtml, scripts, { fetchImpl, role = "user" } = {}) {
     setData() {
       return Promise.resolve();
     }
-    on() {}
+    // Handlers are recorded on the CLASS, not the instance: app.js keeps its table
+    // in a top-level `const`, which (unlike `var`) never lands on `window`, so a
+    // test has no other way to reach what the script subscribed to.
+    on(event, handler) {
+      window.Tabulator.handlers[event] = handler;
+    }
+    static handlers = {};
   };
 
   // Browsers expose form controls as named properties on the form

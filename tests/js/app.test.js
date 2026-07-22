@@ -46,9 +46,10 @@ describe("app.js — table formatting", () => {
       '<span class="cell-desc" title="10k 1% &quot;tight&quot;">' +
         "10k 1% &quot;tight&quot;</span>",
     );
-    // Capped: fitDataFill sizes to content, and this column sits to the LEFT of
-    // Qty and the row-action buttons, so an uncapped one pushes those off-screen.
-    expect(desc.maxWidth).toBe(220);
+    // A starting width, NOT a maximum: a maxWidth also caps the drag handle,
+    // which would leave a long description permanently unreadable in the table.
+    expect(desc.width).toBe(260);
+    expect(desc.maxWidth).toBeUndefined();
 
     const qty = window.columnDef({ field: "quantity", title: "Qty" });
     expect(qty.formatter(cell(0))).toContain("is-zero");
@@ -74,6 +75,43 @@ describe("app.js — table formatting", () => {
     }
     // The row-action buttons column is not filterable.
     expect(window.actionColumn().headerFilter).toBeUndefined();
+  });
+
+  it("remembers a dragged column width across table rebuilds", () => {
+    // loadTable rebuilds the columns on every filter change AND after every stock
+    // write, so without this a widened column snaps back within seconds.
+    const { window } = loadPage(typePageFixture(), SCRIPTS);
+    expect(window.columnDef({ field: "notes", title: "Description" }).width).toBe(260);
+
+    window.rememberColumnWidth("notes", 640);
+    expect(window.columnDef({ field: "notes", title: "Description" }).width).toBe(640);
+    // Any column, not just the description one.
+    window.rememberColumnWidth("param_7", 180);
+    expect(window.columnDef({ field: "param_7", title: "R" }).width).toBe(180);
+    // Untouched columns stay auto-sized.
+    expect(window.columnDef({ field: "mpn", title: "MPN" }).width).toBeUndefined();
+  });
+
+  it("saves the width Tabulator reports when a column is resized", () => {
+    // The half that makes the remembering reachable: without this subscription
+    // nothing ever calls rememberColumnWidth, and the tests above would pass on a
+    // feature the user can't trigger.
+    const { window } = loadPage(typePageFixture(), SCRIPTS);
+    const onResized = window.Tabulator.handlers.columnResized;
+    expect(onResized).toBeTypeOf("function");
+
+    onResized({ getField: () => "notes", getWidth: () => 512 });
+    expect(window.columnDef({ field: "notes", title: "Description" }).width).toBe(512);
+  });
+
+  it("ignores unusable stored widths instead of breaking the table", () => {
+    const { window } = loadPage(typePageFixture(), SCRIPTS);
+    window.localStorage.setItem("shelfos.columnWidths", "not json");
+    expect(window.columnDef({ field: "notes", title: "Description" }).width).toBe(260);
+
+    window.rememberColumnWidth("notes", 0); // a collapsed drag must not stick
+    window.rememberColumnWidth(undefined, 300);
+    expect(window.columnDef({ field: "notes", title: "Description" }).width).toBe(260);
   });
 
   it("a description cell ellipsises rather than wrapping, under the real app.css", () => {

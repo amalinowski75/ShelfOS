@@ -13,6 +13,34 @@ const table = new Tabulator("#components-table", {
   placeholder: "No components",
 });
 
+// ---- remembered column widths ---------------------------------------------
+// Tabulator columns are drag-resizable, but loadTable rebuilds them from scratch
+// on every type-filter change AND after every stock write — so without this a
+// widened column snaps back within seconds of being widened. Keyed by field, so
+// a per-type parameter column keeps its width too.
+const COLUMN_WIDTHS_KEY = "shelfos.columnWidths";
+
+function savedColumnWidths() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(COLUMN_WIDTHS_KEY));
+    return stored && typeof stored === "object" ? stored : {};
+  } catch {
+    return {}; // unparseable or storage unavailable (private mode): just don't
+  }
+}
+
+function rememberColumnWidth(field, width) {
+  if (!field || !(width > 0)) return;
+  try {
+    localStorage.setItem(
+      COLUMN_WIDTHS_KEY,
+      JSON.stringify({ ...savedColumnWidths(), [field]: Math.round(width) }),
+    );
+  } catch {
+    // Storage full or blocked — the width just won't survive a rebuild.
+  }
+}
+
 // Fields the presenter always emits get bespoke formatting; anything else
 // (type, manufacturer, per-type parameter columns) renders as plain text.
 //
@@ -36,9 +64,12 @@ function numericParamSorter(field) {
 }
 
 function columnDef(column) {
+  const remembered = savedColumnWidths()[column.field];
   const base = {
     title: column.title,
     field: column.field,
+    // A width the user dragged wins over any default below.
+    ...(remembered ? { width: remembered } : {}),
     headerFilter: "input",
     // Name each filter after its column so the placeholder and the screen-reader
     // label distinguish otherwise-identical inputs.
@@ -56,16 +87,15 @@ function columnDef(column) {
     case "notes":
       return {
         ...base,
-        // Descriptions run long ("Thick Film Resistors - SMD 1/16watt 10Kohms 1%")
-        // and fitDataFill sizes to content, so one verbose part would push every
-        // other column off-screen — including Qty and the row's Add/Take buttons,
-        // which sit to its right. Kept narrow enough that the whole table still
-        // fits a normal viewport.
+        // A STARTING width, not a maximum: fitDataFill sizes to content, so an
+        // unconstrained column of free text would push Qty and the row's Add/Take
+        // buttons off-screen — but a maxWidth also caps the drag handle, which
+        // leaves a long description permanently unreadable in the table. This way
+        // it starts compact and the user can widen it, and the width sticks.
         //
-        // The title tooltip covers a truncated cell for a mouse; a keyboard or
-        // touch user reads the full text on the component's detail page (which is
-        // also where an over-long description goes, since the feed trims it).
-        maxWidth: 220,
+        // Hovering shows the full text too (title), and the component's detail
+        // page always has it in full.
+        width: base.width ?? 260,
         formatter: (cell) => {
           const value = esc(cell.getValue());
           return `<span class="cell-desc" title="${value}">${value}</span>`;
@@ -165,6 +195,9 @@ async function loadTable() {
 
 typeFilter.addEventListener("change", loadTable);
 table.on("tableBuilt", loadTable);
+table.on("columnResized", (column) =>
+  rememberColumnWidth(column.getField(), column.getWidth()),
+);
 
 // ---- New Type trigger (spec §13) ------------------------------------------
 // The dialog itself lives in type_dialog.js (shared with the invoice line flow),
