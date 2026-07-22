@@ -419,6 +419,11 @@ def component_detail(
 
     movements = ss.list_movements(session, component_id)
 
+    # For the Add/Take stock dialog and the "New location" it can reach inline.
+    # Only a writer gets that dialog, so only a writer pays for the queries.
+    can_write = user.role != UserRole.READ_ONLY
+    tree = ls.location_tree(session) if can_write else []
+
     return templates.TemplateResponse(
         request,
         "component_detail.html",
@@ -429,7 +434,9 @@ def component_detail(
             "locations": locations,
             "history": history,
             "movements": movements,
-            "all_locations": ls.list_all(session),
+            "location_tree": tree,
+            "location_types": [lt.value for lt in LocationType] if can_write else [],
+            "location_options": _location_options(tree) if can_write else [],
             "attachment_kinds": [k.value for k in AttachmentKind],
             "link_kinds": [k.value for k in LinkKind],
             "mounting_types": [mt.value for mt in MountingType],

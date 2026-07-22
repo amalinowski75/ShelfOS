@@ -2,7 +2,9 @@
 {% from "_attachments.html" import attachments_card %}
 {% from "_links.html" import links_card %}
 {% from "_component_edit_dialog.html" import component_edit_dialog %}
+{% from "_stock_dialog.html" import stock_dialog %}
 {% set is_admin = current_user.role.value == "admin" %}
+{% set can_write = current_user.role.value != "read-only" %}
 {% block title %}{{ component.mpn or "Component" }} — ShelfOS{% endblock %}
 
 {% macro status_badge(status) -%}
@@ -117,7 +119,25 @@
   </div>
 
   <div class="card card-pad">
-    <h2>Stock movements</h2>
+    {# Add/Take here mirror the components list's row actions — same dialog, same
+       endpoints. They live on the movements card because a write shows up as a new
+       row right below them. #}
+    <div class="widget-head">
+      <h2>Stock movements</h2>
+      {# NOT .row-actions: that class is transparent until its Tabulator row is
+         hovered, so outside the table it would render an invisible hit target. #}
+      {% if can_write %}
+      <div class="widget-actions">
+        {# aria-label because a screen reader announces the name on its own, away
+           from the heading that makes a bare "Add" on this page unambiguous. #}
+        <button type="button" class="btn btn-secondary btn-sm" aria-label="Add stock"
+                data-stock-act="add" data-component-id="{{ component.id }}">Add</button>
+        <button type="button" class="btn btn-secondary btn-sm"
+                aria-label="Take from stock"
+                data-stock-act="take" data-component-id="{{ component.id }}">Take</button>
+      </div>
+      {% endif %}
+    </div>
     {% if movements %}
     <div class="table-wrap">
       <table class="data">
@@ -150,6 +170,12 @@
 
 {% if is_admin %}
 {{ component_edit_dialog(component, type_name, mounting_types) }}
+{% endif %}
+
+{% if can_write %}
+{{ stock_dialog(location_tree) }}
+{# "New location", reachable inline from the stock picker. #}
+{% include "_location_dialog.html" %}
 {% endif %}
 
 {# Full-size viewer for the header thumbnails, with prev/next navigation. #}

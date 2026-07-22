@@ -1,0 +1,41 @@
+{# Shared "Add stock" / "Take from stock" dialog (§14-15). Include on any page a
+   writer can move stock from — the components list and a component's detail page.
+   Its behaviour lives in stock_dialog.js, which exposes
+   `openStockDialog(mode, componentId, onSaved)` and also wires any
+   `[data-stock-act]` button on the page.
+
+   The tree is an ARGUMENT, not read from context: pass the page's `location_tree`.
+   Since the picker offers "+ New location" inline, also include
+   _location_dialog.html on that page. #}
+{% from "_location_picker.html" import location_picker %}
+{% macro stock_dialog(location_tree) %}
+<dialog id="stock-dialog">
+  <article>
+    <header>
+      <strong id="stock-dialog-title">Add stock</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <form id="stock-form">
+      <input type="hidden" name="component_id" />
+      <input type="hidden" name="mode" />
+      <div class="field">
+        <label>Quantity</label>
+        <input class="control mono" type="number" name="quantity" min="1" value="1" required />
+      </div>
+      <div class="field">
+        <label>Location</label>
+        {{ location_picker(location_tree, name="location_id") }}
+      </div>
+      <div class="field">
+        <label>Note</label>
+        <input class="control" type="text" name="note" placeholder="optional" />
+      </div>
+      <p id="stock-error" class="error" hidden></p>
+      <footer>
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+{% endmacro %}

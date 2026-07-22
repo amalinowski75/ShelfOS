@@ -1,6 +1,7 @@
 {% extends "base.html" %}
-{% from "_location_picker.html" import location_picker %}
+{% from "_stock_dialog.html" import stock_dialog %}
 {% from "_type_dialog.html" import type_dialog %}
+{% set can_write = current_user.role.value != "read-only" %}
 {% block title %}Components — ShelfOS{% endblock %}
 
 {% block content %}
@@ -19,7 +20,7 @@
         {% endfor %}
       </select>
     </div>
-    {% if current_user.role.value != "read-only" %}
+    {% if can_write %}
     <button type="button" class="btn btn-secondary" id="new-type-btn">New Type</button>
     <button type="button" class="btn btn-primary" id="new-component-btn">New Component</button>
     {% endif %}
@@ -28,44 +29,20 @@
 
 <div id="components-table"></div>
 
-<dialog id="stock-dialog">
-  <article>
-    <header>
-      <strong id="stock-dialog-title">Add stock</strong>
-      <button class="close" aria-label="Close" data-close></button>
-    </header>
-    <form id="stock-form">
-      <input type="hidden" name="component_id" />
-      <input type="hidden" name="mode" />
-      <div class="field">
-        <label>Quantity</label>
-        <input class="control mono" type="number" name="quantity" min="1" value="1" required />
-      </div>
-      <div class="field">
-        <label>Location</label>
-        {{ location_picker(location_tree, name="location_id") }}
-      </div>
-      <div class="field">
-        <label>Note</label>
-        <input class="control" type="text" name="note" placeholder="optional" />
-      </div>
-      <p id="stock-error" class="error" hidden></p>
-      <footer>
-        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
-        <button type="submit" class="btn btn-primary">Save</button>
-      </footer>
-    </form>
-  </article>
-</dialog>
+{# Add/Take stock. Gated on the same role as the row actions that open it, so the
+   dialog and its triggers are present-or-absent together. #}
+{% if can_write %}
+{{ stock_dialog(location_tree) }}
+{% endif %}
 
 {# The New Type builder (extracted to _type_dialog.html). Gated on the same role
    as its trigger, so the dialog, its "New Type" button, and the "+ New type"
    button in the component dialog are present-or-absent together. #}
-{% if current_user.role.value != "read-only" %}
+{% if can_write %}
 {{ type_dialog(types, data_types) }}
 {% endif %}
 
-{% if current_user.role.value != "read-only" %}
+{% if can_write %}
 {% include "_component_dialog.html" %}
 {# "New location" dialog, reachable inline from the stock picker. #}
 {% include "_location_dialog.html" %}
