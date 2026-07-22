@@ -115,3 +115,8 @@ TME_COUNTRY = os.environ.get("SHELFOS_TME_COUNTRY", "PL")
 # *names*, which then stop matching ShelfOS's English parameter labels and get
 # dropped (the same trap Digi-Key's locale language has).
 TME_LANGUAGE = os.environ.get("SHELFOS_TME_LANGUAGE", "en")
+
+# A visible field separator some barcode scanners emit in place of the ISO 15434
+# group separator (GS, 0x1D). The scan parser always accepts GS/RS; set this if your
+# scanner is configured to send a printable one (e.g. "|") instead.
+SCAN_SEPARATOR = os.environ.get("SHELFOS_SCAN_SEPARATOR", "").strip()

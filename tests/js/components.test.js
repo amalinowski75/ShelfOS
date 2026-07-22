@@ -358,6 +358,10 @@ describe("component_dialog.js — shop import", () => {
     description: "10k 1% 0402 resistor",
     package: "0402",
     datasheet_url: "https://x/ds.pdf",
+    // The product page the SERVER resolved the code to — what gets saved as the
+    // shop link. Echoed back because a scanned code buries (or lacks) its URL.
+    source_url: "https://www.mouser.com/x",
+    from_label_only: false,
     parameters: [
       { name: "Resistance", value: "10 kOhms" }, // NUMBER field → cleaned to "10k"
       { name: "Package", value: "1206 (3216 Metric)" }, // TEXT field → kept raw
@@ -688,6 +692,132 @@ describe("component_dialog.js — shop import", () => {
     const status = document.getElementById("shop-import-status");
     expect(status.hidden).toBe(false);
     expect(status.textContent).toBe("unsupported shop");
+    expect(status.className).toBe("error");
+  });
+
+  it("focuses the import field on open so a scan lands there", () => {
+    // A keyboard-wedge scanner types into whatever has focus; without this the
+    // payload would be lost (or land in the first form field).
+    const { document } = loadPage(componentPageFixture(), SCRIPTS, { fetchImpl });
+    document.getElementById("new-component-btn").click();
+    expect(document.activeElement.id).toBe("shop-import-url");
+  });
+
+  it("imports on Enter, so a scan needs no click", async () => {
+    // Scanners end their payload with Enter. It must import, not submit the form.
+    const { document, fetchMock } = loadPage(componentPageFixture(), SCRIPTS, {
+      fetchImpl: withLookup(PRODUCT),
+    });
+    document.getElementById("new-component-btn").click();
+    const field = document.getElementById("shop-import-url");
+    field.value = "https://www.mouser.com/x";
+    field.dispatchEvent(
+      new document.defaultView.KeyboardEvent("keydown", {
+        key: "Enter",
+        cancelable: true,
+        bubbles: true,
+      }),
+    );
+    await tick();
+    await tick();
+    expect(document.querySelector('#component-form [name="mpn"]').value).toBe(
+      "RES-10K",
+    );
+    // The endpoint takes a URL *or* a scan, so the field is `code`, not `url`.
+    const lookup = fetchMock.mock.calls.find((c) => c[0] === "/api/shops/lookup");
+    expect(JSON.parse(lookup[1].body)).toEqual({ code: "https://www.mouser.com/x" });
+    // The form was never submitted by that Enter.
+    expect(fetchMock.mock.calls.some((c) => c[0] === "/api/components")).toBe(false);
+  });
+
+  // The shop link comes from the server's `source_url`, never from the raw code:
+  // a barcode has no URL at all, and a TME QR buries one among other tokens — so
+  // testing the code itself would both store junk and drop a real link.
+  async function importAndSubmit(product, code) {
+    const handles = loadPage(componentPageFixture(), SCRIPTS, {
+      fetchImpl: withLookup(product),
+    });
+    handles.document.getElementById("new-component-btn").click();
+    handles.document.getElementById("shop-import-url").value = code;
+    handles.document.getElementById("shop-import-btn").click();
+    await tick();
+    await tick();
+    fire(handles.document.getElementById("component-form"), "submit");
+    await tick();
+    return handles.fetchMock.mock.calls.find(
+      (c) => c[0] === "/api/links" && JSON.parse(c[1].body).kind === "shop",
+    );
+  }
+
+  it("does not save a scanned barcode as the shop link", async () => {
+    const link = await importAndSubmit(
+      { ...PRODUCT, datasheet_url: null, source_url: null },
+      "\x1d1P5277\x1d1VKeystone",
+    );
+    expect(link).toBeFalsy();
+  });
+
+  it("saves the URL a scanned QR resolved to, not the whole payload", async () => {
+    const url = "https://www.tme.eu/details/MIC334";
+    const link = await importAndSubmit(
+      { ...PRODUCT, datasheet_url: null, source_url: url },
+      `QTY:5 PN:MIC334 RoHS ${url}`,
+    );
+    expect(JSON.parse(link[1].body).url).toBe(url);
+  });
+
+  it("says so when a second scan arrives mid-lookup", async () => {
+    // Two labels scanned in quick succession is the normal wedge-scanner mishap;
+    // dropping the second silently leaves the user unsure which one landed.
+    let release;
+    const impl = (url, opts) =>
+      url === "/api/shops/lookup"
+        ? new Promise((resolve) => {
+            release = () => resolve({ ok: true, json: async () => PRODUCT });
+          })
+        : fetchImpl(url, opts);
+    const { document } = loadPage(componentPageFixture(), SCRIPTS, { fetchImpl: impl });
+    document.getElementById("new-component-btn").click();
+    const field = document.getElementById("shop-import-url");
+    field.value = "https://www.mouser.com/x";
+    document.getElementById("shop-import-btn").click();
+    document.getElementById("shop-import-btn").click(); // the second scan
+    const status = document.getElementById("shop-import-status");
+    expect(status.textContent).toMatch(/previous code/);
+    expect(status.className).toBe("error");
+    release();
+    await tick();
+    await tick();
+    // …and the first lookup still lands.
+    expect(document.querySelector('#component-form [name="mpn"]').value).toBe(
+      "RES-10K",
+    );
+  });
+
+  it("says so when only the scanned label could be read", async () => {
+    // An unconfigured/failing shop still yields the label's MPN + manufacturer —
+    // but the user must not read that as a full import.
+    const { document } = loadPage(componentPageFixture(), SCRIPTS, {
+      fetchImpl: withLookup({
+        category: null,
+        shop_category: null,
+        mpn: "5277",
+        manufacturer: "Keystone",
+        description: null,
+        package: null,
+        datasheet_url: null,
+        source_url: null,
+        from_label_only: true,
+        parameters: [],
+      }),
+    });
+    await openAndImport(document);
+    const field = (name) =>
+      document.querySelector(`#component-form [name="${name}"]`).value;
+    expect(field("mpn")).toBe("5277");
+    expect(field("manufacturer")).toBe("Keystone");
+    const status = document.getElementById("shop-import-status");
+    expect(status.textContent).toMatch(/label only/);
     expect(status.className).toBe("error");
   });
 });

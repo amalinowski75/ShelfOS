@@ -17,8 +17,8 @@ router = APIRouter(prefix="/api/shops", tags=["shops"])
 
 @router.post("/lookup", response_model=ShopProductRead)
 def lookup_product(payload: ShopLookup) -> ShopProductRead:
-    """Look a product up via its shop's API and normalise it for the dialog."""
-    product = shops.lookup(payload.url)  # ValidationError → 422; key never leaks
+    """Look a product up from a URL or a scanned code, normalised for the dialog."""
+    product = shops.import_code(payload.code)  # ValidationError → 422; key never leaks
     return ShopProductRead(
         category=product.category,
         shop_category=product.shop_category,
@@ -28,4 +28,6 @@ def lookup_product(payload: ShopLookup) -> ShopProductRead:
         package=product.package,
         datasheet_url=product.datasheet_url,
         parameters=[ShopParameter(name=n, value=v) for n, v in product.parameters],
+        source_url=product.source_url,
+        from_label_only=product.from_label_only,
     )

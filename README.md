@@ -65,9 +65,9 @@ export SHELFOS_ADMIN_PASSWORD="change-me"
 
 ### Shop integrations (optional)
 
-"Import from a shop URL" in the New Component dialog looks a part up via the
-distributor's API. Keys live in the environment (never in the database); each
-shop is independent and the feature stays disabled until its key is set.
+"Import from a shop URL or a scanned code" in the New Component dialog looks a part
+up via the distributor's API. Keys live in the environment (never in the database);
+each shop is independent and the feature stays disabled until its key is set.
 
 ```bash
 # Mouser — a Search API key (their Order API key is a different one and is rejected)
@@ -103,6 +103,38 @@ TME returns structured parameters, so its imports are the richest of the three;
 Mouser exposes specs only inside the free-text description, which the dialog parses
 best-effort. Whatever a shop returns is pre-filled for review — nothing is saved
 until you confirm the dialog.
+
+### Scanning the packaging label
+
+The same field takes a barcode/QR scan. It is focused when the dialog opens, and a
+keyboard-wedge scanner ends its payload with Enter, so scanning a label is the whole
+interaction. Two shapes are understood:
+
+- **TME's QR** embeds the product URL, so it works with any scanner and imports
+  exactly like a pasted URL. So does any shop URL you paste by hand.
+- **Mouser's and Digi-Key's DataMatrix** is ISO 15434 / ANSI MH10.8.2: fields carrying
+  data identifiers (`1P` = manufacturer part number, `30P` = the distributor's own SKU,
+  `1V` = manufacturer) separated by the group separator, `GS` / `0x1D`. The part number
+  is then looked up through that shop's API as usual.
+
+**Your scanner must keep the field separators.** Many emit `GS` as a *key press* (an
+F-key) rather than a character, so it never reaches the input and the fields arrive
+concatenated — at which point the field boundaries are genuinely ambiguous and ShelfOS
+refuses to guess, saying so rather than importing wrong data. Either configure the
+scanner to send `GS`, or configure it to send a printable separator and name it:
+
+```bash
+# a visible separator your scanner sends instead of GS
+export SHELFOS_SCAN_SEPARATOR="|"
+```
+
+It must be a single character that can't occur inside a field — a letter, a digit or
+one of `-._/+` is ignored, since splitting on `-` would cut `1PESQ-106-33-T-S` into
+three "fields" and import confidently wrong data.
+
+If a shop's API can't enrich the scan (its key isn't set, or the lookup fails), the
+dialog is still pre-filled with the part number and manufacturer read off the label,
+and says that's all it managed.
 
 - **Web UI:** sign in at `/login` (session cookie).
 - **API:** `POST /api/auth/token` with `{"username", "password"}` returns a JWT;
