@@ -39,8 +39,8 @@ def test_lookup_returns_a_normalised_product(
 ) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr(
         shops,
-        "lookup",
-        lambda url: ProductData(
+        "import_code",
+        lambda code: ProductData(
             mpn="MPN-1",
             manufacturer="ACME",
             description="desc",
@@ -50,7 +50,7 @@ def test_lookup_returns_a_normalised_product(
             parameters=[("Resistance", "10k")],
         ),
     )
-    resp = client.post("/api/shops/lookup", json={"url": "https://www.mouser.com/x"})
+    resp = client.post("/api/shops/lookup", json={"code": "https://www.mouser.com/x"})
     assert resp.status_code == 200
     body = resp.json()
     assert body["mpn"] == "MPN-1"
@@ -62,16 +62,43 @@ def test_lookup_returns_a_normalised_product(
 
 
 def test_lookup_unsupported_shop_is_422(client: TestClient) -> None:
-    resp = client.post("/api/shops/lookup", json={"url": "https://www.example.com/x"})
+    resp = client.post("/api/shops/lookup", json={"code": "https://www.example.com/x"})
     assert resp.status_code == 422  # no provider matches → ValidationError
+
+
+def test_lookup_accepts_a_scanned_code(client: TestClient, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The same endpoint takes a scanned barcode payload, not just a URL."""
+    seen: dict[str, str] = {}
+
+    def _import(code: str) -> ProductData:
+        seen["code"] = code
+        return ProductData(mpn="MIC334", manufacturer="Microchip")
+
+    monkeypatch.setattr(shops, "import_code", _import)
+    resp = client.post(
+        "/api/shops/lookup",
+        json={"code": "QTY:5 PN:MIC334 https://www.tme.eu/details/MIC334"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["mpn"] == "MIC334"
+    assert seen["code"].startswith("QTY:5")
+
+
+def test_lookup_reports_a_scanner_that_drops_the_separators(
+    client: TestClient,
+) -> None:
+    """A concatenated DataMatrix is refused with an explanation, not guessed at."""
+    resp = client.post("/api/shops/lookup", json={"code": "[)>061P5277Q251VKeystone"})
+    assert resp.status_code == 422
+    assert "separators" in resp.text
 
 
 def test_lookup_forbidden_for_read_only(
     client: TestClient, anon_client: TestClient, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
-    monkeypatch.setattr(shops, "lookup", lambda url: ProductData(mpn="X"))
+    monkeypatch.setattr(shops, "import_code", lambda code: ProductData(mpn="X"))
     headers = _read_only_headers(client, anon_client)
     resp = anon_client.post(
-        "/api/shops/lookup", json={"url": "https://www.mouser.com/x"}, headers=headers
+        "/api/shops/lookup", json={"code": "https://www.mouser.com/x"}, headers=headers
     )
     assert resp.status_code == 403

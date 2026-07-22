@@ -150,9 +150,23 @@ class DigiKeyProvider:
     def fetch(
         self, url: str, *, transport: httpx.BaseTransport | None = None
     ) -> ProductData:
+        # The MPN is parsed from the URL; the API call is URL-independent, so a scan
+        # reuses fetch_by_mpn.
+        return self.fetch_by_mpn(_part_number(url), transport=transport)
+
+    def fetch_by_mpn(
+        self, mpn: str, *, transport: httpx.BaseTransport | None = None
+    ) -> ProductData:
+        """Look a part up by its manufacturer number directly (from a scan)."""
         if not (config.DIGIKEY_CLIENT_ID and config.DIGIKEY_CLIENT_SECRET):
             raise ValidationError("Digi-Key integration is not configured")
-        part_number = _part_number(url)
+        # Escaped OUTSIDE the try below: a part number that can't be encoded (a lone
+        # surrogate from a mangled scan) raises UnicodeEncodeError here, which that
+        # try would either miss entirely — a 500 — or mislabel "could not reach".
+        try:
+            path_segment = quote(mpn, safe="", encoding="utf-8")
+        except UnicodeEncodeError:
+            raise ValidationError("could not read the part number") from None
 
         try:
             with httpx.Client(
@@ -160,7 +174,7 @@ class DigiKeyProvider:
             ) as client:
                 product_url = (
                     f"{config.DIGIKEY_API_BASE}/products/v4/search/"
-                    f"{quote(part_number, safe='')}/productdetails"
+                    f"{path_segment}/productdetails"
                 )
 
                 def _headers(token: str) -> dict[str, str]:
@@ -192,7 +206,7 @@ class DigiKeyProvider:
             raise ValidationError("could not read the Digi-Key response")
         product = payload.get("Product")
         if not isinstance(product, dict):
-            raise ValidationError("no product found for this URL")
+            raise ValidationError("no product found")
 
         def _nested(key: str, field: str) -> str | None:
             value = product.get(key)
@@ -210,6 +224,10 @@ class DigiKeyProvider:
         category = _nested("Category", "Name")
         description = _nested("Description", "ProductDescription")
         return ProductData(
+            # The product page from the response, not from the input: a scan looks a
+            # part up by number and has no URL of its own, and this is what gets kept
+            # as the component's shop link.
+            source_url=product.get("ProductUrl") or None,
             mpn=product.get("ManufacturerProductNumber") or None,
             manufacturer=_nested("Manufacturer", "Name"),
             description=description,

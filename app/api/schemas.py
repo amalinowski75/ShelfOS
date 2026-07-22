@@ -297,9 +297,9 @@ class LinkRead(BaseModel):
 
 
 class ShopLookup(BaseModel):
-    """Look up a product by its shop URL (spec: create component from a shop URL)."""
+    """Look a product up from a shop URL or a scanned barcode/QR payload."""
 
-    url: str = Field(max_length=2048)
+    code: str = Field(max_length=2048)
 
 
 class ShopParameter(BaseModel):
@@ -321,6 +321,11 @@ class ShopProductRead(BaseModel):
     package: str | None = None
     datasheet_url: str | None = None
     parameters: list[ShopParameter] = Field(default_factory=list)
+    # The product page the import resolved to, saved as the component's shop link.
+    # Echoed back because a scan's URL is buried in the code the client sent.
+    source_url: str | None = None
+    # True when only the scanned label could be read — the shop's API added nothing.
+    from_label_only: bool = False
 
 
 class BomLineRead(BaseModel):

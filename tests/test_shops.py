@@ -146,14 +146,14 @@ def test_matches_is_false_for_a_malformed_url() -> None:
     assert MouserProvider().matches("http://[::1/x") is False  # no crash
 
 
-def test_lookup_rejects_an_unsupported_shop() -> None:
+def test_import_code_rejects_an_unsupported_shop() -> None:
     with pytest.raises(ValidationError):
-        shops.lookup("https://www.example.com/product/x")
+        shops.import_code("https://www.example.com/product/x")
 
 
-def test_lookup_rejects_a_malformed_url() -> None:
+def test_import_code_rejects_a_malformed_url() -> None:
     with pytest.raises(ValidationError):  # must be 422, not an unhandled 500
-        shops.lookup("http://[::1/x")
+        shops.import_code("http://[::1/x")
 
 
 @pytest.mark.parametrize(

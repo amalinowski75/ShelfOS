@@ -59,9 +59,8 @@ class MouserProvider:
     def fetch(
         self, url: str, *, transport: httpx.BaseTransport | None = None
     ) -> ProductData:
-        if not config.MOUSER_API_KEY:
-            raise ValidationError("Mouser integration is not configured")
-        # The product number is the last path segment of a Mouser product URL.
+        # The product number is the last path segment of a Mouser product URL; the
+        # API call itself is URL-independent, so a scan reuses fetch_by_mpn.
         try:
             path = urlsplit(url).path
         except ValueError:
@@ -69,9 +68,17 @@ class MouserProvider:
         part_number = unquote(path.rstrip("/").rsplit("/", 1)[-1])
         if not part_number:
             raise ValidationError("could not read a part number from the URL")
+        return self.fetch_by_mpn(part_number, transport=transport)
 
+    def fetch_by_mpn(
+        self, mpn: str, *, transport: httpx.BaseTransport | None = None
+    ) -> ProductData:
+        """Look a part up by its number directly (from a scan, not a URL)."""
+        if not config.MOUSER_API_KEY:
+            raise ValidationError("Mouser integration is not configured")
         # partSearchOptions is optional; omit it rather than risk an invalid value.
-        body = {"SearchByPartRequest": {"mouserPartNumber": part_number}}
+        # mouserPartNumber matches on a manufacturer PN or Mouser's own SKU.
+        body = {"SearchByPartRequest": {"mouserPartNumber": mpn}}
         # A network error, a non-2xx, a non-JSON body (JSONDecodeError → ValueError)
         # or an unexpected JSON shape (AttributeError) all become a clean 422 — never
         # a 500, and the exception (which could embed the api-key query string) never
@@ -99,7 +106,7 @@ class MouserProvider:
             _logger.warning("Mouser lookup failed: %s", detail)
             raise ValidationError(f"Mouser rejected the request: {detail}")
         if not parts:
-            raise ValidationError("no product found for this URL")
+            raise ValidationError("no product found")
         part = parts[0]
         if not isinstance(part, dict):
             raise ValidationError("could not read the Mouser response")
@@ -114,6 +121,10 @@ class MouserProvider:
                 parameters.append((name, value))  # raw; cleaned client-side per type
 
         return ProductData(
+            # The product page from the response, not from the input: a scan looks a
+            # part up by number and has no URL of its own, and this is what gets kept
+            # as the component's shop link.
+            source_url=part.get("ProductDetailUrl") or None,
             mpn=part.get("ManufacturerPartNumber") or None,
             manufacturer=part.get("Manufacturer") or None,
             description=part.get("Description") or None,

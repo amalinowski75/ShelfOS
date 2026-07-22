@@ -29,6 +29,13 @@ class ProductData:
     shop_category: str | None = None
     datasheet_url: str | None = None
     parameters: list[tuple[str, str]] = field(default_factory=list)  # (label, value)
+    # The product page this came from, when there was one. Set by the registry, not
+    # by a provider: with a scan the URL is whatever the code carried (a TME QR wraps
+    # it in other tokens), so the client can't re-derive it from what it sent.
+    source_url: str | None = None
+    # True when the shop's API contributed nothing and the fields were read straight
+    # off the scanned label — the dialog says so instead of implying a full import.
+    from_label_only: bool = False
 
 
 @runtime_checkable

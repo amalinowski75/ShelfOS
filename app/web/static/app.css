@@ -331,6 +331,9 @@ dialog .close:hover { background: var(--surface-2); color: var(--text); }
 dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 
 .error { color: var(--danger); font-size: 13.5px; margin: 0; }
+/* A partial success — something landed, but not everything asked for. Red would
+   overstate it; .muted would hide it. */
+.warn { color: var(--warn); font-size: 13.5px; margin: 0; }
 
 /* ---------- dialogs with a location tree-picker (§7) ---------- */
 /* Wider so the tree has room; cap the height and let the form scroll only as a

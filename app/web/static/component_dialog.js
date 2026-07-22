@@ -501,15 +501,24 @@
     });
   }
 
-  // "Import from a shop URL": look the part up via its shop's API and rich-prefill.
+  // "Import from a shop URL or a scanned code": look the part up via its shop's API
+  // and rich-prefill. The same field takes a pasted URL and a scanned barcode/QR.
   const importUrl = document.getElementById("shop-import-url");
   const importBtn = document.getElementById("shop-import-btn");
   const importStatus = document.getElementById("shop-import-status");
   if (importBtn) {
     let importing = false;
-    importBtn.addEventListener("click", async () => {
-      const url = importUrl.value.trim();
-      if (!url || importing) return;
+    const runImport = async () => {
+      const code = importUrl.value.trim();
+      if (!code) return;
+      if (importing) {
+        // Two scans in quick succession is the normal wedge-scanner mishap; say
+        // which one is landing rather than dropping the second without a word.
+        importStatus.hidden = false;
+        importStatus.className = "error";
+        importStatus.textContent = "Still looking the previous code up — try again.";
+        return;
+      }
       importing = true;
       const token = openToken; // ignore the result if the dialog is reopened
       importStatus.hidden = false;
@@ -519,7 +528,7 @@
         const resp = await fetch("/api/shops/lookup", {
           method: "POST",
           headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-          body: JSON.stringify({ url }),
+          body: JSON.stringify({ code }),
         });
         if (token !== openToken) return; // a different dialog session is open now
         if (!resp.ok) {
@@ -539,18 +548,37 @@
           params: product.parameters,
           datasheetUrl: product.datasheet_url,
         });
-        // applyPrefill cleared it; the URL the user pasted is the shop link to keep.
-        pendingShopUrl = url;
-        importStatus.className = "muted";
-        importStatus.textContent = product.mpn
-          ? `Imported ${product.mpn} — review and Create.`
-          : "Imported — review and Create.";
+        // applyPrefill cleared it; restore the shop link from the URL the SERVER
+        // resolved — a TME QR buries its URL among other tokens, and a barcode has
+        // none at all, so the raw code must never be stored as a link.
+        pendingShopUrl = product.source_url || null;
+        // "warn", not "error": the import partly succeeded and the fields ARE
+        // filled — red is reserved for the cases where nothing landed.
+        importStatus.className = product.from_label_only ? "warn" : "muted";
+        if (product.from_label_only) {
+          // The shop's API added nothing (no key, or the lookup failed); the fields
+          // come off the label alone, so say so rather than implying a full import.
+          importStatus.textContent =
+            "The shop lookup failed — filled from the scanned label only.";
+        } else {
+          importStatus.textContent = product.mpn
+            ? `Imported ${product.mpn} — review and Create.`
+            : "Imported — review and Create.";
+        }
       } catch {
         importStatus.className = "error";
         importStatus.textContent = "Could not reach the server.";
       } finally {
         importing = false;
       }
+    };
+    importBtn.addEventListener("click", runImport);
+    // A keyboard-wedge scanner ends its payload with Enter, so a scan imports by
+    // itself. preventDefault so that Enter doesn't submit the half-empty form.
+    importUrl.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      runImport();
     });
   }
 
@@ -563,6 +591,8 @@
     errorEl.hidden = true;
     if (importStatus) importStatus.hidden = true;
     dialog.showModal(); // open synchronously; fields fill in a tick later
+    // Focus the import field so a scanner's payload lands there without a click.
+    if (importUrl) importUrl.focus();
     applyPrefill(prefill);
   };
 })();
