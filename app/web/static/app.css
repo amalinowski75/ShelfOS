@@ -502,6 +502,13 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 .cell-mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .cell-qty { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .cell-qty.is-zero { color: var(--danger); }
+/* Truncate rather than wrap. Tabulator's own .tabulator-cell already clips, but
+   `display: block` is what makes the ellipsis apply to this inline span, and
+   stating the rest keeps the behaviour ours rather than the vendor's. NOT muted:
+   the description is often the only text that identifies a part at a glance. */
+.cell-desc {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* row actions: quiet until the row is hovered (spec §15) */
 .row-actions { display: inline-flex; gap: 4px; opacity: 0; transition: opacity .12s; }

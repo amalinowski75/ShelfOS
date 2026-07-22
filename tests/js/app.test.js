@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { JSDOM } from "jsdom";
 import { describe, it, expect, vi } from "vitest";
 import { loadPage, tick, typePageFixture } from "./harness.js";
 
@@ -37,6 +39,17 @@ describe("app.js — table formatting", () => {
     expect(mt.formatter(cell("THT"))).toContain("b-accent");
     expect(mt.formatter(cell("SMT"))).toContain("b-neutral");
 
+    const desc = window.columnDef({ field: "notes", title: "Description" });
+    // Escaped in BOTH places — the title attribute is as injectable as the body,
+    // and a quote in a description would otherwise break out of it.
+    expect(desc.formatter(cell('10k 1% "tight"'))).toBe(
+      '<span class="cell-desc" title="10k 1% &quot;tight&quot;">' +
+        "10k 1% &quot;tight&quot;</span>",
+    );
+    // Capped: fitDataFill sizes to content, and this column sits to the LEFT of
+    // Qty and the row-action buttons, so an uncapped one pushes those off-screen.
+    expect(desc.maxWidth).toBe(220);
+
     const qty = window.columnDef({ field: "quantity", title: "Qty" });
     expect(qty.formatter(cell(0))).toContain("is-zero");
     expect(qty.formatter(cell(5))).toBe('<span class="cell-qty">5</span>');
@@ -47,7 +60,7 @@ describe("app.js — table formatting", () => {
 
   it("gives every data column a live text header filter, but not the actions column", () => {
     const { window } = loadPage(typePageFixture(), SCRIPTS);
-    for (const field of ["mpn", "package", "mounting_type", "quantity", "type"]) {
+    for (const field of ["mpn", "notes", "package", "mounting_type", "quantity", "type"]) {
       const col = window.columnDef({ field, title: `Col ${field}` });
       // "input" + Tabulator's default "like" func = case-insensitive substring
       // filter applied live; multiple active filters AND together. That runtime
@@ -61,6 +74,21 @@ describe("app.js — table formatting", () => {
     }
     // The row-action buttons column is not filterable.
     expect(window.actionColumn().headerFilter).toBeUndefined();
+  });
+
+  it("a description cell ellipsises rather than wrapping, under the real app.css", () => {
+    const css = readFileSync(
+      new URL("../../app/web/static/app.css", import.meta.url),
+      "utf8",
+    );
+    const dom = new JSDOM(`<style>${css}</style><span class="cell-desc" id="d"></span>`);
+    const style = dom.window.getComputedStyle(dom.window.document.getElementById("d"));
+    // `display: block` is the load-bearing one: text-overflow does nothing on an
+    // inline span, so without it the ellipsis would silently be the vendor's job.
+    expect(style.display).toBe("block");
+    expect(style.textOverflow).toBe("ellipsis");
+    expect(style.overflow).toBe("hidden");
+    expect(style.whiteSpace).toBe("nowrap");
   });
 
   it("quantity filter matches both the raw and thousands-separated number", () => {

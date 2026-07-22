@@ -46,9 +46,12 @@
         <tr><th>Package</th><td class="mono">{{ component.package or "—" }}</td></tr>
         <tr><th>Mounting</th><td>{{ mount_badge(component.mounting_type.value) }}</td></tr>
         <tr><th>Status</th><td>{{ status_badge(component.status.value) }}</td></tr>
+        {# Labelled, and in the table: the components list and both dialogs call
+           this field "Description", so the page that shows its value shouldn't be
+           the one place it goes unnamed. Full text here — the table trims it. #}
+        <tr><th>Description</th><td>{{ component.notes or "—" }}</td></tr>
       </tbody>
     </table>
-    {% if component.notes %}<p class="muted" style="margin: 14px 0 0">{{ component.notes }}</p>{% endif %}
   </div>
 
   <div class="card card-pad">

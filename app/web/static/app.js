@@ -53,6 +53,24 @@ function columnDef(column) {
         ...base,
         formatter: (cell) => `<span class="cell-mpn">${esc(cell.getValue())}</span>`,
       };
+    case "notes":
+      return {
+        ...base,
+        // Descriptions run long ("Thick Film Resistors - SMD 1/16watt 10Kohms 1%")
+        // and fitDataFill sizes to content, so one verbose part would push every
+        // other column off-screen — including Qty and the row's Add/Take buttons,
+        // which sit to its right. Kept narrow enough that the whole table still
+        // fits a normal viewport.
+        //
+        // The title tooltip covers a truncated cell for a mouse; a keyboard or
+        // touch user reads the full text on the component's detail page (which is
+        // also where an over-long description goes, since the feed trims it).
+        maxWidth: 220,
+        formatter: (cell) => {
+          const value = esc(cell.getValue());
+          return `<span class="cell-desc" title="${value}">${value}</span>`;
+        },
+      };
     case "package":
       return {
         ...base,
