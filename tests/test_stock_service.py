@@ -332,3 +332,72 @@ def test_verify_cache_consistency_detects_drift(
     session.add(cl)
     session.commit()
     assert ss.verify_cache_consistency(session) is False
+
+
+def test_occupied_location_ids_frees_a_slot_emptied_to_zero(
+    fixture_ids, session: Session
+) -> None:
+    """Keys on the quantity, not on the ComponentLocation row existing.
+
+    Taking the last part out leaves the cache row behind with quantity 0; that
+    drawer is physically free again and must be offered for a new part.
+    """
+    component_id, location_id, user_id = fixture_ids
+    other = ls.create_location(session, type=LocationType.DRAWER, name="D2")
+
+    assert ss.occupied_location_ids(session) == []
+
+    ss.add_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=10,
+        user_id=user_id,
+    )
+    assert ss.occupied_location_ids(session) == [location_id]
+    assert other.id not in ss.occupied_location_ids(session)
+
+    # A second occupied location: sorted(), because the query is unordered and an
+    # equality against a literal list would be flaky the moment there are two.
+    ss.add_stock(
+        session,
+        component_id=component_id,
+        location_id=other.id,
+        quantity=1,
+        user_id=user_id,
+    )
+    assert sorted(ss.occupied_location_ids(session)) == sorted([location_id, other.id])
+    ss.remove_stock(
+        session,
+        component_id=component_id,
+        location_id=other.id,
+        quantity=1,
+        user_id=user_id,
+    )
+
+    ss.remove_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=10,
+        user_id=user_id,
+    )
+    assert ss.occupied_location_ids(session) == []
+
+
+def test_occupied_location_ids_reports_each_location_once(
+    fixture_ids, session: Session
+) -> None:
+    """Two different components in one drawer is still one occupied location."""
+    component_id, location_id, user_id = fixture_ids
+    ctype = cs.create_type(session, "capacitor")
+    second = cs.create_component(session, ctype.id)
+    for cid in (component_id, second.id):
+        ss.add_stock(
+            session,
+            component_id=cid,
+            location_id=location_id,
+            quantity=5,
+            user_id=user_id,
+        )
+    assert ss.occupied_location_ids(session) == [location_id]

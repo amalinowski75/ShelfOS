@@ -166,6 +166,22 @@ def list_component_locations(
     )
 
 
+def occupied_location_ids(session: Session) -> list[int]:
+    """Locations currently holding at least one component (any component, qty > 0).
+
+    Drives the stock dialog's "Add" filter: a slot whose quantity has fallen to 0
+    is free again, which is why this keys on the quantity rather than on the mere
+    existence of a ``ComponentLocation`` row.
+    """
+    return list(
+        session.exec(
+            select(col(ComponentLocation.location_id))
+            .where(ComponentLocation.quantity > 0)
+            .distinct()
+        ).all()
+    )
+
+
 def list_movements(session: Session, component_id: int) -> list[StockMovement]:
     """Return a component's stock movements, most recent first (§17)."""
     return list(

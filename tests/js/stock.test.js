@@ -8,8 +8,53 @@ import { loadPage, tick, CSRF } from "./harness.js";
 // on its own, which is the whole point of the split.
 const SCRIPTS = ["shared.js", "location_tree.js", "stock_dialog.js"];
 
-// A stock dialog whose location field is the tree-picker (one selectable node).
-function stockPageFixture() {
+// One selectable leaf (id 5), enough for the write tests.
+function flatTree() {
+  return `<ul class="loc-picker-list"><li>
+            <div class="loc-picker-row">
+              <span class="loc-picker-caret-spacer"></span>
+              <button type="button" class="loc-picker-node"
+                      data-loc-id="5" data-loc-path="Lab / D1">D1</button>
+            </div>
+          </li></ul>`;
+}
+
+// A nested forest for the filter tests: Lab (1) > Rack A (2) > D1 (5), D2 (6),
+// plus a sibling room Store (3) with D9 (9). Mirrors what _location_picker.html
+// renders, carets and all.
+function nestedTree() {
+  const leaf = (id, name, path) =>
+    `<li><div class="loc-picker-row"><span class="loc-picker-caret-spacer"></span>
+       <button type="button" class="loc-picker-node"
+               data-loc-id="${id}" data-loc-path="${path}">${name}</button>
+     </div></li>`;
+  const branch = (id, name, path, children) =>
+    `<li><div class="loc-picker-row">
+       <button type="button" class="loc-picker-caret" aria-expanded="false"></button>
+       <button type="button" class="loc-picker-node"
+               data-loc-id="${id}" data-loc-path="${path}">${name}</button>
+     </div>
+     <div class="loc-picker-children" hidden>
+       <ul class="loc-picker-list">${children}</ul>
+     </div></li>`;
+  return `<ul class="loc-picker-list">
+    ${branch(
+      1,
+      "Lab",
+      "Lab",
+      branch(
+        2,
+        "Rack A",
+        "Lab / Rack A",
+        leaf(5, "D1", "Lab / Rack A / D1") + leaf(6, "D2", "Lab / Rack A / D2"),
+      ),
+    )}
+    ${branch(3, "Store", "Store", leaf(9, "D9", "Store / D9"))}
+  </ul>`;
+}
+
+// A stock dialog whose location field is the tree-picker.
+function stockPageFixture(tree = flatTree(), creatable = false) {
   return `
     <dialog id="stock-dialog">
       <strong id="stock-dialog-title"></strong>
@@ -23,13 +68,12 @@ function stockPageFixture() {
             <span class="loc-picker-label">Select a location…</span>
           </button>
           <div class="loc-picker-menu" hidden>
-            <ul class="loc-picker-list"><li>
-              <div class="loc-picker-row">
-                <span class="loc-picker-caret-spacer"></span>
-                <button type="button" class="loc-picker-node"
-                        data-loc-id="5" data-loc-path="Lab / D1">D1</button>
-              </div>
-            </li></ul>
+            ${creatable ? '<button type="button" class="loc-picker-new" hidden>+ New location</button>' : ""}
+            <label class="loc-picker-showall" hidden>
+              <input type="checkbox" class="loc-picker-showall-box" /> show all
+            </label>
+            <p class="loc-picker-nomatch" hidden>No matching locations</p>
+            ${tree}
           </div>
         </div>
         <input name="note" />
@@ -54,7 +98,8 @@ describe("stock_dialog.js — the shared Add/Take dialog", () => {
     submitStock(document);
     await tick();
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    // The location-usage lookup fires on open; no WRITE may.
+    expect(fetchMock.mock.calls.some(([u]) => u.startsWith("/api/stock/"))).toBe(false);
     const error = document.getElementById("stock-error");
     expect(error.hidden).toBe(false);
     expect(error.textContent).toMatch(/Choose a location/);
@@ -299,6 +344,7 @@ describe("stock_dialog.js — [data-stock-act] triggers (component detail page)"
   });
 
   it("renders the detail-page buttons visibly under the real app.css", () => {
+
     // .row-actions is opacity-0 until its Tabulator row is hovered, so reusing it
     // outside the table would ship two invisible (but clickable) buttons. The
     // attribute assertions in test_web.py can't see that; computed style can.
@@ -331,5 +377,294 @@ describe("stock_dialog.js — [data-stock-act] triggers (component detail page)"
     document.querySelector("[data-stock-act]").click();
     expect(window.HTMLDialogElement.prototype.showModal).not.toHaveBeenCalled();
     expect(document.getElementById("stock-form").component_id.value).toBe("");
+  });
+});
+
+describe("stock_dialog.js — the location filter", () => {
+  // Take offers only where the part IS; Add offers a free slot, or the one it
+  // already occupies so a restock can go back in.
+  const usage = (holding, occupied) => (url) =>
+    url.endsWith("/location-usage")
+      ? Promise.resolve({ ok: true, json: async () => ({ holding, occupied }) })
+      : Promise.resolve({ ok: true, json: async () => ({}) });
+
+  // The dialog fetches usage on open; two ticks covers fetch + json.
+  async function open(mode, fetchImpl) {
+    const handles = loadPage(stockPageFixture(nestedTree()), SCRIPTS, { fetchImpl });
+    handles.window.openStockDialog(mode, 7);
+    await tick();
+    await tick();
+    handles.node = (id) =>
+      handles.document.querySelector(`.loc-picker-node[data-loc-id="${id}"]`);
+    // "Offered" = pickable: visible in the tree AND not disabled.
+    handles.offered = (id) => {
+      const node = handles.node(id);
+      return !node.disabled && !node.closest("li").hidden;
+    };
+    return handles;
+  }
+
+  it("take offers only the locations holding this component", async () => {
+    const h = await open("take", usage([6], [5, 6, 9]));
+    expect(h.offered(6)).toBe(true);
+    expect(h.offered(5)).toBe(false); // holds something, but not this part
+    expect(h.offered(9)).toBe(false);
+  });
+
+  it("take keeps the ancestors of a match visible, but unselectable", async () => {
+    // Otherwise a match nested three levels down would be unreachable — the tree
+    // is expandable, you have to walk through Lab and Rack A to see D2.
+    const h = await open("take", usage([6], [6]));
+    for (const ancestor of [1, 2]) {
+      expect(h.node(ancestor).closest("li").hidden).toBe(false);
+      expect(h.node(ancestor).disabled).toBe(true);
+    }
+    // …and EVERY branch on the way down is open, so nothing to hunt for. Checking
+    // only the innermost would pass while Lab stayed collapsed and D2 unreachable.
+    for (
+      let branch = h.node(6).closest(".loc-picker-children");
+      branch;
+      branch = branch.parentElement.closest(".loc-picker-children")
+    ) {
+      expect(branch.hidden).toBe(false);
+    }
+    // A whole subtree with no match is gone, not just greyed out.
+    expect(h.node(3).closest("li").hidden).toBe(true);
+  });
+
+  it("add offers free slots and the one already holding this component", async () => {
+    // 5 holds this part (restock target), 9 holds something else, 6 is free.
+    const h = await open("add", usage([5], [5, 9]));
+    expect(h.offered(5)).toBe(true);
+    expect(h.offered(6)).toBe(true);
+    expect(h.offered(9)).toBe(false);
+  });
+
+  it("says so when nothing matches, rather than showing an empty dropdown", async () => {
+    const h = await open("take", usage([], [5]));
+    expect(h.document.querySelector(".loc-picker-nomatch").hidden).toBe(false);
+  });
+
+  it("'show all locations' restores the full tree", async () => {
+    const h = await open("take", usage([6], [5, 6, 9]));
+    const showAll = h.document.querySelector(".loc-picker-showall");
+    expect(showAll.hidden).toBe(false); // only offered while a filter is on
+    expect(h.offered(9)).toBe(false);
+
+    const box = h.document.querySelector(".loc-picker-showall-box");
+    box.checked = true;
+    box.dispatchEvent(new h.window.Event("change", { bubbles: true }));
+    expect(h.offered(9)).toBe(true);
+    expect(h.offered(1)).toBe(true); // ancestors selectable again too
+  });
+
+  it("drops a selection the filter then takes away", async () => {
+    // The dialog opens on the full tree and narrows a moment later. A location
+    // picked in that window must not stay in the hidden input the form POSTs —
+    // the dialog would be hiding the very location it was about to submit.
+    let landUsage;
+    const fetchImpl = (url) =>
+      url.endsWith("/location-usage")
+        ? new Promise((resolve) => (landUsage = resolve))
+        : Promise.resolve({ ok: true, json: async () => ({}) });
+    const { window, document } = loadPage(stockPageFixture(nestedTree()), SCRIPTS, {
+      fetchImpl,
+    });
+    window.openStockDialog("take", 7);
+    document.querySelector('.loc-picker-node[data-loc-id="9"]').click();
+    expect(document.querySelector('[name="location_id"]').value).toBe("9");
+
+    landUsage({ ok: true, json: async () => ({ holding: [6], occupied: [6, 9] }) });
+    await tick();
+    await tick();
+    expect(document.querySelector('[name="location_id"]').value).toBe("");
+    expect(document.querySelector(".loc-picker-label").textContent).toMatch(/Select/);
+  });
+
+  it("drops a selection made under 'show all' when it is unticked again", async () => {
+    const h = await open("take", usage([6], [6, 9]));
+    const box = h.document.querySelector(".loc-picker-showall-box");
+    const toggleShowAll = (checked) => {
+      box.checked = checked;
+      box.dispatchEvent(new h.window.Event("change", { bubbles: true }));
+    };
+
+    toggleShowAll(true);
+    h.node(9).click();
+    expect(h.document.querySelector('[name="location_id"]').value).toBe("9");
+    toggleShowAll(false);
+    expect(h.document.querySelector('[name="location_id"]').value).toBe("");
+  });
+
+  it("keeps a selection that the filter still accepts", async () => {
+    // The clearing above must not be indiscriminate.
+    const h = await open("take", usage([6], [6, 9]));
+    h.node(6).click();
+    const box = h.document.querySelector(".loc-picker-showall-box");
+    box.checked = true;
+    box.dispatchEvent(new h.window.Event("change", { bubbles: true }));
+    box.checked = false;
+    box.dispatchEvent(new h.window.Event("change", { bubbles: true }));
+    expect(h.document.querySelector('[name="location_id"]').value).toBe("6");
+  });
+
+  it("does not let a kept-for-the-path ancestor be selected", async () => {
+    const h = await open("take", usage([6], [6]));
+    h.node(2).click(); // "Rack A" — visible only as the way down to D2
+    expect(h.document.querySelector('[name="location_id"]').value).toBe("");
+  });
+
+  it("blocks the picker while the lookup is in flight", async () => {
+    // Otherwise the full tree is live and a pick made now gets silently dropped.
+    let landUsage;
+    const fetchImpl = (url) =>
+      url.endsWith("/location-usage")
+        ? new Promise((resolve) => (landUsage = resolve))
+        : Promise.resolve({ ok: true, json: async () => ({}) });
+    const { window, document } = loadPage(stockPageFixture(nestedTree()), SCRIPTS, {
+      fetchImpl,
+    });
+    window.openStockDialog("take", 7);
+    const toggle = document.querySelector(".loc-picker-toggle");
+    expect(toggle.disabled).toBe(true);
+
+    landUsage({ ok: true, json: async () => ({ holding: [6], occupied: [6] }) });
+    await tick();
+    await tick();
+    expect(toggle.disabled).toBe(false);
+  });
+
+  it("re-enables the picker even when the lookup fails", async () => {
+    const h = await open("take", () => Promise.reject(new Error("offline")));
+    expect(h.document.querySelector(".loc-picker-toggle").disabled).toBe(false);
+  });
+
+  it("does not submit the form on Enter in 'show all'", async () => {
+    // A checkbox implicitly submits its form on Enter; here that would post a
+    // stock movement from a keyboard user just trying to widen the list.
+    const h = await open("take", usage([6], [6, 9]));
+    h.node(6).click(); // a valid location, so nothing else would block a submit
+    const box = h.document.querySelector(".loc-picker-showall-box");
+    const event = new h.window.KeyboardEvent("keydown", {
+      key: "Enter",
+      cancelable: true,
+      bubbles: true,
+    });
+    box.dispatchEvent(event);
+    await tick();
+    expect(event.defaultPrevented).toBe(true);
+    expect(box.checked).toBe(true); // Enter toggles instead
+    expect(h.offered(9)).toBe(true);
+    expect(h.fetchMock.mock.calls.some(([u]) => u.startsWith("/api/stock/"))).toBe(
+      false,
+    );
+  });
+
+  it("ignores a response whose shape isn't what the endpoint promises", async () => {
+    const h = await open("take", (url) =>
+      url.endsWith("/location-usage")
+        ? Promise.resolve({ ok: true, json: async () => ({ holding: null }) })
+        : Promise.resolve({ ok: true, json: async () => ({}) }),
+    );
+    expect(h.offered(9)).toBe(true); // unfiltered, not half-configured
+    expect(h.document.querySelector(".loc-picker-toggle").disabled).toBe(false);
+  });
+
+  it("leaves the tree alone when the usage lookup fails", async () => {
+    // A lookup for a convenience must never cost the user the write itself.
+    const h = await open("add", () => Promise.reject(new Error("offline")));
+    expect(h.offered(9)).toBe(true);
+    expect(h.document.querySelector(".loc-picker-showall").hidden).toBe(true);
+  });
+
+  it("ignores a usage answer that lands after the dialog was reopened", async () => {
+    // Reopening for a different component/mode while the first lookup is in flight
+    // would otherwise filter the new dialog by the old component's stock.
+    let resolveFirst;
+    let call = 0;
+    const fetchImpl = (url) => {
+      if (!url.endsWith("/location-usage")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      call += 1;
+      if (call === 1) return new Promise((resolve) => (resolveFirst = resolve));
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ holding: [9], occupied: [5, 6, 9] }),
+      });
+    };
+    const { window, document } = loadPage(stockPageFixture(nestedTree()), SCRIPTS, {
+      fetchImpl,
+    });
+    const offered = (id) => {
+      const node = document.querySelector(`.loc-picker-node[data-loc-id="${id}"]`);
+      return !node.disabled && !node.closest("li").hidden;
+    };
+
+    window.openStockDialog("take", 7); // lookup hangs
+    window.openStockDialog("take", 8); // reopened before it answers
+    await tick();
+    await tick();
+    expect(offered(9)).toBe(true); // the SECOND component's stock
+
+    resolveFirst({ ok: true, json: async () => ({ holding: [5], occupied: [5] }) });
+    await tick();
+    await tick();
+    expect(offered(9)).toBe(true); // the stale answer changed nothing
+    expect(offered(5)).toBe(false);
+  });
+
+  it("a location created inline stays pickable despite the filter", async () => {
+    // A brand-new location can't hold this part yet, so a "holds it" filter would
+    // hide the very location the user just deliberately created.
+    // location_dialog.js must load BEFORE location_tree.js: the picker only
+    // enables "+ New location" when window.openLocationDialog already exists.
+    const fixture =
+      stockPageFixture(nestedTree(), true) +
+      `<dialog id="location-dialog"><form id="location-form">
+         <select name="type"><option value="drawer">drawer</option></select>
+         <input name="name" /><select name="parent_id"><option value=""></option></select>
+         <p id="location-error" hidden></p><button type="submit"></button>
+       </form></dialog>`;
+    const created = { id: 77, name: "D77", parent_id: null, type: "drawer" };
+    const fetchImpl = (url) => {
+      if (url.endsWith("/location-usage")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ holding: [6], occupied: [6] }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => created });
+    };
+    const { window, document } = loadPage(fixture, [
+      "shared.js",
+      "location_dialog.js",
+      "location_tree.js",
+      "stock_dialog.js",
+    ], { fetchImpl });
+
+    window.openStockDialog("take", 7);
+    await tick();
+    await tick();
+    // The filter is on: D9 is somebody else's, so it's gone.
+    expect(
+      document.querySelector('.loc-picker-node[data-loc-id="9"]').closest("li").hidden,
+    ).toBe(true);
+
+    // Create a location through the picker's inline button.
+    document.querySelector(".loc-picker-new").click();
+    document.querySelector('#location-form [name="name"]').value = "D77";
+    document
+      .getElementById("location-form")
+      .dispatchEvent(new window.Event("submit", { cancelable: true, bubbles: true }));
+    await tick();
+    await tick();
+
+    const node = document.querySelector('.loc-picker-node[data-loc-id="77"]');
+    expect(node).toBeTruthy();
+    expect(node.disabled).toBe(false);
+    expect(node.closest("li").hidden).toBe(false);
+    // …and it was selected, so the user can submit straight away.
+    expect(document.querySelector('[name="location_id"]').value).toBe("77");
   });
 });

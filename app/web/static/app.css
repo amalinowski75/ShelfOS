@@ -293,6 +293,25 @@ table.kv tr:last-child th, table.kv tr:last-child td { border-bottom: none; }
 .loc-picker-new[hidden] { display: none; }
 .loc-picker-new:hover { background: var(--row-hover); }
 
+/* A node kept only as the path to a match below it: readable, but plainly not a
+   target. `disabled` already blocks the click; this makes that visible. */
+.loc-picker-node.is-unavailable {
+  color: var(--muted); opacity: .55; cursor: not-allowed;
+}
+.loc-picker-node.is-unavailable:hover { background: transparent; }
+.loc-picker-caret[hidden] { display: none; }
+.loc-picker-toggle:disabled { color: var(--muted); cursor: progress; }
+/* The escape hatch from a mode filter, and the message when it filters to nothing.
+   Both carry an author `display`, so both need the [hidden] rule (cf. above). */
+.loc-picker-showall {
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+  color: var(--muted); font-size: 13px; padding: 4px 8px;
+  border-bottom: 1px solid var(--border); margin-bottom: 4px;
+}
+.loc-picker-showall[hidden] { display: none; }
+.loc-picker-nomatch { color: var(--muted); font-size: 13px; margin: 4px 8px; }
+.loc-picker-nomatch[hidden] { display: none; }
+
 /* ---------- badges ---------- */
 .badge {
   display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600;
