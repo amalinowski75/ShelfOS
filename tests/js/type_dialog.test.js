@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { loadPage, tick, typePageFixture } from "./harness.js";
+import { loadPage, tick, typePageFixture, componentPageFixture } from "./harness.js";
 
 // type_dialog.js in isolation — no app.js. This is the reusable module that makes
 // "+ New type" work on the invoice page: it exposes window.openTypeDialog and, on a
@@ -86,5 +86,43 @@ describe("type_dialog.js (standalone)", () => {
   it("does nothing on a page without the type dialog", () => {
     const { window } = loadPage("<div></div>", SCRIPTS);
     expect(window.openTypeDialog).toBeUndefined();
+  });
+});
+
+// The exact scenario this feature delivers: the invoice/BOM script set — the shared
+// component dialog + the type builder, WITHOUT app.js (which is list-page only).
+// "+ New type" from the component dialog must create a type and select it.
+describe("type_dialog.js + component_dialog.js (invoice-style, no app.js)", () => {
+  const INVOICE_SCRIPTS = ["shared.js", "component_dialog.js", "type_dialog.js"];
+
+  it("creates a type from the component dialog and selects it", async () => {
+    const impl = (url, opts) => {
+      if (url === "/api/types" && opts?.method === "POST") {
+        return Promise.resolve({ ok: true, json: async () => ({ id: 7, name: "capacitor" }) });
+      }
+      if (url.startsWith("/api/types/") && url.endsWith("/parameters")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    };
+    const { window, document } = loadPage(componentPageFixture(), INVOICE_SCRIPTS, {
+      fetchImpl: impl,
+    });
+    // No list page here, so open the shared dialog directly (as the invoice line does).
+    window.openComponentDialog(() => {});
+    const newTypeBtn = document.getElementById("component-new-type");
+    expect(newTypeBtn.hidden).toBe(false); // the type builder is present on this page
+    newTypeBtn.click(); // opens the type dialog via window.openTypeDialog
+
+    document.getElementById("type-form").querySelector('[name="type-name"]').value =
+      "capacitor";
+    fire(document.getElementById("type-form"), "submit");
+    await tick();
+
+    const select = document.getElementById("component-type");
+    const option = [...select.options].find((o) => o.value === "7");
+    expect(option).toBeTruthy();
+    expect(option.textContent).toBe("capacitor");
+    expect(select.value).toBe("7"); // the new type is selected in the component dialog
   });
 });

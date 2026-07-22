@@ -817,6 +817,9 @@ def test_invoice_detail_read_only_account_has_no_controls(
     assert 'data-act="edit-line"' not in html
     assert 'id="invoice-line-dialog"' not in html
     assert 'id="location-dialog"' not in html
+    # The New component + New type builders are writer-gated too.
+    assert 'id="component-dialog"' not in html
+    assert 'id="type-dialog"' not in html
 
 
 def test_locations_page_renders_tree(client: TestClient) -> None:
