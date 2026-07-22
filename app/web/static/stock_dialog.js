@@ -22,6 +22,13 @@
   // clickable until the server answers. Without this the in-flight flag would have
   // been released already and a second click would post a duplicate movement.
   let navigating = false;
+  // Monotonic: a location-usage lookup that lands after the dialog was reopened for
+  // a different component (or mode) must not apply its filter.
+  let openToken = 0;
+  // How long to wait for the location-usage lookup before giving up and showing
+  // the whole tree. Long enough not to fire on a merely slow answer, short enough
+  // that a hang doesn't read as "the dialog is broken".
+  const USAGE_TIMEOUT_MS = 5000;
 
   // …but a requested reload isn't guaranteed to land either: Stop/Esc, a dropped
   // connection, or a back/forward-cache restore all leave this page rendered and
@@ -41,9 +48,67 @@
     errorEl.hidden = true;
     form.quantity.value = 1;
     form.note.value = ""; // else a note leaks into the NEXT movement
-    form.querySelector(".loc-picker")?.reset();
+    form.querySelector(".loc-picker")?.reset(); // also drops the previous filter
     dialog.showModal();
+    // Bumped HERE, not inside the helper: an early return below must still
+    // invalidate a lookup that is already in flight from a previous open.
+    narrowLocations(mode, componentId, ++openToken);
   };
+
+  // Offer only the locations that make sense for this mode: Take from where the
+  // part actually is, Add into a free slot (or back into the one it already
+  // occupies). Which locations those are depends on the component, so it can't be
+  // baked into the server-rendered picker and is fetched per open.
+  //
+  // Advisory: the picker offers "show all locations", and the tree stays unfiltered
+  // if this fetch fails — a lookup for a nicety must never block the write itself.
+  async function narrowLocations(mode, componentId, token) {
+    const picker = form.querySelector(".loc-picker");
+    if (!picker?.setFilter) return;
+    picker.setBusy?.(true);
+    let usage;
+    // fetch has no timeout of its own, and a HANG is worse here than a failure:
+    // the picker would stay disabled forever, so no location could be chosen and
+    // no stock could be moved until the user reloaded — the write held hostage by
+    // a convenience. A tarpitting proxy or a captive portal does exactly that.
+    // The race (not just the abort) is what guarantees this resolves, whatever the
+    // request ends up doing.
+    const controller = new AbortController();
+    let expire;
+    const expired = new Promise((resolve) => {
+      expire = setTimeout(() => {
+        controller.abort();
+        resolve(undefined);
+      }, USAGE_TIMEOUT_MS);
+    });
+    try {
+      const resp = await Promise.race([
+        fetch(`/web/api/components/${componentId}/location-usage`, {
+          signal: controller.signal,
+        }),
+        expired,
+      ]);
+      if (resp?.ok) usage = await resp.json();
+    } catch {
+      usage = undefined;
+    } finally {
+      clearTimeout(expire);
+    }
+    // A slow answer must not filter (or un-busy) a dialog reopened since.
+    if (token !== openToken) return;
+    picker.setBusy?.(false);
+    // Anything but the expected shape leaves the tree unfiltered rather than
+    // throwing past this point and stranding the picker half-configured.
+    if (!Array.isArray(usage?.holding) || !Array.isArray(usage?.occupied)) return;
+    const holding = new Set(usage.holding);
+    const occupied = new Set(usage.occupied);
+    picker.setFilter(
+      mode === "take"
+        ? (id) => holding.has(id)
+        : // Free, or already holding this same part so a restock can go back in.
+          (id) => !occupied.has(id) || holding.has(id),
+    );
+  }
 
   // [data-close] buttons are wired once in shared.js.
 

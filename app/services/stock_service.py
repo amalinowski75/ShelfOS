@@ -166,6 +166,30 @@ def list_component_locations(
     )
 
 
+def occupied_location_ids(session: Session) -> list[int]:
+    """Locations currently holding at least one component (any component, qty > 0).
+
+    Drives the stock dialog's "Add" filter: a slot whose quantity has fallen to 0
+    is free again, which is why this keys on the quantity rather than on the mere
+    existence of a ``ComponentLocation`` row.
+
+    "Any component" is deliberate, and encodes a policy: **ShelfOS steers toward
+    one part per slot.** The schema does not require it — ``component_locations``
+    is unique on (component, location), so a drawer can hold any number of distinct
+    parts, and the write endpoints still allow it — but a slot holding somebody
+    else's part is not offered as a destination by default. Someone who does share
+    drawers (a "resistors 0402" bin with thirty part numbers) reaches them through
+    the dialog's "show all locations", so this is a default, never a restriction.
+    """
+    return list(
+        session.exec(
+            select(col(ComponentLocation.location_id))
+            .where(ComponentLocation.quantity > 0)
+            .distinct()
+        ).all()
+    )
+
+
 def list_movements(session: Session, component_id: int) -> list[StockMovement]:
     """Return a component's stock movements, most recent first (§17)."""
     return list(

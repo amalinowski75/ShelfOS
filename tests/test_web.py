@@ -431,6 +431,70 @@ def test_component_detail_writer_can_add_and_take_stock(client: TestClient) -> N
     assert "Drawer 5" in html
 
 
+def test_location_usage_feed_drives_the_stock_dialog_filter(
+    client: TestClient,
+) -> None:
+    """Take offers `holding`; Add offers everything outside `occupied`, plus it."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    part = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    other = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    mine = client.post("/api/locations", json={"name": "D1", "type": "drawer"}).json()
+    theirs = client.post("/api/locations", json={"name": "D2", "type": "drawer"}).json()
+    free = client.post("/api/locations", json={"name": "D3", "type": "drawer"}).json()
+    for component, location in ((part, mine), (other, theirs)):
+        client.post(
+            "/api/stock/add",
+            json={
+                "component_id": component["id"],
+                "location_id": location["id"],
+                "quantity": 4,
+            },
+        )
+
+    usage = client.get(f"/web/api/components/{part['id']}/location-usage").json()
+    assert usage["holding"] == [mine["id"]]
+    assert sorted(usage["occupied"]) == sorted([mine["id"], theirs["id"]])
+    # The free drawer is in neither set, so Add offers it and Take doesn't.
+    assert free["id"] not in usage["occupied"]
+
+
+def test_location_picker_announces_its_filter_notice(client: TestClient) -> None:
+    """The notice appears/changes as the filter does, so it must be announced.
+
+    Asserted on the rendered template rather than a jsdom fixture — a fixture
+    would only prove the fixture carries the attribute.
+    """
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    part = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    html = client.get(f"/components/{part['id']}").text
+    assert 'class="loc-picker-nomatch" role="status" aria-live="polite"' in html
+    assert 'class="loc-picker-showall"' in html
+
+
+def test_location_usage_for_an_unknown_component_is_404(client: TestClient) -> None:
+    assert client.get("/web/api/components/999/location-usage").status_code == 404
+
+
+def test_location_usage_readable_by_read_only_but_not_anonymously(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    """It's a read of stock data — a viewer's picker may be filtered too."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    part = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    url = f"/web/api/components/{part['id']}/location-usage"
+
+    token = _non_admin_token(client, role="read-only", username="viewer3")
+    resp = anon_client.get(url, headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    # Assert the BODY: require_web_user answers an unauthenticated request with a
+    # 303 to /login, which the test client follows into a 200 — so a status-only
+    # check here would pass with no auth at all.
+    assert set(resp.json()) == {"holding", "occupied"}
+
+    anonymous = anon_client.get(url, follow_redirects=False)
+    assert anonymous.status_code == 303
+
+
 def test_component_detail_read_only_cannot_move_stock(
     client: TestClient, anon_client: TestClient
 ) -> None:

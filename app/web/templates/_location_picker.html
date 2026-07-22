@@ -39,6 +39,17 @@
     {# Enhanced by location_tree.js; hidden when the New Location dialog is absent. #}
     <button type="button" class="loc-picker-new" hidden>+ New location</button>
     {% endif %}
+    {# Shown by location_tree.js only while a caller-supplied filter is narrowing the
+       tree (the stock dialog does that per mode). No `name`, so it never submits. #}
+    <label class="loc-picker-showall" hidden>
+      <input type="checkbox" class="loc-picker-showall-box" /> show all locations
+    </label>
+    {# aria-live: this line appears and changes as the filter does, and both things
+       it says (nothing matches / your pick was dropped) are the answer to something
+       the user just did. #}
+    <p class="loc-picker-nomatch" role="status" aria-live="polite" hidden>
+      No matching locations — tick "show all locations" to pick any.
+    </p>
     {% if optional %}
     <button type="button" class="loc-picker-node loc-picker-none" data-loc-id="" data-loc-path="">— none —</button>
     {% endif %}
