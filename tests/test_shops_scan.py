@@ -63,6 +63,15 @@ def test_tme_qr_yields_the_product_url() -> None:
     assert scan.shop is None
 
 
+def test_an_upper_case_url_parses() -> None:
+    """QR alphanumeric mode can only encode upper case, and encoders use it."""
+    scan = parse_scan("QTY:5 PN:MIC334 HTTPS://WWW.TME.EU/DETAILS/MIC334")
+    assert scan.url == "HTTPS://WWW.TME.EU/DETAILS/MIC334"
+    assert scan.mpn == "MIC334"
+    # …and the registry can still route it, so this is a full import, not a fallback.
+    assert getattr(shops.resolve(scan.url), "name", None) == "TME"
+
+
 def test_a_plain_pasted_url_still_parses() -> None:
     scan = parse_scan("  https://www.mouser.pl/pl/ProductDetail/Walsin/MR04X1201FTL  ")
     assert scan.url == "https://www.mouser.pl/pl/ProductDetail/Walsin/MR04X1201FTL"
@@ -119,6 +128,18 @@ def test_a_scanner_that_keeps_rs_but_drops_gs_is_refused_too() -> None:
     assert "separators" in str(exc.value)
 
 
+def test_a_label_with_no_identifier_we_read_does_not_blame_the_scanner() -> None:
+    """Separators intact, but nothing we parse — the guidance must name both causes."""
+    message = str(
+        pytest.raises(
+            ValidationError,
+            parse_scan,
+            _label(["[)>\x1e06", "PCUST-123", "1T309150120016", "Q20"]),
+        ).value
+    )
+    assert "isn't one ShelfOS can read" in message  # not just "your scanner"
+
+
 def test_an_unsafe_configured_separator_is_ignored(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """"-" occurs inside part numbers; splitting on it would shred a real label."""
     monkeypatch.setattr(config, "SCAN_SEPARATOR", "-")
@@ -169,7 +190,14 @@ def test_mouser_fetch_by_mpn_sends_the_scanned_part_number(monkeypatch) -> None:
             200,
             json={
                 "Errors": [],
-                "SearchResults": {"Parts": [{"ManufacturerPartNumber": "5277"}]},
+                "SearchResults": {
+                    "Parts": [
+                        {
+                            "ManufacturerPartNumber": "5277",
+                            "ProductDetailUrl": "https://www.mouser.com/x/5277",
+                        }
+                    ]
+                },
             },
         )
 
@@ -178,6 +206,8 @@ def test_mouser_fetch_by_mpn_sends_the_scanned_part_number(monkeypatch) -> None:
     )
     assert seen["body"] == {"SearchByPartRequest": {"mouserPartNumber": "5277"}}
     assert product.mpn == "5277"
+    # A scan has no URL of its own, so the shop link has to come from the response.
+    assert product.source_url == "https://www.mouser.com/x/5277"
 
 
 def test_digikey_fetch_by_mpn_sends_the_scanned_part_number(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -195,13 +225,20 @@ def test_digikey_fetch_by_mpn_sends_the_scanned_part_number(monkeypatch) -> None
             return httpx.Response(200, json={"access_token": "t", "expires_in": 600})
         seen["path"] = req.url.path
         return httpx.Response(
-            200, json={"Product": {"ManufacturerProductNumber": "ESQ-106-33-T-S"}}
+            200,
+            json={
+                "Product": {
+                    "ManufacturerProductNumber": "ESQ-106-33-T-S",
+                    "ProductUrl": "https://www.digikey.com/x/ESQ-106-33-T-S",
+                }
+            },
         )
 
-    DigiKeyProvider().fetch_by_mpn(
+    product = DigiKeyProvider().fetch_by_mpn(
         "ESQ-106-33-T-S", transport=httpx.MockTransport(handler)
     )
     assert seen["path"] == "/products/v4/search/ESQ-106-33-T-S/productdetails"
+    assert product.source_url == "https://www.digikey.com/x/ESQ-106-33-T-S"
 
 
 # --- import_code routing ---------------------------------------------------
@@ -295,9 +332,21 @@ def test_import_code_rejects_an_unsupported_shop_url() -> None:
 
 
 def test_a_part_number_survives_an_unsupported_shop_url() -> None:
-    """A TME QR pointing at a site we have no provider for still fills the MPN."""
+    """A QR pointing at a site we have no provider for still fills the MPN."""
     product = shops.import_code("PN:MIC334 https://example.com/part/1")
     assert (product.mpn, product.from_label_only) == ("MIC334", True)
+    # …but a page we just said we can't interpret is not "the shop page", and the
+    # client stores source_url as exactly that.
+    assert product.source_url is None
+
+
+def test_a_datamatrix_import_keeps_the_shops_own_product_url(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The barcode carries no URL, so the response's is what becomes the shop link."""
+    url = "https://www.mouser.com/x/5277"
+    monkeypatch.setitem(
+        shops._BY_MPN, "mouser", _Recorder(ProductData(mpn="5277", source_url=url))
+    )
+    assert shops.import_code(_label(_MOUSER_FIELDS)).source_url == url
 
 
 def test_an_unencodable_part_number_is_a_clean_error_not_a_crash(monkeypatch) -> None:  # type: ignore[no-untyped-def]

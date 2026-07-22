@@ -8,7 +8,7 @@ dialog uses and additionally accepts a scanned barcode (see ``scan``).
 from __future__ import annotations
 
 import logging
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 from app.services.errors import ValidationError
 from app.services.shops.base import ProductData, ShopProvider
@@ -20,7 +20,6 @@ from app.services.shops.tme import TmeProvider
 _logger = logging.getLogger("shelfos")
 
 
-@runtime_checkable
 class MpnProvider(Protocol):
     """A provider that can also look a part up by its part number alone."""
 
@@ -54,7 +53,9 @@ def lookup(url: str) -> ProductData:
     return provider.fetch(url)
 
 
-def _fallback(scan: ScanResult, error: ValidationError | None) -> ProductData:
+def _fallback(
+    scan: ScanResult, error: ValidationError | None, *, keep_url: bool = True
+) -> ProductData:
     """What the label itself told us, when the shop's API couldn't add to it.
 
     A scan that parsed usually yields at least an MPN, so an unconfigured or failing
@@ -65,6 +66,10 @@ def _fallback(scan: ScanResult, error: ValidationError | None) -> ProductData:
     The swallowed error is logged: it's routinely "<shop> integration is not
     configured", and silently degrading every scan is how a missing key stays
     unnoticed for months. ``from_label_only`` carries the same fact to the dialog.
+
+    ``keep_url=False`` for a URL no provider matched: the client stores ``source_url``
+    as the component's *shop* link, and a page we just said we can't interpret hasn't
+    earned that label.
     """
     if not scan.mpn:
         raise error or ValidationError("could not read a part number from the code")
@@ -73,7 +78,7 @@ def _fallback(scan: ScanResult, error: ValidationError | None) -> ProductData:
     return ProductData(
         mpn=scan.mpn,
         manufacturer=scan.manufacturer,
-        source_url=scan.url,
+        source_url=scan.url if keep_url else None,
         from_label_only=True,
     )
 
@@ -93,11 +98,13 @@ def import_code(code: str) -> ProductData:
             # carried a part number (a TME QR does); otherwise say so plainly.
             if not scan.mpn:
                 raise ValidationError("unsupported shop — no provider for this URL")
-            return _fallback(scan, None)
+            return _fallback(scan, None, keep_url=False)
         try:
             product = provider.fetch(scan.url)
         except ValidationError as exc:
             return _fallback(scan, exc)
+        # The URL the user actually pasted/scanned wins over the canonical one from
+        # the response: it's the page they were looking at.
         product.source_url = scan.url
         return product
 

@@ -224,6 +224,10 @@ class DigiKeyProvider:
         category = _nested("Category", "Name")
         description = _nested("Description", "ProductDescription")
         return ProductData(
+            # The product page from the response, not from the input: a scan looks a
+            # part up by number and has no URL of its own, and this is what gets kept
+            # as the component's shop link.
+            source_url=product.get("ProductUrl") or None,
             mpn=product.get("ManufacturerProductNumber") or None,
             manufacturer=_nested("Manufacturer", "Name"),
             description=description,

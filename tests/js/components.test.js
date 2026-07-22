@@ -287,6 +287,24 @@ describe("app.js — new component", () => {
     expect(dom.window.getComputedStyle(btn).display).toBe("none");
   });
 
+  it("the .warn status class is a real, distinct colour in app.css", () => {
+    // The label-only import styles itself "warn"; without a rule that would render
+    // as ordinary body text and the partial-success signal would vanish silently.
+    const css = readFileSync(
+      new URL("../../app/web/static/app.css", import.meta.url),
+      "utf8",
+    );
+    const dom = new JSDOM(
+      `<style>${css}</style><p class="warn" id="w"></p><p class="error" id="e"></p>` +
+        `<p id="p"></p>`,
+    );
+    const colour = (id) =>
+      dom.window.getComputedStyle(dom.window.document.getElementById(id)).color;
+    expect(colour("w")).toBeTruthy();
+    expect(colour("w")).not.toBe(colour("e"));
+    expect(colour("w")).not.toBe(colour("p"));
+  });
+
   it("a type created from the list after opening + New type uses the list flow", async () => {
     // Regression for the callback-overwrite safety: opening + New type arms the
     // dialog's "select the type" callback; creating instead from the list's New
@@ -818,7 +836,8 @@ describe("component_dialog.js — shop import", () => {
     expect(field("manufacturer")).toBe("Keystone");
     const status = document.getElementById("shop-import-status");
     expect(status.textContent).toMatch(/label only/);
-    expect(status.className).toBe("error");
+    // Not "error": the fields ARE filled, so red would overstate the failure.
+    expect(status.className).toBe("warn");
   });
 });
 

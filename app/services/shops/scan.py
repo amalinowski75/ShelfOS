@@ -26,15 +26,21 @@ from app.services.errors import ValidationError
 # A token runs to whitespace or a control character (a separator may sit flush
 # against the end of a URL), and trailing punctuation is sentence noise, not part
 # of the value — it would otherwise be stored as part of the shop link.
-_URL = re.compile(r"https?://[^\s\x00-\x20]+")
-_TME_PN = re.compile(r"\bPN:([^\s\x00-\x20]+)")
+#
+# Case-insensitive: QR alphanumeric mode can only encode upper case, so plenty of
+# encoders emit HTTPS://WWW.TME.EU/… — and the providers' matches() lower-cases the
+# host anyway, so a case-sensitive parse here would reject a URL the registry can
+# resolve perfectly well.
+_URL = re.compile(r"https?://[^\s\x00-\x20]+", re.IGNORECASE)
+_TME_PN = re.compile(r"\bPN:([^\s\x00-\x20]+)", re.IGNORECASE)
 _TRAILING = ".,;:!?'\"()[]{}<>"
 # The Digi-Key-only Z data identifiers — a strong signal it's a Digi-Key label.
 _DIGIKEY_Z = ("11Z", "12Z", "13Z", "20Z")
 
-_NO_SEPARATORS = (
-    "This scanner isn't sending field separators, so the barcode can't be read. Scan a "
-    "TME QR or paste a shop URL — or use a scanner that keeps the separators."
+_UNREADABLE = (
+    "No readable fields in this barcode — either your scanner is dropping the field "
+    "separators, or this label isn't one ShelfOS can read. Scan a TME QR or paste a "
+    "shop URL, or use a scanner that keeps the separators."
 )
 
 
@@ -106,9 +112,11 @@ def _parse_datamatrix(text: str) -> ScanResult:
     # Not "did the split produce more than one field" — GS and RS are separately
     # configurable on most scanners, so one that drops GS but keeps the RS inside
     # the header yields two fields with the body still concatenated. What proves the
-    # payload really was split is finding a data identifier we recognise.
+    # payload really was split is finding a data identifier we recognise. That does
+    # conflate the dropped-separator case with a label carrying only identifiers we
+    # don't read, hence the message names both rather than misdiagnosing the scanner.
     if not (mpn or manufacturer or distributor_pn):
-        raise ValidationError(_NO_SEPARATORS)
+        raise ValidationError(_UNREADABLE)
 
     # Mouser prints nothing uniquely its own, so it's the default. That is safe
     # rather than a guess: 1P is a MANUFACTURER part number, so looking it up at

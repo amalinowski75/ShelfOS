@@ -165,7 +165,10 @@ def _symbol_candidates(url: str) -> list[str]:
         raise ValidationError("malformed URL") from None
     segments = [s for s in path.split("/") if s]
     try:
-        index = segments.index("details")
+        # Case-insensitively: an all-upper-case URL (QR alphanumeric mode can encode
+        # nothing else) is the same product page, and the host match is already
+        # case-insensitive, so the path comparison must not be the odd one out.
+        index = [s.lower() for s in segments].index("details")
     except ValueError:
         raise ValidationError("could not read a product symbol from the URL") from None
 

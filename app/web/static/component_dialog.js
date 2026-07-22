@@ -552,7 +552,9 @@
         // resolved — a TME QR buries its URL among other tokens, and a barcode has
         // none at all, so the raw code must never be stored as a link.
         pendingShopUrl = product.source_url || null;
-        importStatus.className = product.from_label_only ? "error" : "muted";
+        // "warn", not "error": the import partly succeeded and the fields ARE
+        // filled — red is reserved for the cases where nothing landed.
+        importStatus.className = product.from_label_only ? "warn" : "muted";
         if (product.from_label_only) {
           // The shop's API added nothing (no key, or the lookup failed); the fields
           // come off the label alone, so say so rather than implying a full import.

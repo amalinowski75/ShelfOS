@@ -121,6 +121,10 @@ class MouserProvider:
                 parameters.append((name, value))  # raw; cleaned client-side per type
 
         return ProductData(
+            # The product page from the response, not from the input: a scan looks a
+            # part up by number and has no URL of its own, and this is what gets kept
+            # as the component's shop link.
+            source_url=part.get("ProductDetailUrl") or None,
             mpn=part.get("ManufacturerPartNumber") or None,
             manufacturer=part.get("Manufacturer") or None,
             description=part.get("Description") or None,
