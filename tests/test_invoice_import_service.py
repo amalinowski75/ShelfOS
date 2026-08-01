@@ -277,6 +277,50 @@ def test_enrichment_failure_degrades_to_parsed_data(
     assert iis.list_pending(session, result.invoice_id)[0].mpn == "NX3P1108UKZ"
 
 
+# --- a mid-import failure leaves nothing behind ------------------------------
+
+
+def test_failure_mid_import_discards_the_whole_invoice(
+    session: Session, monkeypatch, tmp_path
+) -> None:
+    diode = cs.create_type(session, "diode")
+    cs.create_component(session, diode.id, mpn="OK", manufacturer="A")
+    cs.create_component(session, diode.id, mpn="OK2", manufacturer="A")
+    _patch_parse(
+        monkeypatch,
+        _invoice(
+            _line(mpn="OK", manufacturer="A"),  # line 1 adds fine
+            _line(mpn="OK2", manufacturer="A"),  # line 2 blows up in add_line
+        ),
+    )
+    calls = {"n": 0}
+    real_add = invoice_service.add_line
+
+    def exploding_add(*args, **kwargs):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("boom on line 2")
+        return real_add(*args, **kwargs)
+
+    monkeypatch.setattr(invoice_service, "add_line", exploding_add)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
+
+    # No invoice, no lines, no staged rows, no stored PDF survived the failure.
+    assert invoice_service.list_invoices(session) == []
+    from app.models.attachment import Attachment
+    from sqlmodel import select
+
+    assert session.exec(select(Attachment)).all() == []
+
+    # And the same PDF can now be re-imported (the unique number isn't taken).
+    monkeypatch.setattr(invoice_service, "add_line", real_add)
+    _patch_parse(monkeypatch, _invoice(_line(mpn="OK", manufacturer="A")))
+    result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
+    assert result.added == 1
+
+
 # --- duplicate invoice -------------------------------------------------------
 
 

@@ -62,9 +62,14 @@ def import_invoice(
     if file.size is not None and file.size > config.MAX_ATTACHMENT_BYTES:
         raise ValidationError(f"file exceeds the {config.MAX_ATTACHMENT_MB} MB limit")
     try:
-        data = file.file.read()
+        # Bound the read to the cap + 1 byte so a client streaming without a
+        # Content-Length can't pull an unbounded body into memory ahead of the
+        # (more expensive) PDF parse; a full body then trips the same limit.
+        data = file.file.read(config.MAX_ATTACHMENT_BYTES + 1)
     finally:
         file.file.close()
+    if len(data) > config.MAX_ATTACHMENT_BYTES:
+        raise ValidationError(f"file exceeds the {config.MAX_ATTACHMENT_MB} MB limit")
     result = imp.import_invoice(
         session, data=data, filename=file.filename or "invoice.pdf", user_id=user_id
     )

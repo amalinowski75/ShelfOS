@@ -17,7 +17,7 @@ from typing import cast
 from sqlmodel import Session, col, select
 
 from app.models.enums import AttachmentKind
-from app.models.invoice import InvoiceImportLine
+from app.models.invoice import Invoice, InvoiceImportLine, InvoiceLine
 from app.services import attachment_service, invoice_service, shops
 from app.services import component_service as cs
 from app.services._common import require_entity
@@ -60,6 +60,11 @@ def import_invoice(
     )
     invoice_id = cast(int, invoice.id)
 
+    # Everything after the (committed) invoice is best-effort: the PDF attachment and
+    # then a per-line loop that creates components and adds lines, each committing as
+    # it goes. If ANY of it raises — a failing shop provider, a concurrently deleted
+    # type, a DB error — unwind the whole import so a half-built, un-deletable draft
+    # doesn't sit there blocking a re-upload forever (there is no delete-invoice UI).
     try:
         attachment_service.create_attachment(
             session,
@@ -69,27 +74,49 @@ def import_invoice(
             filename=filename,
             data=data,
         )
+        added = 0
+        line_no = 0
+        for parsed_line in parsed.lines:
+            if parsed_line.kind != "component":
+                continue  # a freight/handling charge is noted, not a component line
+            line_no += 1
+            added_line = _resolve_line(
+                session, invoice_id, parsed.shop_key, parsed_line, line_no, user_id
+            )
+            if added_line:
+                added += 1
     except Exception:
-        # Don't leave a committed invoice with no stored PDF (and blocking a
-        # re-import via the unique constraint) behind a failed attachment.
-        session.delete(invoice)
-        session.commit()
+        _discard_invoice(session, invoice_id)
         raise
-
-    added = 0
-    line_no = 0
-    for parsed_line in parsed.lines:
-        if parsed_line.kind != "component":
-            continue  # a freight/handling charge is noted, not a component line
-        line_no += 1
-        added_line = _resolve_line(
-            session, invoice_id, parsed.shop_key, parsed_line, line_no, user_id
-        )
-        if added_line:
-            added += 1
 
     pending = len(list_pending(session, invoice_id))
     return ImportResult(invoice_id=invoice_id, added=added, pending=pending)
+
+
+def _discard_invoice(session: Session, invoice_id: int) -> None:
+    """Remove a partially-built invoice: its PDF, lines, staged rows and the row.
+
+    Runs after a mid-import failure. Rolls back first so the session isn't stuck in a
+    failed transaction, then deletes in a fresh one; a component auto-created earlier
+    (already committed) is intentionally left — it is a real part, just not this
+    invoice's to own.
+    """
+    session.rollback()
+    attachment_service.delete_attachments_for(
+        session, entity_type="invoice", entity_id=invoice_id
+    )
+    for line in session.exec(
+        select(InvoiceLine).where(InvoiceLine.invoice_id == invoice_id)
+    ).all():
+        session.delete(line)
+    for staged in session.exec(
+        select(InvoiceImportLine).where(InvoiceImportLine.invoice_id == invoice_id)
+    ).all():
+        session.delete(staged)
+    invoice = session.get(Invoice, invoice_id)
+    if invoice is not None:
+        session.delete(invoice)
+    session.commit()
 
 
 def _resolve_line(

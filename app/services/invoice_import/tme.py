@@ -101,16 +101,24 @@ def _line(header: re.Match[str], cont_lines: list[str]) -> ParsedLine:
     # TME prints "__" glyphs at a page break; they land mid-field ("Symbol
     # producenta: __ GRM31…") so drop underscore runs before reading the fields.
     joined = re.sub(r"\s+", " ", re.sub(r"_{2,}", " ", joined))
-    manufacturer = _MANUFACTURER.search(joined)
-    mpn = _MPN.search(joined)
+    manufacturer_m = _MANUFACTURER.search(joined)
+    mpn_m = _MPN.search(joined)
+    mpn = mpn_m.group(1).strip() if mpn_m else None
     # Everything before "Producent:" is the semicolon-delimited spec line, e.g.
     # "Rezystor:thick film;SMD;0402;1MΩ;…" — kept as the component's notes.
     description = joined.split("Producent:")[0].strip() or None
+    # The wrapped tail of the article column ("GRM022R60J104KE1" + "5L") lands at the
+    # front of the description; when that leading token is a suffix of the real MPN,
+    # it's the wrap fragment, so drop it.
+    if description and mpn:
+        head, _, rest = description.partition(" ")
+        if rest and head and mpn.endswith(head):
+            description = rest
     return ParsedLine(
         quantity=to_int(qty_s),
         unit_price=unit_price(price_s, per, decimal_sep=","),
-        manufacturer=manufacturer.group(1).strip() if manufacturer else None,
-        mpn=mpn.group(1).strip() if mpn else None,
+        manufacturer=manufacturer_m.group(1).strip() if manufacturer_m else None,
+        mpn=mpn,
         description=description,
         # A line with no manufacturer symbol is a charge, not a part (TME's
         # "Koszty wysyłki" shipping line) — the orchestrator skips it.

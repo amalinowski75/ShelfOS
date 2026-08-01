@@ -30,6 +30,9 @@ _CURRENCY = re.compile(r"Price\((\w{3})\)")
 _ITEM = re.compile(
     r"^\s*(\d+)\s+(\d{2,4}-\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+([\d.,]+)\s+([\d.,]+)\s*$"
 )
+# The item table ends here; freight/handling/duty live in this totals block
+# (Merchandise / Handling / Freight / VAT / Tariff), never as an item row — so they
+# are not mis-parsed as components (they lack the "<digits>-<mpn>" SKU shape anyway).
 _STOP = re.compile(r"Wartość towarów|Merchandise|Informacje dotyczące")
 _MPN = re.compile(r"Numer katalogowy u producenta:\s*(\S+)")
 _SKIP_DESC = re.compile(r"Numer katalogowy|ECCN|TARIC|HTS|COO:")

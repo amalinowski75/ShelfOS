@@ -56,6 +56,16 @@ def test_tme_reads_mpn_from_symbol_not_the_wrapped_article() -> None:
     assert any(line.mpn == "GRM31CR60J227ME11L" for line in invoice.lines)
 
 
+def test_tme_description_drops_the_wrapped_article_fragment() -> None:
+    invoice = TmeInvoiceParser().parse(_text("tme.txt"))
+    # The article "GRM022R60J104KE15L" wraps as "…KE1" + "5L"; the "5L" fragment must
+    # not leak into the description, which should start at the spec text.
+    line = _by_mpn(invoice, "GRM022R60J104KE15L")
+    assert line.description is not None
+    assert not line.description.startswith("5L")
+    assert line.description.startswith("Kondensator")
+
+
 def test_tme_per_pack_unit_price() -> None:
     invoice = TmeInvoiceParser().parse(_text("tme.txt"))
     # "2,01/1000 SZT" is a price per 1000 → 0.002010 per unit, quantity 10 000.

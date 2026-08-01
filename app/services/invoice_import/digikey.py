@@ -5,6 +5,11 @@ PART: <dk-pn> DESC: <text> <unit> <amount>") followed by
 ``MFG : <Manufacturer> (VA) / <MPN>``. Manufacturer and MPN are both clean there —
 the ``(VA)`` marker is optional and the MPN may itself contain a slash
 ("MCP2200-I/MQ"). Numbers are dot-decimal.
+
+Scope: this targets the **Polish storefront** invoice — it keys on ``Nr faktury`` and
+a ``zł`` currency suffix. A Digi-Key invoice billed in another currency / market fails
+to parse with a clear "could not read the currency/number" error rather than a wrong
+result; supporting it is a follow-up (add the other storefronts' header wording).
 """
 
 from __future__ import annotations
@@ -32,6 +37,9 @@ _ITEM = re.compile(
     r"^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+PART:\s*(\S+)\s+"
     r"DESC:\s*(.+?)\s+([\d.]+)\s+([\d.]+)\s*$"
 )
+# The item table ends here; charges/freight live in this totals block (Sales Amount /
+# Charges subtotal), never as an item row — an item row is identified by "PART:", which
+# a charge line doesn't carry, so charges are not mis-parsed as components.
 _STOP = re.compile(r"Kwota sprzedaży|Sales Amount|Skrzynka|Box\s+ShipMethod")
 # "MFG : Diodes Incorporated (VA) / AP22615AWU-7" — manufacturer up to the first
 # " / ", MPN the rest (may contain a slash).
