@@ -34,7 +34,9 @@
   <div class="head-actions">
     <button type="button" class="btn btn-ghost" id="invoice-edit-btn">Edit</button>
     <button type="button" class="btn btn-secondary" id="invoice-addline-btn">Add line</button>
-    {% if lines %}<button type="button" class="btn btn-primary" id="invoice-finalize-btn">Finalize</button>{% endif %}
+    {# Finalize is offered only once every imported line is resolved: it is blocked
+       server-side while any remain (they'd be orphaned), so don't invite the click. #}
+    {% if lines and not pending_import_lines %}<button type="button" class="btn btn-primary" id="invoice-finalize-btn">Finalize</button>{% endif %}
     <button type="button" class="btn btn-danger" id="invoice-delete-btn">Delete draft</button>
   </div>
   {% endif %}
@@ -61,7 +63,8 @@
 <div class="card card-pad" id="invoice-pending" style="margin-top: 20px">
   <h2>Needs review <span class="badge b-warn">{{ pending_import_lines | length }}</span></h2>
   <p class="muted">Lines from the imported PDF that need a component. Resolve each to
-    add it (creating the component/type if needed), or dismiss it.</p>
+    add it (creating the component/type if needed), or dismiss it. The invoice can be
+    finalized once this list is empty.</p>
   <div class="table-wrap">
     <table class="data">
       <thead>

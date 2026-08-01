@@ -741,6 +741,45 @@ def test_invoice_detail_unknown_returns_404(client: TestClient) -> None:
     assert client.get("/invoices/9999").status_code == 404
 
 
+def test_finalize_hidden_while_import_lines_need_review(
+    client: TestClient,
+    session,  # type: ignore[no-untyped-def]
+) -> None:
+    """The Finalize button is offered only once the "Needs review" panel is clear.
+
+    Finalizing is blocked server-side while parked import lines remain (they'd be
+    orphaned), so the button must not invite the click in the first place.
+    """
+    from decimal import Decimal
+
+    from app.models.invoice import InvoiceImportLine
+
+    handles = _invoice_with_line(client)
+    invoice_id = handles["invoice"]["id"]  # type: ignore[index]
+
+    # With no parked lines, Finalize is available.
+    assert 'id="invoice-finalize-btn"' in client.get(f"/invoices/{invoice_id}").text
+
+    # A parked import line (client and session share the in-memory engine).
+    session.add(
+        InvoiceImportLine(
+            invoice_id=invoice_id,
+            line_no=1,
+            mpn="IC",
+            manufacturer="Z",
+            quantity=1,
+            unit_price=Decimal("1"),
+            shop_key="tme",
+            reason="no matching type",
+        )
+    )
+    session.commit()
+
+    html = client.get(f"/invoices/{invoice_id}").text
+    assert 'id="invoice-finalize-btn"' not in html  # Finalize withdrawn
+    assert 'id="invoice-pending"' in html  # the Needs review panel is shown instead
+
+
 def test_invoice_detail_shows_attachments_even_when_finalized(
     client: TestClient,
 ) -> None:
