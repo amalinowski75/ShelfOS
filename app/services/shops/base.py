@@ -72,6 +72,10 @@ _CATEGORY_KEYWORDS: list[tuple[str, str]] = [
     ("oscillator", "crystal"),
     ("kwarc", "crystal"),
     ("rezonator", "crystal"),
+    # Integrated circuits. Kept LAST (most generic) and matched only on TME's literal
+    # "IC:" prefix — the colon is deliberate, so it can't false-match "logic",
+    # "electric" or "STMicroelectronics" the way a bare "ic" would.
+    ("ic:", "ic"),
 ]
 
 

@@ -164,6 +164,13 @@ def test_import_code_rejects_a_malformed_url() -> None:
         ("Standard LEDs - SMD", "led"),
         ("Rectifier Diode", "diode"),
         ("MOSFET N-Channel", "mosfet"),
+        # TME's Polish descriptions and its "IC:" integrated-circuit prefix.
+        ("Rezystor:thick film;SMD;0402", "resistor"),
+        ("Kondensator:ceramiczny;MLCC", "capacitor"),
+        ("IC:komparator;low-power;Cmp:2", "ic"),
+        # The "ic:" keyword must not false-match these (no colon in the right place).
+        ("Logic gate 74HC00", None),
+        ("STMicroelectronics buck converter", None),
         ("Some Widget", None),
     ],
 )
