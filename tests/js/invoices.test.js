@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { JSDOM } from "jsdom";
 import { describe, it, expect, vi } from "vitest";
 import {
   loadPage,
@@ -503,6 +505,24 @@ describe("invoices.js — error surfacing and add-line", () => {
       ([url, opts]) => url === "/api/invoices/7/lines" && opts.method === "POST",
     );
     expect(JSON.parse(post[1].body).location_id).toBe(5);
+  });
+
+  it("hides the Component field on edit under the real app.css", () => {
+    // openEditLine sets `componentField.hidden = true`, but `.field { display:flex }`
+    // beats the UA `[hidden]` rule — without `.field[hidden] { display:none }` the
+    // field stays on screen as an empty, unusable combobox. jsdom in loadPage has no
+    // stylesheet, so only a computed-style check against the real CSS catches this.
+    const css = readFileSync(
+      new URL("../../app/web/static/app.css", import.meta.url),
+      "utf8",
+    );
+    const dom = new JSDOM(
+      `<style>${css}</style>
+       <div class="field" id="cf" hidden><label>Component</label>
+         <select><option>x</option></select></div>`,
+    );
+    const style = dom.window.getComputedStyle(dom.window.document.getElementById("cf"));
+    expect(style.display).toBe("none");
   });
 
   it("edit line reflects the existing location in the picker", () => {
