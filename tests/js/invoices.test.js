@@ -346,6 +346,26 @@ describe("invoices.js — remove line and finalize", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("deletes the draft after confirmation and returns to the list", async () => {
+    const { window, document, fetchMock } = loadPage(detailFixture(), SCRIPTS);
+    document.getElementById("invoice-delete-btn").click();
+    await tick();
+
+    expect(window.confirm).toHaveBeenCalled();
+    const [url, opts] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/invoices/7");
+    expect(opts.method).toBe("DELETE");
+    expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
+  });
+
+  it("does not delete the draft when the confirm is dismissed", async () => {
+    const { window, document, fetchMock } = loadPage(detailFixture(), SCRIPTS);
+    window.confirm.mockReturnValue(false);
+    document.getElementById("invoice-delete-btn").click();
+    await tick();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("finalize sends a null gross when the field is blank", async () => {
     const { document, fetchMock } = loadPage(
       detailFixture({ withFinalize: true }),

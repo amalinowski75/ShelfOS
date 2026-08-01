@@ -91,6 +91,14 @@ def list_invoices(
     )
 
 
+@router.delete("/{invoice_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_invoice(
+    invoice_id: int, session: Session = Depends(get_session)
+) -> None:
+    """Delete a draft invoice with its lines/staged rows/PDF (writers; 409 final)."""
+    inv.delete_invoice(session, invoice_id)
+
+
 @router.get("/{invoice_id}", response_model=InvoiceDetailRead)
 def get_invoice(
     invoice_id: int, session: Session = Depends(get_session)

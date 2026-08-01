@@ -726,6 +726,78 @@ def test_resolve_and_dismiss_pending_import_line(
     )
 
 
+def test_delete_draft_invoice(client: TestClient) -> None:
+    invoice = client.post(
+        "/api/invoices",
+        json={
+            "supplier": "TME",
+            "invoice_number": "D-1",
+            "invoice_date": "2026-07-08",
+            "currency": "PLN",
+        },
+    ).json()
+    assert client.delete(f"/api/invoices/{invoice['id']}").status_code == 204
+    # It's gone.
+    assert client.get(f"/api/invoices/{invoice['id']}").status_code == 404
+
+
+def test_delete_finalized_invoice_is_rejected(client: TestClient) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    location = client.post(
+        "/api/locations", json={"type": "box", "name": "Bin"}
+    ).json()
+    invoice = client.post(
+        "/api/invoices",
+        json={
+            "supplier": "TME",
+            "invoice_number": "F-1",
+            "invoice_date": "2026-07-08",
+            "currency": "PLN",
+        },
+    ).json()
+    client.post(
+        f"/api/invoices/{invoice['id']}/lines",
+        json={
+            "component_id": component["id"],
+            "quantity": 1,
+            "unit_price": "1.00",
+            "location_id": location["id"],
+        },
+    )
+    client.post(f"/api/invoices/{invoice['id']}/finalize", json={})
+    # A finalized invoice is a permanent record — 409, not deletable.
+    assert client.delete(f"/api/invoices/{invoice['id']}").status_code == 409
+
+
+def test_delete_invoice_forbidden_for_read_only(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    invoice = client.post(
+        "/api/invoices",
+        json={
+            "supplier": "TME",
+            "invoice_number": "R-1",
+            "invoice_date": "2026-07-08",
+            "currency": "PLN",
+        },
+    ).json()
+    client.post(
+        "/api/admin/users",
+        json={"username": "viewer", "password": "pw", "role": "read-only"},
+    )
+    token = client.post(
+        "/api/auth/token", json={"username": "viewer", "password": "pw"}
+    ).json()["access_token"]
+    assert (
+        anon_client.delete(
+            f"/api/invoices/{invoice['id']}",
+            headers={"Authorization": f"Bearer {token}"},
+        ).status_code
+        == 403
+    )
+
+
 def test_dismiss_import_line_forbidden_for_read_only(
     client: TestClient, anon_client: TestClient
 ) -> None:

@@ -352,6 +352,7 @@ export function detailFixture({
          data-notes="${notes}">
       <button id="invoice-edit-btn"></button>
       <button id="invoice-addline-btn"></button>
+      <button id="invoice-delete-btn"></button>
       ${pendingPanel}
       <table class="data" id="invoice-lines"><tbody>
         <tr data-line-id="3"

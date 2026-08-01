@@ -20,7 +20,7 @@ from app.models.component import Component
 from app.models.enums import StockReason
 from app.models.invoice import Invoice, InvoiceImportLine, InvoiceLine
 from app.models.location import Location
-from app.services import audit_service, stock_service
+from app.services import attachment_service, audit_service, stock_service
 from app.services._common import require_entity
 from app.services.errors import (
     InvoiceFinalizedError,
@@ -252,6 +252,28 @@ def remove_line(
     session.delete(line)
     session.commit()
     _recompute_net(session, invoice)
+
+
+def delete_invoice(session: Session, invoice_id: int) -> None:
+    """Delete a draft invoice and everything attached to it.
+
+    Only a **draft** can be deleted — a finalized invoice is a permanent purchase
+    record (it generated stock movements), so this raises for one. Removes the
+    invoice's lines, any parked PDF-import lines, and its stored PDF attachment, so
+    a mistaken or superseded import can be cleared and re-imported cleanly.
+    """
+    invoice = _require_draft(session, invoice_id)
+    for line in _lines_of(session, invoice_id):
+        session.delete(line)
+    for staged in session.exec(
+        select(InvoiceImportLine).where(InvoiceImportLine.invoice_id == invoice_id)
+    ).all():
+        session.delete(staged)
+    attachment_service.delete_attachments_for(
+        session, entity_type="invoice", entity_id=invoice_id
+    )
+    session.delete(invoice)
+    session.commit()
 
 
 def update_line(

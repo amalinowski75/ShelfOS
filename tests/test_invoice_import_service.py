@@ -393,6 +393,34 @@ def test_add_line_ignores_a_foreign_import_line_id(
     assert len(iis.list_pending(session, one.invoice_id)) == 1
 
 
+# --- delete a draft clears its import artefacts -------------------------------
+
+
+def test_delete_draft_invoice_removes_lines_staging_and_pdf(
+    session: Session, monkeypatch
+) -> None:
+    diode = cs.create_type(session, "diode")
+    cs.create_component(session, diode.id, mpn="OK", manufacturer="A")
+    _patch_parse(
+        monkeypatch,
+        _invoice(
+            _line(mpn="OK", manufacturer="A"),  # added
+            _line(mpn="XYZ", manufacturer="A"),  # parked
+        ),
+    )
+    result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
+    assert result.added == 1 and result.pending == 1
+
+    invoice_service.delete_invoice(session, result.invoice_id)
+
+    assert invoice_service.list_invoices(session) == []
+    assert iis.list_pending(session, result.invoice_id) == []
+    from app.models.attachment import Attachment
+    from sqlmodel import select
+
+    assert session.exec(select(Attachment)).all() == []
+
+
 # --- dismiss -----------------------------------------------------------------
 
 

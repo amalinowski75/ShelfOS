@@ -421,6 +421,30 @@ if (detail && lineDialog) {
     }
   });
 
+  // --- Delete draft ---
+  const deleteBtn = document.getElementById("invoice-delete-btn");
+  if (deleteBtn) {
+    deleteBtn.addEventListener("click", () => {
+      if (
+        !window.confirm(
+          "Delete this draft invoice and everything imported with it? This can't be undone.",
+        )
+      )
+        return;
+      guard(async () => {
+        const resp = await fetch(`/api/invoices/${invoiceId}`, {
+          method: "DELETE",
+          headers: { "X-CSRF-Token": csrfToken },
+        });
+        if (resp.ok) {
+          window.location = "/invoices"; // back to the list; the draft is gone
+        } else {
+          window.alert(await errorMessage(resp));
+        }
+      });
+    });
+  }
+
   // --- Finalize ---
   const finalizeBtn = document.getElementById("invoice-finalize-btn");
   const finalizeDialog = document.getElementById("invoice-finalize-dialog");
