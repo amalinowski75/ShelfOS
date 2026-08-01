@@ -49,18 +49,29 @@ class ShopProvider(Protocol):
 
 # Keyword → ShelfOS type name. Order matters: the more specific child types
 # (led, mosfet) come before their parents so "LED" doesn't resolve to "diode".
+# Polish aliases are included so a TME invoice — whose descriptions are Polish and
+# which has no shop API to enrich from — can still resolve a type it already has.
 _CATEGORY_KEYWORDS: list[tuple[str, str]] = [
     ("resistor", "resistor"),
+    ("rezystor", "resistor"),
     ("capacitor", "capacitor"),
+    ("kondensator", "capacitor"),
     ("inductor", "inductor"),
     ("ferrite", "inductor"),
+    ("cewka", "inductor"),
+    ("dławik", "inductor"),
     ("led", "led"),
     ("diode", "diode"),
+    ("dioda", "diode"),
     ("mosfet", "mosfet"),
     ("transistor", "transistor"),
+    ("tranzystor", "transistor"),
     ("connector", "connector"),
+    ("złącz", "connector"),
     ("crystal", "crystal"),
     ("oscillator", "crystal"),
+    ("kwarc", "crystal"),
+    ("rezonator", "crystal"),
 ]
 
 

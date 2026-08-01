@@ -129,6 +129,18 @@ export function newInvoiceFixture() {
     </form></dialog>`;
 }
 
+// The "Import from PDF" control + dialog (mirrors invoices_list.html), for the
+// multipart upload → redirect flow.
+export function invoiceImportFixture() {
+  return `
+    <button id="invoice-import-btn"></button>
+    <dialog id="invoice-import-dialog"><form id="invoice-import-form">
+      <input type="file" name="file" />
+      <p id="invoice-import-error" hidden></p>
+      <button type="submit" id="invoice-import-submit">Import</button>
+    </form></dialog>`;
+}
+
 // The invoice-list page shell (mirrors invoices_list.html): the Tabulator mount
 // and the truncation hint. Rows come from the /web/api/invoices feed.
 export function invoicesPageFixture() {
@@ -291,7 +303,27 @@ export function detailFixture({
   lineLocationId = "",
   withFinalize = false,
   secondLine = false,
+  pending = false,
 } = {}) {
+  const pendingPanel = pending
+    ? `<div id="invoice-pending">
+         <table class="data"><tbody>
+           <tr data-import-line-id="21"
+               data-mpn="ABC123"
+               data-manufacturer="Acme"
+               data-description="A widget"
+               data-package="SOT23"
+               data-quantity="7"
+               data-unit-price="2.50"
+               data-spn="ABC-ND">
+             <td>
+               <button type="button" data-act="resolve-import"></button>
+               <button type="button" data-act="dismiss-import"></button>
+             </td>
+           </tr>
+         </tbody></table>
+       </div>`
+    : "";
   const extraRow = secondLine
     ? `<tr data-line-id="4" data-quantity="2" data-unit-price="2.00"
            data-spn="" data-location-id="">
@@ -320,7 +352,8 @@ export function detailFixture({
          data-notes="${notes}">
       <button id="invoice-edit-btn"></button>
       <button id="invoice-addline-btn"></button>
-      <table class="data"><tbody>
+      ${pendingPanel}
+      <table class="data" id="invoice-lines"><tbody>
         <tr data-line-id="3"
             data-quantity="5"
             data-unit-price="1.50"

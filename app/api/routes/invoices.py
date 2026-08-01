@@ -4,14 +4,16 @@ from __future__ import annotations
 
 from typing import cast
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from sqlmodel import Session
 
+from app import config
 from app.api.deps import get_session
 from app.api.schemas import (
     InvoiceCreate,
     InvoiceDetailRead,
     InvoiceFinalize,
+    InvoiceImportResult,
     InvoiceLineComponentRead,
     InvoiceLineCreate,
     InvoiceLineRead,
@@ -21,7 +23,9 @@ from app.api.schemas import (
 )
 from app.auth.deps import current_user_id
 from app.models.invoice import Invoice, InvoiceLine
+from app.services import invoice_import_service as imp
 from app.services import invoice_service as inv
+from app.services.errors import ValidationError
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
 
@@ -38,6 +42,34 @@ def create_invoice(
         currency=payload.currency,
         notes=payload.notes,
         file_path=payload.file_path,
+    )
+
+
+@router.post(
+    "/import",
+    response_model=InvoiceImportResult,
+    status_code=status.HTTP_201_CREATED,
+)
+def import_invoice(
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> InvoiceImportResult:
+    """Create a draft invoice from an uploaded TME/Mouser/Digi-Key PDF (writers).
+
+    Matched lines are added; the rest are parked for review on the draft page.
+    """
+    if file.size is not None and file.size > config.MAX_ATTACHMENT_BYTES:
+        raise ValidationError(f"file exceeds the {config.MAX_ATTACHMENT_MB} MB limit")
+    try:
+        data = file.file.read()
+    finally:
+        file.file.close()
+    result = imp.import_invoice(
+        session, data=data, filename=file.filename or "invoice.pdf", user_id=user_id
+    )
+    return InvoiceImportResult(
+        invoice_id=result.invoice_id, added=result.added, pending=result.pending
     )
 
 
@@ -143,7 +175,21 @@ def add_line(
         unit_price=payload.unit_price,
         supplier_part_number=payload.supplier_part_number,
         location_id=payload.location_id,
+        import_line_id=payload.import_line_id,
     )
+
+
+@router.delete(
+    "/{invoice_id}/import-lines/{import_line_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def dismiss_import_line(
+    invoice_id: int,
+    import_line_id: int,
+    session: Session = Depends(get_session),
+) -> None:
+    """Drop a parked PDF-import line the user chose not to add (writers)."""
+    imp.dismiss_pending(session, invoice_id, import_line_id)
 
 
 @router.put("/{invoice_id}/lines/{line_id}", response_model=InvoiceLine)

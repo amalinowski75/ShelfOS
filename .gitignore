@@ -35,3 +35,7 @@ node_modules/
 
 # Local sample BOM (not part of the repo; tests use tests/fixtures/kicad_bom.csv)
 /hiduart.csv
+
+# Scratch folder for source samples (invoices, datasheets, …) kept locally only —
+# never committed. Tests use redacted fixtures under tests/fixtures/ instead.
+/samples/

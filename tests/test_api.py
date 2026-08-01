@@ -589,6 +589,162 @@ def test_invoice_edit_endpoints_forbidden_for_read_only(
     )
 
 
+def _stub_parsed(monkeypatch, tmp_path, invoice) -> None:
+    """Route the import through a crafted ParsedInvoice and a throwaway PDF store."""
+    from app import config
+    from app.services import invoice_import_service as iis
+
+    monkeypatch.setattr(config, "ATTACHMENTS_DIR", tmp_path)
+    monkeypatch.setattr(iis, "parse_invoice", lambda data, filename: invoice)
+
+
+def test_import_invoice_creates_draft_and_reports_counts(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from datetime import date
+    from decimal import Decimal
+
+    from app.services.invoice_import import ParsedInvoice, ParsedLine
+
+    ctype = client.post("/api/types", json={"name": "diode"}).json()
+    client.post(
+        "/api/components",
+        json={"type_id": ctype["id"], "manufacturer": "Onsemi", "mpn": "1N4148"},
+    )
+    invoice = ParsedInvoice(
+        supplier="Digi-Key",
+        invoice_number="INV-9",
+        invoice_date=date(2026, 1, 1),
+        currency="PLN",
+        shop_key="digikey",
+        lines=[
+            ParsedLine(quantity=5, unit_price=Decimal("1"), mpn="1N4148",
+                       manufacturer="Onsemi"),
+            ParsedLine(quantity=2, unit_price=Decimal("2"), mpn="NOPE",
+                       manufacturer="Acme"),  # no type → parked
+        ],
+    )
+    _stub_parsed(monkeypatch, tmp_path, invoice)
+
+    resp = client.post(
+        "/api/invoices/import",
+        files={"file": ("dk.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["added"] == 1 and body["pending"] == 1
+
+    detail = client.get(f"/api/invoices/{body['invoice_id']}").json()
+    assert detail["is_finalized"] is False
+    assert len(detail["lines"]) == 1
+    assert detail["lines"][0]["quantity"] == 5
+
+
+def test_import_invoice_forbidden_for_read_only(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    client.post(
+        "/api/admin/users",
+        json={"username": "viewer", "password": "pw", "role": "read-only"},
+    )
+    token = client.post(
+        "/api/auth/token", json={"username": "viewer", "password": "pw"}
+    ).json()["access_token"]
+    resp = anon_client.post(
+        "/api/invoices/import",
+        files={"file": ("dk.pdf", b"%PDF-1.4", "application/pdf")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+
+
+def test_import_invoice_rejects_unrecognised_pdf(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from app import config
+
+    monkeypatch.setattr(config, "ATTACHMENTS_DIR", tmp_path)
+    resp = client.post(
+        "/api/invoices/import",
+        files={"file": ("x.pdf", b"not a pdf at all", "application/pdf")},
+    )
+    assert resp.status_code == 422
+
+
+def test_resolve_and_dismiss_pending_import_line(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from datetime import date
+    from decimal import Decimal
+
+    from app.services.invoice_import import ParsedInvoice, ParsedLine
+
+    ctype = client.post("/api/types", json={"name": "diode"}).json()
+    invoice = ParsedInvoice(
+        supplier="TME",
+        invoice_number="INV-P",
+        invoice_date=date(2026, 1, 1),
+        currency="PLN",
+        shop_key="tme",
+        lines=[
+            ParsedLine(quantity=3, unit_price=Decimal("1"), mpn="AAA",
+                       manufacturer="Acme"),
+            ParsedLine(quantity=4, unit_price=Decimal("1"), mpn="BBB",
+                       manufacturer="Acme"),
+        ],
+    )
+    _stub_parsed(monkeypatch, tmp_path, invoice)
+    imported = client.post(
+        "/api/invoices/import",
+        files={"file": ("tme.pdf", b"%PDF", "application/pdf")},
+    ).json()
+    invoice_id = imported["invoice_id"]
+    assert imported["pending"] == 2
+
+    # These are the only two staging rows in this fresh DB, so their ids are 1 and 2.
+    component = client.post(
+        "/api/components",
+        json={"type_id": ctype["id"], "manufacturer": "Acme", "mpn": "AAA"},
+    ).json()
+    resolved = client.post(
+        f"/api/invoices/{invoice_id}/lines",
+        json={
+            "component_id": component["id"],
+            "quantity": 3,
+            "unit_price": "1",
+            "import_line_id": 1,
+        },
+    )
+    assert resolved.status_code == 201
+    # Row 1 is gone: dismissing it now 404s.
+    assert (
+        client.delete(f"/api/invoices/{invoice_id}/import-lines/1").status_code == 404
+    )
+    # Row 2 can still be dismissed.
+    assert (
+        client.delete(f"/api/invoices/{invoice_id}/import-lines/2").status_code == 204
+    )
+
+
+def test_dismiss_import_line_forbidden_for_read_only(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    client.post(
+        "/api/admin/users",
+        json={"username": "viewer", "password": "pw", "role": "read-only"},
+    )
+    token = client.post(
+        "/api/auth/token", json={"username": "viewer", "password": "pw"}
+    ).json()["access_token"]
+    assert (
+        anon_client.delete(
+            "/api/invoices/1/import-lines/1",
+            headers={"Authorization": f"Bearer {token}"},
+        ).status_code
+        == 403
+    )
+
+
 def test_update_invoice_db_constraint_maps_to_conflict(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

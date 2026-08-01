@@ -55,3 +55,31 @@ class InvoiceLine(SQLModel, table=True):
     total_price: Decimal = Field(max_digits=_MONEY_DIGITS, decimal_places=_MONEY_PLACES)
     # Destination stock location, assigned before finalization (spec §16 step 6).
     location_id: int | None = Field(default=None, foreign_key="locations.id")
+
+
+class InvoiceImportLine(SQLModel, table=True):
+    """A parsed PDF-import line that could not be resolved to a component yet.
+
+    A real :class:`InvoiceLine` needs a ``component_id``, so a line whose component
+    (and type) don't exist can't be persisted as one. PDF import parks such lines
+    here — carrying what it read off the invoice — and the draft invoice page lets
+    the user resolve each through the normal New Component / New Type dialogs.
+    Resolving one creates the real line and deletes its staging row, so this table
+    only ever holds the outstanding lines.
+    """
+
+    __tablename__ = "invoice_import_lines"
+
+    id: int | None = Field(default=None, primary_key=True)
+    invoice_id: int = Field(foreign_key="invoices.id")
+    line_no: int
+    supplier_part_number: str | None = Field(default=None)
+    mpn: str | None = Field(default=None)
+    manufacturer: str | None = Field(default=None)
+    description: str | None = Field(default=None)
+    package: str | None = Field(default=None)
+    quantity: int
+    unit_price: Decimal = Field(max_digits=_MONEY_DIGITS, decimal_places=_MONEY_PLACES)
+    shop_key: str
+    # Why it needs the user (e.g. "no matching type") — shown in the review panel.
+    reason: str

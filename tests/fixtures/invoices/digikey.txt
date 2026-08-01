@@ -1,0 +1,164 @@
+                                                                                                             
+                                                                                                             
+                                                                                             Nr faktury 123458567
+                                                                                               Invoice #     
+                                                                                Zakończonezamówieniehandlowe PLN zł
+                                                                                                             
+                                                                                                             
+  :kintałP                                                                                                   
+                                                                                                             
+                                                                                                             
+                                                                                                             
+                                                                                                             
+                                                                                                             
+  :ycąjupuK                                                                                                  
+   :oTlliB                                                                                                   
+   :reyuB                                                                                                    
+                                     :taserdA :oTpihS                                                        
+               701 Brooks Ave South,               www.digikey.pl                                            
+               PO Box 677                       Global CustomerSupport                                       
+               Thief River Falls, MN 56701-0677   (+48) 22 53 64 114                                         
+               USA                                                                                           
+                                                                                        CompletedSalesorder  
+     SAMPLE BUYER                    SAMPLE BUYER                 Zamówienie handlowe/ lista 98393638 / PL1
+                                                                        pakowania:                           
+     SAMPLE CO                    SAMPLE CO                                                      
+                                                                        Salesorder / Packlist:               
+     UL. SAMPLE 1         UL. SAMPLE 1                                           
+                                                                        Klient:           0000000           
+     SAMPLE CITY 00000                 SAMPLE CITY 00000                                                   
+                                                                        Customer:                            
+     POLAND                             POLAND                                                               
+                                                                        VAT:              PL0000000000       
+                                                                        VAT:                                 
+     SAMPLE BUYER                                                    Warunki płatności: VISA / 1785       
+     SAMPLE CO                                                    Payment Terms:                       
+     UL. SAMPLE 1                                         Nr ref.:          SA # 98393638      
+     SAMPLE CITY 00000                                                 Ref #:                               
+     POLAND                                                             Metoda wysyłki:   USAV               
+                                                                        ShippingMethod:                      
+                                                                        Nr śledzenia:     1Z000000000000000 
+    Źródło zamówienia: Datazamówienia: Datafaktury: Datawysyłki: Datadokumentu:                              
+     Order Source: Order Date:  Invoice Date: ShipDate:   DocumentDate: Tracking#:                           
+      INTERNET    01-Apr-2026   06-Apr-2026  06-Apr-2026 06-Apr-2026/AUTO                                    
+  Pozycja                                                                                      Cena   Kwota  
+  wiersza Zamówione Anulowane Wysłane                  Numer pozycji / opis                  jednostkowa PLNzł
+                                                                                               PLNzł         
+   Line                                                                                       UnitPrice Amount
+        Ordered Cancelled Shipped                     ItemNumber/ Description                                
+   Item                                                                                        PLNzł  PLNzł  
+    1    10      0      10   PART: 123-A-USBC-32M1-EA-GRR01CT-ND DESC: CONN PLUG USB3.2 TYPC 24P SMD RA 6.12900 61.29
+                             MFG : Assmann WSW Components (VA) / A-USBC-32M1-EA-GRR01                        
+                             COO : CHINA             ECCN: EAR99        HTSUS: 8536.69.4040                  
+                             ROHS3 COMP REACH UNAFFECTED Feb-2026                                            
+    2    25      0      25   PART: AP22615AWU-7DICT-ND       DESC: IC PWR SWTCH N/P-CHAN 1:1 TSOT26 1.73720 43.43
+                             MFG : Diodes Incorporated (VA) / AP22615AWU-7                                   
+                             COO : TAIWAN, PROVINCE OF CHINA ECCN: EAR99 HTSUS: 8542.39.0090                 
+                             ROHS3 COMP REACH UNAFFECTED Jun-2020                                            
+    3    25      0      25   PART: 296-25495-1-ND            DESC: IC USB SWITCH SGL 1X2 10MSOP 1.67880 41.97
+                             MFG : Texas Instruments (VA) / TS3USB30EDGSR                                    
+                             COO : GERMANY           ECCN: EAR99        HTSUS: 8542.39.0070                  
+                             ROHS3 COMP REACH UNAFFECTED Feb-2026                                            
+    4    2       0      2    PART: SMDLTLFP60T4-ND           DESC: SN42/BI57.6/AG0.4 2-PART MIX 60G 150.22000 300.44
+                             MFG : Chip Quik Inc. / SMDLTLFP60T4                                             
+                             COO : CANADA            ECCN: EAR99        HTSUS: 3810.10.0000                  
+                             ROHS3 COMP REACH UNAFFECTED Jan-2023                                            
+                  Nr VATDIGI-KEY:DE239975861 Klientponosiodpowiedzialność za opłaceniewszelkichstosownych podatków od sprzedaży, które niezostały pobrane w niniejszej fakturze Strona 1 z 3
+                                                                                                     Page1 of 3
+                                                                                                             
+               701 Brooks Ave South,               www.digikey.pl                                            
+               PO Box 677                       Global CustomerSupport                                       
+                                                                                             Nr faktury 123458567
+               Thief River Falls, MN 56701-0677   (+48) 22 53 64 114                                         
+               USA                                                                             Invoice #     
+                                                                                Zakończonezamówieniehandlowe PLN zł
+                                                                                        CompletedSalesorder  
+  Pozycja                                                                                      Cena   Kwota  
+  wiersza Zamówione Anulowane Wysłane                  Numer pozycji / opis                  jednostkowa PLNzł
+                                                                                               PLNzł         
+   Line                                                                                       UnitPrice Amount
+        Ordered Cancelled Shipped                     ItemNumber/ Description                                
+   Item                                                                                        PLNzł  PLNzł  
+    5    5       0      5    PART: MCP2200-I/MQ-ND           DESC: IC USB TO UART 20QFN       10.38000 51.90 
+                             MFG : Microchip Technology / MCP2200-I/MQ                                       
+                             COO : THAILAND          ECCN: EAR99        HTSUS: 8542.39.0070                  
+                             COD : UNITED STATES OF AMERICA                                                  
+                             ROHS3 COMP REACH UNAFFECTED Jan-2024                                            
+                                                                                     Kwota sprzedaży  499.03 
+                                                                                       Sales Amount          
+                                                                                   ** Podsuma opłat ** 499.03
+                                                                                 ** Charges subtotal **      
+                                                                        Całkowite obciążenie karty kredytowej 499.03
+                                                                             Total charged to credit card    
+                                                                                                      PLN zł 
+                                                                                     Incoterm 2020: DDP COLOGNE, GERMANY
+                                                                                   Incoterm 2020: CPT SAMPLE CITY, POLAND
+    * NO EEI 30.37(a)                                                                                        
+    * Licencja nie jest wymagana                                                                             
+    * No license required                                                                                    
+    * NA PODSTAWIE ART. 141 ORAZ ART. 197 DYREKTYWY 2006/112/WE, ODBIORCA OBOWIĄZANY JEST ROZLICZYĆ LUB SAMODZIELNIE OBLICZYĆ WEWNĄTRZWSPÓLNOTOWY PODATEK VAT W ZWIĄZKU Z NABYCIEM
+    TOWARÓW.                                                                                                 
+    * Based on Art. 141 in conjunction with Art. 197 of Directive 2006/112/EC the recipient is required to account for or to self-assess the intra-community acquisition VAT.
+    * Wymienione pozycje podlegają regulacjom Rządu Stanów Zjednoczonych i zostały zatwierdzone do eksportu jedynie do kraju ostatecznego przeznaczenia, do użytku przez odbiorcę
+    końcowego lub użytkowników końcowych określonych w niniejszym dokumencie. Nie mogą być odsprzedawane ani w żaden inny sposób przekazywane do innego kraju lub innej osoby niż
+    autoryzowany odbiorca końcowy lub autoryzowani użytkownicy końcowi, zarówno w ich oryginalnej formie, jak i po włączeniu do innych produktów, bez uprzedniej zgody Rządu Stanów
+    Zjednoczonych lub spełniania innych odpowiednich wymagań określonych w prawodawstwie Stanów Zjednoczonych.
+    * These items are controlled by the U.S. Government and authorized for export only to the country of ultimate destination for use by the ultimate consignee or end-user(s)
+    herein identified. They may not be resold, transferred, or otherwise disposed of, to any other country or to any person other than the authorized ultimate consignee or end-
+    user(s), either in their original form or after being incorporated into other items, without first obtaining approval from the U.S. Government or as otherwise authorized by
+    U.S. law and regulations.                                                                                
+  Skrzynka Metoda    Śledzenie          Waga       Pozycja            Część                Ilość             
+         wysyłki                                   wiersza                                                   
+   Box ShipMethod    Tracking          Weight     LineItem             Part               Quantity           
+    1     USAV 1Z000000000000000 0.43 kgs / 15 oz   1  123-A-USBC-32M1-EA-GRR01CT-ND       10               
+                                                     2  AP22615AWU-7DICT-ND                 25               
+                                                     3  296-25495-1-ND                      25               
+                                                     4  SMDLTLFP60T4-ND                     2                
+                  Nr VATDIGI-KEY:DE239975861 Klientponosiodpowiedzialność za opłaceniewszelkichstosownych podatków od sprzedaży, które niezostały pobrane w niniejszej fakturze Strona 2 z 3
+                                                                                                     Page2 of 3
+                                                                                                             
+               701 Brooks Ave South,               www.digikey.pl                                            
+               PO Box 677                       Global CustomerSupport                                       
+                                                                                             Nr faktury 123458567
+               Thief River Falls, MN 56701-0677   (+48) 22 53 64 114                                         
+               USA                                                                             Invoice #     
+                                                                                Zakończonezamówieniehandlowe PLN zł
+                                                                                        CompletedSalesorder  
+  Skrzynka Metoda    Śledzenie          Waga       Pozycja            Część                Ilość             
+         wysyłki                                   wiersza                                                   
+   Box ShipMethod    Tracking          Weight     LineItem             Part               Quantity           
+                                                     5  MCP2200-I/MQ-ND                     5                
+      Ogólne -WEB ORDER ID: 369810082                                                                        
+      General                                                                                                
+  Numer wysyłki: WA47979M7JC                                                                                 
+  Ship Number: WA47979M7JC                                                                                   
+   ŚWIADECTWO ZGODNOŚCI:                                                                                     
+   Produkty DigiKey lubwysyłane bezpośredniood dostawcy objętepowyższą wysyłką zostały zakupioneod pierwotnego producenta lubza pośrednictwem autoryzowanej sieci dystrybucji producenta. Pierwotnyproducentgwarantuje i zaświadcza, że wytwarzane przez niego
+   wyrobyspełniająodpowiednie specyfikacje. Raporty z badań (chemicznych, fizycznych, elektrycznych itp.) wymaganych do uzyskaniaświadectwa są dostępne w dokumentacji(w firmieDigiKey, u dostawcy lubw zakładzieproducenta) i zostaną udostępnionena żądanie.
+   Niniejszydokument jest dowodem zgodnościniniejszej wysyłki z wymogami systemu zarządzania jakością firmy DigiKey i/lub wymaganiami zamówienia zakupu, uzgodnionymipomiędzy klientem i firmą DigiKey. Niniejszeświadectwo jest ważne wyłączniedlapierwotnego klienta i
+   jest nieprzenoszalne.                                                                                     
+   CERTIFICATE OF COMPLIANCE:                                                                                
+   TheDigiKey or supplier directship products included in theabove shipment were purchasedfrom theoriginal manufactureror through themanufacturer’s authorized distribution. Theoriginal manufacturerwarrants andcertifiesthat theproducts they produce meet their
+   specifications.Test reports (chemical, physical,electrical, etc.) supporting their certification areon file (either at DigiKey, thesupplier or in theplant of themanufacturer) andwill be made availableupon request. This document is evidence of Conformity that this shipment meets
+   therequirementsof DigiKey’sQuality Management Systemand/orPurchase Order requirementsagreedon between thecustomer andDigiKey. This certification is valid only to theoriginal customer andis nottransferable.
+         PamAaland, starszy dyrektor ds.relacji z klientamina rynku amerykańskim                             
+         PamAaland, SeniorManager, Customer Resolution - Americas                                            
+              Wszelkie błędy należyzgłaszać przed upływem 60 dniod daty faktury za pośrednictwem stronyhttps://www.digikey.com/mydigikey/returns.Przed dokonaniem zwrotujakichkolwiek produktów,
+               firma DigiKey wymagawcześniejszego uzyskanianumeruautoryzacji zwrotutowaru(Return Merchandise Authorization, RMA). Zwracane produkty muszą znajdowaćsięw oryginalnych
+                                          opakowaniach, muszą byćnieużywane i w staniejaknowe.               
+               Allerrorsshouldbe reported within60 days of theinvoice date viahttps://www.digikey.com/mydigikey/returns. DigiKey requires that customersfirst obtainan RMA(ReturnedMerchandise
+                           Authorization) numberprior to returninganyproducts.Returns must be in theoriginal packaging, unusedandlike-new condition.
+                  Wszelkie transakcje z firmą DigiKey, a także z jejpodmiotami afiliowanymi, podlegająokreślonym przez DigiKey warunkom korzystania i warunkom zamawiania.
+                            Alltransactionswith DigiKey, includingitsaffiliates, aresubject to DigiKey’sTerms of Use and Conditions of Order.
+                                                                                                             
+                                                                                                             
+                                                                                                             
+                                                                                                             
+                                                                                                             
+                                                                                                             
+                                                                                                             
+                                                                                                             
+                                                                                                             
+                                                                                                             
+                  Nr VATDIGI-KEY:DE239975861 Klientponosiodpowiedzialność za opłaceniewszelkichstosownych podatków od sprzedaży, które niezostały pobrane w niniejszej fakturze Strona 3 z 3
+                                                                                                     Page3 of 3

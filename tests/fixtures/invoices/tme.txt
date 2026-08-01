@@ -1,0 +1,128 @@
+                                                                                  
+                  Transfer Multisort Elektronik Sp. z o.o.                        
+                                                     Data dostawy / usługi: 20.04.2026
+                  93-350 Łódź, ul. Ustronna 41, Polska                            
+                  NIP: 729-010-89-84, VAT No: PL7290108984, Regon: 473171710 Data wystawienia faktury*: 20.04.2026
+                  EORI: PL729010898400000            Numer klienta:  0000000      
+                  Sąd rejonowy dla Łodzi-Śródmieścia, Nr KRS: 0000165815 Forma wysyłki: GLS
+                  Kapitał zakładowy: 3 300 000 zł, numer rejestrowy BDO: 000006165 Forma płatności: Przedpłata
+                  Tel.: (+48) 42 645 55 55, fax: (+48) 42 645 55 00, e-mail: tme@tme.eu
+                                                     Incoterms:      EXW ŁÓDŹ     
+                  www.tme.eu                                                      
+                                                     Zlecenie numer: 34520544     
+                                         Nabywca                                  
+                                         SAMPLE BUYER SAMPLE CO          
+                                         UL. SAMPLE 1                    
+                                         00-000 SAMPLE CITY, Polska              
+                                         NIP: 0000000000                          
+      Faktura VAT                                                                 
+      Numer faktury: 1261247129                                                   
+      Numer KSeF: 7290108984-20260420-9EDD6AC00033-09                             
+      Faktura wystawiona w cenach netto w walucie: PLN                            
+       Lp.           Artykuł/Opis         Ilość  Cena netto PLN %VAT Wartość netto PLN
+      1   0402WGF1004TCE                 10 000 SZT 2,01/1000 SZT 23     20,10    
+          Rezystor:thick film;SMD;0402;1MΩ;62,5mW;±1%;50V;-55÷155°C               
+          Producent: ROYALOHM; Symbol producenta: 0402WGF1004TCE;                 
+          Zgodność RoHS                                                           
+      2   Koszty wysyłki                    1 SZT    15,90/SZT 23        15,90    
+      3   0402WGF1202TCE                 50 000 SZT 2,48/1000 SZT 23     124,00   
+          Rezystor:thick film;SMD;0402;12kΩ;62,5mW;±1%;-55÷155°C                  
+          Producent: ROYALOHM; Symbol producenta: 0402WGF1202TCE;                 
+          Zgodność RoHS                                                           
+      4   AO3400A                         1 000 SZT 23,97/100 SZT 23     239,70   
+          Tranzystor:N-MOSFET;unipolarny;30V;4,7A;1,4W;SOT23                      
+          Producent: ALPHA & OMEGA SEMICONDUCTOR; Symbol                          
+          producenta: AO3400A; Zgodność RoHS                                      
+      5   RC1210FR-07100RL                100 SZT   9,87/100 SZT 23       9,87    
+          Rezystor:thick film;SMD;1210;100Ω;500mW;±1%                             
+          Producent: YAGEO; Symbol producenta: RC1210FR-07100RL;                  
+          Zgodność RoHS                                                           
+      6   SN74LVC1T45DCKT                   5 SZT   42,52/10 SZT 23      21,26    
+          IC:interfejs;transceiver;420Mbps;1,65÷5,5VDC;SMD;SC70-6;Ch:1            
+          Producent: TEXAS INSTRUMENTS; Symbol producenta:                        
+          SN74LVC1T45DCKT; Zgodność RoHS                                          
+      7   GRM022R60J104KE1                2 500 SZT 21,74/1000 SZT 23    54,35    
+          5L                                                                      
+          Kondensator:ceramiczny;MLCC;100nF;6,3V;X5R;±10%;SMD;0100                
+          5                                                                       
+          Producent: MURATA; Symbol producenta:                                   
+          GRM022R60J104KE15L; Zgodność RoHS                                       
+      8   SC1H227M10010VR                  10 SZT   10,12/10 SZT 23      10,12    
+          Kondensator:elektrolityczny;SMD;220uF;50VDC;Ø10x10mm;±20%               
+          Producent: SAMWHA; Symbol producenta: SC1H227M10010VR;                  
+          Zgodność RoHS                                                           
+      9   GRM31CR60J227ME1                 10 SZT   19,88/10 SZT 23      19,88    
+          1L                                                                      
+                                                                             __   
+          Kondensator:ceramiczny;MLCC;220uF;6,3V;X5R;±20%;SMD;1206                
+          Producent: MURATA; Symbol producenta:                              __   
+          GRM31CR60J227ME11L; Zgodność RoHS                                       
+                                                                             __   
+                                                                Do przeniesienia: 515,18 __
+      Transfer Multisort Elektronik Sp. z o.o. TEP : 100             Strona: 1/2  
+                                                                                  
+                                                                                  
+                                                                                  
+                  Transfer Multisort Elektronik Sp. z o.o.                        
+                                                     Data dostawy / usługi: 20.04.2026
+                  93-350 Łódź, ul. Ustronna 41, Polska                            
+                  NIP: 729-010-89-84, VAT No: PL7290108984, Regon: 473171710 Data wystawienia faktury*: 20.04.2026
+                  EORI: PL729010898400000            Numer klienta:  0000000      
+                  Sąd rejonowy dla Łodzi-Śródmieścia, Nr KRS: 0000165815 Forma wysyłki: GLS
+                  Kapitał zakładowy: 3 300 000 zł, numer rejestrowy BDO: 000006165 Forma płatności: Przedpłata
+                  Tel.: (+48) 42 645 55 55, fax: (+48) 42 645 55 00, e-mail: tme@tme.eu
+                                                     Incoterms:      EXW ŁÓDŹ     
+                  www.tme.eu                                                      
+                                                     Zlecenie numer: 34520544     
+      Faktura VAT                                                                 
+      Numer faktury: 1261247129                                                   
+       Lp.           Artykuł/Opis         Ilość  Cena netto PLN %VAT Wartość netto PLN
+                                                            Wartość z przeniesienia: 515,18
+      10  CL31A476MQHNNNE                  10 SZT  56,38/100 SZT 23       5,64    
+          Kondensator:ceramiczny;MLCC;47uF;6,3V;X5R;±20%;SMD;1206                 
+          Producent: SAMSUNG; Symbol producenta: CL31A476MQHNNNE;                 
+          Zgodność RoHS                                                           
+      11  TS3702CDT                        10 SZT   7,15/10 SZT 23        7,15    
+          IC:komparator;low-power;Cmp:2;2,7÷16V;SMT;SO8;rolka,taśma               
+          Producent: STMicroelectronics; Symbol producenta: TS3702CDT;            
+          Zgodność RoHS                                                           
+      Otrzymano zaliczkę dnia 20.04.2026 na kwotę 649,40 PLN                      
+                                                                                  
+                  Rozliczenie wpłaconej zaliczki:                                 
+                     A       B         C          D             E                 
+           PROFORMA1265097651 20.04.2026 649,40      649,40          0,00         
+                  1261247129 20.04.2026  -649,40     -649,40         0,00         
+                  Pozostało do rozliczenia: 0,00      0,00           0,00         
+      Legenda: A - Nr dokumentu; B - Data dokumentu; C - Wartość zamówionego towaru; D - wartość wpłaconej zaliczki; E - różnica (C - D);
+                                                                                  
+                                                      PLN                         
+                                   Wartość netto %VAT     VAT     Wartość brutto  
+                                         527,97 23           121,43      649,40   
+                             Razem:      527,97              121,43      649,40   
+      Więcej informacji o niedostarczonych produktach, wystawionych fakturach i płatnościach znajdą Państwo po zalogowaniu na naszej stronie
+      www.tme.eu.                                                                 
+      *Data wystawienia, z zastrzeżeniem art. 106na ust. 1 ustawy o VAT.          
+                                                                                  
+      Do zapłaty: 0,00 PLN                                                        
+      Bank, Nr. Konta: mBank S.A. PL53 1140 1108 0000 3779 1000 1001              
+      SWIFT: BREXPLPWLOD                                                          
+      Informujemy, że reklamacje ilościowe należy zgłosić w terminie 7 dni od otrzymania przesyłki.
+                                                                                  
+      KSeF QR                                                                     
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                             __   
+                                                                                  
+                                                                             __   
+                                                                             __   
+      7290108984-20260420-9EDD6AC00033-09                                    __   
+                                                                                  
+                                                                                  
+      Transfer Multisort Elektronik Sp. z o.o. TEP : 100             Strona: 2/2  
+                                                                                  
+                                                                                  
+                                                                                  

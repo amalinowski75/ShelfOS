@@ -4,6 +4,7 @@ import {
   tick,
   CSRF,
   newInvoiceFixture,
+  invoiceImportFixture,
   detailFixture,
   componentDialogFixture,
   locationDialogFixture,
@@ -54,6 +55,141 @@ describe("invoices.js — new invoice", () => {
       currency: "EUR",
       notes: null,
     });
+  });
+});
+
+describe("invoices.js — import from PDF", () => {
+  it("uploads the file as multipart with CSRF and redirects to the draft", async () => {
+    const { window, document, fetchMock } = loadPage(
+      invoiceImportFixture(),
+      SCRIPTS,
+      {
+        fetchImpl: () =>
+          Promise.resolve({ ok: true, json: async () => ({ invoice_id: 42 }) }),
+      },
+    );
+    submit(document, "invoice-import-form");
+    await tick();
+
+    const [url, opts] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/invoices/import");
+    expect(opts.method).toBe("POST");
+    expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
+    // Multipart: a FormData body, no JSON Content-Type header.
+    expect(opts.body).toBeInstanceOf(window.FormData);
+    expect(opts.headers["Content-Type"]).toBeUndefined();
+    // Success path: no error surfaced (jsdom doesn't reflect the location
+    // assignment, so the redirect itself isn't asserted here — the error branch
+    // test below covers the failure handling that must NOT redirect).
+    expect(document.getElementById("invoice-import-error").hidden).toBe(true);
+  });
+
+  it("surfaces the server error and re-enables the button on failure", async () => {
+    const { document, fetchMock } = loadPage(invoiceImportFixture(), SCRIPTS, {
+      fetchImpl: () =>
+        Promise.resolve({
+          ok: false,
+          json: async () => ({ detail: "unrecognised invoice" }),
+        }),
+    });
+    submit(document, "invoice-import-form");
+    await tick();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const error = document.getElementById("invoice-import-error");
+    expect(error.hidden).toBe(false);
+    expect(error.textContent).toBe("unrecognised invoice");
+    const button = document.getElementById("invoice-import-submit");
+    expect(button.disabled).toBe(false);
+    expect(button.textContent).toBe("Import");
+  });
+});
+
+describe("invoices.js — resolve/dismiss parked import lines", () => {
+  it("resolve opens the line dialog prefilled and posts with import_line_id", async () => {
+    const fetchImpl = (url) =>
+      url === "/web/api/components"
+        ? Promise.resolve({
+            ok: true,
+            json: async () => ({
+              data: [{ id: 11, mpn: "ABC123", manufacturer: "Acme", type: "diode" }],
+            }),
+          })
+        : Promise.resolve({ ok: true, json: async () => ({ id: 55 }) });
+    const { document, fetchMock } = loadPage(detailFixture({ pending: true }), SCRIPTS, {
+      fetchImpl,
+    });
+
+    document.querySelector('[data-act="resolve-import"]').click();
+    await tick();
+
+    const form = document.getElementById("invoice-line-form");
+    // Prefilled from the pending row.
+    expect(form.quantity.value).toBe("7");
+    expect(form.unit_price.value).toBe("2.50");
+    expect(form.supplier_part_number.value).toBe("ABC-ND");
+    expect(document.getElementById("invoice-line-title").textContent).toBe(
+      "Resolve import line",
+    );
+
+    submit(document, "invoice-line-form");
+    await tick();
+
+    const post = fetchMock.mock.calls.find(
+      ([url, opts]) => url === "/api/invoices/7/lines" && opts.method === "POST",
+    );
+    expect(JSON.parse(post[1].body)).toEqual({
+      component_id: 11,
+      quantity: 7,
+      unit_price: "2.50",
+      supplier_part_number: "ABC-ND",
+      location_id: null,
+      import_line_id: 21,
+    });
+  });
+
+  it("a plain add does not carry an import_line_id", async () => {
+    const fetchImpl = (url) =>
+      url === "/web/api/components"
+        ? Promise.resolve({
+            ok: true,
+            json: async () => ({
+              data: [{ id: 11, mpn: "R", manufacturer: null, type: "diode" }],
+            }),
+          })
+        : Promise.resolve({ ok: true, json: async () => ({ id: 1 }) });
+    // Same page has both a pending panel and the normal Add-line button.
+    const { document, fetchMock } = loadPage(detailFixture({ pending: true }), SCRIPTS, {
+      fetchImpl,
+    });
+
+    document.getElementById("invoice-addline-btn").click();
+    await tick();
+    const form = document.getElementById("invoice-line-form");
+    form.quantity.value = "2";
+    form.unit_price.value = "1";
+    submit(document, "invoice-line-form");
+    await tick();
+
+    const post = fetchMock.mock.calls.find(
+      ([url, opts]) => url === "/api/invoices/7/lines" && opts.method === "POST",
+    );
+    expect(JSON.parse(post[1].body).import_line_id).toBeNull();
+  });
+
+  it("dismiss DELETEs the staging row after confirmation, with CSRF", async () => {
+    const { window, document, fetchMock } = loadPage(
+      detailFixture({ pending: true }),
+      SCRIPTS,
+    );
+    document.querySelector('[data-act="dismiss-import"]').click();
+    await tick();
+
+    expect(window.confirm).toHaveBeenCalled();
+    const [url, opts] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/invoices/7/import-lines/21");
+    expect(opts.method).toBe("DELETE");
+    expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
   });
 });
 
@@ -314,6 +450,7 @@ describe("invoices.js — error surfacing and add-line", () => {
       unit_price: "1.50",
       supplier_part_number: null,
       location_id: null,
+      import_line_id: null,
     });
   });
 
