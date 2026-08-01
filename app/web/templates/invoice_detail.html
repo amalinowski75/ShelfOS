@@ -58,7 +58,7 @@
 
 {% if can_edit and pending_import_lines %}
 <div class="card card-pad" id="invoice-pending" style="margin-top: 20px">
-  <h2>Do uzupełnienia <span class="badge b-warn">{{ pending_import_lines | length }}</span></h2>
+  <h2>Needs review <span class="badge b-warn">{{ pending_import_lines | length }}</span></h2>
   <p class="muted">Lines from the imported PDF that need a component. Resolve each to
     add it (creating the component/type if needed), or dismiss it.</p>
   <div class="table-wrap">
@@ -158,9 +158,13 @@
 </div>{# /#invoice-detail #}
 
 {# Uploads are allowed for any writer, including on a finalized invoice (e.g. to
-   attach the scanned PDF after finalizing) — so gate on role, not can_edit. #}
+   attach the scanned PDF after finalizing) — so gate on role, not can_edit. The
+   wrapper adds the same inter-card gap the cards above set inline (the shared
+   attachments macro carries no outer margin of its own). #}
+<div style="margin-top: 20px">
 {{ attachments_card("invoice", invoice.id,
                     current_user.role.value != "read-only", attachment_kinds) }}
+</div>
 
 {% if can_edit %}
 <dialog id="invoice-meta-dialog">
