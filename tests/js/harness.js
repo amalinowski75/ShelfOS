@@ -313,13 +313,7 @@ export function detailFixture({
                data-package="SOT23" data-description="A widget"
                data-parameters='[{"parameter_definition_id":9,"value":"4k7"}]'>
              <td><span class="mono">ABC123</span></td>
-             <td>
-               <select class="control ril-type">
-                 <option value="">— choose a type —</option>
-                 <option value="3" selected>diode</option>
-               </select>
-               <button type="button" class="btn ril-new-type"></button>
-             </td>
+             <td><span class="badge">diode</span></td>
              <td class="num">7</td>
              <td class="num">2.50</td>
              <td>
@@ -335,23 +329,7 @@ export function detailFixture({
            </tr>
          </tbody></table>
          <p id="invoice-review-error" hidden></p>
-       </div>
-       <dialog id="invoice-import-line-dialog"><form id="invoice-import-line-form">
-         <input type="hidden" name="import_line_id" />
-         <select name="type_id" id="ril-edit-type">
-           <option value="">—</option>
-           <option value="3">diode</option>
-           <option value="7">resistor</option>
-         </select>
-         <input name="manufacturer" />
-         <input name="mpn" />
-         <input name="package" />
-         <input name="description" />
-         <div id="ril-edit-params"></div>
-         <p id="ril-edit-params-hint" hidden></p>
-         <p id="invoice-import-line-error" hidden></p>
-         <button type="submit"></button>
-       </form></dialog>`
+       </div>`
     : "";
   const extraRow = secondLine
     ? `<tr data-line-id="4" data-quantity="2" data-unit-price="2.00"

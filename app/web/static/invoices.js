@@ -340,7 +340,7 @@ if (detail && lineDialog) {
   const reviewError = document.getElementById("invoice-review-error");
 
   function markRow(row) {
-    const hasType = !!row.querySelector(".ril-type")?.value;
+    const hasType = !!row.dataset.typeId;
     const hasLocation = !!row.querySelector(".ril-location")?.value;
     row.classList.toggle("is-incomplete", !(hasType && hasLocation));
   }
@@ -360,169 +360,44 @@ if (detail && lineDialog) {
     }
   }
 
+  // Inline location pick — the quick, common action. The type and parameters are set
+  // through the full editor (the New Component dialog in stage mode), below.
   reviewPanel?.addEventListener("change", (event) => {
     const select = event.target;
-    const row = select.closest("tr");
-    if (select.classList.contains("ril-type")) {
-      guard(() => patchImportLine(row, { type_id: select.value ? Number(select.value) : null }));
-    } else if (select.classList.contains("ril-location")) {
-      guard(() => patchImportLine(row, { location_id: select.value ? Number(select.value) : null }));
-    }
-  });
-
-  // --- Full editor for a staged row: type, identity fields and the type's params ---
-  // The component is still created at finalize; this only saves the review edits to the
-  // staging row. Self-contained parameter rendering (mirrors the New Component dialog).
-  const editDialog = document.getElementById("invoice-import-line-dialog");
-  const editForm = document.getElementById("invoice-import-line-form");
-  const editError = document.getElementById("invoice-import-line-error");
-  const editParams = document.getElementById("ril-edit-params");
-  const editParamsHint = document.getElementById("ril-edit-params-hint");
-  const editType = document.getElementById("ril-edit-type");
-  let editParamsToken = 0;
-
-  function buildImportParamField(definition, value) {
-    const field = document.createElement("div");
-    field.className = "field";
-    const label = document.createElement("label");
-    label.textContent = definition.unit
-      ? `${definition.label} (${definition.unit})`
-      : definition.label;
-    field.appendChild(label);
-    let input;
-    if (definition.data_type === "enum") {
-      input = document.createElement("select");
-      input.className = "control";
-      input.appendChild(new Option("—", ""));
-      for (const v of definition.enum_values) input.appendChild(new Option(v, v));
-    } else if (definition.data_type === "bool") {
-      input = document.createElement("select");
-      input.className = "control";
-      input.appendChild(new Option("—", ""));
-      input.appendChild(new Option("yes", "true"));
-      input.appendChild(new Option("no", "false"));
-    } else {
-      input = document.createElement("input");
-      input.className = "control";
-      input.type = "text";
-      if (definition.data_type === "number") input.placeholder = "e.g. 4k7";
-    }
-    input.dataset.definitionId = definition.id;
-    input.dataset.dataType = definition.data_type;
-    if (value != null && value !== "") input.value = String(value);
-    field.appendChild(input);
-    return field;
-  }
-
-  function collectImportParams() {
-    const out = [];
-    for (const input of editParams.querySelectorAll("[data-definition-id]")) {
-      const raw = String(input.value).trim();
-      if (!raw) continue;
-      out.push({
-        parameter_definition_id: Number(input.dataset.definitionId),
-        value: input.dataset.dataType === "bool" ? raw === "true" : raw,
-      });
-    }
-    return out;
-  }
-
-  async function loadImportParams(typeId, stored) {
-    const token = ++editParamsToken;
-    editParams.replaceChildren();
-    if (!typeId) {
-      editParamsHint.textContent = "Choose a type to enter its parameters.";
-      editParamsHint.hidden = false;
-      return;
-    }
-    editParamsHint.textContent = "Loading…";
-    editParamsHint.hidden = false;
-    let definitions;
-    try {
-      const resp = await fetch(`/api/types/${typeId}/parameters`);
-      if (!resp.ok) throw new Error();
-      definitions = await resp.json();
-    } catch {
-      if (token !== editParamsToken) return;
-      editParamsHint.textContent = "Could not load this type's parameters.";
-      return;
-    }
-    if (token !== editParamsToken) return; // a newer type pick is in flight
-    if (!definitions.length) {
-      editParamsHint.textContent = "This type has no parameters.";
-      return;
-    }
-    editParamsHint.hidden = true;
-    const values = new Map(
-      (stored || []).map((p) => [p.parameter_definition_id, p.value]),
+    if (!select.classList.contains("ril-location")) return;
+    guard(() =>
+      patchImportLine(select.closest("tr"), {
+        location_id: select.value ? Number(select.value) : null,
+      }),
     );
-    for (const d of definitions) {
-      editParams.appendChild(buildImportParamField(d, values.get(d.id)));
-    }
-  }
-
-  function openEditImportLine(row) {
-    editForm.reset();
-    editError.hidden = true;
-    editForm.import_line_id.value = row.dataset.importLineId;
-    editType.value = row.dataset.typeId || "";
-    editForm.manufacturer.value = row.dataset.manufacturer || "";
-    editForm.mpn.value = row.dataset.mpn || "";
-    editForm.package.value = row.dataset.package || "";
-    editForm.description.value = row.dataset.description || "";
-    let stored = [];
-    try {
-      stored = JSON.parse(row.dataset.parameters || "[]");
-    } catch {
-      stored = [];
-    }
-    loadImportParams(editType.value, stored);
-    editDialog.showModal();
-  }
-
-  // Changing the type in the editor reloads its parameter set (starting empty).
-  editType?.addEventListener("change", () => loadImportParams(editType.value, []));
-
-  editForm?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    guard(async () => {
-      const value = (name) => editForm[name].value.trim();
-      const resp = await sendJSON(
-        `/api/invoices/${invoiceId}/import-lines/${editForm.import_line_id.value}`,
-        "PATCH",
-        {
-          type_id: editType.value ? Number(editType.value) : null,
-          manufacturer: value("manufacturer") || null,
-          mpn: value("mpn") || null,
-          package: value("package") || null,
-          description: value("description") || null,
-          parameters: collectImportParams(),
-        },
-      );
-      if (resp.ok) return window.location.reload();
-      return showError(editError, await errorMessage(resp));
-    });
   });
 
   reviewPanel?.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-act], .ril-new-type");
+    const button = event.target.closest("[data-act]");
     if (!button) return;
     const row = button.closest("tr");
-    if (button.classList.contains("ril-new-type")) {
-      // Create a type inline (e.g. the invoice's part needs a type you don't have
-      // yet), then select it for this row and persist.
-      window.openTypeDialog?.((created) => {
-        for (const select of reviewPanel.querySelectorAll(".ril-type")) {
-          if (!select.querySelector(`option[value="${created.id}"]`)) {
-            select.appendChild(new Option(created.name, created.id));
-          }
-        }
-        const typeSelect = row.querySelector(".ril-type");
-        typeSelect.value = String(created.id);
-        guard(() => patchImportLine(row, { type_id: created.id }));
-      });
-    } else if (button.dataset.act === "edit-import") {
-      openEditImportLine(row);
+    if (button.dataset.act === "edit-import") {
+      // Reuse the New Component dialog in "stage" mode: it renders the type, identity
+      // fields and the type's parameters (matching from the description), then saves to
+      // the staged row instead of creating a component (that happens at finalize).
+      let stored = [];
+      try {
+        stored = JSON.parse(row.dataset.parameters || "[]");
+      } catch {
+        stored = [];
+      }
+      window.openComponentDialog?.(
+        () => window.location.reload(),
+        {
+          typeId: row.dataset.typeId || null,
+          mpn: row.dataset.mpn || null,
+          manufacturer: row.dataset.manufacturer || null,
+          package: row.dataset.package || null,
+          notes: row.dataset.description || null,
+          paramValues: stored,
+        },
+        { stage: { invoiceId, importLineId: row.dataset.importLineId } },
+      );
     } else if (button.dataset.act === "dismiss-import") {
       if (!window.confirm("Dismiss this line? It won't be added to the invoice."))
         return;

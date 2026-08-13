@@ -778,8 +778,9 @@ def test_import_review_panel_renders_with_type_and_location_pickers(
 
     html = client.get(f"/invoices/{invoice_id}").text
     assert 'id="invoice-review"' in html  # the review panel
-    assert 'class="control ril-type"' in html  # inline type picker
+    assert ">resistor</span>" in html  # the resolved type shown on the row
     assert 'class="control ril-location"' in html  # inline location picker
+    assert 'data-act="edit-import"' in html  # opens the editor (type + params)
     # Finalize stays available (it validates readiness server-side).
     assert 'id="invoice-finalize-btn"' in html
     # The row is flagged incomplete until it has a location.

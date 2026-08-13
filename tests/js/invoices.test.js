@@ -114,27 +114,6 @@ describe("invoices.js — review imported lines inline", () => {
     );
   }
 
-  it("PATCHes the staging row when the type is chosen, and clears incomplete", async () => {
-    const { document, fetchMock } = loadPage(detailFixture({ pending: true }), SCRIPTS, {
-      fetchImpl: () => Promise.resolve({ ok: true, json: async () => ({}) }),
-    });
-    const row = document.querySelector("#invoice-review tr");
-    const typeSelect = row.querySelector(".ril-type");
-    typeSelect.value = "3";
-    // set a location too so the row is complete after the type change
-    row.querySelector(".ril-location").value = "5";
-    change(typeSelect);
-    await tick();
-
-    const [url, opts] = fetchMock.mock.calls[0];
-    expect(url).toBe("/api/invoices/7/import-lines/21");
-    expect(opts.method).toBe("PATCH");
-    expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
-    expect(JSON.parse(opts.body)).toEqual({ type_id: 3 });
-    // Both selects set → row no longer flagged incomplete.
-    expect(row.classList.contains("is-incomplete")).toBe(false);
-  });
-
   it("PATCHes location_id (as null when blanked) on location change", async () => {
     const { document, fetchMock } = loadPage(detailFixture({ pending: true }), SCRIPTS, {
       fetchImpl: () => Promise.resolve({ ok: true, json: async () => ({}) }),
@@ -143,10 +122,13 @@ describe("invoices.js — review imported lines inline", () => {
     locationSelect.value = "5";
     change(locationSelect);
     await tick();
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ location_id: 5 });
+    const [url, opts] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/invoices/7/import-lines/21");
+    expect(opts.method).toBe("PATCH");
+    expect(JSON.parse(opts.body)).toEqual({ location_id: 5 });
   });
 
-  it("dismiss removes the row after confirmation, with CSRF", async () => {
+  it("dismiss deletes the row after confirmation, with CSRF", async () => {
     const { window, document, fetchMock } = loadPage(
       detailFixture({ pending: true }),
       SCRIPTS,
@@ -160,96 +142,30 @@ describe("invoices.js — review imported lines inline", () => {
     expect(url).toBe("/api/invoices/7/import-lines/21");
     expect(opts.method).toBe("DELETE");
     expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
-    // Dismissing the last row reloads so the server re-renders the now-empty state
-    // (jsdom's reload is a no-op, so we assert the DELETE, not DOM removal here).
   });
 
-  it("Edit opens the editor prefilled, loads the type's params, saves via PATCH", async () => {
-    const fetchImpl = (url) =>
-      url === "/api/types/3/parameters"
-        ? Promise.resolve({
-            ok: true,
-            json: async () => [
-              { id: 9, label: "Resistance", unit: "Ω", data_type: "number", enum_values: [] },
-            ],
-          })
-        : Promise.resolve({ ok: true, json: async () => ({}) });
-    const { document, fetchMock } = loadPage(detailFixture({ pending: true }), SCRIPTS, {
-      fetchImpl,
-    });
-
-    document.querySelector('[data-act="edit-import"]').click();
-    await tick(); // params load
-
-    const form = document.getElementById("invoice-import-line-form");
-    expect(form.import_line_id.value).toBe("21");
-    expect(form.mpn.value).toBe("ABC123");
-    expect(form.manufacturer.value).toBe("Acme");
-    expect(document.getElementById("ril-edit-type").value).toBe("3");
-    // The type's one param rendered, prefilled from the row's stored parameters.
-    const paramInput = document.querySelector("#ril-edit-params [data-definition-id]");
-    expect(paramInput.dataset.definitionId).toBe("9");
-    expect(paramInput.value).toBe("4k7");
-
-    // Edit the param and save.
-    paramInput.value = "1k";
-    submit(document, "invoice-import-line-form");
-    await tick();
-
-    const patch = fetchMock.mock.calls.find(
-      ([url, opts]) =>
-        url === "/api/invoices/7/import-lines/21" && opts.method === "PATCH",
-    );
-    expect(JSON.parse(patch[1].body)).toEqual({
-      type_id: 3,
-      manufacturer: "Acme",
-      mpn: "ABC123",
-      package: "SOT23",
-      description: "A widget",
-      parameters: [{ parameter_definition_id: 9, value: "1k" }],
-    });
-  });
-
-  it("changing the type in the editor reloads that type's parameters", async () => {
+  it("Edit opens the New Component dialog in stage mode with the row's prefill", async () => {
+    const { window, document } = loadPage(detailFixture({ pending: true }), SCRIPTS);
+    // The component dialog is a shared global; stub it to capture the call.
     const calls = [];
-    const fetchImpl = (url) => {
-      calls.push(url);
-      return Promise.resolve({ ok: true, json: async () => [] });
-    };
-    const { document } = loadPage(detailFixture({ pending: true }), SCRIPTS, {
-      fetchImpl,
-    });
+    window.openComponentDialog = (cb, prefill, opts) =>
+      calls.push({ cb, prefill, opts });
+
     document.querySelector('[data-act="edit-import"]').click();
-    await tick();
 
-    const typeSelect = document.getElementById("ril-edit-type");
-    typeSelect.value = "7";
-    typeSelect.dispatchEvent(
-      new document.defaultView.Event("change", { bubbles: true }),
-    );
-    await tick();
-    expect(calls).toContain("/api/types/7/parameters");
-  });
-
-  it("+ New type creates a type, selects it for the row and PATCHes", async () => {
-    const { window, document, fetchMock } = loadPage(
-      detailFixture({ pending: true }),
-      SCRIPTS,
-      { fetchImpl: () => Promise.resolve({ ok: true, json: async () => ({}) }) },
-    );
-    // Stub the shared type dialog: immediately "create" a type.
-    window.openTypeDialog = (onCreated) => onCreated({ id: 42, name: "cable" });
-
-    document.querySelector(".ril-new-type").click();
-    await tick();
-
-    const typeSelect = document.querySelector("#invoice-review .ril-type");
-    expect([...typeSelect.options].map((o) => o.value)).toContain("42");
-    expect(typeSelect.value).toBe("42");
-    const patch = fetchMock.mock.calls.find(
-      ([url, opts]) => opts.method === "PATCH",
-    );
-    expect(JSON.parse(patch[1].body)).toEqual({ type_id: 42 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].prefill).toEqual({
+      typeId: "3",
+      mpn: "ABC123",
+      manufacturer: "Acme",
+      package: "SOT23",
+      notes: "A widget",
+      paramValues: [{ parameter_definition_id: 9, value: "4k7" }],
+    });
+    expect(calls[0].opts).toEqual({
+      stage: { invoiceId: "7", importLineId: "21" },
+    });
+    expect(typeof calls[0].cb).toBe("function"); // the reload callback
   });
 });
 

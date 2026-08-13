@@ -93,13 +93,9 @@
             {% if p.description %}<div class="muted small">{{ p.description }}</div>{% endif %}
           </td>
           <td>
-            <select class="control ril-type">
-              <option value="">— choose a type —</option>
-              {% for t in types %}
-              <option value="{{ t.id }}" {{ 'selected' if t.id == p.type_id else '' }}>{{ t.name }}</option>
-              {% endfor %}
-            </select>
-            <button type="button" class="btn btn-ghost btn-sm ril-new-type">+ New type</button>
+            {% set ns = namespace(name=None) %}
+            {% for t in types %}{% if t.id == p.type_id %}{% set ns.name = t.name %}{% endif %}{% endfor %}
+            {% if ns.name %}<span class="badge b-neutral">{{ ns.name }}</span>{% else %}<span class="muted">— set via Edit —</span>{% endif %}
           </td>
           <td class="num">{{ p.quantity }}</td>
           <td class="num">{{ format_money(p.unit_price) }} {{ invoice.currency }}</td>
@@ -216,53 +212,6 @@
         <input class="control" name="notes" placeholder="optional" />
       </div>
       <p id="invoice-meta-error" class="error" hidden></p>
-      <footer>
-        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
-        <button type="submit" class="btn btn-primary">Save</button>
-      </footer>
-    </form>
-  </article>
-</dialog>
-
-{# Review-edit a staged import line: type, identity fields and the type's parameters.
-   Saves to the staging row (component still created at finalize), not a component. #}
-<dialog id="invoice-import-line-dialog">
-  <article>
-    <header>
-      <strong>Review imported line</strong>
-      <button class="close" aria-label="Close" data-close></button>
-    </header>
-    <form id="invoice-import-line-form">
-      <input type="hidden" name="import_line_id" />
-      <div class="field">
-        <label>Type</label>
-        <select class="control" name="type_id" id="ril-edit-type">
-          <option value="">— choose a type —</option>
-          {% for t in types %}
-          <option value="{{ t.id }}">{{ t.name }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="field">
-        <label>Manufacturer</label>
-        <input class="control" name="manufacturer" />
-      </div>
-      <div class="field">
-        <label>MPN</label>
-        <input class="control" name="mpn" />
-      </div>
-      <div class="field">
-        <label>Package</label>
-        <input class="control" name="package" />
-      </div>
-      <div class="field">
-        <label>Notes</label>
-        <input class="control" name="description" />
-      </div>
-      <h3 class="section">Parameters</h3>
-      <div id="ril-edit-params"></div>
-      <p id="ril-edit-params-hint" class="muted" hidden></p>
-      <p id="invoice-import-line-error" class="error" hidden></p>
       <footer>
         <button type="button" class="btn btn-ghost" data-close>Cancel</button>
         <button type="submit" class="btn btn-primary">Save</button>
