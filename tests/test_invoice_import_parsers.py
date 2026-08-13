@@ -154,12 +154,38 @@ def test_tme_raises_when_an_item_row_is_unparseable() -> None:
         TmeInvoiceParser().parse(broken)
 
 
-def test_mouser_raises_when_an_item_row_is_unparseable() -> None:
-    # Corrupt one unit price so its item row fails to match; the "Numer katalogowy"
-    # markers (11) then exceed the parsed lines (10) — a silent drop is caught.
+def test_mouser_raises_on_an_item_shaped_line_it_cannot_read() -> None:
+    # Corrupt one unit price so its item row no longer matches; because the row still
+    # looks like an item ("<line> <sku> …"), the parser fails loudly and names it
+    # rather than folding it silently into the previous line's continuation.
     broken = _text("mouser.txt").replace("25,12", "2X,12", 1)
-    with pytest.raises(ValidationError, match="wasn't fully understood"):
+    with pytest.raises(ValidationError, match="could not read this Mouser line"):
         MouserInvoiceParser().parse(broken)
+
+
+def test_mouser_reads_comma_thousands_quantities() -> None:
+    # A bulk reel is quantitied "2,500" (= 2500) — a thousands separator, not a
+    # decimal. The row must match and parse to 2500, not be dropped.
+    from app.services.invoice_import.base import to_int
+    from app.services.invoice_import.mouser import _ITEM
+
+    row = "   6  810-C1005X7R1V104MBB   2,500   2,500   0   0,063   157,50"
+    match = _ITEM.match(row)
+    assert match is not None
+    assert to_int(match.group(4)) == 2500  # shipped qty
+
+
+def test_mouser_bulk_invoice_comma_quantities_and_wrapped_marker() -> None:
+    # A real invoice (redacted) that broke the old count-based check: two items are
+    # quantitied "2,500" and the last item's "Numer katalogowy" marker wrapped at a
+    # page break. All 11 rows parse; the comma quantities are 2500; the wrapped-marker
+    # item simply has no MPN (→ review) instead of crashing the whole import.
+    invoice = MouserInvoiceParser().parse(_text("mouser_bulk.txt"))
+    assert invoice.invoice_number == "89923858"
+    assert len(invoice.lines) == 11
+    assert sum(1 for line in invoice.lines if line.quantity == 2500) == 2
+    assert invoice.lines[-1].mpn is None
+    assert invoice.lines[-1].supplier_part_number == "947-UCLAMP2271P.TNT"
 
 
 def test_digikey_raises_when_an_item_row_is_unparseable() -> None:

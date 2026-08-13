@@ -96,8 +96,8 @@ def unit_price(total_price: str, per: int = 1, *, decimal_sep: str = ",") -> Dec
 
 
 def to_int(text: str) -> int:
-    """Parse a quantity that may carry space/NBSP thousands ("10 000" → 10000)."""
-    cleaned = text.strip().replace("\xa0", "").replace(" ", "")
+    """Parse a quantity with space/NBSP or comma thousands ("10 000", "2,500")."""
+    cleaned = text.strip().replace("\xa0", "").replace(" ", "").replace(",", "")
     try:
         return int(cleaned)
     except ValueError:

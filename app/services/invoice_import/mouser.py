@@ -26,10 +26,15 @@ _HEADER = re.compile(r"(\d{6,})\s+(\d{1,2}-[A-Za-z]{3}-\d{2,4})\s+\d+\s+of\s+\d+
 _CURRENCY = re.compile(r"Price\((\w{3})\)")
 
 # An item row: "1  771-NX3P1108UKZ  100  100  0  0,853  85,30". The Mouser catalogue
-# number is "<digits>-<mpn>"; the three integers are Ordered / Shipped / Pending.
+# number is "<digits>-<mpn>"; the three quantities are Ordered / Shipped / Pending and
+# can carry a comma thousands separator ("2,500" = 2500), stripped by ``to_int``.
 _ITEM = re.compile(
-    r"^\s*(\d+)\s+(\d{2,4}-\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+([\d.,]+)\s+([\d.,]+)\s*$"
+    r"^\s*(\d+)\s+(\d{2,4}-\S+)\s+([\d,]+)\s+([\d,]+)\s+([\d,]+)\s+([\d.,]+)\s+([\d.,]+)\s*$"
 )
+# A line that clearly starts an item row ("<line> <digits>-<sku> …") — used to fail
+# loudly on one the strict pattern couldn't read, instead of relying on a marker
+# count (the "Numer katalogowy" line can wrap at a page break and miscount).
+_LOOSE_ITEM = re.compile(r"^\s*\d+\s+\d{2,4}-\S")
 # The item table ends here; freight/handling/duty live in this totals block
 # (Merchandise / Handling / Freight / VAT / Tariff), never as an item row — so they
 # are not mis-parsed as components (they lack the "<digits>-<mpn>" SKU shape anyway).
@@ -68,7 +73,15 @@ class MouserInvoiceParser:
             if match:
                 flush()
                 item, cont = match, []
-            elif item is not None:
+                continue
+            if _LOOSE_ITEM.match(line):
+                # An item-shaped row the strict pattern couldn't read (an unforeseen
+                # quantity/price format) — fail loudly and point at it rather than
+                # silently folding it into the previous item's continuation.
+                raise ValidationError(
+                    f"could not read this Mouser line: {line.strip()!r}"
+                )
+            if item is not None:
                 if _STOP.search(line):
                     flush()
                     item, cont = None, []
@@ -76,15 +89,8 @@ class MouserInvoiceParser:
                     cont.append(line)
         flush()
 
-        # Every item carries exactly one "Numer katalogowy u producenta:" line; if
-        # the item-row regex dropped one (e.g. an unforeseen quantity/price format),
-        # the counts diverge — fail loudly rather than silently lose a line.
-        expected = text.count("Numer katalogowy u producenta:")
-        if not expected or len(parsed) != expected:
-            raise ValidationError(
-                f"recognised {len(parsed)} of {expected} Mouser lines — the invoice "
-                "layout wasn't fully understood"
-            )
+        if not parsed:
+            raise ValidationError("no invoice lines found in this Mouser PDF")
         return ParsedInvoice(
             supplier=self.supplier,
             invoice_number=header.group(1),
