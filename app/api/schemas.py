@@ -164,6 +164,9 @@ class InvoiceLineCreate(BaseModel):
     unit_price: Decimal
     supplier_part_number: str | None = None
     location_id: int | None = None
+    # When resolving a parked PDF-import line, its staging row is cleared with the
+    # add in one transaction (see invoice_service.add_line).
+    import_line_id: int | None = None
 
 
 class InvoiceUpdate(BaseModel):
@@ -238,6 +241,33 @@ class LineLocationSet(BaseModel):
 
 class InvoiceFinalize(BaseModel):
     total_gross: Decimal | None = None
+
+
+class InvoiceImportResult(BaseModel):
+    """Outcome of a PDF import: the draft invoice and how its lines landed."""
+
+    invoice_id: int
+    added: int
+    pending: int
+
+
+class InvoiceImportLineRead(BaseModel):
+    """A parked import line awaiting resolution on the draft invoice page."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    invoice_id: int
+    line_no: int
+    supplier_part_number: str | None
+    mpn: str | None
+    manufacturer: str | None
+    description: str | None
+    package: str | None
+    quantity: int
+    unit_price: Decimal
+    shop_key: str
+    reason: str
 
 
 class AttachmentRead(BaseModel):

@@ -49,18 +49,39 @@ class ShopProvider(Protocol):
 
 # Keyword → ShelfOS type name. Order matters: the more specific child types
 # (led, mosfet) come before their parents so "LED" doesn't resolve to "diode".
+# Polish aliases are included so a TME invoice — whose descriptions are Polish and
+# which has no shop API to enrich from — can still resolve a type it already has.
 _CATEGORY_KEYWORDS: list[tuple[str, str]] = [
     ("resistor", "resistor"),
+    ("rezystor", "resistor"),
     ("capacitor", "capacitor"),
+    ("kondensator", "capacitor"),
     ("inductor", "inductor"),
     ("ferrite", "inductor"),
+    ("cewka", "inductor"),
+    ("dławik", "inductor"),
     ("led", "led"),
     ("diode", "diode"),
+    ("dioda", "diode"),
     ("mosfet", "mosfet"),
     ("transistor", "transistor"),
+    ("tranzystor", "transistor"),
+    # Cable/wire BEFORE connector: a ribbon cable is described "Kabel … ze złączami
+    # IDC" — it contains "złącz", but the leading noun is the real category, and
+    # list order is what wins here, so cable must be checked first.
+    ("kabel", "cable"),
+    ("przewód", "cable"),
+    ("cable", "cable"),
     ("connector", "connector"),
+    ("złącz", "connector"),
     ("crystal", "crystal"),
     ("oscillator", "crystal"),
+    ("kwarc", "crystal"),
+    ("rezonator", "crystal"),
+    # Integrated circuits. Kept LAST (most generic) and matched only on TME's literal
+    # "IC:" prefix — the colon is deliberate, so it can't false-match "logic",
+    # "electric" or "STMicroelectronics" the way a bare "ic" would.
+    ("ic:", "ic"),
 ]
 
 

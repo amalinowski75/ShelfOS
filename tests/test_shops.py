@@ -164,6 +164,17 @@ def test_import_code_rejects_a_malformed_url() -> None:
         ("Standard LEDs - SMD", "led"),
         ("Rectifier Diode", "diode"),
         ("MOSFET N-Channel", "mosfet"),
+        # TME's Polish descriptions and its "IC:" integrated-circuit prefix.
+        ("Rezystor:thick film;SMD;0402", "resistor"),
+        ("Kondensator:ceramiczny;MLCC", "capacitor"),
+        ("IC:komparator;low-power;Cmp:2", "ic"),
+        # The "ic:" keyword must not false-match these (no colon in the right place).
+        ("Logic gate 74HC00", None),
+        ("STMicroelectronics buck converter", None),
+        # A ribbon cable names its connectors ("ze złączami"), but it's a cable —
+        # the leading noun wins because cable is checked before connector.
+        ("Kabel wstążkowy ze złączami IDC;R.taśmy:1,27mm", "cable"),
+        ("Złącze:proste;PIN:8;THT", "connector"),  # a real connector still resolves
         ("Some Widget", None),
     ],
 )

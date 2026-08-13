@@ -1,0 +1,129 @@
+                                                                                    
+                                                  Faktura dot. Karty kredytowej     
+                                                  Invoice - Credit Card Receipt     
+                                                                                    
+                                                    Nr faktury Data faktury Nr strony
+                                                    Invoice No. Invoice Date Page No.
+     1000 North Main Street, Mansfield, TX 76063, USA                               
+     Przedstawiciel ds. obsługi klienta: Internet Customer Service 91185641 02-JUL-26 1 of 2
+     Obsługa klienta: +48 71 749 74 00                                              
+     Finanse: +49 (0)89 520 462 115                  Numer zamówienia Nr śledzenia zam.
+     VAT# FR 27512466913                             Purchase Order No. Master Tracker No.
+                           INCOTERMS: DDP              39680750      000000000000   
+            Osoba kontaktowa     Wysyłka za pośrednictwem Numer klienta Warunki Data zamówienia
+             Contact Name            Ship Via      Customer Number Terms Order Date 
+            SAMPLE BUYER      FEDEX INT'L PRIORITY 0000000  VI 1785  01-JUL-26   
+             SAMPLE BUYER SAMPLE CO      SAMPLE BUYER                   
+       Odbiorca ATTN: SAMPLE BUYER      Adres dostawy UL. SAMPLE 1 
+       Bill To UL. SAMPLE 1   Ship To 00-000 SAMPLE CITY             
+             00-000 SAMPLE CITY                  POLAND                            
+             POLAND                               VAT# PL 0000000000                
+                                        Zamówiona      Oczekująca                   
+       Nr Nr katalogowy Mouser Mouser Part Number Wysłana ilość        Wartość towaru
+                                          ilość          ilość Cena jednostkowa     
+      pozycji Nr katalogowy u producenta Customer/MFG Part No. Quantity  Extended   
+                                         Quantity       Quantity Unit Price(PLN)    
+     Line No. Opis               Description    Shipped                 Price(PLN)  
+                                         Ordered        Pending                     
+       1  771-NX3P1108UKZ                   100     100     0      0,853    85,30   
+          Numer katalogowy u producenta: NX3P1108UKZ                                
+          NXP Semiconductors Logic controlled hi- / Układy scalone do przełączników zasilania – dystrybucja mocy
+          TARIC:8542399000 ECCN:EAR99 COO:NL ACO:-- COD:--                          
+       2  579-USB7006T/KDX                    5      5      0      25,12   125,60   
+          Numer katalogowy u producenta: USB7006T/KDX                               
+          Microchip Technology USB3.1 GEN1 HUB WITH / Układy scalone interfejsu USB 
+          US HTS:8542310030 ECCN:EAR99 COO:TW ACO:-- COD:--                         
+       3  538-501568-0407                    25     25      0       1,84    46,00   
+          Numer katalogowy u producenta: 501568-0407                                
+          Molex 1.0 WtB 4Ckt R/AWafe / Złącza sygnałowe i przemysłowe               
+          TARIC:8536693000 ECCN:EAR99 COO:VN ACO:-- COD:--                          
+       4  640-USB4056-03-A                   10     10      0       2,86    28,60   
+          Numer katalogowy u producenta: USB4056-03-A                               
+          GCT USB C 3.2 Rec, Horz, / Złącza USB                                     
+          TARIC:8536693000 ECCN:EAR99 COO:CN ACO:-- COD:--                          
+       5  595-TPS259481AYWPR                 25     25      0       5,8    145,00   
+          Numer katalogowy u producenta: TPS259481AYWPR                             
+          Texas Instruments 3.5-V to 23-V 12.2- / Układy scalone do przełączników zasilania – dystrybucja mocy
+          TARIC:8542399000 ECCN:EAR99 COO:CN ACO:-- COD:--                          
+       6  595-HD3SS3220RNHT                  10     10      0      12,85   128,50   
+          Numer katalogowy u producenta: HD3SS3220RNHT                              
+          Texas Instruments 10-Gbps USB 3.1 Type / Układy scalone interfejsu USB    
+          TARIC:8542399000 ECCN:EAR99 COO:PH ACO:-- COD:--                          
+         Wartość towarów  Obsługa        Fracht         VAT           Taryfa        
+          Merchandise    Handling        Freight        VAT            Tariff       
+                                                          Dalej Continued           
+                Informacje dotyczące wysyłki           Shipping Information         
+     Data wysyłki: Jul 02, 2026                                                     
+     Te elementy podlegają nadzorowi rządu Stanów Zjednoczonych i są dopuszczone wyłącznie do eksportu do kraju docelowego użytku przez docelowego odbiorcę lub
+     określonych tutaj użytkowników końcowych. Zabrania się ich odsprzedaży, przekazywania lub usuwania do krajów lub osób innych niż upoważnieni docelowi odbiorcy
+     lub użytkownicy końcowi — ani w pierwotnej postaci, ani po dołączeniu do innych elementów — bez uprzedniego uzyskania pozwolenia rządu Stanów Zjednoczonych
+     lub innego stosownego upoważnienia na mocy prawa i uregulowań Stanów Zjednoczonych.
+     Odwrotne obciążenie podatku VAT — dostawa wewnątrzwspólnotowa.                 
+     Ship Date: Jul 02, 2026                                                        
+     These items are controlled by the U.S. Government and authorized for export only to the country of ultimate destination for use by the ultimate
+     consignee or end-user(s) herein identified. They may not be resold, transferred, or otherwise disposed of, to any other country or to any person
+               Numer śledzenia i rozliczona waga   Tracking Number(s) and Billed Weights
+     000000000000 0.80 lb                                                           
+                 French Fiscal Representative: Fiscal Solutions S.A.R.L, 23 Rue du Clos d'Orléans, Fontenay-sous-Bois, 94 120, FR
+             Niniejsze zamówienie podlega wszystkim warunkom i zasadom sprzedaży przedstawionym na stronie:http://pl.mouser.com/saleterms/
+                      This order is subject to all terms and conditions displayed at:http://pl.mouser.com/saleterms/
+                                                                                    
+                                                  Faktura dot. Karty kredytowej     
+                                                  Invoice - Credit Card Receipt     
+                                                                                    
+                                                    Nr faktury Data faktury Nr strony
+                                                    Invoice No. Invoice Date Page No.
+     1000 North Main Street, Mansfield, TX 76063, USA                               
+     Przedstawiciel ds. obsługi klienta: Internet Customer Service 91185641 02-JUL-26 2 of 2
+     Obsługa klienta: +48 71 749 74 00                                              
+     Finanse: +49 (0)89 520 462 115                  Numer zamówienia Nr śledzenia zam.
+     VAT# FR 27512466913                             Purchase Order No. Master Tracker No.
+                           INCOTERMS: DDP              39680750      000000000000   
+            Osoba kontaktowa     Wysyłka za pośrednictwem Numer klienta Warunki Data zamówienia
+             Contact Name            Ship Via      Customer Number Terms Order Date 
+            SAMPLE BUYER      FEDEX INT'L PRIORITY 0000000  VI 1785  01-JUL-26   
+             SAMPLE BUYER SAMPLE CO      SAMPLE BUYER                   
+       Odbiorca ATTN: SAMPLE BUYER      Adres dostawy UL. SAMPLE 1 
+       Bill To UL. SAMPLE 1   Ship To 00-000 SAMPLE CITY             
+             00-000 SAMPLE CITY                  POLAND                            
+             POLAND                               VAT# PL 0000000000                
+                                        Zamówiona      Oczekująca                   
+       Nr Nr katalogowy Mouser Mouser Part Number Wysłana ilość        Wartość towaru
+                                          ilość          ilość Cena jednostkowa     
+      pozycji Nr katalogowy u producenta Customer/MFG Part No. Quantity  Extended   
+                                         Quantity       Quantity Unit Price(PLN)    
+     Line No. Opis               Description    Shipped                 Price(PLN)  
+                                         Ordered        Pending                     
+       7  595-TMUXHS4412RUAR                 10     10      0       7,56    75,60   
+          Numer katalogowy u producenta: TMUXHS4412RUAR                             
+          Texas Instruments 4-Channel 20-Gbps di / Układy scalone do przełączników multipleksowych
+          TARIC:8542399000 ECCN:EAR99 COO:CN ACO:-- COD:--                          
+       8  511-STM32G030F6P6TR                10     10      0       2,93    29,30   
+          Numer katalogowy u producenta: STM32G030F6P6TR                            
+          STMicroelectronics Mainstream Value-Lin / Mikrokontrolery ARM - MCU       
+          TARIC:8542319000 ECCN:3A991.a.2 COO:CN ACO:-- COD:--                      
+       9  511-ST3485EBDR                     10     10      0       3,9     39,00   
+          Numer katalogowy u producenta: ST3485EBDR                                 
+          STMicroelectronics 3.3 V Powered, 15 kV / Układy scalone interfejsów RS-422/RS-485
+          TARIC:8542399000 ECCN:EAR99 COO:SG ACO:SG COD:--                          
+       10 595-TS3USB30EDGSR                  10     10      0       2,15    21,50   
+          Numer katalogowy u producenta: TS3USB30EDGSR                              
+          Texas Instruments High-Speed USB 2.0 1 / Układy scalone włączników USB    
+          TARIC:8542399000 ECCN:EAR99 COO:TH ACO:TH COD:DE                          
+       11 710-632712000112                   10     10      0      12,68   126,80   
+          Numer katalogowy u producenta: 632712000112                               
+          Wurth Elektronik WR-COM SMT Horizonta / Złącza USB                        
+          TARIC:8536693000 ECCN:EAR99 COO:CN ACO:-- COD:--                          
+         Wartość towarów  Obsługa        Fracht         VAT           Taryfa        
+          Merchandise    Handling        Freight        VAT            Tariff       
+                 851,20         0,00           0,00           0,00           0,00   
+                                             Płatność kartą kredytową Paid by credit card PLN 851,20
+                Informacje dotyczące wysyłki           Shipping Information         
+     other than the authorized ultimate consignee or end-user(s), either in their original form or after being incorporated into other items, without
+     first obtaining approval from the U.S. government or as otherwise authorized by U.S. law and regulations. VAT reverse charge - intra community
+     -delivery.                                                                     
+               Numer śledzenia i rozliczona waga   Tracking Number(s) and Billed Weights
+                                                                                    
+                 French Fiscal Representative: Fiscal Solutions S.A.R.L, 23 Rue du Clos d'Orléans, Fontenay-sous-Bois, 94 120, FR
+             Niniejsze zamówienie podlega wszystkim warunkom i zasadom sprzedaży przedstawionym na stronie:http://pl.mouser.com/saleterms/
+                      This order is subject to all terms and conditions displayed at:http://pl.mouser.com/saleterms/

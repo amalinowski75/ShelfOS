@@ -30,6 +30,7 @@ from app.models.user import User
 from app.services import attachment_service as ats
 from app.services import bom_service as boms_svc
 from app.services import component_service as cs
+from app.services import invoice_import_service as imp
 from app.services import invoice_service as inv
 from app.services import location_service as ls
 from app.services import stock_service as ss
@@ -384,12 +385,15 @@ def invoice_detail(
     # fetch its data then (avoids a types query on read-only/finalized views).
     can_edit = user.role.value != "read-only" and not invoice.is_finalized
     tree = ls.location_tree(session) if can_edit else []
+    # Parked PDF-import lines awaiting resolution — only shown on an editable draft.
+    pending_import = imp.list_pending(session, invoice_id) if can_edit else []
     return templates.TemplateResponse(
         request,
         "invoice_detail.html",
         {
             "invoice": invoice,
             "lines": lines,
+            "pending_import_lines": pending_import,
             # The line dialog (location tree-picker + "New component") only renders
             # for a writer on a draft, so only fetch its data then.
             "location_tree": tree,

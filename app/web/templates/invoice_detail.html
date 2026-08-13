@@ -34,7 +34,10 @@
   <div class="head-actions">
     <button type="button" class="btn btn-ghost" id="invoice-edit-btn">Edit</button>
     <button type="button" class="btn btn-secondary" id="invoice-addline-btn">Add line</button>
-    {% if lines %}<button type="button" class="btn btn-primary" id="invoice-finalize-btn">Finalize</button>{% endif %}
+    {# Finalize is offered only once every imported line is resolved: it is blocked
+       server-side while any remain (they'd be orphaned), so don't invite the click. #}
+    {% if lines and not pending_import_lines %}<button type="button" class="btn btn-primary" id="invoice-finalize-btn">Finalize</button>{% endif %}
+    <button type="button" class="btn btn-danger" id="invoice-delete-btn">Delete draft</button>
   </div>
   {% endif %}
 </div>
@@ -56,11 +59,59 @@
   {% if invoice.notes %}<p class="muted" style="margin: 14px 0 0">{{ invoice.notes }}</p>{% endif %}
 </div>
 
+{% if can_edit and pending_import_lines %}
+<div class="card card-pad" id="invoice-pending" style="margin-top: 20px">
+  <h2>Needs review <span class="badge b-warn">{{ pending_import_lines | length }}</span></h2>
+  <p class="muted">Lines from the imported PDF that need a component. Resolve each to
+    add it (creating the component/type if needed), or dismiss it. The invoice can be
+    finalized once this list is empty.</p>
+  <div class="table-wrap">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>Part</th>
+          <th>Supplier part #</th>
+          <th style="text-align:right">Qty</th>
+          <th style="text-align:right">Unit price</th>
+          <th>Needs</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in pending_import_lines %}
+        <tr data-import-line-id="{{ p.id }}"
+            data-mpn="{{ p.mpn or '' }}"
+            data-manufacturer="{{ p.manufacturer or '' }}"
+            data-description="{{ p.description or '' }}"
+            data-package="{{ p.package or '' }}"
+            data-quantity="{{ p.quantity }}"
+            data-unit-price="{{ format_money(p.unit_price) }}"
+            data-spn="{{ p.supplier_part_number or '' }}">
+          <td>
+            <span class="mono">{{ p.mpn or ("Line " ~ p.line_no) }}</span>
+            {% if p.manufacturer %}<span class="muted"> · {{ p.manufacturer }}</span>{% endif %}
+          </td>
+          <td class="mono">{{ p.supplier_part_number or "—" }}</td>
+          <td class="num">{{ p.quantity }}</td>
+          <td class="num">{{ format_money(p.unit_price) }} {{ invoice.currency }}</td>
+          <td class="muted">{{ p.reason }}</td>
+          <td class="line-actions">
+            <button type="button" class="btn btn-primary btn-sm" data-act="resolve-import">Resolve</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="dismiss-import">Dismiss</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
 <div class="card card-pad" style="margin-top: 20px">
   <h2>Lines</h2>
   {% if lines %}
   <div class="table-wrap">
-    <table class="data">
+    <table class="data" id="invoice-lines">
       <thead>
         <tr>
           <th>Component</th>
@@ -111,9 +162,13 @@
 </div>{# /#invoice-detail #}
 
 {# Uploads are allowed for any writer, including on a finalized invoice (e.g. to
-   attach the scanned PDF after finalizing) — so gate on role, not can_edit. #}
+   attach the scanned PDF after finalizing) — so gate on role, not can_edit. The
+   wrapper adds the same inter-card gap the cards above set inline (the shared
+   attachments macro carries no outer margin of its own). #}
+<div style="margin-top: 20px">
 {{ attachments_card("invoice", invoice.id,
                     current_user.role.value != "read-only", attachment_kinds) }}
+</div>
 
 {% if can_edit %}
 <dialog id="invoice-meta-dialog">

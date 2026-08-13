@@ -66,6 +66,55 @@ if (newInvoiceBtn) {
   });
 }
 
+// ---- Import invoice from PDF (list page) -----------------------------------
+const importBtn = document.getElementById("invoice-import-btn");
+if (importBtn) {
+  const dialog = document.getElementById("invoice-import-dialog");
+  const form = document.getElementById("invoice-import-form");
+  const error = document.getElementById("invoice-import-error");
+  const submit = document.getElementById("invoice-import-submit");
+
+  importBtn.addEventListener("click", () => {
+    form.reset();
+    error.hidden = true;
+    dialog.showModal();
+  });
+
+  // Own in-flight flag (not the shared `guard`): parsing a PDF and looking each
+  // line up at the shop can take a few seconds, and the button reflects that.
+  let importing = false;
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (importing) return;
+    importing = true;
+    submit.disabled = true;
+    submit.textContent = "Importing…";
+    (async () => {
+      try {
+        // FormData drives the multipart request; no Content-Type header so the
+        // browser sets the boundary (same as the BOM/attachment uploads).
+        const resp = await fetch("/api/invoices/import", {
+          method: "POST",
+          headers: { "X-CSRF-Token": csrfToken },
+          body: new FormData(form),
+        });
+        if (resp.ok) {
+          const result = await resp.json();
+          window.location = `/invoices/${result.invoice_id}`; // to the draft
+        } else {
+          showError(error, await errorMessage(resp));
+        }
+      } catch {
+        showError(error, "Could not reach the server.");
+      } finally {
+        importing = false;
+        submit.disabled = false;
+        submit.textContent = "Import";
+      }
+    })();
+  });
+}
+
 // ---- Detail page: metadata, lines, finalize --------------------------------
 // The edit controls (and their dialogs) are only rendered for a writer viewing
 // a draft; on a finalized or read-only page there is nothing to wire up.
@@ -126,6 +175,9 @@ if (detail && lineDialog) {
 
   // Fetch the component list once and reuse it for the picker.
   let componentOptions = null;
+  // Seeds the shared "New component" dialog when resolving an import line, so it
+  // opens pre-filled from what the invoice told us; null for a plain add.
+  let componentPrefill = null;
   async function loadComponentOptions() {
     if (componentOptions) return componentOptions;
     const payload = await fetch("/web/api/components").then((r) => r.json());
@@ -157,6 +209,8 @@ if (detail && lineDialog) {
     lineForm.line_id.value = "";
     lineForm.dataset.originalLocationId = "";
     lineForm.dataset.originalSpn = "";
+    lineForm.dataset.importLineId = "";
+    componentPrefill = null;
     locationPicker?.reset();
     componentField.hidden = false;
     componentSelect.required = true;
@@ -164,6 +218,35 @@ if (detail && lineDialog) {
     if (!options.length) {
       showError(lineError, "No components yet — use “New component” to add one.");
     }
+    fillComponentSelect(options);
+    lineDialog.showModal();
+  }
+
+  // Resolve a parked PDF-import line: the same line dialog, pre-filled with what
+  // the invoice carried and remembering the import line so the add clears it. The
+  // component still has to be chosen — an existing one, or "+ New component"
+  // (pre-filled from the same data), which can create its type inline.
+  async function openResolveLine(row) {
+    lineForm.reset();
+    lineError.hidden = true;
+    lineTitle.textContent = "Resolve import line";
+    lineForm.line_id.value = "";
+    lineForm.dataset.originalLocationId = "";
+    lineForm.dataset.originalSpn = "";
+    lineForm.dataset.importLineId = row.dataset.importLineId;
+    lineForm.quantity.value = row.dataset.quantity;
+    lineForm.unit_price.value = row.dataset.unitPrice;
+    lineForm.supplier_part_number.value = row.dataset.spn;
+    locationPicker?.reset();
+    componentField.hidden = false;
+    componentSelect.required = true;
+    componentPrefill = {
+      mpn: row.dataset.mpn || null,
+      manufacturer: row.dataset.manufacturer || null,
+      package: row.dataset.package || null,
+      notes: row.dataset.description || null,
+    };
+    const options = await loadComponentOptions();
     fillComponentSelect(options);
     lineDialog.showModal();
   }
@@ -187,7 +270,7 @@ if (detail && lineDialog) {
         }
         componentSelect.value = String(created.id);
         lineError.hidden = true;
-      });
+      }, componentPrefill);
     });
   }
 
@@ -199,6 +282,8 @@ if (detail && lineDialog) {
     // a line to a different component), so the picker is hidden.
     componentField.hidden = true;
     componentSelect.required = false;
+    lineForm.dataset.importLineId = "";
+    componentPrefill = null;
     lineForm.line_id.value = row.dataset.lineId;
     lineForm.quantity.value = row.dataset.quantity;
     lineForm.unit_price.value = row.dataset.unitPrice;
@@ -221,12 +306,15 @@ if (detail && lineDialog) {
       const locationValue = lineForm.location_id.value;
 
       if (!lineId) {
+        const importLineId = lineForm.dataset.importLineId;
         const resp = await sendJSON(`/api/invoices/${invoiceId}/lines`, "POST", {
           component_id: Number(componentSelect.value),
           quantity,
           unit_price: unitPrice,
           supplier_part_number: lineForm.supplier_part_number.value.trim() || null,
           location_id: locationValue ? Number(locationValue) : null,
+          // Set when resolving a parked line: clears its staging row atomically.
+          import_line_id: importLineId ? Number(importLineId) : null,
         });
         if (resp.ok) return window.location.reload();
         return showError(lineError, await errorMessage(resp));
@@ -283,8 +371,35 @@ if (detail && lineDialog) {
   const addLineBtn = document.getElementById("invoice-addline-btn");
   addLineBtn.addEventListener("click", openAddLine);
 
-  // Per-row edit / remove, delegated from the lines table.
-  document.querySelector("table.data")?.addEventListener("click", (event) => {
+  // --- Parked PDF-import lines: resolve (open the line dialog) or dismiss ---
+  document
+    .getElementById("invoice-pending")
+    ?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-act]");
+      if (!button) return;
+      const row = button.closest("tr");
+      if (button.dataset.act === "resolve-import") {
+        openResolveLine(row);
+      } else if (button.dataset.act === "dismiss-import") {
+        if (!window.confirm("Dismiss this line? It won't be added to the invoice."))
+          return;
+        guard(async () => {
+          const resp = await fetch(
+            `/api/invoices/${invoiceId}/import-lines/${row.dataset.importLineId}`,
+            { method: "DELETE", headers: { "X-CSRF-Token": csrfToken } },
+          );
+          if (resp.ok) {
+            window.location.reload();
+          } else {
+            window.alert(await errorMessage(resp));
+          }
+        });
+      }
+    });
+
+  // Per-row edit / remove, delegated from the lines table. Scoped by id (not
+  // ".data") so the pending-import panel, itself a .data table, isn't captured.
+  document.getElementById("invoice-lines")?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-act]");
     if (!button) return;
     const row = button.closest("tr");
@@ -305,6 +420,30 @@ if (detail && lineDialog) {
       });
     }
   });
+
+  // --- Delete draft ---
+  const deleteBtn = document.getElementById("invoice-delete-btn");
+  if (deleteBtn) {
+    deleteBtn.addEventListener("click", () => {
+      if (
+        !window.confirm(
+          "Delete this draft invoice and everything imported with it? This can't be undone.",
+        )
+      )
+        return;
+      guard(async () => {
+        const resp = await fetch(`/api/invoices/${invoiceId}`, {
+          method: "DELETE",
+          headers: { "X-CSRF-Token": csrfToken },
+        });
+        if (resp.ok) {
+          window.location = "/invoices"; // back to the list; the draft is gone
+        } else {
+          window.alert(await errorMessage(resp));
+        }
+      });
+    });
+  }
 
   // --- Finalize ---
   const finalizeBtn = document.getElementById("invoice-finalize-btn");

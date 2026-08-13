@@ -9,6 +9,7 @@
   </div>
   {% if current_user.role.value != "read-only" %}
   <div class="head-actions">
+    <button type="button" class="btn btn-ghost" id="invoice-import-btn">Import from PDF</button>
     <button type="button" class="btn btn-secondary" id="invoice-new-btn">New invoice</button>
   </div>
   {% endif %}
@@ -18,6 +19,29 @@
 <p id="invoice-list-hint" class="muted" style="margin: 12px 0 0" hidden></p>
 
 {% if current_user.role.value != "read-only" %}
+<dialog id="invoice-import-dialog">
+  <article>
+    <header>
+      <strong>Import invoice from PDF</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <form id="invoice-import-form">
+      <p class="muted">A text PDF from TME, Mouser or Digi-Key. The shop is detected
+        automatically; matched lines are added and the rest are listed for review on
+        the draft.</p>
+      <div class="field">
+        <label>Invoice PDF</label>
+        <input class="control" type="file" name="file" accept="application/pdf,.pdf" required />
+      </div>
+      <p id="invoice-import-error" class="error" hidden></p>
+      <footer>
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" class="btn btn-primary" id="invoice-import-submit">Import</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+
 <dialog id="invoice-new-dialog">
   <article>
     <header>

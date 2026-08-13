@@ -18,9 +18,9 @@ from sqlmodel import Session, col, select
 
 from app.models.component import Component
 from app.models.enums import StockReason
-from app.models.invoice import Invoice, InvoiceLine
+from app.models.invoice import Invoice, InvoiceImportLine, InvoiceLine
 from app.models.location import Location
-from app.services import audit_service, stock_service
+from app.services import attachment_service, audit_service, stock_service
 from app.services._common import require_entity
 from app.services.errors import (
     InvoiceFinalizedError,
@@ -150,8 +150,15 @@ def add_line(
     unit_price: Decimal,
     supplier_part_number: str | None = None,
     location_id: int | None = None,
+    import_line_id: int | None = None,
 ) -> InvoiceLine:
-    """Add a line to a draft invoice; ``total_price`` is computed automatically."""
+    """Add a line to a draft invoice; ``total_price`` is computed automatically.
+
+    When ``import_line_id`` is given (resolving a parked PDF-import line), its staging
+    row is deleted in the same transaction, so the line becoming real and the
+    outstanding row disappearing can't diverge. A staging row that names a different
+    invoice, or is already gone, is ignored.
+    """
     invoice = _require_draft(session, invoice_id)
     require_entity(session, Component, component_id, "component")
     if quantity <= 0:
@@ -171,6 +178,10 @@ def add_line(
         location_id=location_id,
     )
     session.add(line)
+    if import_line_id is not None:
+        staging = session.get(InvoiceImportLine, import_line_id)
+        if staging is not None and staging.invoice_id == invoice_id:
+            session.delete(staging)
     session.commit()
     session.refresh(line)
     _recompute_net(session, invoice)
@@ -241,6 +252,28 @@ def remove_line(
     session.delete(line)
     session.commit()
     _recompute_net(session, invoice)
+
+
+def delete_invoice(session: Session, invoice_id: int) -> None:
+    """Delete a draft invoice and everything attached to it.
+
+    Only a **draft** can be deleted — a finalized invoice is a permanent purchase
+    record (it generated stock movements), so this raises for one. Removes the
+    invoice's lines, any parked PDF-import lines, and its stored PDF attachment, so
+    a mistaken or superseded import can be cleared and re-imported cleanly.
+    """
+    invoice = _require_draft(session, invoice_id)
+    for line in _lines_of(session, invoice_id):
+        session.delete(line)
+    for staged in session.exec(
+        select(InvoiceImportLine).where(InvoiceImportLine.invoice_id == invoice_id)
+    ).all():
+        session.delete(staged)
+    attachment_service.delete_attachments_for(
+        session, entity_type="invoice", entity_id=invoice_id
+    )
+    session.delete(invoice)
+    session.commit()
 
 
 def update_line(
@@ -350,6 +383,17 @@ def finalize_invoice(
     if any(line.location_id is None for line in lines):
         raise ValidationError(
             "every invoice line must have a location before finalization"
+        )
+    # Finalizing hides the "needs attention" panel (it renders only on a draft) and
+    # a parked line can never become real afterwards (add_line requires a draft), so
+    # any left unresolved would be silently orphaned. Block until they're gone.
+    pending = session.exec(
+        select(InvoiceImportLine).where(InvoiceImportLine.invoice_id == invoice_id)
+    ).all()
+    if pending:
+        raise ValidationError(
+            f"{len(pending)} imported line(s) still need review — resolve or dismiss "
+            "them before finalizing"
         )
 
     net = _net_total(session, invoice_id)

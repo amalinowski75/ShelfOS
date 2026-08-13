@@ -25,7 +25,7 @@ from app.models.enums import (
     StockReason,
     UserRole,
 )
-from app.models.invoice import Invoice, InvoiceLine
+from app.models.invoice import Invoice, InvoiceImportLine, InvoiceLine
 from app.models.link import Link
 from app.models.location import ComponentLocation, Location
 from app.models.stock import StockMovement
@@ -44,6 +44,7 @@ __all__ = [
     "ComponentType",
     "ContainerType",
     "Invoice",
+    "InvoiceImportLine",
     "InvoiceLine",
     "Link",
     "LinkKind",

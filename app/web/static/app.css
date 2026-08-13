@@ -165,6 +165,11 @@ a { color: var(--accent-strong); text-underline-offset: 2px; }
 
 /* ---------- form controls ---------- */
 .field { display: flex; flex-direction: column; gap: 5px; }
+/* `.field` sets `display: flex`, which beats the UA `[hidden] { display: none }`, so
+   a JS-toggled field (the invoice line dialog hides its Component field on edit) would
+   stay on screen — showing an empty, unusable combobox. Restore the attribute's
+   authority (same trap as .btn[hidden] / .badge[hidden]). */
+.field[hidden] { display: none; }
 .field label { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .01em; }
 .control {
   appearance: none; font: inherit; width: 100%; color: var(--text);
