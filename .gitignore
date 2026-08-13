@@ -27,6 +27,7 @@ node_modules/
 *.sqlite3
 /data/
 /attachments/
+/backups/
 
 # IDE / OS
 .vscode/
