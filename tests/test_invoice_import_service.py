@@ -546,15 +546,18 @@ def test_duplicate_invoice_is_rejected(session: Session, monkeypatch) -> None:
 # --- resolving a parked line clears it (via add_line reconcile) ---------------
 
 
+@pytest.mark.parametrize("cleared", ["type", "location"])
 def test_materialize_rejects_a_row_that_lost_its_type_or_location(
-    session: Session, monkeypatch
+    session: Session, cleared: str
 ) -> None:
     # Simulates the concurrent-PATCH race: finalize's upfront snapshot said the row
-    # was ready, but by the time materialize runs its location has been cleared. It
-    # must raise (not silently skip, not build a location-less line) — nothing created.
+    # was ready, but by the time materialize runs its type OR location has been
+    # cleared. Either way it must raise (never silently skip a typeless row →
+    # orphaned; never build a location-less line → 500) — and create nothing.
     from app.models.invoice import InvoiceImportLine
 
     rt = cs.create_type(session, "resistor")
+    location = _make_location(session)
     invoice = invoice_service.create_invoice(
         session, supplier="TME", invoice_number="M", invoice_date=date(2026, 1, 1),
         currency="PLN",
@@ -562,8 +565,10 @@ def test_materialize_rejects_a_row_that_lost_its_type_or_location(
     session.add(
         InvoiceImportLine(
             invoice_id=invoice.id, line_no=1, mpn="R1", manufacturer="Acme",
-            quantity=1, unit_price=Decimal("1"), shop_key="tme", type_id=rt.id,
-            location_id=None, reason="",
+            quantity=1, unit_price=Decimal("1"), shop_key="tme",
+            type_id=None if cleared == "type" else rt.id,
+            location_id=None if cleared == "location" else location,
+            reason="",
         )
     )
     session.commit()
