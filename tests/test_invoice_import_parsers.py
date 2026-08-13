@@ -198,6 +198,63 @@ def test_digikey_raises_when_an_item_row_is_unparseable() -> None:
         DigiKeyInvoiceParser().parse(broken)
 
 
+def test_mouser_raises_when_a_wrapped_row_would_form_a_chimera() -> None:
+    # The reviewer's reproduction: item 2's row wraps so its line number sits alone
+    # and the rest no longer looks item-shaped. Both halves fold into item 1's
+    # continuation — and item 2's part-number marker would OVERWRITE item 1's MPN,
+    # producing one line with item 1's qty/price and item 2's MPN. Must raise.
+    row = "2  579-USB7006T/KDX                    5      5      0      25,12   125,60"
+    text = _text("mouser.txt")
+    assert "       " + row in text
+    text = text.replace("       " + row, "       2\n  " + row[3:], 1)
+    with pytest.raises(ValidationError, match="two part-number cells"):
+        MouserInvoiceParser().parse(text)
+
+
+def test_mouser_counts_markers_when_a_row_vanishes_entirely() -> None:
+    # A first-table row corrupted beyond even the loose item shape: its lines drop
+    # with no item active, so neither the strict nor the loose pattern can flag it.
+    # The marker count (labels in text vs labels consumed) is the net that catches it.
+    text = _text("mouser.txt").replace(
+        "       1  771-NX3P1108UKZ", "       X  771-NX3P1108UKZ", 1
+    )
+    with pytest.raises(ValidationError, match="wasn't fully understood"):
+        MouserInvoiceParser().parse(text)
+
+
+def test_mouser_unlabelled_form_requires_a_numeric_left_token() -> None:
+    # A title-less description ("Vishay / Rezystory") has the same two-token shape as
+    # the unlabelled part-number cell — it must NOT be read as an MPN (a category word
+    # as MPN poisons enrichment; no MPN just routes the row to review).
+    text = _text("mouser.txt").replace(
+        "Numer katalogowy u producenta: NX3P1108UKZ", "Vishay / Rezystory", 1
+    )
+    invoice = MouserInvoiceParser().parse(text)
+    line = next(
+        row for row in invoice.lines
+        if row.supplier_part_number == "771-NX3P1108UKZ"
+    )
+    assert line.mpn is None  # → review, not a fake MPN
+    assert line.description == "Vishay"
+
+
+def test_number_helpers_reject_malformed_grouping() -> None:
+    # A damaged extraction must fail loudly, not parse to a plausible wrong number.
+    from app.services.invoice_import.base import to_decimal, to_int
+
+    assert to_int("2,500") == 2500
+    assert to_int("10 000") == 10000
+    for bad in ("2,50", "2,5", ",500"):
+        with pytest.raises(ValidationError):
+            to_int(bad)
+    assert to_decimal("1,234.56", decimal_sep=".") == Decimal("1234.56")
+    assert to_decimal("1.234,56", decimal_sep=",") == Decimal("1234.56")
+    with pytest.raises(ValidationError):
+        to_decimal("6,12.9", decimal_sep=".")  # damaged "6,129" / "612.9"
+    with pytest.raises(ValidationError):
+        to_decimal("6.12,9", decimal_sep=",")
+
+
 def test_mouser_requires_a_currency() -> None:
     broken = _text("mouser.txt").replace("Price(PLN)", "Price()")
     with pytest.raises(ValidationError, match="currency"):
