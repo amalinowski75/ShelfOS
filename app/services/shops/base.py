@@ -66,6 +66,12 @@ _CATEGORY_KEYWORDS: list[tuple[str, str]] = [
     ("mosfet", "mosfet"),
     ("transistor", "transistor"),
     ("tranzystor", "transistor"),
+    # Cable/wire BEFORE connector: a ribbon cable is described "Kabel … ze złączami
+    # IDC" — it contains "złącz", but the leading noun is the real category, and
+    # list order is what wins here, so cable must be checked first.
+    ("kabel", "cable"),
+    ("przewód", "cable"),
+    ("cable", "cable"),
     ("connector", "connector"),
     ("złącz", "connector"),
     ("crystal", "crystal"),
