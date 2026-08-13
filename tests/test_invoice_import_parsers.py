@@ -175,11 +175,12 @@ def test_mouser_reads_comma_thousands_quantities() -> None:
     assert to_int(match.group(4)) == 2500  # shipped qty
 
 
-def test_mouser_bulk_invoice_comma_quantities_and_wrapped_marker() -> None:
+def test_mouser_bulk_invoice_comma_quantities_and_unlabelled_marker() -> None:
     # A real invoice (redacted) that broke the old count-based check: two items are
-    # quantitied "2,500" and the last item's "Numer katalogowy" marker wrapped at a
-    # page break. All 11 rows parse; the comma quantities are 2500; the wrapped-marker
-    # item simply has no MPN (→ review) instead of crashing the whole import.
+    # quantitied "2,500", and the last item's part-number cell carries no "Numer
+    # katalogowy u producenta:" label at all (just "20 / <mpn>" — atypical cell
+    # content, mid-page). All 11 rows parse; the comma quantities are 2500; the
+    # unlabelled item simply has no MPN (→ review) instead of crashing the import.
     invoice = MouserInvoiceParser().parse(_text("mouser_bulk.txt"))
     assert invoice.invoice_number == "89923858"
     assert len(invoice.lines) == 11

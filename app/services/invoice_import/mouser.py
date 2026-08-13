@@ -33,7 +33,10 @@ _ITEM = re.compile(
 )
 # A line that clearly starts an item row ("<line> <digits>-<sku> …") — used to fail
 # loudly on one the strict pattern couldn't read, instead of relying on a marker
-# count (the "Numer katalogowy" line can wrap at a page break and miscount).
+# count: an item's part-number cell doesn't always carry the "Numer katalogowy u
+# producenta:" label (seen in the wild as a bare "20 / <mpn>"), so counting the
+# labels under-counts even when every row parses. Such an item lands in review
+# with no MPN rather than aborting the import.
 _LOOSE_ITEM = re.compile(r"^\s*\d+\s+\d{2,4}-\S")
 # The item table ends here; freight/handling/duty live in this totals block
 # (Merchandise / Handling / Freight / VAT / Tariff), never as an item row — so they
