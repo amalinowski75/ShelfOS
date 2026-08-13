@@ -721,6 +721,49 @@ def test_patch_import_line_can_send_a_row_back_to_needs_review(
     assert reassigned["type_id"] == ctype["id"] and reassigned["reason"] == ""
 
 
+def test_patch_import_line_stores_reviewed_parameters(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from datetime import date
+    from decimal import Decimal
+
+    from app.services.invoice_import import ParsedInvoice, ParsedLine
+
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    param = client.post(
+        f"/api/types/{ctype['id']}/parameters",
+        json={"name": "resistance", "label": "R", "data_type": "number", "unit": "Ω"},
+    ).json()
+    _stub_parsed(
+        monkeypatch,
+        tmp_path,
+        ParsedInvoice(
+            supplier="TME", invoice_number="INV-P2", invoice_date=date(2026, 1, 1),
+            currency="PLN", shop_key="tme",
+            lines=[ParsedLine(quantity=1, unit_price=Decimal("1"), mpn="R1",
+                              manufacturer="Acme", description="Rezystor:x")],
+        ),
+    )
+    iid = client.post(
+        "/api/invoices/import", files={"file": ("t.pdf", b"%PDF", "application/pdf")}
+    ).json()["invoice_id"]
+
+    resp = client.patch(
+        f"/api/invoices/{iid}/import-lines/1",
+        json={
+            "type_id": ctype["id"],
+            "mpn": "R1-EDIT",
+            "parameters": [{"parameter_definition_id": param["id"], "value": "4k7"}],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["mpn"] == "R1-EDIT"
+    assert body["parameters"] == [
+        {"parameter_definition_id": param["id"], "value": "4k7"}
+    ]
+
+
 def test_patch_import_line_forbidden_for_read_only(
     client: TestClient, anon_client: TestClient
 ) -> None:

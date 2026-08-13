@@ -164,6 +164,73 @@ describe("invoices.js — review imported lines inline", () => {
     // (jsdom's reload is a no-op, so we assert the DELETE, not DOM removal here).
   });
 
+  it("Edit opens the editor prefilled, loads the type's params, saves via PATCH", async () => {
+    const fetchImpl = (url) =>
+      url === "/api/types/3/parameters"
+        ? Promise.resolve({
+            ok: true,
+            json: async () => [
+              { id: 9, label: "Resistance", unit: "Ω", data_type: "number", enum_values: [] },
+            ],
+          })
+        : Promise.resolve({ ok: true, json: async () => ({}) });
+    const { document, fetchMock } = loadPage(detailFixture({ pending: true }), SCRIPTS, {
+      fetchImpl,
+    });
+
+    document.querySelector('[data-act="edit-import"]').click();
+    await tick(); // params load
+
+    const form = document.getElementById("invoice-import-line-form");
+    expect(form.import_line_id.value).toBe("21");
+    expect(form.mpn.value).toBe("ABC123");
+    expect(form.manufacturer.value).toBe("Acme");
+    expect(document.getElementById("ril-edit-type").value).toBe("3");
+    // The type's one param rendered, prefilled from the row's stored parameters.
+    const paramInput = document.querySelector("#ril-edit-params [data-definition-id]");
+    expect(paramInput.dataset.definitionId).toBe("9");
+    expect(paramInput.value).toBe("4k7");
+
+    // Edit the param and save.
+    paramInput.value = "1k";
+    submit(document, "invoice-import-line-form");
+    await tick();
+
+    const patch = fetchMock.mock.calls.find(
+      ([url, opts]) =>
+        url === "/api/invoices/7/import-lines/21" && opts.method === "PATCH",
+    );
+    expect(JSON.parse(patch[1].body)).toEqual({
+      type_id: 3,
+      manufacturer: "Acme",
+      mpn: "ABC123",
+      package: "SOT23",
+      description: "A widget",
+      parameters: [{ parameter_definition_id: 9, value: "1k" }],
+    });
+  });
+
+  it("changing the type in the editor reloads that type's parameters", async () => {
+    const calls = [];
+    const fetchImpl = (url) => {
+      calls.push(url);
+      return Promise.resolve({ ok: true, json: async () => [] });
+    };
+    const { document } = loadPage(detailFixture({ pending: true }), SCRIPTS, {
+      fetchImpl,
+    });
+    document.querySelector('[data-act="edit-import"]').click();
+    await tick();
+
+    const typeSelect = document.getElementById("ril-edit-type");
+    typeSelect.value = "7";
+    typeSelect.dispatchEvent(
+      new document.defaultView.Event("change", { bubbles: true }),
+    );
+    await tick();
+    expect(calls).toContain("/api/types/7/parameters");
+  });
+
   it("+ New type creates a type, selects it for the row and PATCHes", async () => {
     const { window, document, fetchMock } = loadPage(
       detailFixture({ pending: true }),

@@ -308,7 +308,10 @@ export function detailFixture({
   const pendingPanel = pending
     ? `<div id="invoice-pending">
          <table class="data" id="invoice-review"><tbody>
-           <tr data-import-line-id="21" class="is-incomplete">
+           <tr data-import-line-id="21" class="is-incomplete"
+               data-type-id="3" data-mpn="ABC123" data-manufacturer="Acme"
+               data-package="SOT23" data-description="A widget"
+               data-parameters='[{"parameter_definition_id":9,"value":"4k7"}]'>
              <td><span class="mono">ABC123</span></td>
              <td>
                <select class="control ril-type">
@@ -325,11 +328,30 @@ export function detailFixture({
                  <option value="5">D1</option>
                </select>
              </td>
-             <td><button type="button" data-act="dismiss-import"></button></td>
+             <td>
+               <button type="button" data-act="edit-import"></button>
+               <button type="button" data-act="dismiss-import"></button>
+             </td>
            </tr>
          </tbody></table>
          <p id="invoice-review-error" hidden></p>
-       </div>`
+       </div>
+       <dialog id="invoice-import-line-dialog"><form id="invoice-import-line-form">
+         <input type="hidden" name="import_line_id" />
+         <select name="type_id" id="ril-edit-type">
+           <option value="">—</option>
+           <option value="3">diode</option>
+           <option value="7">resistor</option>
+         </select>
+         <input name="manufacturer" />
+         <input name="mpn" />
+         <input name="package" />
+         <input name="description" />
+         <div id="ril-edit-params"></div>
+         <p id="ril-edit-params-hint" hidden></p>
+         <p id="invoice-import-line-error" hidden></p>
+         <button type="submit"></button>
+       </form></dialog>`
     : "";
   const extraRow = secondLine
     ? `<tr data-line-id="4" data-quantity="2" data-unit-price="2.00"
