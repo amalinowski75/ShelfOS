@@ -25,7 +25,11 @@ from app.models.location import Location
 from app.services import attachment_service, invoice_service, shops
 from app.services import component_service as cs
 from app.services._common import require_entity
-from app.services.errors import NotFoundError, ValidationError
+from app.services.errors import (
+    InvoiceFinalizedError,
+    NotFoundError,
+    ValidationError,
+)
 from app.services.invoice_import import ParsedInvoice, ParsedLine, parse_invoice
 from app.services.shops.base import ProductData, infer_category
 
@@ -298,8 +302,21 @@ def get_pending(
     return staging
 
 
+def _require_draft_invoice(session: Session, invoice_id: int) -> None:
+    """Refuse to mutate a staged row once its invoice is finalized (read-only).
+
+    Mirrors ``invoice_service.set_line_location``'s guard: a finalized invoice's rows
+    must not change, and this also closes the review-PATCH-during-finalize window from
+    the writer's side (the materialise loop re-validates too, belt-and-suspenders).
+    """
+    invoice = invoice_service.get_invoice(session, invoice_id)
+    if invoice.is_finalized:
+        raise InvoiceFinalizedError(f"invoice {invoice_id} is finalized (read-only)")
+
+
 def dismiss_pending(session: Session, invoice_id: int, import_line_id: int) -> None:
     """Drop a pending line the user chose not to add."""
+    _require_draft_invoice(session, invoice_id)
     staging = get_pending(session, invoice_id, import_line_id)
     session.delete(staging)
     session.commit()
@@ -325,6 +342,7 @@ def update_pending(
     (they are the old type's). ``location_id`` is required before finalize. The identity
     fields + parameters seed the component created at finalize. Nothing is created here.
     """
+    _require_draft_invoice(session, invoice_id)
     staging = get_pending(session, invoice_id, import_line_id)
     if type_id is not _UNSET:
         if type_id is not None:
@@ -370,8 +388,16 @@ def materialize_ready_lines(
     here) rolls back. Rows with no ``type_id`` are left for the finalize guard.
     """
     for row in list_pending(session, invoice_id):
-        if row.type_id is None:
-            continue  # still needs a type — finalize_invoice blocks on these first
+        # Re-validate at the point of use, not against finalize's earlier snapshot: a
+        # concurrent review PATCH could have cleared the type or location in between.
+        # Raise (never silently skip a row, never build a location-less line) so
+        # finalize's transaction rolls back cleanly rather than orphaning the row or
+        # 500-ing on a downstream assert.
+        if row.type_id is None or row.location_id is None:
+            raise ValidationError(
+                "an imported line changed during finalize (its type or location was "
+                "cleared) — reopen the invoice and finalize again"
+            )
         component_id = _materialize_component(session, row, user_id)
         session.add(
             InvoiceLine(

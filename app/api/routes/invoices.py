@@ -190,7 +190,6 @@ def add_line(
         unit_price=payload.unit_price,
         supplier_part_number=payload.supplier_part_number,
         location_id=payload.location_id,
-        import_line_id=payload.import_line_id,
     )
 
 
@@ -204,7 +203,7 @@ def update_import_line(
     payload: InvoiceImportLineUpdate,
     session: Session = Depends(get_session),
 ) -> InvoiceImportLineRead:
-    """Review-edit a staged import line: set its type, location, qty or price (writers).
+    """Review-edit a staged import line — type/location/identity/parameters (writers).
 
     Only the fields present in the request are changed (``type_id: null`` clears it).
     """

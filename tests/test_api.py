@@ -815,7 +815,7 @@ def test_import_invoice_rejects_unrecognised_pdf(
     assert resp.status_code == 422
 
 
-def test_resolve_and_dismiss_pending_import_line(
+def test_dismiss_pending_import_line(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     from datetime import date
@@ -823,7 +823,6 @@ def test_resolve_and_dismiss_pending_import_line(
 
     from app.services.invoice_import import ParsedInvoice, ParsedLine
 
-    ctype = client.post("/api/types", json={"name": "diode"}).json()
     invoice = ParsedInvoice(
         supplier="TME",
         invoice_number="INV-P",
@@ -845,22 +844,11 @@ def test_resolve_and_dismiss_pending_import_line(
     invoice_id = imported["invoice_id"]
     assert imported["pending"] == 2
 
-    # These are the only two staging rows in this fresh DB, so their ids are 1 and 2.
-    component = client.post(
-        "/api/components",
-        json={"type_id": ctype["id"], "manufacturer": "Acme", "mpn": "AAA"},
-    ).json()
-    resolved = client.post(
-        f"/api/invoices/{invoice_id}/lines",
-        json={
-            "component_id": component["id"],
-            "quantity": 3,
-            "unit_price": "1",
-            "import_line_id": 1,
-        },
+    # The two staging rows in this fresh DB have ids 1 and 2. Dismiss row 1.
+    assert (
+        client.delete(f"/api/invoices/{invoice_id}/import-lines/1").status_code == 204
     )
-    assert resolved.status_code == 201
-    # Row 1 is gone: dismissing it now 404s.
+    # It's gone — a second dismiss 404s.
     assert (
         client.delete(f"/api/invoices/{invoice_id}/import-lines/1").status_code == 404
     )

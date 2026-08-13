@@ -546,63 +546,56 @@ def test_duplicate_invoice_is_rejected(session: Session, monkeypatch) -> None:
 # --- resolving a parked line clears it (via add_line reconcile) ---------------
 
 
-def test_resolving_a_pending_line_clears_the_staging_row(
+def test_materialize_rejects_a_row_that_lost_its_type_or_location(
     session: Session, monkeypatch
 ) -> None:
-    ctype = cs.create_type(session, "diode")
-    _patch_parse(
-        monkeypatch,
-        _invoice(_line(mpn="XYZ123", manufacturer="Acme"), shop_key="tme"),
-    )
-    result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
-    staged = iis.list_pending(session, result.invoice_id)[0]
+    # Simulates the concurrent-PATCH race: finalize's upfront snapshot said the row
+    # was ready, but by the time materialize runs its location has been cleared. It
+    # must raise (not silently skip, not build a location-less line) — nothing created.
+    from app.models.invoice import InvoiceImportLine
 
-    component = cs.create_component(
-        session, ctype.id, manufacturer="Acme", mpn="XYZ123"
-    )
-    invoice_service.add_line(
-        session,
-        result.invoice_id,
-        component_id=component.id,
-        quantity=staged.quantity,
-        unit_price=staged.unit_price,
-        import_line_id=staged.id,
-    )
-
-    assert iis.list_pending(session, result.invoice_id) == []
-    _, lines = invoice_service.get_invoice_detail(session, result.invoice_id)
-    assert len(lines) == 1
-
-
-def test_add_line_ignores_a_foreign_import_line_id(
-    session: Session, monkeypatch
-) -> None:
-    """A staging row from another invoice must not be deleted by this add."""
-    ctype = cs.create_type(session, "diode")
-    _patch_parse(
-        monkeypatch, _invoice(_line(mpn="A1", manufacturer="Acme"), number="ONE")
-    )
-    one = iis.import_invoice(session, data=b"x", filename="a.pdf", user_id=1)
-    foreign = iis.list_pending(session, one.invoice_id)[0]
-
-    two = invoice_service.create_invoice(
-        session,
-        supplier="Other",
-        invoice_number="TWO",
-        invoice_date=date(2026, 1, 1),
+    rt = cs.create_type(session, "resistor")
+    invoice = invoice_service.create_invoice(
+        session, supplier="TME", invoice_number="M", invoice_date=date(2026, 1, 1),
         currency="PLN",
     )
-    comp = cs.create_component(session, ctype.id, mpn="B1")
-    invoice_service.add_line(
-        session,
-        two.id,
-        component_id=comp.id,
-        quantity=1,
-        unit_price=Decimal("1"),
-        import_line_id=foreign.id,
+    session.add(
+        InvoiceImportLine(
+            invoice_id=invoice.id, line_no=1, mpn="R1", manufacturer="Acme",
+            quantity=1, unit_price=Decimal("1"), shop_key="tme", type_id=rt.id,
+            location_id=None, reason="",
+        )
     )
-    # The other invoice's pending line is untouched.
-    assert len(iis.list_pending(session, one.invoice_id)) == 1
+    session.commit()
+
+    with pytest.raises(ValidationError, match="changed during finalize"):
+        iis.materialize_ready_lines(session, invoice.id, user_id=1)
+    assert cs.list_components(session) == []
+
+
+def test_update_and_dismiss_pending_refuse_a_finalized_invoice(
+    session: Session,
+) -> None:
+    from app.services.errors import InvoiceFinalizedError
+
+    diode = cs.create_type(session, "diode")
+    comp = cs.create_component(session, diode.id, manufacturer="On", mpn="OK")
+    location = _make_location(session)
+    invoice = invoice_service.create_invoice(
+        session, supplier="X", invoice_number="F", invoice_date=date(2026, 1, 1),
+        currency="PLN",
+    )
+    line = invoice_service.add_line(
+        session, invoice.id, component_id=comp.id, quantity=1, unit_price=Decimal("1")
+    )
+    invoice_service.set_line_location(session, invoice.id, line.id, location, user_id=1)
+    invoice_service.finalize_invoice(session, invoice.id, user_id=1)
+
+    # A finalized invoice is read-only — a stray review PATCH/dismiss is refused.
+    with pytest.raises(InvoiceFinalizedError):
+        iis.dismiss_pending(session, invoice.id, 999)
+    with pytest.raises(InvoiceFinalizedError):
+        iis.update_pending(session, invoice.id, 999, location_id=location)
 
 
 # --- delete a draft clears its import artefacts -------------------------------

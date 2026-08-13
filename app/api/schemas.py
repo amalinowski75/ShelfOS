@@ -164,9 +164,6 @@ class InvoiceLineCreate(BaseModel):
     unit_price: Decimal
     supplier_part_number: str | None = None
     location_id: int | None = None
-    # When resolving a parked PDF-import line, its staging row is cleared with the
-    # add in one transaction (see invoice_service.add_line).
-    import_line_id: int | None = None
 
 
 class InvoiceUpdate(BaseModel):

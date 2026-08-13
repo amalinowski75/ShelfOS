@@ -50,7 +50,7 @@
       <tr><th>Invoice number</th><td class="mono">{{ invoice.invoice_number }}</td></tr>
       <tr><th>Date</th><td class="mono">{{ invoice.invoice_date.isoformat() }}</td></tr>
       <tr><th>Currency</th><td>{{ invoice.currency }}</td></tr>
-      <tr><th>Total net</th><td class="mono">{{ format_money(invoice.total_net) }} {{ invoice.currency }}</td></tr>
+      <tr><th>Total net</th><td class="mono">{{ format_money(invoice.total_net) }} {{ invoice.currency }}{% if can_edit and pending_import_lines %} <span class="muted">(resolved lines only)</span>{% endif %}</td></tr>
       <tr><th>Total gross</th><td class="mono">{% if invoice.is_finalized %}{{ format_money(invoice.total_gross) }} {{ invoice.currency }}{% else %}<span class="muted">— (set on finalize)</span>{% endif %}</td></tr>
       <tr><th>Status</th><td>{{ state_badge(invoice.is_finalized) }}</td></tr>
       {% if invoice.file_path %}<tr><th>Invoice file</th><td class="mono">{{ invoice.file_path }}</td></tr>{% endif %}
@@ -64,7 +64,9 @@
   <h2>Imported — review <span class="badge b-warn">{{ pending_import_lines | length }}</span></h2>
   <p class="muted">These lines were read from the PDF. The component is created only when
     you finalize, so check the auto-guessed <strong>type</strong> (fix it if wrong), set a
-    <strong>location</strong>, or dismiss a line. Finalize once each has a type and a location.</p>
+    <strong>location</strong>, or dismiss a line. Finalize once each has a type and a location.
+    These will add <strong class="mono">{{ format_money(pending_import_subtotal) }} {{ invoice.currency }}</strong>
+    to the net (not counted in Total net until finalized).</p>
   <div class="table-wrap">
     <table class="data" id="invoice-review">
       <thead>
