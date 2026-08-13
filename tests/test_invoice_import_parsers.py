@@ -154,18 +154,105 @@ def test_tme_raises_when_an_item_row_is_unparseable() -> None:
         TmeInvoiceParser().parse(broken)
 
 
-def test_mouser_raises_when_an_item_row_is_unparseable() -> None:
-    # Corrupt one unit price so its item row fails to match; the "Numer katalogowy"
-    # markers (11) then exceed the parsed lines (10) — a silent drop is caught.
+def test_mouser_raises_on_an_item_shaped_line_it_cannot_read() -> None:
+    # Corrupt one unit price so its item row no longer matches; because the row still
+    # looks like an item ("<line> <sku> …"), the parser fails loudly and names it
+    # rather than folding it silently into the previous line's continuation.
     broken = _text("mouser.txt").replace("25,12", "2X,12", 1)
-    with pytest.raises(ValidationError, match="wasn't fully understood"):
+    with pytest.raises(ValidationError, match="could not read this Mouser line"):
         MouserInvoiceParser().parse(broken)
+
+
+def test_mouser_reads_comma_thousands_quantities() -> None:
+    # A bulk reel is quantitied "2,500" (= 2500) — a thousands separator, not a
+    # decimal. The row must match and parse to 2500, not be dropped.
+    from app.services.invoice_import.base import to_int
+    from app.services.invoice_import.mouser import _ITEM
+
+    row = "   6  810-C1005X7R1V104MBB   2,500   2,500   0   0,063   157,50"
+    match = _ITEM.match(row)
+    assert match is not None
+    assert to_int(match.group(4)) == 2500  # shipped qty
+
+
+def test_mouser_bulk_invoice_comma_quantities_and_unlabelled_marker() -> None:
+    # A real invoice (redacted) that broke the old count-based check: two items are
+    # quantitied "2,500", and the last item's part-number cell carries no "Numer
+    # katalogowy u producenta:" label — just "20 / UCLAMP2271P.TNT", where the token
+    # after the slash IS the MPN. All 11 rows parse; the comma quantities are 2500;
+    # the unlabelled cell yields the MPN (and must NOT leak "20" as the description).
+    invoice = MouserInvoiceParser().parse(_text("mouser_bulk.txt"))
+    assert invoice.invoice_number == "89923858"
+    assert len(invoice.lines) == 11
+    assert sum(1 for line in invoice.lines if line.quantity == 2500) == 2
+    last = invoice.lines[-1]
+    assert last.mpn == "UCLAMP2271P.TNT"
+    assert last.supplier_part_number == "947-UCLAMP2271P.TNT"
+    assert last.description is not None
+    assert last.description.startswith("Semtech")  # not the cell's "20" left half
 
 
 def test_digikey_raises_when_an_item_row_is_unparseable() -> None:
     broken = _text("digikey.txt").replace("6.12900", "6.12X00", 1)
     with pytest.raises(ValidationError, match="wasn't fully understood"):
         DigiKeyInvoiceParser().parse(broken)
+
+
+def test_mouser_raises_when_a_wrapped_row_would_form_a_chimera() -> None:
+    # The reviewer's reproduction: item 2's row wraps so its line number sits alone
+    # and the rest no longer looks item-shaped. Both halves fold into item 1's
+    # continuation — and item 2's part-number marker would OVERWRITE item 1's MPN,
+    # producing one line with item 1's qty/price and item 2's MPN. Must raise.
+    row = "2  579-USB7006T/KDX                    5      5      0      25,12   125,60"
+    text = _text("mouser.txt")
+    assert "       " + row in text
+    text = text.replace("       " + row, "       2\n  " + row[3:], 1)
+    with pytest.raises(ValidationError, match="two part-number cells"):
+        MouserInvoiceParser().parse(text)
+
+
+def test_mouser_counts_markers_when_a_row_vanishes_entirely() -> None:
+    # A first-table row corrupted beyond even the loose item shape: its lines drop
+    # with no item active, so neither the strict nor the loose pattern can flag it.
+    # The marker count (labels in text vs labels consumed) is the net that catches it.
+    text = _text("mouser.txt").replace(
+        "       1  771-NX3P1108UKZ", "       X  771-NX3P1108UKZ", 1
+    )
+    with pytest.raises(ValidationError, match="wasn't fully understood"):
+        MouserInvoiceParser().parse(text)
+
+
+def test_mouser_unlabelled_form_requires_a_numeric_left_token() -> None:
+    # A title-less description ("Vishay / Rezystory") has the same two-token shape as
+    # the unlabelled part-number cell — it must NOT be read as an MPN (a category word
+    # as MPN poisons enrichment; no MPN just routes the row to review).
+    text = _text("mouser.txt").replace(
+        "Numer katalogowy u producenta: NX3P1108UKZ", "Vishay / Rezystory", 1
+    )
+    invoice = MouserInvoiceParser().parse(text)
+    line = next(
+        row for row in invoice.lines
+        if row.supplier_part_number == "771-NX3P1108UKZ"
+    )
+    assert line.mpn is None  # → review, not a fake MPN
+    assert line.description == "Vishay"
+
+
+def test_number_helpers_reject_malformed_grouping() -> None:
+    # A damaged extraction must fail loudly, not parse to a plausible wrong number.
+    from app.services.invoice_import.base import to_decimal, to_int
+
+    assert to_int("2,500") == 2500
+    assert to_int("10 000") == 10000
+    for bad in ("2,50", "2,5", ",500"):
+        with pytest.raises(ValidationError):
+            to_int(bad)
+    assert to_decimal("1,234.56", decimal_sep=".") == Decimal("1234.56")
+    assert to_decimal("1.234,56", decimal_sep=",") == Decimal("1234.56")
+    with pytest.raises(ValidationError):
+        to_decimal("6,12.9", decimal_sep=".")  # damaged "6,129" / "612.9"
+    with pytest.raises(ValidationError):
+        to_decimal("6.12,9", decimal_sep=",")
 
 
 def test_mouser_requires_a_currency() -> None:

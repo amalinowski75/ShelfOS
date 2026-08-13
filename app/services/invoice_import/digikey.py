@@ -34,8 +34,8 @@ _CURRENCY = re.compile(r"([A-Z]{3})\s*zł")
 # unit price and the line amount ($-anchored so a dotted token in DESC can't steal
 # them).
 _ITEM = re.compile(
-    r"^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+PART:\s*(\S+)\s+"
-    r"DESC:\s*(.+?)\s+([\d.]+)\s+([\d.]+)\s*$"
+    r"^\s*(\d+)\s+([\d,]+)\s+([\d,]+)\s+([\d,]+)\s+PART:\s*(\S+)\s+"
+    r"DESC:\s*(.+?)\s+([\d.,]+)\s+([\d.,]+)\s*$"
 )
 # The item table ends here; charges/freight live in this totals block (Sales Amount /
 # Charges subtotal), never as an item row — an item row is identified by "PART:", which

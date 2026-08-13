@@ -9,6 +9,7 @@ know nothing about the database.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -65,18 +66,31 @@ class InvoiceParser(Protocol):
     def parse(self, text: str) -> ParsedInvoice: ...
 
 
+# Grouping-separator shapes, validated BEFORE stripping: either no groups at all, or
+# proper 3-digit groups. Without this, "2,50" (a damaged "2,500") would silently strip
+# to a plausible wrong 250 instead of failing loudly.
+_COMMA_GROUPED = re.compile(r"(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?")
+_DOT_GROUPED = re.compile(r"(?:\d+|\d{1,3}(?:\.\d{3})+)(?:,\d+)?")
+_INT_SHAPE = re.compile(r"\d+|\d{1,3}(?:,\d{3})+")
+
+
 def to_decimal(text: str, *, decimal_sep: str = ",") -> Decimal:
     """Parse a shop's number string to :class:`Decimal`.
 
     Handles the two formats these invoices use: comma-decimal with space (or NBSP)
-    thousands (TME/Mouser "2 500,50", "0,853") and dot-decimal (Digi-Key "6.12900").
-    The grouping separator — whichever is not the decimal one — is stripped.
+    thousands (TME/Mouser "2 500,50", "0,853") and dot-decimal (Digi-Key "6.12900",
+    "1,234.56"). The grouping separator — whichever is not the decimal one — must sit
+    on proper 3-digit boundaries and is then stripped; a malformed grouping (a damaged
+    extraction like "6,12.9") raises instead of parsing to a plausible wrong number.
     """
-    cleaned = text.strip().replace("\xa0", " ")
+    cleaned = text.strip().replace("\xa0", " ").replace(" ", "")
+    shape = _DOT_GROUPED if decimal_sep == "," else _COMMA_GROUPED
+    if not shape.fullmatch(cleaned):
+        raise ValidationError(f"could not read the amount {text!r}")
     if decimal_sep == ",":
-        cleaned = cleaned.replace(" ", "").replace(".", "").replace(",", ".")
+        cleaned = cleaned.replace(".", "").replace(",", ".")
     else:
-        cleaned = cleaned.replace(" ", "").replace(",", "")
+        cleaned = cleaned.replace(",", "")
     try:
         return Decimal(cleaned)
     except InvalidOperation:
@@ -96,12 +110,15 @@ def unit_price(total_price: str, per: int = 1, *, decimal_sep: str = ",") -> Dec
 
 
 def to_int(text: str) -> int:
-    """Parse a quantity that may carry space/NBSP thousands ("10 000" → 10000)."""
+    """Parse a quantity with space/NBSP or comma thousands ("10 000", "2,500").
+
+    Comma groups must sit on 3-digit boundaries — "2,50" (a damaged "2,500") raises
+    rather than silently parsing to 250.
+    """
     cleaned = text.strip().replace("\xa0", "").replace(" ", "")
-    try:
-        return int(cleaned)
-    except ValueError:
-        raise ValidationError(f"could not read the quantity {text!r}") from None
+    if not _INT_SHAPE.fullmatch(cleaned):
+        raise ValidationError(f"could not read the quantity {text!r}")
+    return int(cleaned.replace(",", ""))
 
 
 def month_date(text: str) -> date:

@@ -1,0 +1,129 @@
+                                                                                    
+                                                  Faktura dot. Karty kredytowej     
+                                                  Invoice - Credit Card Receipt     
+                                                                                    
+                                                    Nr faktury Data faktury Nr strony
+                                                    Invoice No. Invoice Date Page No.
+     1000 North Main Street, Mansfield, TX 76063, USA                               
+     Przedstawiciel ds. obsługi klienta: Internet Customer Service 89923858 20-APR-26 1 of 2
+     Obsługa klienta: +48 71 749 74 00                                              
+     Finanse: +49 (0)89 520 462 115                  Numer zamówienia Nr śledzenia zam.
+     VAT# FR 27512466913                             Purchase Order No. Master Tracker No.
+                           INCOTERMS: DDP              38941800      522128360155   
+            Osoba kontaktowa     Wysyłka za pośrednictwem Numer klienta Warunki Data zamówienia
+             Contact Name            Ship Via      Customer Number Terms Order Date 
+            SAMPLE BUYER      FEDEX INT'L PRIORITY 0000000  VI 1785  20-APR-26   
+             SAMPLE BUYER SAMPLE CO      SAMPLE BUYER                   
+       Odbiorca ATTN: SAMPLE BUYER      Adres dostawy UL. SAMPLE 1 
+       Bill To UL. SAMPLE 1   Ship To 00-000 SAMPLE CITY             
+             00-000 SAMPLE CITY                  POLAND                            
+             POLAND                               VAT# PL 0000000000                
+                                        Zamówiona      Oczekująca                   
+       Nr Nr katalogowy Mouser Mouser Part Number Wysłana ilość        Wartość towaru
+                                          ilość          ilość Cena jednostkowa     
+      pozycji Nr katalogowy u producenta Customer/MFG Part No. Quantity  Extended   
+                                         Quantity       Quantity Unit Price(PLN)    
+     Line No. Opis               Description    Shipped                 Price(PLN)  
+                                         Ordered        Pending                     
+       1  153-MSOFS-M2-2                     30     30      0      0,899    26,97   
+          Numer katalogowy u producenta: MSOFS-M2-2                                 
+          PEM MICRO FLARING STANDO / Dystanse i podkładki                           
+          US HTS:7318190000 ECCN:EAR99 COO:CN ACO:-- COD:--                         
+       2  153-SO-M3-10ZI                    100     100     0       1,04   104,00   
+          Numer katalogowy u producenta: SO-M3-10ZI                                 
+          PEM STANDOFF, STEEL / Dystanse i podkładki                                
+          US HTS:7318190000 ECCN:EAR99 COO:US ACO:-- COD:--                         
+       3  153-S-M3-1ZI                      100     100     0      0,386    38,60   
+          Numer katalogowy u producenta: S-M3-1ZI                                   
+          PEM NUT, PLAIN, STEEL / Śruby i elementy złączne                          
+          TARIC:3926909790 ECCN:EAR99 COO:US ACO:-- COD:--                          
+       4  153-MSOFS-M2-3                     30     30      0       0,92    27,60   
+          Numer katalogowy u producenta: MSOFS-M2-3                                 
+          PEM MICRO FLARING STANDO / Dystanse i podkładki                           
+          US HTS:7318190000 ECCN:EAR99 COO:CN ACO:-- COD:--                         
+       5  576-0458002.DR                     10     10      0       5,29    52,90   
+          Numer katalogowy u producenta: 0458002.DR                                 
+          Littelfuse 48VAC 2A .0695ohms 4 / Bezpieczniki do montażu powierzchniowego
+          TARIC:8536101090 ECCN:EAR99 COO:PH ACO:-- COD:--                          
+       6  810-C1005X7R1V104MBB             2,500   2,500    0      0,063   157,50   
+          Numer katalogowy u producenta: C1005X7R1V104M050BB                        
+          TDK 0.1 uF X7R 35 VDC 40 / Wielowarstwowe kondensatory ceramiczne MLCC – SMD/SMT
+          TARIC:8532240000 ECCN:EAR99 COO:JP ACO:-- COD:--                          
+         Wartość towarów  Obsługa        Fracht         VAT           Taryfa        
+          Merchandise    Handling        Freight        VAT            Tariff       
+                                                          Dalej Continued           
+                Informacje dotyczące wysyłki           Shipping Information         
+     Data wysyłki: Apr 20, 2026                                                     
+     Te elementy podlegają nadzorowi rządu Stanów Zjednoczonych i są dopuszczone wyłącznie do eksportu do kraju docelowego użytku przez docelowego odbiorcę lub
+     określonych tutaj użytkowników końcowych. Zabrania się ich odsprzedaży, przekazywania lub usuwania do krajów lub osób innych niż upoważnieni docelowi odbiorcy
+     lub użytkownicy końcowi — ani w pierwotnej postaci, ani po dołączeniu do innych elementów — bez uprzedniego uzyskania pozwolenia rządu Stanów Zjednoczonych
+     lub innego stosownego upoważnienia na mocy prawa i uregulowań Stanów Zjednoczonych.
+     Odwrotne obciążenie podatku VAT — dostawa wewnątrzwspólnotowa.                 
+     Ship Date: Apr 20, 2026                                                        
+     These items are controlled by the U.S. Government and authorized for export only to the country of ultimate destination for use by the ultimate
+     consignee or end-user(s) herein identified. They may not be resold, transferred, or otherwise disposed of, to any other country or to any person
+               Numer śledzenia i rozliczona waga   Tracking Number(s) and Billed Weights
+     522128360155 2.01 lb                                                           
+                 French Fiscal Representative: Fiscal Solutions S.A.R.L, 23 Rue du Clos d'Orléans, Fontenay-sous-Bois, 94 120, FR
+             Niniejsze zamówienie podlega wszystkim warunkom i zasadom sprzedaży przedstawionym na stronie:http://pl.mouser.com/saleterms/
+                      This order is subject to all terms and conditions displayed at:http://pl.mouser.com/saleterms/
+                                                                                    
+                                                  Faktura dot. Karty kredytowej     
+                                                  Invoice - Credit Card Receipt     
+                                                                                    
+                                                    Nr faktury Data faktury Nr strony
+                                                    Invoice No. Invoice Date Page No.
+     1000 North Main Street, Mansfield, TX 76063, USA                               
+     Przedstawiciel ds. obsługi klienta: Internet Customer Service 89923858 20-APR-26 2 of 2
+     Obsługa klienta: +48 71 749 74 00                                              
+     Finanse: +49 (0)89 520 462 115                  Numer zamówienia Nr śledzenia zam.
+     VAT# FR 27512466913                             Purchase Order No. Master Tracker No.
+                           INCOTERMS: DDP              38941800      522128360155   
+            Osoba kontaktowa     Wysyłka za pośrednictwem Numer klienta Warunki Data zamówienia
+             Contact Name            Ship Via      Customer Number Terms Order Date 
+            SAMPLE BUYER      FEDEX INT'L PRIORITY 0000000  VI 1785  20-APR-26   
+             SAMPLE BUYER SAMPLE CO      SAMPLE BUYER                   
+       Odbiorca ATTN: SAMPLE BUYER      Adres dostawy UL. SAMPLE 1 
+       Bill To UL. SAMPLE 1   Ship To 00-000 SAMPLE CITY             
+             00-000 SAMPLE CITY                  POLAND                            
+             POLAND                               VAT# PL 0000000000                
+                                        Zamówiona      Oczekująca                   
+       Nr Nr katalogowy Mouser Mouser Part Number Wysłana ilość        Wartość towaru
+                                          ilość          ilość Cena jednostkowa     
+      pozycji Nr katalogowy u producenta Customer/MFG Part No. Quantity  Extended   
+                                         Quantity       Quantity Unit Price(PLN)    
+     Line No. Opis               Description    Shipped                 Price(PLN)  
+                                         Ordered        Pending                     
+       7  81-GRM155R61H105ME5D             2,500   2,500    0      0,063   157,50   
+          Numer katalogowy u producenta: GRM155R61H105ME05D                         
+          Murata Electronics 1 uF 50 VDC 20% 0402 / Wielowarstwowe kondensatory ceramiczne MLCC – SMD/SMT
+          TARIC:8532240000 ECCN:EAR99 COO:JP ACO:JP COD:--                          
+       8  757-SSM3J332RLF                    50     50      0       0,84    42,00   
+          Numer katalogowy u producenta: SSM3J332R,LF                               
+          Toshiba SM Sig P-CH MOS 12V / Układy MOSFET                               
+          TARIC:8541290000 ECCN:EAR99 COO:TH ACO:-- COD:--                          
+       9  652-SRP6030CA-R56M                  6      6      0       5,59    33,54   
+          Numer katalogowy u producenta: SRP6030CA-R56M                             
+          Bourns 0.56uH 20% 22A / Cewki indukcyjne mocy – SMD                       
+          TARIC:8504500090 ECCN:EAR99 COO:CN ACO:CN COD:--                          
+       10 757-DF2S30FSL3M                    20     20      0      0,248     4,96   
+          Numer katalogowy u producenta: DF2S30FS,L3M                               
+          Toshiba ESD protection diode / Diody ochronne ESD / diody TVS             
+          TARIC:8541100000 ECCN:EAR99 COO:TH ACO:-- COD:--                          
+       11 947-UCLAMP2271P.TNT                20     20      0       2,85    57,00   
+          20 / UCLAMP2271P.TNT                                                      
+          Semtech High-Power uClamp 22 / Diody ochronne ESD / diody TVS             
+          TARIC:8541100000 ECCN:EAR99 COO:CN ACO:-- COD:--                          
+         Wartość towarów  Obsługa        Fracht         VAT           Taryfa        
+          Merchandise    Handling        Freight        VAT            Tariff       
+                 702,57         0,00           0,00           0,00           0,00   
+                                             Płatność kartą kredytową Paid by credit card PLN 702,57
+                Informacje dotyczące wysyłki           Shipping Information         
+     other than the authorized ultimate consignee or end-user(s), either in their original form or after being incorporated into other items, without
+     first obtaining approval from the U.S. government or as otherwise authorized by U.S. law and regulations. VAT reverse charge - intra community
+     -delivery.                                                                     
+               Numer śledzenia i rozliczona waga   Tracking Number(s) and Billed Weights
+                                                                                    
+                 French Fiscal Representative: Fiscal Solutions S.A.R.L, 23 Rue du Clos d'Orléans, Fontenay-sous-Bois, 94 120, FR
+             Niniejsze zamówienie podlega wszystkim warunkom i zasadom sprzedaży przedstawionym na stronie:http://pl.mouser.com/saleterms/
+                      This order is subject to all terms and conditions displayed at:http://pl.mouser.com/saleterms/
