@@ -254,6 +254,76 @@ def test_finalize_does_not_partially_materialize(
     assert len(iis.list_pending(session, result.invoice_id)) == 2
 
 
+def test_finalize_blocked_by_a_case1_line_without_location_creates_nothing(
+    session: Session, monkeypatch
+) -> None:
+    # A line matched to an existing component at import ("case 1") has no location yet,
+    # alongside a ready staged row. Finalize must reject BEFORE materialising, so the
+    # staged row's component is never created.
+    rt = cs.create_type(session, "resistor")
+    cs.create_component(session, rt.id, manufacturer="On", mpn="EXIST")
+    _patch_parse(
+        monkeypatch,
+        _invoice(
+            _line(mpn="EXIST", manufacturer="On"),  # case 1 → real line, no location
+            _line(mpn="NEW", manufacturer="Acme", description="Rezystor:x"),  # ready
+            shop_key="tme",
+        ),
+    )
+    result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
+    ready = next(p for p in iis.list_pending(session, result.invoice_id) if p.type_id)
+    iis.update_pending(
+        session, result.invoice_id, ready.id, location_id=_make_location(session)
+    )
+
+    with pytest.raises(ValidationError, match="location"):
+        invoice_service.finalize_invoice(session, result.invoice_id, user_id=1)
+
+    # Only the seeded component exists — the ready row was NOT materialised.
+    assert [c.mpn for c in cs.list_components(session)] == ["EXIST"]
+    assert len(iis.list_pending(session, result.invoice_id)) == 1
+
+
+def test_finalize_rolls_back_the_whole_unit_on_a_mid_materialize_failure(
+    session: Session, monkeypatch
+) -> None:
+    # Two new ready rows; component creation blows up on the 2nd. The atomic finalize
+    # must roll back the 1st component too — nothing created, both rows still staged.
+    cs.create_type(session, "resistor")
+    location = _make_location(session)
+    _patch_parse(
+        monkeypatch,
+        _invoice(
+            _line(mpn="A1", manufacturer="Acme", description="Rezystor:x"),
+            _line(mpn="B2", manufacturer="Beta", description="Rezystor:y"),
+            shop_key="tme",
+        ),
+    )
+    result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
+    for row in iis.list_pending(session, result.invoice_id):
+        iis.update_pending(session, result.invoice_id, row.id, location_id=location)
+
+    real_create = cs.create_component_with_values
+    calls = {"n": 0}
+
+    def exploding_create(*args, **kwargs):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("boom on the 2nd component")
+        return real_create(*args, **kwargs)
+
+    monkeypatch.setattr(cs, "create_component_with_values", exploding_create)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        invoice_service.finalize_invoice(session, result.invoice_id, user_id=1)
+
+    # Rolled back: no component created, both staged rows intact, still a draft.
+    assert cs.list_components(session) == []
+    assert len(iis.list_pending(session, result.invoice_id)) == 2
+    invoice, _ = invoice_service.get_invoice_detail(session, result.invoice_id)
+    assert invoice.is_finalized is False
+
+
 def test_finalize_blocked_when_a_ready_row_has_no_location(
     session: Session, monkeypatch
 ) -> None:

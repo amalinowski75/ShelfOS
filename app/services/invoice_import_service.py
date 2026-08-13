@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from decimal import Decimal
 from typing import Any, cast
 
 from sqlmodel import Session, col, select
@@ -313,8 +312,6 @@ def update_pending(
     *,
     type_id: int | None = _UNSET,
     location_id: int | None = _UNSET,
-    quantity: int = _UNSET,
-    unit_price: Decimal = _UNSET,
 ) -> InvoiceImportLine:
     """Edit a staged line during review (only the fields provided are changed).
 
@@ -333,14 +330,6 @@ def update_pending(
         if location_id is not None:
             require_entity(session, Location, location_id, "location")
         staging.location_id = location_id
-    if quantity is not _UNSET:
-        if quantity <= 0:
-            raise ValidationError("quantity must be positive")
-        staging.quantity = quantity
-    if unit_price is not _UNSET:
-        if unit_price < 0:
-            raise ValidationError("unit price must not be negative")
-        staging.unit_price = unit_price
     session.add(staging)
     session.commit()
     session.refresh(staging)
@@ -352,39 +341,40 @@ def materialize_ready_lines(
 ) -> None:
     """Turn every ready staged row into a real component + invoice line (at finalize).
 
-    A "ready" row has a ``type_id``; it must also have a ``location_id``. For each, we
-    re-match an existing component by Manufacturer+MPN (one may have been created since
-    import) and reuse it, else create it, then add the invoice line and delete the
-    staging row (via ``add_line``'s ``import_line_id`` reconcile). Rows with no
-    ``type_id`` are left for the finalize guard to reject. This deliberately runs
-    BEFORE finalize claims the invoice, so it is naturally idempotent: it consumes the
-    staging rows, so a retry finds none left to materialise.
+    A "ready" row has a ``type_id`` and a ``location_id`` (both validated by
+    ``finalize_invoice`` before this runs). For each, we re-match an existing component
+    by Manufacturer+MPN (one may have been created since import) and reuse it, else
+    create it, then add the invoice line and delete the staging row.
+
+    **Does not commit** — everything joins finalize's single transaction, so materialise
+    plus the atomic ``is_finalized`` claim and the stock movements succeed or roll back
+    together. That keeps a concurrent/duplicate finalize from leaving a stray component
+    behind: the loser's claim fails and its whole unit (including any component created
+    here) rolls back. Rows with no ``type_id`` are left for the finalize guard.
     """
     for row in list_pending(session, invoice_id):
         if row.type_id is None:
-            continue  # still needs a type — finalize_invoice blocks on these
-        if row.location_id is None:
-            raise ValidationError(
-                f"assign a location to {row.mpn or 'the imported line'} "
-                "before finalizing"
-            )
+            continue  # still needs a type — finalize_invoice blocks on these first
         component_id = _materialize_component(session, row, user_id)
-        invoice_service.add_line(
-            session,
-            invoice_id,
-            component_id=component_id,
-            quantity=row.quantity,
-            unit_price=row.unit_price,
-            supplier_part_number=row.supplier_part_number,
-            location_id=row.location_id,
-            import_line_id=cast(int, row.id),
+        session.add(
+            InvoiceLine(
+                invoice_id=invoice_id,
+                component_id=component_id,
+                supplier_part_number=row.supplier_part_number,
+                quantity=row.quantity,
+                unit_price=row.unit_price,
+                total_price=row.unit_price * row.quantity,
+                location_id=row.location_id,
+            )
         )
+        session.delete(row)
+    session.flush()  # surface any error now, inside the caller's transaction
 
 
 def _materialize_component(
     session: Session, row: InvoiceImportLine, user_id: int
 ) -> int:
-    """Reuse an existing matching component, or create one from the staged row."""
+    """Reuse an existing matching component, or create one (uncommitted) from a row."""
     existing = None
     if row.manufacturer and row.mpn:
         existing = cs.find_duplicate_component(
@@ -404,5 +394,6 @@ def _materialize_component(
         package=row.package,
         notes=row.description,
         user_id=user_id,
+        commit=False,
     )
     return cast(int, component.id)

@@ -395,10 +395,16 @@ if (detail && lineDialog) {
           `/api/invoices/${invoiceId}/import-lines/${row.dataset.importLineId}`,
           { method: "DELETE", headers: { "X-CSRF-Token": csrfToken } },
         );
-        if (resp.ok) {
-          row.remove();
-        } else {
+        if (!resp.ok) {
           showError(reviewError, await errorMessage(resp));
+          return;
+        }
+        // Reload once the panel empties so the server re-renders the page state
+        // (an all-staged invoice that's now empty should stop offering Finalize).
+        if (reviewPanel.querySelectorAll("#invoice-review tr").length <= 1) {
+          window.location.reload();
+        } else {
+          row.remove();
         }
       });
     }

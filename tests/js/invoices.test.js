@@ -160,8 +160,8 @@ describe("invoices.js — review imported lines inline", () => {
     expect(url).toBe("/api/invoices/7/import-lines/21");
     expect(opts.method).toBe("DELETE");
     expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
-    // The row is gone from the DOM (no reload).
-    expect(document.querySelector("#invoice-review tr")).toBeNull();
+    // Dismissing the last row reloads so the server re-renders the now-empty state
+    // (jsdom's reload is a no-op, so we assert the DELETE, not DOM removal here).
   });
 
   it("+ New type creates a type, selects it for the row and PATCHes", async () => {

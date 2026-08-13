@@ -385,6 +385,7 @@ def create_component_with_values(
     notes: str | None = None,
     values: Iterable[tuple[int, ParameterValue]] = (),
     user_id: int | None = None,
+    commit: bool = True,
 ) -> Component:
     """Create a component and its initial parameter values in one transaction (§16.5).
 
@@ -394,6 +395,10 @@ def create_component_with_values(
     whole create, so a component is never left half-populated. When ``user_id``
     is given each initial value is recorded in the audit log (§19), matching the
     later ``set_parameter_value`` path.
+
+    ``commit=False`` leaves the new component flushed (its id assigned) but uncommitted
+    in the caller's transaction — for finalize, which creates several components and the
+    invoice's stock in one all-or-nothing commit. The caller then owns rollback.
     """
     require_entity(session, ComponentType, type_id, "component type")
     component = Component(
@@ -474,14 +479,18 @@ def create_component_with_values(
                     user_id=user_id,
                 )
 
-        session.commit()
+        if commit:
+            session.commit()
     except Exception:
         # Roll back the flushed component so a bad value never leaves a
-        # half-populated row behind, regardless of the caller's own handling.
-        session.rollback()
+        # half-populated row behind — but only when we own the transaction; with
+        # commit=False the caller manages (and will roll back) the whole unit.
+        if commit:
+            session.rollback()
         raise
 
-    session.refresh(component)
+    if commit:
+        session.refresh(component)
     return component
 
 

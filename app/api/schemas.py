@@ -283,8 +283,6 @@ class InvoiceImportLineUpdate(BaseModel):
 
     type_id: int | None = None
     location_id: int | None = None
-    quantity: int | None = None
-    unit_price: Decimal | None = None
 
 
 class AttachmentRead(BaseModel):
