@@ -272,6 +272,7 @@ class InvoiceImportLineRead(BaseModel):
     shop_key: str
     type_id: int | None
     location_id: int | None
+    parameters: list[ParameterValueSet]
     reason: str
 
 
@@ -279,10 +280,17 @@ class InvoiceImportLineUpdate(BaseModel):
     """Review edits to a staged import line; only the fields sent are changed.
 
     ``type_id`` set marks the row ready; ``null`` sends it back to needs-review.
+    Changing ``type_id`` clears any ``parameters`` (they belong to a type). The
+    identity fields and parameters seed the component created at finalize.
     """
 
     type_id: int | None = None
     location_id: int | None = None
+    manufacturer: str | None = None
+    mpn: str | None = None
+    package: str | None = None
+    description: str | None = None
+    parameters: list[ParameterValueSet] | None = None
 
 
 class AttachmentRead(BaseModel):

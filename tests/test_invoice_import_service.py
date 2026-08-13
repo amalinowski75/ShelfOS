@@ -334,6 +334,70 @@ def test_finalize_blocked_when_a_ready_row_has_no_location(
     assert cs.list_components(session) == []  # nothing materialised
 
 
+def test_finalize_applies_parameters_entered_during_review(
+    session: Session, monkeypatch
+) -> None:
+    from app.models.enums import ParameterDataType
+
+    rt = cs.create_type(session, "resistor")
+    resistance = cs.add_parameter_definition(
+        session, rt.id, name="resistance", label="R",
+        data_type=ParameterDataType.NUMBER, unit="Ω",
+    )
+    _patch_parse(
+        monkeypatch,
+        _invoice(
+            _line(mpn="R1", manufacturer="Acme", description="Rezystor:x"),
+            shop_key="tme",
+        ),
+    )
+    result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
+    row = iis.list_pending(session, result.invoice_id)[0]
+    iis.update_pending(
+        session,
+        result.invoice_id,
+        row.id,
+        location_id=_make_location(session),
+        parameters=[{"parameter_definition_id": resistance.id, "value": "4k7"}],
+    )
+
+    invoice_service.finalize_invoice(session, result.invoice_id, user_id=1)
+
+    component = cs.list_components(session)[0]
+    values = {
+        v.parameter_definition_id: v.value_num
+        for v in cs.list_parameter_values(session, component.id)
+    }
+    assert values[resistance.id] == 4700.0  # engineering-parsed like a normal create
+
+
+def test_changing_the_type_clears_reviewed_parameters(
+    session: Session, monkeypatch
+) -> None:
+    from app.models.enums import ParameterDataType
+
+    rt = cs.create_type(session, "resistor")
+    resistance = cs.add_parameter_definition(
+        session, rt.id, name="resistance", label="R",
+        data_type=ParameterDataType.NUMBER, unit="Ω",
+    )
+    other = cs.create_type(session, "capacitor")
+    _patch_parse(
+        monkeypatch,
+        _invoice(_line(mpn="R1", manufacturer="Acme", description="Rezystor:x")),
+    )
+    result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
+    row = iis.list_pending(session, result.invoice_id)[0]
+    iis.update_pending(
+        session, result.invoice_id, row.id,
+        parameters=[{"parameter_definition_id": resistance.id, "value": "1k"}],
+    )
+    assert iis.get_pending(session, result.invoice_id, row.id).parameters
+
+    iis.update_pending(session, result.invoice_id, row.id, type_id=other.id)
+    assert iis.get_pending(session, result.invoice_id, row.id).parameters == []
+
+
 def test_finalize_reuses_an_existing_matching_component(
     session: Session, monkeypatch
 ) -> None:

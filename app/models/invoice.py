@@ -8,8 +8,9 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from typing import Any
 
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import JSON, Column, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 # Monetary precision shared by all amount columns (decision D5).
@@ -87,5 +88,12 @@ class InvoiceImportLine(SQLModel, table=True):
     type_id: int | None = Field(default=None, foreign_key="component_types.id")
     # Destination stock location, assigned during review; required before finalize.
     location_id: int | None = Field(default=None, foreign_key="locations.id")
+    # Initial EAV parameter values the user entered during review, as a list of
+    # ``{"parameter_definition_id": int, "value": ...}`` (same shape the component
+    # create API takes). Applied when the component is created at finalize; cleared
+    # when the type changes (they belong to a type's definitions).
+    parameters: list[dict[str, Any]] = Field(
+        default_factory=list, sa_column=Column(JSON, nullable=False)
+    )
     # Why it still needs the user (e.g. "no matching type"); "" once ready.
     reason: str

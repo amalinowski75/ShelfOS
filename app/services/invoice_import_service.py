@@ -312,24 +312,41 @@ def update_pending(
     *,
     type_id: int | None = _UNSET,
     location_id: int | None = _UNSET,
+    manufacturer: str | None = _UNSET,
+    mpn: str | None = _UNSET,
+    package: str | None = _UNSET,
+    description: str | None = _UNSET,
+    parameters: list[dict[str, Any]] | None = _UNSET,
 ) -> InvoiceImportLine:
     """Edit a staged line during review (only the fields provided are changed).
 
     Setting ``type_id`` marks the row ready (clears its review reason); setting it to
-    ``None`` sends it back to needs-review. ``location_id`` is required before the
-    invoice can be finalized. Nothing is created here — the component is still made at
-    finalize.
+    ``None`` sends it back to needs-review. Changing the type also clears ``parameters``
+    (they are the old type's). ``location_id`` is required before finalize. The identity
+    fields + parameters seed the component created at finalize. Nothing is created here.
     """
     staging = get_pending(session, invoice_id, import_line_id)
     if type_id is not _UNSET:
         if type_id is not None:
             require_entity(session, ComponentType, type_id, "component type")
+        if type_id != staging.type_id:
+            staging.parameters = []  # entered for the old type — no longer valid
         staging.type_id = type_id
         staging.reason = "" if type_id is not None else _REASON_NO_TYPE
     if location_id is not _UNSET:
         if location_id is not None:
             require_entity(session, Location, location_id, "location")
         staging.location_id = location_id
+    if manufacturer is not _UNSET:
+        staging.manufacturer = manufacturer
+    if mpn is not _UNSET:
+        staging.mpn = mpn
+    if package is not _UNSET:
+        staging.package = package
+    if description is not _UNSET:
+        staging.description = description
+    if parameters is not _UNSET:
+        staging.parameters = parameters or []
     session.add(staging)
     session.commit()
     session.refresh(staging)
@@ -386,6 +403,11 @@ def _materialize_component(
             existing = candidates[0]
     if existing is not None:
         return cast(int, existing.id)
+    # The parameter values the user entered during review (validated here against the
+    # type's definitions, same as a direct create); an existing reuse ignores them.
+    values = [
+        (int(p["parameter_definition_id"]), p["value"]) for p in (row.parameters or [])
+    ]
     component = cs.create_component_with_values(
         session,
         cast(int, row.type_id),
@@ -393,6 +415,7 @@ def _materialize_component(
         mpn=row.mpn,
         package=row.package,
         notes=row.description,
+        values=values,
         user_id=user_id,
         commit=False,
     )
