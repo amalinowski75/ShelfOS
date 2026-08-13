@@ -107,82 +107,50 @@ describe("invoices.js — import from PDF", () => {
   });
 });
 
-describe("invoices.js — resolve/dismiss parked import lines", () => {
-  it("resolve opens the line dialog prefilled and posts with import_line_id", async () => {
-    const fetchImpl = (url) =>
-      url === "/web/api/components"
-        ? Promise.resolve({
-            ok: true,
-            json: async () => ({
-              data: [{ id: 11, mpn: "ABC123", manufacturer: "Acme", type: "diode" }],
-            }),
-          })
-        : Promise.resolve({ ok: true, json: async () => ({ id: 55 }) });
+describe("invoices.js — review imported lines inline", () => {
+  function change(el) {
+    el.dispatchEvent(
+      new el.ownerDocument.defaultView.Event("change", { bubbles: true }),
+    );
+  }
+
+  it("PATCHes the staging row when the type is chosen, and clears incomplete", async () => {
     const { document, fetchMock } = loadPage(detailFixture({ pending: true }), SCRIPTS, {
-      fetchImpl,
+      fetchImpl: () => Promise.resolve({ ok: true, json: async () => ({}) }),
     });
-
-    document.querySelector('[data-act="resolve-import"]').click();
+    const row = document.querySelector("#invoice-review tr");
+    const typeSelect = row.querySelector(".ril-type");
+    typeSelect.value = "3";
+    // set a location too so the row is complete after the type change
+    row.querySelector(".ril-location").value = "5";
+    change(typeSelect);
     await tick();
 
-    const form = document.getElementById("invoice-line-form");
-    // Prefilled from the pending row.
-    expect(form.quantity.value).toBe("7");
-    expect(form.unit_price.value).toBe("2.50");
-    expect(form.supplier_part_number.value).toBe("ABC-ND");
-    expect(document.getElementById("invoice-line-title").textContent).toBe(
-      "Resolve import line",
-    );
-
-    submit(document, "invoice-line-form");
-    await tick();
-
-    const post = fetchMock.mock.calls.find(
-      ([url, opts]) => url === "/api/invoices/7/lines" && opts.method === "POST",
-    );
-    expect(JSON.parse(post[1].body)).toEqual({
-      component_id: 11,
-      quantity: 7,
-      unit_price: "2.50",
-      supplier_part_number: "ABC-ND",
-      location_id: null,
-      import_line_id: 21,
-    });
+    const [url, opts] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/invoices/7/import-lines/21");
+    expect(opts.method).toBe("PATCH");
+    expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
+    expect(JSON.parse(opts.body)).toEqual({ type_id: 3 });
+    // Both selects set → row no longer flagged incomplete.
+    expect(row.classList.contains("is-incomplete")).toBe(false);
   });
 
-  it("a plain add does not carry an import_line_id", async () => {
-    const fetchImpl = (url) =>
-      url === "/web/api/components"
-        ? Promise.resolve({
-            ok: true,
-            json: async () => ({
-              data: [{ id: 11, mpn: "R", manufacturer: null, type: "diode" }],
-            }),
-          })
-        : Promise.resolve({ ok: true, json: async () => ({ id: 1 }) });
-    // Same page has both a pending panel and the normal Add-line button.
+  it("PATCHes location_id (as null when blanked) on location change", async () => {
     const { document, fetchMock } = loadPage(detailFixture({ pending: true }), SCRIPTS, {
-      fetchImpl,
+      fetchImpl: () => Promise.resolve({ ok: true, json: async () => ({}) }),
     });
-
-    document.getElementById("invoice-addline-btn").click();
+    const locationSelect = document.querySelector("#invoice-review .ril-location");
+    locationSelect.value = "5";
+    change(locationSelect);
     await tick();
-    const form = document.getElementById("invoice-line-form");
-    form.quantity.value = "2";
-    form.unit_price.value = "1";
-    submit(document, "invoice-line-form");
-    await tick();
-
-    const post = fetchMock.mock.calls.find(
-      ([url, opts]) => url === "/api/invoices/7/lines" && opts.method === "POST",
-    );
-    expect(JSON.parse(post[1].body).import_line_id).toBeNull();
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ location_id: 5 });
   });
 
-  it("dismiss DELETEs the staging row after confirmation, with CSRF", async () => {
+  it("dismiss removes the row after confirmation, with CSRF", async () => {
     const { window, document, fetchMock } = loadPage(
       detailFixture({ pending: true }),
       SCRIPTS,
+      { fetchImpl: () => Promise.resolve({ ok: true, json: async () => ({}) }) },
     );
     document.querySelector('[data-act="dismiss-import"]').click();
     await tick();
@@ -192,6 +160,29 @@ describe("invoices.js — resolve/dismiss parked import lines", () => {
     expect(url).toBe("/api/invoices/7/import-lines/21");
     expect(opts.method).toBe("DELETE");
     expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
+    // The row is gone from the DOM (no reload).
+    expect(document.querySelector("#invoice-review tr")).toBeNull();
+  });
+
+  it("+ New type creates a type, selects it for the row and PATCHes", async () => {
+    const { window, document, fetchMock } = loadPage(
+      detailFixture({ pending: true }),
+      SCRIPTS,
+      { fetchImpl: () => Promise.resolve({ ok: true, json: async () => ({}) }) },
+    );
+    // Stub the shared type dialog: immediately "create" a type.
+    window.openTypeDialog = (onCreated) => onCreated({ id: 42, name: "cable" });
+
+    document.querySelector(".ril-new-type").click();
+    await tick();
+
+    const typeSelect = document.querySelector("#invoice-review .ril-type");
+    expect([...typeSelect.options].map((o) => o.value)).toContain("42");
+    expect(typeSelect.value).toBe("42");
+    const patch = fetchMock.mock.calls.find(
+      ([url, opts]) => opts.method === "PATCH",
+    );
+    expect(JSON.parse(patch[1].body)).toEqual({ type_id: 42 });
   });
 });
 
@@ -472,7 +463,6 @@ describe("invoices.js — error surfacing and add-line", () => {
       unit_price: "1.50",
       supplier_part_number: null,
       location_id: null,
-      import_line_id: null,
     });
   });
 

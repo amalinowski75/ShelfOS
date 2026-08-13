@@ -2,22 +2,27 @@
 
 Orchestrates the per-shop parsers (``app.services.invoice_import``) with the existing
 component/invoice services: create a draft invoice, store the PDF, and for each parsed
-line either add a real invoice line (component already exists, or its type exists so we
-create + enrich the component) or park it as an :class:`InvoiceImportLine` for the user
-to resolve on the draft page. Types are never created automatically — that stays a
-deliberate, human action.
+line either add a real invoice line (its component already exists) or **stage** it for
+review as an :class:`InvoiceImportLine`. New components are **not** created during
+import — a staged row carries the parsed/enriched data plus an auto-inferred ``type_id``
+where possible, and the user reviews it on the draft (fixing the type, setting a
+location). :func:`materialize_ready_lines` then creates the component + line at
+**finalize**, so the catalog is never polluted unless the invoice is actually committed.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import cast
+from decimal import Decimal
+from typing import Any, cast
 
 from sqlmodel import Session, col, select
 
+from app.models.component import ComponentType
 from app.models.enums import AttachmentKind
 from app.models.invoice import Invoice, InvoiceImportLine, InvoiceLine
+from app.models.location import Location
 from app.services import attachment_service, invoice_service, shops
 from app.services import component_service as cs
 from app.services._common import require_entity
@@ -26,6 +31,9 @@ from app.services.invoice_import import ParsedInvoice, ParsedLine, parse_invoice
 from app.services.shops.base import ProductData, infer_category
 
 _logger = logging.getLogger("shelfos")
+
+# Sentinel for "field not provided" in update_pending (so None can mean "clear it").
+_UNSET: Any = object()
 
 _REASON_NO_TYPE = "no matching type — create or pick one"
 _REASON_AMBIGUOUS = "several components share this MPN — pick one"
@@ -176,22 +184,16 @@ def _resolve_line(
             _stage(session, invoice_id, shop_key, line, line_no, _REASON_AMBIGUOUS)
             return False
 
-    # 5. New part: create it if its type is known, else park it for the user.
+    # 5. New part: stage it for review — the component is NOT created now, only at
+    #    finalize. If its type could be inferred the row is "ready" (needs just a
+    #    location); otherwise it needs the user to pick/create a type. Either way the
+    #    auto-guess is visible and correctable before anything is committed.
     type_id = _resolve_type_id(session, product.category)
-    if type_id is not None:
-        component = cs.create_component_with_values(
-            session,
-            type_id,
-            manufacturer=manufacturer,
-            mpn=mpn,
-            package=product.package,
-            notes=product.description or line.description,
-            user_id=user_id,
-        )
-        return add(cast(int, component.id))
-
-    reason = _REASON_NO_MPN if not mpn else _REASON_NO_TYPE
-    _stage(session, invoice_id, shop_key, line, line_no, reason, product=product)
+    reason = "" if type_id else (_REASON_NO_MPN if not mpn else _REASON_NO_TYPE)
+    _stage(
+        session, invoice_id, shop_key, line, line_no, reason,
+        product=product, type_id=type_id,
+    )
     return False
 
 
@@ -233,8 +235,13 @@ def _stage(
     reason: str,
     *,
     product: ProductData | None = None,
+    type_id: int | None = None,
 ) -> None:
-    """Park an unresolved line, prefilled with the best data we have."""
+    """Park a line for review, prefilled with the best data we have.
+
+    ``type_id`` set marks the row "ready" (auto-classified); left None it needs the
+    user to choose a type. Nothing is created here — materialisation is at finalize.
+    """
     session.add(
         InvoiceImportLine(
             invoice_id=invoice_id,
@@ -249,6 +256,7 @@ def _stage(
             quantity=line.quantity,
             unit_price=line.unit_price,
             shop_key=shop_key,
+            type_id=type_id,
             reason=reason,
         )
     )
@@ -296,3 +304,105 @@ def dismiss_pending(session: Session, invoice_id: int, import_line_id: int) -> N
     staging = get_pending(session, invoice_id, import_line_id)
     session.delete(staging)
     session.commit()
+
+
+def update_pending(
+    session: Session,
+    invoice_id: int,
+    import_line_id: int,
+    *,
+    type_id: int | None = _UNSET,
+    location_id: int | None = _UNSET,
+    quantity: int = _UNSET,
+    unit_price: Decimal = _UNSET,
+) -> InvoiceImportLine:
+    """Edit a staged line during review (only the fields provided are changed).
+
+    Setting ``type_id`` marks the row ready (clears its review reason); setting it to
+    ``None`` sends it back to needs-review. ``location_id`` is required before the
+    invoice can be finalized. Nothing is created here — the component is still made at
+    finalize.
+    """
+    staging = get_pending(session, invoice_id, import_line_id)
+    if type_id is not _UNSET:
+        if type_id is not None:
+            require_entity(session, ComponentType, type_id, "component type")
+        staging.type_id = type_id
+        staging.reason = "" if type_id is not None else _REASON_NO_TYPE
+    if location_id is not _UNSET:
+        if location_id is not None:
+            require_entity(session, Location, location_id, "location")
+        staging.location_id = location_id
+    if quantity is not _UNSET:
+        if quantity <= 0:
+            raise ValidationError("quantity must be positive")
+        staging.quantity = quantity
+    if unit_price is not _UNSET:
+        if unit_price < 0:
+            raise ValidationError("unit price must not be negative")
+        staging.unit_price = unit_price
+    session.add(staging)
+    session.commit()
+    session.refresh(staging)
+    return staging
+
+
+def materialize_ready_lines(
+    session: Session, invoice_id: int, user_id: int
+) -> None:
+    """Turn every ready staged row into a real component + invoice line (at finalize).
+
+    A "ready" row has a ``type_id``; it must also have a ``location_id``. For each, we
+    re-match an existing component by Manufacturer+MPN (one may have been created since
+    import) and reuse it, else create it, then add the invoice line and delete the
+    staging row (via ``add_line``'s ``import_line_id`` reconcile). Rows with no
+    ``type_id`` are left for the finalize guard to reject. This deliberately runs
+    BEFORE finalize claims the invoice, so it is naturally idempotent: it consumes the
+    staging rows, so a retry finds none left to materialise.
+    """
+    for row in list_pending(session, invoice_id):
+        if row.type_id is None:
+            continue  # still needs a type — finalize_invoice blocks on these
+        if row.location_id is None:
+            raise ValidationError(
+                f"assign a location to {row.mpn or 'the imported line'} "
+                "before finalizing"
+            )
+        component_id = _materialize_component(session, row, user_id)
+        invoice_service.add_line(
+            session,
+            invoice_id,
+            component_id=component_id,
+            quantity=row.quantity,
+            unit_price=row.unit_price,
+            supplier_part_number=row.supplier_part_number,
+            location_id=row.location_id,
+            import_line_id=cast(int, row.id),
+        )
+
+
+def _materialize_component(
+    session: Session, row: InvoiceImportLine, user_id: int
+) -> int:
+    """Reuse an existing matching component, or create one from the staged row."""
+    existing = None
+    if row.manufacturer and row.mpn:
+        existing = cs.find_duplicate_component(
+            session, mpn=row.mpn, manufacturer=row.manufacturer
+        )
+    if existing is None and row.mpn and not row.manufacturer:
+        candidates = cs.find_components_by_mpn(session, row.mpn)
+        if len(candidates) == 1:
+            existing = candidates[0]
+    if existing is not None:
+        return cast(int, existing.id)
+    component = cs.create_component_with_values(
+        session,
+        cast(int, row.type_id),
+        manufacturer=row.manufacturer,
+        mpn=row.mpn,
+        package=row.package,
+        notes=row.description,
+        user_id=user_id,
+    )
+    return cast(int, component.id)

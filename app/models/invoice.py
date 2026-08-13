@@ -58,14 +58,15 @@ class InvoiceLine(SQLModel, table=True):
 
 
 class InvoiceImportLine(SQLModel, table=True):
-    """A parsed PDF-import line that could not be resolved to a component yet.
+    """A parsed PDF-import line staged for review; its component is created at finalize.
 
-    A real :class:`InvoiceLine` needs a ``component_id``, so a line whose component
-    (and type) don't exist can't be persisted as one. PDF import parks such lines
-    here — carrying what it read off the invoice — and the draft invoice page lets
-    the user resolve each through the normal New Component / New Type dialogs.
-    Resolving one creates the real line and deletes its staging row, so this table
-    only ever holds the outstanding lines.
+    Import never creates a component immediately — it carries what it read off the
+    invoice here (enriched where possible) and lets the user review each line on the
+    draft before committing. A row is **ready** once it has a ``type_id`` and a
+    ``location_id``; a row with no ``type_id`` still **needs review**. Finalizing the
+    invoice materialises every ready row into a real component + line (deleting the
+    staging row), so nothing pollutes the catalog unless the invoice is
+    actually committed — and a wrong auto-classification can be corrected here first.
     """
 
     __tablename__ = "invoice_import_lines"
@@ -81,5 +82,10 @@ class InvoiceImportLine(SQLModel, table=True):
     quantity: int
     unit_price: Decimal = Field(max_digits=_MONEY_DIGITS, decimal_places=_MONEY_PLACES)
     shop_key: str
-    # Why it needs the user (e.g. "no matching type") — shown in the review panel.
+    # The resolved component type (auto-inferred or user-picked). None → still needs a
+    # type before it can be created; set → "ready" to materialise at finalize.
+    type_id: int | None = Field(default=None, foreign_key="component_types.id")
+    # Destination stock location, assigned during review; required before finalize.
+    location_id: int | None = Field(default=None, foreign_key="locations.id")
+    # Why it still needs the user (e.g. "no matching type"); "" once ready.
     reason: str

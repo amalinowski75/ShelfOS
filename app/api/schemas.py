@@ -252,7 +252,10 @@ class InvoiceImportResult(BaseModel):
 
 
 class InvoiceImportLineRead(BaseModel):
-    """A parked import line awaiting resolution on the draft invoice page."""
+    """A staged import line under review on the draft invoice page.
+
+    ``type_id`` set + ``location_id`` set = ready to be created at finalize.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -267,7 +270,21 @@ class InvoiceImportLineRead(BaseModel):
     quantity: int
     unit_price: Decimal
     shop_key: str
+    type_id: int | None
+    location_id: int | None
     reason: str
+
+
+class InvoiceImportLineUpdate(BaseModel):
+    """Review edits to a staged import line; only the fields sent are changed.
+
+    ``type_id`` set marks the row ready; ``null`` sends it back to needs-review.
+    """
+
+    type_id: int | None = None
+    location_id: int | None = None
+    quantity: int | None = None
+    unit_price: Decimal | None = None
 
 
 class AttachmentRead(BaseModel):

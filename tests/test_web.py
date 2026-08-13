@@ -741,26 +741,26 @@ def test_invoice_detail_unknown_returns_404(client: TestClient) -> None:
     assert client.get("/invoices/9999").status_code == 404
 
 
-def test_finalize_hidden_while_import_lines_need_review(
+def test_import_review_panel_renders_with_type_and_location_pickers(
     client: TestClient,
     session,  # type: ignore[no-untyped-def]
 ) -> None:
-    """The Finalize button is offered only once the "Needs review" panel is clear.
+    """A staged import line shows an inline type + location picker on the draft.
 
-    Finalizing is blocked server-side while parked import lines remain (they'd be
-    orphaned), so the button must not invite the click in the first place.
+    Under deferred creation the component is made at finalize, so the row is edited
+    in place (choose/fix its type, set a location) rather than resolved into a
+    component up front. Finalize is offered throughout — it validates readiness.
     """
     from decimal import Decimal
 
+    from app.models.component import ComponentType
     from app.models.invoice import InvoiceImportLine
 
     handles = _invoice_with_line(client)
     invoice_id = handles["invoice"]["id"]  # type: ignore[index]
+    ctype = session.get(ComponentType, 1)  # "resistor", made by _invoice_with_line
 
-    # With no parked lines, Finalize is available.
-    assert 'id="invoice-finalize-btn"' in client.get(f"/invoices/{invoice_id}").text
-
-    # A parked import line (client and session share the in-memory engine).
+    # A ready staged row (type inferred, no location yet).
     session.add(
         InvoiceImportLine(
             invoice_id=invoice_id,
@@ -770,14 +770,20 @@ def test_finalize_hidden_while_import_lines_need_review(
             quantity=1,
             unit_price=Decimal("1"),
             shop_key="tme",
-            reason="no matching type",
+            type_id=ctype.id,
+            reason="",
         )
     )
     session.commit()
 
     html = client.get(f"/invoices/{invoice_id}").text
-    assert 'id="invoice-finalize-btn"' not in html  # Finalize withdrawn
-    assert 'id="invoice-pending"' in html  # the Needs review panel is shown instead
+    assert 'id="invoice-review"' in html  # the review panel
+    assert 'class="control ril-type"' in html  # inline type picker
+    assert 'class="control ril-location"' in html  # inline location picker
+    # Finalize stays available (it validates readiness server-side).
+    assert 'id="invoice-finalize-btn"' in html
+    # The row is flagged incomplete until it has a location.
+    assert "is-incomplete" in html
 
 
 def test_invoice_detail_shows_attachments_even_when_finalized(

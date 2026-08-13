@@ -377,23 +377,38 @@ def finalize_invoice(
     the invoice is read-only.
     """
     invoice = _require_draft(session, invoice_id)
+    # Deferred creation: staged import lines become real components + lines only now.
+    # Validate EVERY staged row first, so a bad one can't leave the invoice half
+    # materialised — a row with no type still needs the user, and a ready row needs a
+    # location. Only then materialise (creating components), then run the normal
+    # per-line checks over the full set.
+    staged = session.exec(
+        select(InvoiceImportLine).where(InvoiceImportLine.invoice_id == invoice_id)
+    ).all()
+    needs_type = [row for row in staged if row.type_id is None]
+    if needs_type:
+        raise ValidationError(
+            f"{len(needs_type)} imported line(s) still need a type — resolve or "
+            "dismiss them before finalizing"
+        )
+    needs_location = [row for row in staged if row.location_id is None]
+    if needs_location:
+        raise ValidationError(
+            f"assign a location to {len(needs_location)} imported line(s) before "
+            "finalizing"
+        )
+
+    # Lazy import avoids a module cycle (invoice_import_service imports this module).
+    from app.services import invoice_import_service as _imp
+
+    _imp.materialize_ready_lines(session, invoice_id, user_id)
+
     lines = get_lines(session, invoice_id)
     if not lines:
         raise ValidationError("cannot finalize an invoice with no lines")
     if any(line.location_id is None for line in lines):
         raise ValidationError(
             "every invoice line must have a location before finalization"
-        )
-    # Finalizing hides the "needs attention" panel (it renders only on a draft) and
-    # a parked line can never become real afterwards (add_line requires a draft), so
-    # any left unresolved would be silently orphaned. Block until they're gone.
-    pending = session.exec(
-        select(InvoiceImportLine).where(InvoiceImportLine.invoice_id == invoice_id)
-    ).all()
-    if pending:
-        raise ValidationError(
-            f"{len(pending)} imported line(s) still need review — resolve or dismiss "
-            "them before finalizing"
         )
 
     net = _net_total(session, invoice_id)
