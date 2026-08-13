@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 import tarfile
 from pathlib import Path
 
@@ -47,8 +51,13 @@ def test_create_and_restore_round_trip(source: dict[str, Path]) -> None:
     archive = source["root"] / "backup.tar.gz"
     manifest = backup.create_backup(source["db"], source["attachments"], archive)
     assert archive.is_file()
+    assert archive.stat().st_mode & 0o777 == 0o600  # holds password hashes
     assert manifest["format"] == 1
     assert manifest["attachments"]["count"] == 2  # .thumbs excluded
+    assert set(manifest["attachments"]["files"]) == {
+        "components/1/datasheet.pdf",
+        "invoice.pdf",
+    }
 
     # Restore into a completely different location (as after moving hosts).
     target_db = source["root"] / "restored" / "data" / "shelfos.db"
@@ -82,9 +91,12 @@ def test_restore_replaces_current_state_and_drops_stale_sidecars(
     # The attachments tree is swapped whole: post-backup files do not survive.
     assert not (source["attachments"] / "added-later.pdf").exists()
     assert (source["attachments"] / "invoice.pdf").is_file()
-    # No staging leftovers next to the live directories.
+    # No staging leftovers next to the live directories — neither the
+    # ".restore-<pid>" staging dir nor the ".old-<pid>" pre-restore copy.
     leftovers = [
-        p for p in source["attachments"].parent.iterdir() if ".restore" in p.name
+        p
+        for p in source["attachments"].parent.iterdir()
+        if ".restore" in p.name or ".old" in p.name
     ]
     assert leftovers == []
 
@@ -94,7 +106,7 @@ def test_create_backup_works_with_no_attachments_dir(source: dict[str, Path]) ->
     manifest = backup.create_backup(
         source["db"], source["root"] / "does-not-exist", archive
     )
-    assert manifest["attachments"] == {"count": 0, "bytes": 0}
+    assert manifest["attachments"] == {"count": 0, "bytes": 0, "files": {}}
     target = source["root"] / "restored"
     backup.restore_backup(archive, target / "shelfos.db", target / "attachments")
     assert (target / "attachments").is_dir()
@@ -126,6 +138,16 @@ def test_restore_rejects_foreign_and_corrupt_archives(source: dict[str, Path]) -
         tar.add(manifest_file, arcname="manifest.json")
     with pytest.raises(backup.BackupError, match="unsupported backup format"):
         backup.read_manifest(future)
+
+    # Right app and format but missing the database/attachments sections: the
+    # shape is validated up front, so no downstream KeyError (e.g. in the
+    # pre-restore summary main() prints).
+    hollow = source["root"] / "hollow.tar.gz"
+    manifest_file.write_text(json.dumps({"app": "shelfos", "format": 1}))
+    with tarfile.open(hollow, "w:gz") as tar:
+        tar.add(manifest_file, arcname="manifest.json")
+    with pytest.raises(backup.BackupError, match="malformed manifest"):
+        backup.read_manifest(hollow)
 
 
 def test_restore_detects_checksum_mismatch(source: dict[str, Path]) -> None:
@@ -169,6 +191,131 @@ def test_restore_blocks_path_traversal_members(source: dict[str, Path]) -> None:
 
 def test_sqlite_path_accepts_only_file_backed_urls() -> None:
     assert backup._sqlite_path("sqlite:///data/shelfos.db") == Path("data/shelfos.db")
+    # A query string is connection config, not part of the filename.
+    assert backup._sqlite_path("sqlite:///data/shelfos.db?timeout=30") == Path(
+        "data/shelfos.db"
+    )
     for url in ("sqlite:///:memory:", "postgresql://host/db"):
         with pytest.raises(backup.BackupError, match="file-backed SQLite"):
             backup._sqlite_path(url)
+
+
+def test_restore_rolls_back_the_live_dir_when_the_swap_fails_midway(
+    source: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = source["root"] / "backup.tar.gz"
+    backup.create_backup(source["db"], source["attachments"], archive)
+    (source["attachments"] / "added-later.pdf").write_bytes(b"live content")
+
+    # Fail exactly once, on the rename that moves the staged tree into place —
+    # i.e. after the live directory has already been moved aside.
+    live = source["attachments"].resolve()
+    real_rename = os.rename
+    tripped = False
+
+    def failing_rename(src: object, dst: object) -> None:
+        nonlocal tripped
+        if not tripped and Path(str(dst)) == live:
+            tripped = True
+            raise OSError("disk went away")
+        real_rename(str(src), str(dst))
+
+    monkeypatch.setattr(backup.os, "rename", failing_rename)
+    with pytest.raises(OSError, match="disk went away"):
+        backup.restore_backup(archive, source["db"], source["attachments"])
+    assert tripped
+
+    # The pre-restore attachments tree is back under its original name, and
+    # neither the staging dir nor the ".old" copy survives.
+    assert (source["attachments"] / "added-later.pdf").read_bytes() == b"live content"
+    leftovers = [
+        p
+        for p in source["attachments"].parent.iterdir()
+        if ".restore" in p.name or ".old" in p.name
+    ]
+    assert leftovers == []
+
+
+def test_restore_detects_a_tampered_attachment(source: dict[str, Path]) -> None:
+    archive = source["root"] / "backup.tar.gz"
+    backup.create_backup(source["db"], source["attachments"], archive)
+
+    # Repack the archive with one attachment's bytes flipped; the manifest
+    # (and the database) stay pristine.
+    tampered = source["root"] / "tampered.tar.gz"
+    with tarfile.open(archive) as src, tarfile.open(tampered, "w:gz") as dst:
+        for member in src.getmembers():
+            handle = src.extractfile(member)
+            data = handle.read() if handle else None
+            if member.name == "attachments/invoice.pdf":
+                data = b"flipped bits"
+                member.size = len(data)
+            dst.addfile(member, io.BytesIO(data) if data is not None else None)
+
+    target = source["root"] / "restored"
+    with pytest.raises(backup.BackupError, match="attachment checksum mismatch"):
+        backup.restore_backup(tampered, target / "shelfos.db", target / "attachments")
+    assert not (target / "shelfos.db").exists()  # verified before any replacement
+
+
+@pytest.mark.skipif(not Path("/proc").is_dir(), reason="needs Linux /proc")
+def test_restore_refuses_while_another_process_holds_the_db_open(
+    source: dict[str, Path],
+) -> None:
+    archive = source["root"] / "backup.tar.gz"
+    backup.create_backup(source["db"], source["attachments"], archive)
+
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import sqlite3, sys, time\n"
+            "conn = sqlite3.connect(sys.argv[1])\n"
+            "print('open', flush=True)\n"
+            "time.sleep(60)\n",
+            str(source["db"]),
+        ],
+        stdout=subprocess.PIPE,
+    )
+    try:
+        assert holder.stdout is not None and holder.stdout.readline().strip() == b"open"
+        with pytest.raises(backup.BackupError, match="open by process"):
+            backup.restore_backup(archive, source["db"], source["attachments"])
+        # --force overrides the guard.
+        backup.restore_backup(archive, source["db"], source["attachments"], force=True)
+    finally:
+        holder.kill()
+        holder.wait()
+
+
+def test_restore_swaps_the_target_of_a_symlinked_attachments_dir(
+    source: dict[str, Path],
+) -> None:
+    archive = source["root"] / "backup.tar.gz"
+    backup.create_backup(source["db"], source["attachments"], archive)
+
+    real = source["root"] / "nas" / "shelfos-attachments"
+    real.mkdir(parents=True)
+    link = source["root"] / "attachments-link"
+    link.symlink_to(real)
+
+    backup.restore_backup(archive, source["db"], link)
+    assert link.is_symlink()  # the link survives...
+    assert (real / "invoice.pdf").is_file()  # ...and its target got the content
+
+
+def test_restore_refuses_an_archive_larger_than_free_disk(
+    source: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = source["root"] / "backup.tar.gz"
+    backup.create_backup(source["db"], source["attachments"], archive)
+
+    class _Tiny:
+        total = used = 0
+        free = 1
+
+    monkeypatch.setattr(backup.shutil, "disk_usage", lambda _path: _Tiny)
+    with pytest.raises(backup.BackupError, match="not extracting"):
+        backup.restore_backup(
+            archive, source["root"] / "r" / "db", source["root"] / "r" / "att"
+        )
