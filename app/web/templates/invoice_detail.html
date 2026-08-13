@@ -34,9 +34,9 @@
   <div class="head-actions">
     <button type="button" class="btn btn-ghost" id="invoice-edit-btn">Edit</button>
     <button type="button" class="btn btn-secondary" id="invoice-addline-btn">Add line</button>
-    {# Finalize is offered only once every imported line is resolved: it is blocked
-       server-side while any remain (they'd be orphaned), so don't invite the click. #}
-    {% if lines and not pending_import_lines %}<button type="button" class="btn btn-primary" id="invoice-finalize-btn">Finalize</button>{% endif %}
+    {# Finalize materialises the ready review rows too, so it's offered whenever the
+       invoice isn't empty; it validates server-side that each row has a type + location. #}
+    {% if lines or pending_import_lines %}<button type="button" class="btn btn-primary" id="invoice-finalize-btn">Finalize</button>{% endif %}
     <button type="button" class="btn btn-danger" id="invoice-delete-btn">Delete draft</button>
   </div>
   {% endif %}
@@ -50,7 +50,7 @@
       <tr><th>Invoice number</th><td class="mono">{{ invoice.invoice_number }}</td></tr>
       <tr><th>Date</th><td class="mono">{{ invoice.invoice_date.isoformat() }}</td></tr>
       <tr><th>Currency</th><td>{{ invoice.currency }}</td></tr>
-      <tr><th>Total net</th><td class="mono">{{ format_money(invoice.total_net) }} {{ invoice.currency }}</td></tr>
+      <tr><th>Total net</th><td class="mono">{{ format_money(invoice.total_net) }} {{ invoice.currency }}{% if can_edit and pending_import_lines %} <span class="muted">(resolved lines only)</span>{% endif %}</td></tr>
       <tr><th>Total gross</th><td class="mono">{% if invoice.is_finalized %}{{ format_money(invoice.total_gross) }} {{ invoice.currency }}{% else %}<span class="muted">— (set on finalize)</span>{% endif %}</td></tr>
       <tr><th>Status</th><td>{{ state_badge(invoice.is_finalized) }}</td></tr>
       {% if invoice.file_path %}<tr><th>Invoice file</th><td class="mono">{{ invoice.file_path }}</td></tr>{% endif %}
@@ -61,42 +61,56 @@
 
 {% if can_edit and pending_import_lines %}
 <div class="card card-pad" id="invoice-pending" style="margin-top: 20px">
-  <h2>Needs review <span class="badge b-warn">{{ pending_import_lines | length }}</span></h2>
-  <p class="muted">Lines from the imported PDF that need a component. Resolve each to
-    add it (creating the component/type if needed), or dismiss it. The invoice can be
-    finalized once this list is empty.</p>
+  <h2>Imported — review <span class="badge b-warn">{{ pending_import_lines | length }}</span></h2>
+  <p class="muted">These lines were read from the PDF. The component is created only when
+    you finalize, so check the auto-guessed <strong>type</strong> (fix it if wrong), set a
+    <strong>location</strong>, or dismiss a line. Finalize once each has a type and a location.
+    These will add <strong class="mono">{{ format_money(pending_import_subtotal) }} {{ invoice.currency }}</strong>
+    to the net (not counted in Total net until finalized).</p>
   <div class="table-wrap">
-    <table class="data">
+    <table class="data" id="invoice-review">
       <thead>
         <tr>
           <th>Part</th>
-          <th>Supplier part #</th>
+          <th>Type</th>
           <th style="text-align:right">Qty</th>
           <th style="text-align:right">Unit price</th>
-          <th>Needs</th>
+          <th>Location</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
         {% for p in pending_import_lines %}
         <tr data-import-line-id="{{ p.id }}"
+            data-type-id="{{ p.type_id or '' }}"
             data-mpn="{{ p.mpn or '' }}"
             data-manufacturer="{{ p.manufacturer or '' }}"
-            data-description="{{ p.description or '' }}"
             data-package="{{ p.package or '' }}"
-            data-quantity="{{ p.quantity }}"
-            data-unit-price="{{ format_money(p.unit_price) }}"
-            data-spn="{{ p.supplier_part_number or '' }}">
+            data-description="{{ p.description or '' }}"
+            data-parameters='{{ p.parameters | tojson }}'
+            class="{{ '' if (p.type_id and p.location_id) else 'is-incomplete' }}">
           <td>
             <span class="mono">{{ p.mpn or ("Line " ~ p.line_no) }}</span>
             {% if p.manufacturer %}<span class="muted"> · {{ p.manufacturer }}</span>{% endif %}
+            {% if p.description %}<div class="muted small">{{ p.description }}</div>{% endif %}
           </td>
-          <td class="mono">{{ p.supplier_part_number or "—" }}</td>
+          <td>
+            {% set ns = namespace(name=None) %}
+            {% for t in types %}{% if t.id == p.type_id %}{% set ns.name = t.name %}{% endif %}{% endfor %}
+            {% if ns.name %}<span class="badge b-neutral">{{ ns.name }}</span>{% else %}<span class="muted">— set via Edit —</span>{% endif %}
+          </td>
           <td class="num">{{ p.quantity }}</td>
           <td class="num">{{ format_money(p.unit_price) }} {{ invoice.currency }}</td>
-          <td class="muted">{{ p.reason }}</td>
+          <td>
+            <select class="control ril-location">
+              <option value="">— choose a location —</option>
+              {% for opt in location_options %}
+              <option value="{{ opt.id }}" {{ 'selected' if opt.id == p.location_id else '' }}>{{ opt.path }}</option>
+              {% endfor %}
+            </select>
+          </td>
           <td class="line-actions">
-            <button type="button" class="btn btn-primary btn-sm" data-act="resolve-import">Resolve</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-act="edit-import">Edit</button>
             <button type="button" class="btn btn-ghost btn-sm" data-act="dismiss-import">Dismiss</button>
           </td>
         </tr>
@@ -104,6 +118,7 @@
       </tbody>
     </table>
   </div>
+  <p id="invoice-review-error" class="error" hidden></p>
 </div>
 {% endif %}
 
@@ -254,7 +269,7 @@
 {# The shared "New location" dialog, reachable inline from the line picker. #}
 {% include "_location_dialog.html" %}
 
-{% if lines %}
+{% if lines or pending_import_lines %}
 <dialog id="invoice-finalize-dialog">
   <article>
     <header>

@@ -399,6 +399,13 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
    overstate it; .muted would hide it. */
 .warn { color: var(--warn); font-size: 13.5px; margin: 0; }
 
+/* Secondary line under a table cell (e.g. an imported part's description). */
+.small { font-size: 12px; }
+
+/* An imported-review row still missing a type or a location — a soft accent bar
+   so it reads as "needs a touch" without shouting error red. */
+#invoice-review tr.is-incomplete > td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+
 /* ---------- dialogs with a location tree-picker (§7) ---------- */
 /* Wider so the tree has room; cap the height and let the form scroll only as a
    fallback on a short viewport — the picker menu scrolls itself. */

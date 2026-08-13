@@ -175,9 +175,6 @@ if (detail && lineDialog) {
 
   // Fetch the component list once and reuse it for the picker.
   let componentOptions = null;
-  // Seeds the shared "New component" dialog when resolving an import line, so it
-  // opens pre-filled from what the invoice told us; null for a plain add.
-  let componentPrefill = null;
   async function loadComponentOptions() {
     if (componentOptions) return componentOptions;
     const payload = await fetch("/web/api/components").then((r) => r.json());
@@ -209,8 +206,6 @@ if (detail && lineDialog) {
     lineForm.line_id.value = "";
     lineForm.dataset.originalLocationId = "";
     lineForm.dataset.originalSpn = "";
-    lineForm.dataset.importLineId = "";
-    componentPrefill = null;
     locationPicker?.reset();
     componentField.hidden = false;
     componentSelect.required = true;
@@ -218,35 +213,6 @@ if (detail && lineDialog) {
     if (!options.length) {
       showError(lineError, "No components yet — use “New component” to add one.");
     }
-    fillComponentSelect(options);
-    lineDialog.showModal();
-  }
-
-  // Resolve a parked PDF-import line: the same line dialog, pre-filled with what
-  // the invoice carried and remembering the import line so the add clears it. The
-  // component still has to be chosen — an existing one, or "+ New component"
-  // (pre-filled from the same data), which can create its type inline.
-  async function openResolveLine(row) {
-    lineForm.reset();
-    lineError.hidden = true;
-    lineTitle.textContent = "Resolve import line";
-    lineForm.line_id.value = "";
-    lineForm.dataset.originalLocationId = "";
-    lineForm.dataset.originalSpn = "";
-    lineForm.dataset.importLineId = row.dataset.importLineId;
-    lineForm.quantity.value = row.dataset.quantity;
-    lineForm.unit_price.value = row.dataset.unitPrice;
-    lineForm.supplier_part_number.value = row.dataset.spn;
-    locationPicker?.reset();
-    componentField.hidden = false;
-    componentSelect.required = true;
-    componentPrefill = {
-      mpn: row.dataset.mpn || null,
-      manufacturer: row.dataset.manufacturer || null,
-      package: row.dataset.package || null,
-      notes: row.dataset.description || null,
-    };
-    const options = await loadComponentOptions();
     fillComponentSelect(options);
     lineDialog.showModal();
   }
@@ -270,7 +236,7 @@ if (detail && lineDialog) {
         }
         componentSelect.value = String(created.id);
         lineError.hidden = true;
-      }, componentPrefill);
+      });
     });
   }
 
@@ -282,8 +248,6 @@ if (detail && lineDialog) {
     // a line to a different component), so the picker is hidden.
     componentField.hidden = true;
     componentSelect.required = false;
-    lineForm.dataset.importLineId = "";
-    componentPrefill = null;
     lineForm.line_id.value = row.dataset.lineId;
     lineForm.quantity.value = row.dataset.quantity;
     lineForm.unit_price.value = row.dataset.unitPrice;
@@ -306,15 +270,12 @@ if (detail && lineDialog) {
       const locationValue = lineForm.location_id.value;
 
       if (!lineId) {
-        const importLineId = lineForm.dataset.importLineId;
         const resp = await sendJSON(`/api/invoices/${invoiceId}/lines`, "POST", {
           component_id: Number(componentSelect.value),
           quantity,
           unit_price: unitPrice,
           supplier_part_number: lineForm.supplier_part_number.value.trim() || null,
           location_id: locationValue ? Number(locationValue) : null,
-          // Set when resolving a parked line: clears its staging row atomically.
-          import_line_id: importLineId ? Number(importLineId) : null,
         });
         if (resp.ok) return window.location.reload();
         return showError(lineError, await errorMessage(resp));
@@ -371,31 +332,94 @@ if (detail && lineDialog) {
   const addLineBtn = document.getElementById("invoice-addline-btn");
   addLineBtn.addEventListener("click", openAddLine);
 
-  // --- Parked PDF-import lines: resolve (open the line dialog) or dismiss ---
-  document
-    .getElementById("invoice-pending")
-    ?.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-act]");
-      if (!button) return;
-      const row = button.closest("tr");
-      if (button.dataset.act === "resolve-import") {
-        openResolveLine(row);
-      } else if (button.dataset.act === "dismiss-import") {
-        if (!window.confirm("Dismiss this line? It won't be added to the invoice."))
-          return;
-        guard(async () => {
-          const resp = await fetch(
-            `/api/invoices/${invoiceId}/import-lines/${row.dataset.importLineId}`,
-            { method: "DELETE", headers: { "X-CSRF-Token": csrfToken } },
-          );
-          if (resp.ok) {
-            window.location.reload();
-          } else {
-            window.alert(await errorMessage(resp));
-          }
-        });
+  // --- Imported lines under review: set type/location inline, or dismiss ---
+  // The component is created at finalize, so here we only persist the review edits
+  // (type, location) on the staged row — no reload per change; the row's own
+  // "incomplete" styling updates in place, and finalize validates the rest.
+  const reviewPanel = document.getElementById("invoice-pending");
+  const reviewError = document.getElementById("invoice-review-error");
+
+  function markRow(row) {
+    const hasType = !!row.dataset.typeId;
+    const hasLocation = !!row.querySelector(".ril-location")?.value;
+    row.classList.toggle("is-incomplete", !(hasType && hasLocation));
+  }
+
+  async function patchImportLine(row, body) {
+    const id = row.dataset.importLineId;
+    const resp = await sendJSON(
+      `/api/invoices/${invoiceId}/import-lines/${id}`,
+      "PATCH",
+      body,
+    );
+    if (resp.ok) {
+      reviewError.hidden = true;
+      markRow(row);
+    } else {
+      showError(reviewError, await errorMessage(resp));
+    }
+  }
+
+  // Inline location pick — the quick, common action. The type and parameters are set
+  // through the full editor (the New Component dialog in stage mode), below.
+  reviewPanel?.addEventListener("change", (event) => {
+    const select = event.target;
+    if (!select.classList.contains("ril-location")) return;
+    guard(() =>
+      patchImportLine(select.closest("tr"), {
+        location_id: select.value ? Number(select.value) : null,
+      }),
+    );
+  });
+
+  reviewPanel?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-act]");
+    if (!button) return;
+    const row = button.closest("tr");
+    if (button.dataset.act === "edit-import") {
+      // Reuse the New Component dialog in "stage" mode: it renders the type, identity
+      // fields and the type's parameters (matching from the description), then saves to
+      // the staged row instead of creating a component (that happens at finalize).
+      let stored = [];
+      try {
+        stored = JSON.parse(row.dataset.parameters || "[]");
+      } catch {
+        stored = [];
       }
-    });
+      window.openComponentDialog?.(
+        () => window.location.reload(),
+        {
+          typeId: row.dataset.typeId || null,
+          mpn: row.dataset.mpn || null,
+          manufacturer: row.dataset.manufacturer || null,
+          package: row.dataset.package || null,
+          notes: row.dataset.description || null,
+          paramValues: stored,
+        },
+        { stage: { invoiceId, importLineId: row.dataset.importLineId } },
+      );
+    } else if (button.dataset.act === "dismiss-import") {
+      if (!window.confirm("Dismiss this line? It won't be added to the invoice."))
+        return;
+      guard(async () => {
+        const resp = await fetch(
+          `/api/invoices/${invoiceId}/import-lines/${row.dataset.importLineId}`,
+          { method: "DELETE", headers: { "X-CSRF-Token": csrfToken } },
+        );
+        if (!resp.ok) {
+          showError(reviewError, await errorMessage(resp));
+          return;
+        }
+        // Reload once the panel empties so the server re-renders the page state
+        // (an all-staged invoice that's now empty should stop offering Finalize).
+        if (reviewPanel.querySelectorAll("#invoice-review tr").length <= 1) {
+          window.location.reload();
+        } else {
+          row.remove();
+        }
+      });
+    }
+  });
 
   // Per-row edit / remove, delegated from the lines table. Scoped by id (not
   // ".data") so the pending-import panel, itself a .data table, isn't captured.

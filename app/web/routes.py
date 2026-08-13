@@ -7,6 +7,7 @@ API (``/api/stock/*``) via ``fetch`` from the browser.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
@@ -387,6 +388,11 @@ def invoice_detail(
     tree = ls.location_tree(session) if can_edit else []
     # Parked PDF-import lines awaiting resolution — only shown on an editable draft.
     pending_import = imp.list_pending(session, invoice_id) if can_edit else []
+    # What the staged rows will add to the net once finalized — total_net counts only
+    # real lines, so a freshly imported invoice would otherwise read 0.00.
+    pending_import_subtotal = sum(
+        (line.unit_price * line.quantity for line in pending_import), Decimal(0)
+    )
     return templates.TemplateResponse(
         request,
         "invoice_detail.html",
@@ -394,6 +400,7 @@ def invoice_detail(
             "invoice": invoice,
             "lines": lines,
             "pending_import_lines": pending_import,
+            "pending_import_subtotal": pending_import_subtotal,
             # The line dialog (location tree-picker + "New component") only renders
             # for a writer on a draft, so only fetch its data then.
             "location_tree": tree,

@@ -368,6 +368,59 @@ describe("app.js — new component", () => {
   });
 });
 
+describe("component_dialog.js — stage mode (invoice import review)", () => {
+  it("prefills type + params from the staged row and PATCHes on save (no create)", async () => {
+    const saved = [];
+    const { window, document, fetchMock } = loadPage(componentPageFixture(), SCRIPTS, {
+      fetchImpl,
+    });
+
+    window.openComponentDialog(
+      (r) => saved.push(r),
+      {
+        typeId: 1,
+        mpn: "R-1",
+        manufacturer: "Acme",
+        package: "0402",
+        notes: "a res",
+        paramValues: [{ parameter_definition_id: 10, value: "4k7" }],
+      },
+      { stage: { invoiceId: 7, importLineId: 21 } },
+    );
+    await tick(); // params load + prefill
+
+    // Type selected, the type's params rendered, the stored value applied.
+    expect(document.getElementById("component-type").value).toBe("1");
+    expect(document.querySelector('[data-definition-id="10"]').value).toBe("4k7");
+    expect(document.getElementById("component-form").mpn.value).toBe("R-1");
+
+    fire(document.getElementById("component-form"), "submit");
+    await tick();
+
+    // Saved to the import line — NOT a component create.
+    const patch = fetchMock.mock.calls.find(
+      ([url, opts]) =>
+        url === "/api/invoices/7/import-lines/21" && opts.method === "PATCH",
+    );
+    expect(patch).toBeTruthy();
+    expect(patch[1].headers["X-CSRF-Token"]).toBe(CSRF);
+    expect(JSON.parse(patch[1].body)).toEqual({
+      type_id: 1,
+      manufacturer: "Acme",
+      mpn: "R-1",
+      package: "0402",
+      description: "a res",
+      parameters: [{ parameter_definition_id: 10, value: "4k7" }],
+    });
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, opts]) => url === "/api/components" && opts?.method === "POST",
+      ),
+    ).toBe(false);
+    expect(saved).toHaveLength(1);
+  });
+});
+
 describe("component_dialog.js — shop import", () => {
   const PRODUCT = {
     category: "resistor",

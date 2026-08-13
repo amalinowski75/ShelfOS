@@ -640,6 +640,150 @@ def test_import_invoice_creates_draft_and_reports_counts(
     assert detail["lines"][0]["quantity"] == 5
 
 
+def test_review_import_line_then_finalize_materializes_the_component(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from datetime import date
+    from decimal import Decimal
+
+    from app.services.invoice_import import ParsedInvoice, ParsedLine
+
+    client.post("/api/types", json={"name": "resistor"})
+    location = client.post("/api/locations", json={"type": "box", "name": "Bin"}).json()
+    invoice = ParsedInvoice(
+        supplier="TME",
+        invoice_number="INV-R",
+        invoice_date=date(2026, 1, 1),
+        currency="PLN",
+        shop_key="tme",
+        lines=[
+            ParsedLine(quantity=5, unit_price=Decimal("2"), mpn="R1",
+                       manufacturer="Acme", description="Rezystor:x"),
+        ],
+    )
+    _stub_parsed(monkeypatch, tmp_path, invoice)
+    imported = client.post(
+        "/api/invoices/import",
+        files={"file": ("t.pdf", b"%PDF", "application/pdf")},
+    ).json()
+    iid = imported["invoice_id"]
+    # Deferred: no real line yet — the part is staged (type auto-inferred).
+    assert imported["added"] == 0 and imported["pending"] == 1
+    assert client.get(f"/api/invoices/{iid}").json()["lines"] == []
+
+    # Set the location on the staged row (#1 in this fresh DB), then finalize.
+    patch = client.patch(
+        f"/api/invoices/{iid}/import-lines/1", json={"location_id": location["id"]}
+    )
+    assert patch.status_code == 200
+    assert patch.json()["location_id"] == location["id"]
+    assert patch.json()["reason"] == ""
+
+    assert client.post(f"/api/invoices/{iid}/finalize", json={}).status_code == 200
+    detail = client.get(f"/api/invoices/{iid}").json()
+    assert detail["is_finalized"] is True
+    # The component was created at finalize and the line references it.
+    assert len(detail["lines"]) == 1
+    assert detail["lines"][0]["component"]["mpn"] == "R1"
+
+
+def test_patch_import_line_can_send_a_row_back_to_needs_review(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from datetime import date
+    from decimal import Decimal
+
+    from app.services.invoice_import import ParsedInvoice, ParsedLine
+
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    _stub_parsed(
+        monkeypatch,
+        tmp_path,
+        ParsedInvoice(
+            supplier="TME", invoice_number="INV-Q", invoice_date=date(2026, 1, 1),
+            currency="PLN", shop_key="tme",
+            lines=[ParsedLine(quantity=1, unit_price=Decimal("1"), mpn="R1",
+                              manufacturer="Acme", description="Rezystor:x")],
+        ),
+    )
+    iid = client.post(
+        "/api/invoices/import", files={"file": ("t.pdf", b"%PDF", "application/pdf")}
+    ).json()["invoice_id"]
+    # Ready (type inferred). Clearing the type sends it back to needs-review.
+    cleared = client.patch(
+        f"/api/invoices/{iid}/import-lines/1", json={"type_id": None}
+    ).json()
+    assert cleared["type_id"] is None and cleared["reason"]
+    # Re-assigning a type marks it ready again.
+    reassigned = client.patch(
+        f"/api/invoices/{iid}/import-lines/1", json={"type_id": ctype["id"]}
+    ).json()
+    assert reassigned["type_id"] == ctype["id"] and reassigned["reason"] == ""
+
+
+def test_patch_import_line_stores_reviewed_parameters(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from datetime import date
+    from decimal import Decimal
+
+    from app.services.invoice_import import ParsedInvoice, ParsedLine
+
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    param = client.post(
+        f"/api/types/{ctype['id']}/parameters",
+        json={"name": "resistance", "label": "R", "data_type": "number", "unit": "Ω"},
+    ).json()
+    _stub_parsed(
+        monkeypatch,
+        tmp_path,
+        ParsedInvoice(
+            supplier="TME", invoice_number="INV-P2", invoice_date=date(2026, 1, 1),
+            currency="PLN", shop_key="tme",
+            lines=[ParsedLine(quantity=1, unit_price=Decimal("1"), mpn="R1",
+                              manufacturer="Acme", description="Rezystor:x")],
+        ),
+    )
+    iid = client.post(
+        "/api/invoices/import", files={"file": ("t.pdf", b"%PDF", "application/pdf")}
+    ).json()["invoice_id"]
+
+    resp = client.patch(
+        f"/api/invoices/{iid}/import-lines/1",
+        json={
+            "type_id": ctype["id"],
+            "mpn": "R1-EDIT",
+            "parameters": [{"parameter_definition_id": param["id"], "value": "4k7"}],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["mpn"] == "R1-EDIT"
+    assert body["parameters"] == [
+        {"parameter_definition_id": param["id"], "value": "4k7"}
+    ]
+
+
+def test_patch_import_line_forbidden_for_read_only(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    client.post(
+        "/api/admin/users",
+        json={"username": "viewer", "password": "pw", "role": "read-only"},
+    )
+    token = client.post(
+        "/api/auth/token", json={"username": "viewer", "password": "pw"}
+    ).json()["access_token"]
+    assert (
+        anon_client.patch(
+            "/api/invoices/1/import-lines/1",
+            json={"location_id": 1},
+            headers={"Authorization": f"Bearer {token}"},
+        ).status_code
+        == 403
+    )
+
+
 def test_import_invoice_forbidden_for_read_only(
     client: TestClient, anon_client: TestClient
 ) -> None:
@@ -671,7 +815,7 @@ def test_import_invoice_rejects_unrecognised_pdf(
     assert resp.status_code == 422
 
 
-def test_resolve_and_dismiss_pending_import_line(
+def test_dismiss_pending_import_line(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     from datetime import date
@@ -679,7 +823,6 @@ def test_resolve_and_dismiss_pending_import_line(
 
     from app.services.invoice_import import ParsedInvoice, ParsedLine
 
-    ctype = client.post("/api/types", json={"name": "diode"}).json()
     invoice = ParsedInvoice(
         supplier="TME",
         invoice_number="INV-P",
@@ -701,22 +844,11 @@ def test_resolve_and_dismiss_pending_import_line(
     invoice_id = imported["invoice_id"]
     assert imported["pending"] == 2
 
-    # These are the only two staging rows in this fresh DB, so their ids are 1 and 2.
-    component = client.post(
-        "/api/components",
-        json={"type_id": ctype["id"], "manufacturer": "Acme", "mpn": "AAA"},
-    ).json()
-    resolved = client.post(
-        f"/api/invoices/{invoice_id}/lines",
-        json={
-            "component_id": component["id"],
-            "quantity": 3,
-            "unit_price": "1",
-            "import_line_id": 1,
-        },
+    # The two staging rows in this fresh DB have ids 1 and 2. Dismiss row 1.
+    assert (
+        client.delete(f"/api/invoices/{invoice_id}/import-lines/1").status_code == 204
     )
-    assert resolved.status_code == 201
-    # Row 1 is gone: dismissing it now 404s.
+    # It's gone — a second dismiss 404s.
     assert (
         client.delete(f"/api/invoices/{invoice_id}/import-lines/1").status_code == 404
     )

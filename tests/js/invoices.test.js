@@ -107,82 +107,32 @@ describe("invoices.js — import from PDF", () => {
   });
 });
 
-describe("invoices.js — resolve/dismiss parked import lines", () => {
-  it("resolve opens the line dialog prefilled and posts with import_line_id", async () => {
-    const fetchImpl = (url) =>
-      url === "/web/api/components"
-        ? Promise.resolve({
-            ok: true,
-            json: async () => ({
-              data: [{ id: 11, mpn: "ABC123", manufacturer: "Acme", type: "diode" }],
-            }),
-          })
-        : Promise.resolve({ ok: true, json: async () => ({ id: 55 }) });
+describe("invoices.js — review imported lines inline", () => {
+  function change(el) {
+    el.dispatchEvent(
+      new el.ownerDocument.defaultView.Event("change", { bubbles: true }),
+    );
+  }
+
+  it("PATCHes location_id (as null when blanked) on location change", async () => {
     const { document, fetchMock } = loadPage(detailFixture({ pending: true }), SCRIPTS, {
-      fetchImpl,
+      fetchImpl: () => Promise.resolve({ ok: true, json: async () => ({}) }),
     });
-
-    document.querySelector('[data-act="resolve-import"]').click();
+    const locationSelect = document.querySelector("#invoice-review .ril-location");
+    locationSelect.value = "5";
+    change(locationSelect);
     await tick();
-
-    const form = document.getElementById("invoice-line-form");
-    // Prefilled from the pending row.
-    expect(form.quantity.value).toBe("7");
-    expect(form.unit_price.value).toBe("2.50");
-    expect(form.supplier_part_number.value).toBe("ABC-ND");
-    expect(document.getElementById("invoice-line-title").textContent).toBe(
-      "Resolve import line",
-    );
-
-    submit(document, "invoice-line-form");
-    await tick();
-
-    const post = fetchMock.mock.calls.find(
-      ([url, opts]) => url === "/api/invoices/7/lines" && opts.method === "POST",
-    );
-    expect(JSON.parse(post[1].body)).toEqual({
-      component_id: 11,
-      quantity: 7,
-      unit_price: "2.50",
-      supplier_part_number: "ABC-ND",
-      location_id: null,
-      import_line_id: 21,
-    });
+    const [url, opts] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/invoices/7/import-lines/21");
+    expect(opts.method).toBe("PATCH");
+    expect(JSON.parse(opts.body)).toEqual({ location_id: 5 });
   });
 
-  it("a plain add does not carry an import_line_id", async () => {
-    const fetchImpl = (url) =>
-      url === "/web/api/components"
-        ? Promise.resolve({
-            ok: true,
-            json: async () => ({
-              data: [{ id: 11, mpn: "R", manufacturer: null, type: "diode" }],
-            }),
-          })
-        : Promise.resolve({ ok: true, json: async () => ({ id: 1 }) });
-    // Same page has both a pending panel and the normal Add-line button.
-    const { document, fetchMock } = loadPage(detailFixture({ pending: true }), SCRIPTS, {
-      fetchImpl,
-    });
-
-    document.getElementById("invoice-addline-btn").click();
-    await tick();
-    const form = document.getElementById("invoice-line-form");
-    form.quantity.value = "2";
-    form.unit_price.value = "1";
-    submit(document, "invoice-line-form");
-    await tick();
-
-    const post = fetchMock.mock.calls.find(
-      ([url, opts]) => url === "/api/invoices/7/lines" && opts.method === "POST",
-    );
-    expect(JSON.parse(post[1].body).import_line_id).toBeNull();
-  });
-
-  it("dismiss DELETEs the staging row after confirmation, with CSRF", async () => {
+  it("dismiss deletes the row after confirmation, with CSRF", async () => {
     const { window, document, fetchMock } = loadPage(
       detailFixture({ pending: true }),
       SCRIPTS,
+      { fetchImpl: () => Promise.resolve({ ok: true, json: async () => ({}) }) },
     );
     document.querySelector('[data-act="dismiss-import"]').click();
     await tick();
@@ -192,6 +142,30 @@ describe("invoices.js — resolve/dismiss parked import lines", () => {
     expect(url).toBe("/api/invoices/7/import-lines/21");
     expect(opts.method).toBe("DELETE");
     expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
+  });
+
+  it("Edit opens the New Component dialog in stage mode with the row's prefill", async () => {
+    const { window, document } = loadPage(detailFixture({ pending: true }), SCRIPTS);
+    // The component dialog is a shared global; stub it to capture the call.
+    const calls = [];
+    window.openComponentDialog = (cb, prefill, opts) =>
+      calls.push({ cb, prefill, opts });
+
+    document.querySelector('[data-act="edit-import"]').click();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].prefill).toEqual({
+      typeId: "3",
+      mpn: "ABC123",
+      manufacturer: "Acme",
+      package: "SOT23",
+      notes: "A widget",
+      paramValues: [{ parameter_definition_id: 9, value: "4k7" }],
+    });
+    expect(calls[0].opts).toEqual({
+      stage: { invoiceId: "7", importLineId: "21" },
+    });
+    expect(typeof calls[0].cb).toBe("function"); // the reload callback
   });
 });
 
@@ -472,7 +446,6 @@ describe("invoices.js — error surfacing and add-line", () => {
       unit_price: "1.50",
       supplier_part_number: null,
       location_id: null,
-      import_line_id: null,
     });
   });
 

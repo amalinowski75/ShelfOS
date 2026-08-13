@@ -13,6 +13,8 @@ from app.api.schemas import (
     InvoiceCreate,
     InvoiceDetailRead,
     InvoiceFinalize,
+    InvoiceImportLineRead,
+    InvoiceImportLineUpdate,
     InvoiceImportResult,
     InvoiceLineComponentRead,
     InvoiceLineCreate,
@@ -188,8 +190,26 @@ def add_line(
         unit_price=payload.unit_price,
         supplier_part_number=payload.supplier_part_number,
         location_id=payload.location_id,
-        import_line_id=payload.import_line_id,
     )
+
+
+@router.patch(
+    "/{invoice_id}/import-lines/{import_line_id}",
+    response_model=InvoiceImportLineRead,
+)
+def update_import_line(
+    invoice_id: int,
+    import_line_id: int,
+    payload: InvoiceImportLineUpdate,
+    session: Session = Depends(get_session),
+) -> InvoiceImportLineRead:
+    """Review-edit a staged import line — type/location/identity/parameters (writers).
+
+    Only the fields present in the request are changed (``type_id: null`` clears it).
+    """
+    changes = payload.model_dump(exclude_unset=True)
+    staging = imp.update_pending(session, invoice_id, import_line_id, **changes)
+    return InvoiceImportLineRead.model_validate(staging)
 
 
 @router.delete(

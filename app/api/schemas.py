@@ -164,9 +164,6 @@ class InvoiceLineCreate(BaseModel):
     unit_price: Decimal
     supplier_part_number: str | None = None
     location_id: int | None = None
-    # When resolving a parked PDF-import line, its staging row is cleared with the
-    # add in one transaction (see invoice_service.add_line).
-    import_line_id: int | None = None
 
 
 class InvoiceUpdate(BaseModel):
@@ -252,7 +249,10 @@ class InvoiceImportResult(BaseModel):
 
 
 class InvoiceImportLineRead(BaseModel):
-    """A parked import line awaiting resolution on the draft invoice page."""
+    """A staged import line under review on the draft invoice page.
+
+    ``type_id`` set + ``location_id`` set = ready to be created at finalize.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -267,7 +267,27 @@ class InvoiceImportLineRead(BaseModel):
     quantity: int
     unit_price: Decimal
     shop_key: str
+    type_id: int | None
+    location_id: int | None
+    parameters: list[ParameterValueSet]
     reason: str
+
+
+class InvoiceImportLineUpdate(BaseModel):
+    """Review edits to a staged import line; only the fields sent are changed.
+
+    ``type_id`` set marks the row ready; ``null`` sends it back to needs-review.
+    Changing ``type_id`` clears any ``parameters`` (they belong to a type). The
+    identity fields and parameters seed the component created at finalize.
+    """
+
+    type_id: int | None = None
+    location_id: int | None = None
+    manufacturer: str | None = None
+    mpn: str | None = None
+    package: str | None = None
+    description: str | None = None
+    parameters: list[ParameterValueSet] | None = None
 
 
 class AttachmentRead(BaseModel):

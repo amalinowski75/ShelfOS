@@ -150,15 +150,8 @@ def add_line(
     unit_price: Decimal,
     supplier_part_number: str | None = None,
     location_id: int | None = None,
-    import_line_id: int | None = None,
 ) -> InvoiceLine:
-    """Add a line to a draft invoice; ``total_price`` is computed automatically.
-
-    When ``import_line_id`` is given (resolving a parked PDF-import line), its staging
-    row is deleted in the same transaction, so the line becoming real and the
-    outstanding row disappearing can't diverge. A staging row that names a different
-    invoice, or is already gone, is ignored.
-    """
+    """Add a line to a draft invoice; ``total_price`` is computed automatically."""
     invoice = _require_draft(session, invoice_id)
     require_entity(session, Component, component_id, "component")
     if quantity <= 0:
@@ -178,10 +171,6 @@ def add_line(
         location_id=location_id,
     )
     session.add(line)
-    if import_line_id is not None:
-        staging = session.get(InvoiceImportLine, import_line_id)
-        if staging is not None and staging.invoice_id == invoice_id:
-            session.delete(staging)
     session.commit()
     session.refresh(line)
     _recompute_net(session, invoice)
@@ -377,88 +366,111 @@ def finalize_invoice(
     the invoice is read-only.
     """
     invoice = _require_draft(session, invoice_id)
-    lines = get_lines(session, invoice_id)
-    if not lines:
-        raise ValidationError("cannot finalize an invoice with no lines")
-    if any(line.location_id is None for line in lines):
-        raise ValidationError(
-            "every invoice line must have a location before finalization"
-        )
-    # Finalizing hides the "needs attention" panel (it renders only on a draft) and
-    # a parked line can never become real afterwards (add_line requires a draft), so
-    # any left unresolved would be silently orphaned. Block until they're gone.
-    pending = session.exec(
+    # Deferred creation: staged import lines become real components + lines only now.
+    # Validate EVERYTHING first — every staged row (type + location) AND every existing
+    # (case-1) line's location — so nothing is created if the invoice isn't finalizable.
+    staged = session.exec(
         select(InvoiceImportLine).where(InvoiceImportLine.invoice_id == invoice_id)
     ).all()
-    if pending:
+    needs_type = [row for row in staged if row.type_id is None]
+    if needs_type:
         raise ValidationError(
-            f"{len(pending)} imported line(s) still need review — resolve or dismiss "
-            "them before finalizing"
+            f"{len(needs_type)} imported line(s) still need a type — resolve or "
+            "dismiss them before finalizing"
         )
+    existing_lines = get_lines(session, invoice_id)
+    missing_location = sum(row.location_id is None for row in staged) + sum(
+        line.location_id is None for line in existing_lines
+    )
+    if missing_location:
+        raise ValidationError(
+            "every line must have a location before finalization "
+            f"({missing_location} still missing one)"
+        )
+    if not existing_lines and not staged:
+        raise ValidationError("cannot finalize an invoice with no lines")
 
-    net = _net_total(session, invoice_id)
-    if total_gross is not None:
-        if total_gross < net:
-            raise ValidationError("total_gross must not be less than total_net")
-        gross = total_gross
-    else:
-        gross = net
-
-    # Capture the pre-finalization values for the audit trail before the UPDATE
-    # below overwrites them (total_gross defaults to Decimal(0), not NULL).
     old_finalized = invoice.is_finalized
     old_gross = invoice.total_gross
 
-    # Claim finalization atomically: flip the flag only if the invoice is still a
-    # draft, in the same transaction as the stock movements below. A concurrent
-    # finalize (or a retry after a mid-loop failure) sees rowcount 0 and aborts,
-    # so movements are never generated twice (decision D1).
-    claimed = cast(
-        "CursorResult[object]",
-        session.execute(
-            update(Invoice)
-            .where(col(Invoice.id) == invoice_id, col(Invoice.is_finalized).is_(False))
-            .values(is_finalized=True, total_net=net, total_gross=gross)
-        ),
-    )
-    if claimed.rowcount != 1:
-        raise InvoiceFinalizedError(f"invoice {invoice_id} is finalized (read-only)")
+    # One atomic unit: materialise the staged rows (creating components), claim the
+    # invoice, and generate stock — a single commit, rolled back on ANY failure. So a
+    # concurrent/duplicate finalize can't leave a stray component behind: the loser's
+    # claim sees the flag already flipped, raises, and its whole unit (including any
+    # component it created here) rolls back. Lazy import breaks a module cycle.
+    from app.services import invoice_import_service as _imp
 
-    audit_service.record_change(
-        session,
-        entity_type="invoice",
-        entity_id=invoice_id,
-        field=audit_service.FIELD_IS_FINALIZED,
-        old_value=old_finalized,
-        new_value=True,
-        user_id=user_id,
-    )
-    audit_service.record_change(
-        session,
-        entity_type="invoice",
-        entity_id=invoice_id,
-        field=audit_service.FIELD_TOTAL_GROSS,
-        old_value=old_gross,
-        new_value=gross,
-        user_id=user_id,
-    )
+    try:
+        _imp.materialize_ready_lines(session, invoice_id, user_id)  # uncommitted
 
-    # Generate a purchase movement per line without committing; the single
-    # commit below makes the flag flip and every movement succeed or fail as one.
-    for line in lines:
-        assert line.location_id is not None  # guarded above
-        stock_service.add_stock(
+        lines = get_lines(session, invoice_id)  # now includes the materialised ones
+        net = _net_total(session, invoice_id)
+        if total_gross is not None:
+            if total_gross < net:
+                raise ValidationError("total_gross must not be less than total_net")
+            gross = total_gross
+        else:
+            gross = net
+
+        # Claim finalization atomically: flip the flag only if still a draft.
+        claimed = cast(
+            "CursorResult[object]",
+            session.execute(
+                update(Invoice)
+                .where(
+                    col(Invoice.id) == invoice_id,
+                    col(Invoice.is_finalized).is_(False),
+                )
+                .values(is_finalized=True, total_net=net, total_gross=gross)
+            ),
+        )
+        if claimed.rowcount != 1:
+            raise InvoiceFinalizedError(
+                f"invoice {invoice_id} is finalized (read-only)"
+            )
+
+        audit_service.record_change(
             session,
-            component_id=line.component_id,
-            location_id=line.location_id,
-            quantity=line.quantity,
+            entity_type="invoice",
+            entity_id=invoice_id,
+            field=audit_service.FIELD_IS_FINALIZED,
+            old_value=old_finalized,
+            new_value=True,
             user_id=user_id,
-            reason=StockReason.PURCHASE,
-            invoice_id=invoice_id,
-            commit=False,
+        )
+        audit_service.record_change(
+            session,
+            entity_type="invoice",
+            entity_id=invoice_id,
+            field=audit_service.FIELD_TOTAL_GROSS,
+            old_value=old_gross,
+            new_value=gross,
+            user_id=user_id,
         )
 
-    session.commit()
+        for line in lines:
+            if line.location_id is None:
+                # Unreachable: validated above and materialise guarantees a location.
+                # A raise (not a bare assert) keeps this a clean rollback, never a 500.
+                raise ValidationError(
+                    "every invoice line must have a location before finalization"
+                )
+            stock_service.add_stock(
+                session,
+                component_id=line.component_id,
+                location_id=line.location_id,
+                quantity=line.quantity,
+                user_id=user_id,
+                reason=StockReason.PURCHASE,
+                invoice_id=invoice_id,
+                commit=False,
+            )
+
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+
     session.refresh(invoice)
     return invoice
 

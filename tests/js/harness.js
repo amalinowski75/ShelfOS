@@ -307,21 +307,28 @@ export function detailFixture({
 } = {}) {
   const pendingPanel = pending
     ? `<div id="invoice-pending">
-         <table class="data"><tbody>
-           <tr data-import-line-id="21"
-               data-mpn="ABC123"
-               data-manufacturer="Acme"
-               data-description="A widget"
-               data-package="SOT23"
-               data-quantity="7"
-               data-unit-price="2.50"
-               data-spn="ABC-ND">
+         <table class="data" id="invoice-review"><tbody>
+           <tr data-import-line-id="21" class="is-incomplete"
+               data-type-id="3" data-mpn="ABC123" data-manufacturer="Acme"
+               data-package="SOT23" data-description="A widget"
+               data-parameters='[{"parameter_definition_id":9,"value":"4k7"}]'>
+             <td><span class="mono">ABC123</span></td>
+             <td><span class="badge">diode</span></td>
+             <td class="num">7</td>
+             <td class="num">2.50</td>
              <td>
-               <button type="button" data-act="resolve-import"></button>
+               <select class="control ril-location">
+                 <option value="">— choose a location —</option>
+                 <option value="5">D1</option>
+               </select>
+             </td>
+             <td>
+               <button type="button" data-act="edit-import"></button>
                <button type="button" data-act="dismiss-import"></button>
              </td>
            </tr>
          </tbody></table>
+         <p id="invoice-review-error" hidden></p>
        </div>`
     : "";
   const extraRow = secondLine

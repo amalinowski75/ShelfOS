@@ -82,10 +82,10 @@ def test_existing_component_is_matched_and_added(session: Session, monkeypatch) 
 # --- case 2: type exists, component created + enriched ------------------------
 
 
-def test_missing_component_with_known_type_is_created(
+def test_missing_component_with_known_type_is_staged_ready_not_created(
     session: Session, monkeypatch
 ) -> None:
-    cs.create_type(session, "mosfet")
+    ctype = cs.create_type(session, "mosfet")
     _fake_provider(
         monkeypatch,
         "mouser",
@@ -104,13 +104,16 @@ def test_missing_component_with_known_type_is_created(
 
     result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
 
-    assert result.added == 1 and result.pending == 0
-    components = cs.list_components(session)
-    assert len(components) == 1
-    created = components[0]
-    assert created.manufacturer == "NXP Semiconductors"
-    assert created.mpn == "NX3P1108UKZ"
-    assert created.package == "XSON8"
+    # Deferred: NO component created at import — the line is staged "ready" with the
+    # inferred type, carrying the enriched fields for materialisation at finalize.
+    assert result.added == 0 and result.pending == 1
+    assert cs.list_components(session) == []
+    row = iis.list_pending(session, result.invoice_id)[0]
+    assert row.type_id == ctype.id
+    assert row.manufacturer == "NXP Semiconductors"
+    assert row.mpn == "NX3P1108UKZ"
+    assert row.package == "XSON8"
+    assert row.reason == ""  # ready — no review reason
 
 
 # --- case 3: no matching type → parked ---------------------------------------
@@ -145,7 +148,7 @@ def test_missing_component_without_a_type_is_staged(
 def test_tme_polish_description_resolves_an_existing_type(
     session: Session, monkeypatch
 ) -> None:
-    cs.create_type(session, "resistor")
+    ctype = cs.create_type(session, "resistor")
     # TME has no fetch_by_mpn; the category is inferred from the Polish description.
     _patch_parse(
         monkeypatch,
@@ -161,49 +164,258 @@ def test_tme_polish_description_resolves_an_existing_type(
 
     result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
 
-    assert result.added == 1 and result.pending == 0
-    created = cs.list_components(session)
-    assert len(created) == 1
-    assert created[0].mpn == "0402WGF1004TCE"
+    # Staged ready against the resistor type; still not created until finalize.
+    assert result.pending == 1
+    assert cs.list_components(session) == []
+    assert iis.list_pending(session, result.invoice_id)[0].type_id == ctype.id
 
 
 # --- finalize is blocked while lines are still parked -------------------------
 
 
-def test_finalize_blocked_while_import_lines_pending(
-    session: Session, monkeypatch
-) -> None:
-    # One line resolves (existing component), one is parked.
-    diode = cs.create_type(session, "diode")
-    component = cs.create_component(session, diode.id, manufacturer="Onsemi", mpn="OK")
+def _import_one_ready(session, monkeypatch, *, mpn="R1", manufacturer="Acme"):
+    """Import a single new part whose type exists → one ready staged row."""
+    cs.create_type(session, "resistor")
     _patch_parse(
         monkeypatch,
         _invoice(
-            _line(mpn="OK", manufacturer="Onsemi"),
-            _line(mpn="XYZ", manufacturer="Acme"),
+            _line(mpn=mpn, manufacturer=manufacturer, description="Rezystor:x"),
             shop_key="tme",
         ),
     )
     result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
-    assert result.pending == 1
+    return result.invoice_id, iis.list_pending(session, result.invoice_id)[0]
 
-    # Give the added line a location so only the parked row blocks finalization.
-    _, lines = invoice_service.get_invoice_detail(session, result.invoice_id)
+
+def test_finalize_materializes_a_ready_row(session: Session, monkeypatch) -> None:
+    invoice_id, row = _import_one_ready(session, monkeypatch)
     location = _make_location(session)
-    invoice_service.set_line_location(
-        session, result.invoice_id, lines[0][0].id, location, user_id=1
-    )
+    iis.update_pending(session, invoice_id, row.id, location_id=location)
+    assert cs.list_components(session) == []  # still nothing created
 
-    with pytest.raises(ValidationError, match="need review"):
+    invoice_service.finalize_invoice(session, invoice_id, user_id=1)
+
+    invoice, lines = invoice_service.get_invoice_detail(session, invoice_id)
+    assert invoice.is_finalized is True
+    # The component is created at finalize, the line references it, staging is gone.
+    created = cs.list_components(session)
+    assert len(created) == 1 and created[0].mpn == "R1"
+    assert len(lines) == 1
+    assert iis.list_pending(session, invoice_id) == []
+
+
+def test_finalize_blocked_by_a_needs_review_row(
+    session: Session, monkeypatch
+) -> None:
+    # No type exists → the row needs review (no type_id).
+    _patch_parse(
+        monkeypatch,
+        _invoice(_line(mpn="X9", manufacturer="Beta"), shop_key="tme"),
+    )
+    result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
+    row = iis.list_pending(session, result.invoice_id)[0]
+    assert row.type_id is None
+
+    with pytest.raises(ValidationError, match="need a type"):
         invoice_service.finalize_invoice(session, result.invoice_id, user_id=1)
 
-    # After dismissing the parked line, finalization goes through.
-    staged = iis.list_pending(session, result.invoice_id)[0]
-    iis.dismiss_pending(session, result.invoice_id, staged.id)
-    invoice_service.finalize_invoice(session, result.invoice_id, user_id=1)
+    # Dismissing it (and it was the only line) then leaves nothing to finalize.
+    iis.dismiss_pending(session, result.invoice_id, row.id)
+    with pytest.raises(ValidationError, match="no lines"):
+        invoice_service.finalize_invoice(session, result.invoice_id, user_id=1)
+
+
+def test_finalize_does_not_partially_materialize(
+    session: Session, monkeypatch
+) -> None:
+    # One ready row (type + location) and one needs-review row. Finalize must reject
+    # the whole thing WITHOUT creating the ready row's component (no half-done state).
+    cs.create_type(session, "resistor")
+    _patch_parse(
+        monkeypatch,
+        _invoice(
+            _line(mpn="R1", manufacturer="Acme", description="Rezystor:x"),  # ready
+            _line(mpn="X9", manufacturer="Beta"),  # needs review (no type)
+            shop_key="tme",
+        ),
+    )
+    result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
+    pending = iis.list_pending(session, result.invoice_id)
+    ready = next(p for p in pending if p.type_id is not None)
+    iis.update_pending(
+        session, result.invoice_id, ready.id, location_id=_make_location(session)
+    )
+
+    with pytest.raises(ValidationError, match="need a type"):
+        invoice_service.finalize_invoice(session, result.invoice_id, user_id=1)
+
+    # The ready row was NOT materialised — nothing created, both rows still staged.
+    assert cs.list_components(session) == []
+    assert len(iis.list_pending(session, result.invoice_id)) == 2
+
+
+def test_finalize_blocked_by_a_case1_line_without_location_creates_nothing(
+    session: Session, monkeypatch
+) -> None:
+    # A line matched to an existing component at import ("case 1") has no location yet,
+    # alongside a ready staged row. Finalize must reject BEFORE materialising, so the
+    # staged row's component is never created.
+    rt = cs.create_type(session, "resistor")
+    cs.create_component(session, rt.id, manufacturer="On", mpn="EXIST")
+    _patch_parse(
+        monkeypatch,
+        _invoice(
+            _line(mpn="EXIST", manufacturer="On"),  # case 1 → real line, no location
+            _line(mpn="NEW", manufacturer="Acme", description="Rezystor:x"),  # ready
+            shop_key="tme",
+        ),
+    )
+    result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
+    ready = next(p for p in iis.list_pending(session, result.invoice_id) if p.type_id)
+    iis.update_pending(
+        session, result.invoice_id, ready.id, location_id=_make_location(session)
+    )
+
+    with pytest.raises(ValidationError, match="location"):
+        invoice_service.finalize_invoice(session, result.invoice_id, user_id=1)
+
+    # Only the seeded component exists — the ready row was NOT materialised.
+    assert [c.mpn for c in cs.list_components(session)] == ["EXIST"]
+    assert len(iis.list_pending(session, result.invoice_id)) == 1
+
+
+def test_finalize_rolls_back_the_whole_unit_on_a_mid_materialize_failure(
+    session: Session, monkeypatch
+) -> None:
+    # Two new ready rows; component creation blows up on the 2nd. The atomic finalize
+    # must roll back the 1st component too — nothing created, both rows still staged.
+    cs.create_type(session, "resistor")
+    location = _make_location(session)
+    _patch_parse(
+        monkeypatch,
+        _invoice(
+            _line(mpn="A1", manufacturer="Acme", description="Rezystor:x"),
+            _line(mpn="B2", manufacturer="Beta", description="Rezystor:y"),
+            shop_key="tme",
+        ),
+    )
+    result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
+    for row in iis.list_pending(session, result.invoice_id):
+        iis.update_pending(session, result.invoice_id, row.id, location_id=location)
+
+    real_create = cs.create_component_with_values
+    calls = {"n": 0}
+
+    def exploding_create(*args, **kwargs):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("boom on the 2nd component")
+        return real_create(*args, **kwargs)
+
+    monkeypatch.setattr(cs, "create_component_with_values", exploding_create)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        invoice_service.finalize_invoice(session, result.invoice_id, user_id=1)
+
+    # Rolled back: no component created, both staged rows intact, still a draft.
+    assert cs.list_components(session) == []
+    assert len(iis.list_pending(session, result.invoice_id)) == 2
     invoice, _ = invoice_service.get_invoice_detail(session, result.invoice_id)
-    assert invoice.is_finalized is True
-    _ = component  # (referenced so linters keep the seed above)
+    assert invoice.is_finalized is False
+
+
+def test_finalize_blocked_when_a_ready_row_has_no_location(
+    session: Session, monkeypatch
+) -> None:
+    invoice_id, row = _import_one_ready(session, monkeypatch)
+    # type set (ready) but no location assigned.
+    with pytest.raises(ValidationError, match="location"):
+        invoice_service.finalize_invoice(session, invoice_id, user_id=1)
+    assert cs.list_components(session) == []  # nothing materialised
+
+
+def test_finalize_applies_parameters_entered_during_review(
+    session: Session, monkeypatch
+) -> None:
+    from app.models.enums import ParameterDataType
+
+    rt = cs.create_type(session, "resistor")
+    resistance = cs.add_parameter_definition(
+        session, rt.id, name="resistance", label="R",
+        data_type=ParameterDataType.NUMBER, unit="Ω",
+    )
+    _patch_parse(
+        monkeypatch,
+        _invoice(
+            _line(mpn="R1", manufacturer="Acme", description="Rezystor:x"),
+            shop_key="tme",
+        ),
+    )
+    result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
+    row = iis.list_pending(session, result.invoice_id)[0]
+    iis.update_pending(
+        session,
+        result.invoice_id,
+        row.id,
+        location_id=_make_location(session),
+        parameters=[{"parameter_definition_id": resistance.id, "value": "4k7"}],
+    )
+
+    invoice_service.finalize_invoice(session, result.invoice_id, user_id=1)
+
+    component = cs.list_components(session)[0]
+    values = {
+        v.parameter_definition_id: v.value_num
+        for v in cs.list_parameter_values(session, component.id)
+    }
+    assert values[resistance.id] == 4700.0  # engineering-parsed like a normal create
+
+
+def test_changing_the_type_clears_reviewed_parameters(
+    session: Session, monkeypatch
+) -> None:
+    from app.models.enums import ParameterDataType
+
+    rt = cs.create_type(session, "resistor")
+    resistance = cs.add_parameter_definition(
+        session, rt.id, name="resistance", label="R",
+        data_type=ParameterDataType.NUMBER, unit="Ω",
+    )
+    other = cs.create_type(session, "capacitor")
+    _patch_parse(
+        monkeypatch,
+        _invoice(_line(mpn="R1", manufacturer="Acme", description="Rezystor:x")),
+    )
+    result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
+    row = iis.list_pending(session, result.invoice_id)[0]
+    iis.update_pending(
+        session, result.invoice_id, row.id,
+        parameters=[{"parameter_definition_id": resistance.id, "value": "1k"}],
+    )
+    assert iis.get_pending(session, result.invoice_id, row.id).parameters
+
+    iis.update_pending(session, result.invoice_id, row.id, type_id=other.id)
+    assert iis.get_pending(session, result.invoice_id, row.id).parameters == []
+
+
+def test_finalize_reuses_an_existing_matching_component(
+    session: Session, monkeypatch
+) -> None:
+    # A component with this exact Manufacturer+MPN already exists → materialise reuses
+    # it instead of creating a duplicate.
+    invoice_id, row = _import_one_ready(
+        session, monkeypatch, mpn="R1", manufacturer="Acme"
+    )
+    ctype = cs.list_types(session)[0]
+    existing = cs.create_component(session, ctype.id, manufacturer="Acme", mpn="R1")
+    location = _make_location(session)
+    iis.update_pending(session, invoice_id, row.id, location_id=location)
+
+    invoice_service.finalize_invoice(session, invoice_id, user_id=1)
+
+    assert len(cs.list_components(session)) == 1  # no duplicate created
+    _, lines = invoice_service.get_invoice_detail(session, invoice_id)
+    assert lines[0][0].component_id == existing.id
 
 
 def _make_location(session: Session) -> int:
@@ -334,63 +546,61 @@ def test_duplicate_invoice_is_rejected(session: Session, monkeypatch) -> None:
 # --- resolving a parked line clears it (via add_line reconcile) ---------------
 
 
-def test_resolving_a_pending_line_clears_the_staging_row(
-    session: Session, monkeypatch
+@pytest.mark.parametrize("cleared", ["type", "location"])
+def test_materialize_rejects_a_row_that_lost_its_type_or_location(
+    session: Session, cleared: str
 ) -> None:
-    ctype = cs.create_type(session, "diode")
-    _patch_parse(
-        monkeypatch,
-        _invoice(_line(mpn="XYZ123", manufacturer="Acme"), shop_key="tme"),
-    )
-    result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
-    staged = iis.list_pending(session, result.invoice_id)[0]
+    # Simulates the concurrent-PATCH race: finalize's upfront snapshot said the row
+    # was ready, but by the time materialize runs its type OR location has been
+    # cleared. Either way it must raise (never silently skip a typeless row →
+    # orphaned; never build a location-less line → 500) — and create nothing.
+    from app.models.invoice import InvoiceImportLine
 
-    component = cs.create_component(
-        session, ctype.id, manufacturer="Acme", mpn="XYZ123"
-    )
-    invoice_service.add_line(
-        session,
-        result.invoice_id,
-        component_id=component.id,
-        quantity=staged.quantity,
-        unit_price=staged.unit_price,
-        import_line_id=staged.id,
-    )
-
-    assert iis.list_pending(session, result.invoice_id) == []
-    _, lines = invoice_service.get_invoice_detail(session, result.invoice_id)
-    assert len(lines) == 1
-
-
-def test_add_line_ignores_a_foreign_import_line_id(
-    session: Session, monkeypatch
-) -> None:
-    """A staging row from another invoice must not be deleted by this add."""
-    ctype = cs.create_type(session, "diode")
-    _patch_parse(
-        monkeypatch, _invoice(_line(mpn="A1", manufacturer="Acme"), number="ONE")
-    )
-    one = iis.import_invoice(session, data=b"x", filename="a.pdf", user_id=1)
-    foreign = iis.list_pending(session, one.invoice_id)[0]
-
-    two = invoice_service.create_invoice(
-        session,
-        supplier="Other",
-        invoice_number="TWO",
-        invoice_date=date(2026, 1, 1),
+    rt = cs.create_type(session, "resistor")
+    location = _make_location(session)
+    invoice = invoice_service.create_invoice(
+        session, supplier="TME", invoice_number="M", invoice_date=date(2026, 1, 1),
         currency="PLN",
     )
-    comp = cs.create_component(session, ctype.id, mpn="B1")
-    invoice_service.add_line(
-        session,
-        two.id,
-        component_id=comp.id,
-        quantity=1,
-        unit_price=Decimal("1"),
-        import_line_id=foreign.id,
+    session.add(
+        InvoiceImportLine(
+            invoice_id=invoice.id, line_no=1, mpn="R1", manufacturer="Acme",
+            quantity=1, unit_price=Decimal("1"), shop_key="tme",
+            type_id=None if cleared == "type" else rt.id,
+            location_id=None if cleared == "location" else location,
+            reason="",
+        )
     )
-    # The other invoice's pending line is untouched.
-    assert len(iis.list_pending(session, one.invoice_id)) == 1
+    session.commit()
+
+    with pytest.raises(ValidationError, match="changed during finalize"):
+        iis.materialize_ready_lines(session, invoice.id, user_id=1)
+    assert cs.list_components(session) == []
+
+
+def test_update_and_dismiss_pending_refuse_a_finalized_invoice(
+    session: Session,
+) -> None:
+    from app.services.errors import InvoiceFinalizedError
+
+    diode = cs.create_type(session, "diode")
+    comp = cs.create_component(session, diode.id, manufacturer="On", mpn="OK")
+    location = _make_location(session)
+    invoice = invoice_service.create_invoice(
+        session, supplier="X", invoice_number="F", invoice_date=date(2026, 1, 1),
+        currency="PLN",
+    )
+    line = invoice_service.add_line(
+        session, invoice.id, component_id=comp.id, quantity=1, unit_price=Decimal("1")
+    )
+    invoice_service.set_line_location(session, invoice.id, line.id, location, user_id=1)
+    invoice_service.finalize_invoice(session, invoice.id, user_id=1)
+
+    # A finalized invoice is read-only — a stray review PATCH/dismiss is refused.
+    with pytest.raises(InvoiceFinalizedError):
+        iis.dismiss_pending(session, invoice.id, 999)
+    with pytest.raises(InvoiceFinalizedError):
+        iis.update_pending(session, invoice.id, 999, location_id=location)
 
 
 # --- delete a draft clears its import artefacts -------------------------------

@@ -18,6 +18,11 @@
   // Monotonic id so overlapping type-select changes can't render stale fields.
   let paramsRequestId = 0;
   let onCreated = null;
+  // When set ({invoiceId, importLineId}) the dialog is in "stage" mode: its submit
+  // PATCHes a draft invoice's import line instead of creating a component (the
+  // component is created later, at invoice finalize). Everything else — type, fields,
+  // per-type parameters, "+ New type", description-based matching — is identical.
+  let stageTarget = null;
   // The effective parameter definitions currently rendered (for prefill lookups).
   let currentDefinitions = [];
   // A datasheet URL from a shop import, attached to the component after it's created
@@ -204,6 +209,51 @@
       });
 
       errorEl.hidden = true;
+
+      // Stage mode: save the review edits to the import line and stop — no component
+      // is created here (it is made at finalize). Skips the create-only follow-ups
+      // (datasheet/links) since there is no component id to attach them to yet.
+      if (stageTarget) {
+        let resp;
+        try {
+          resp = await fetch(
+            `/api/invoices/${stageTarget.invoiceId}/import-lines/${stageTarget.importLineId}`,
+            {
+              method: "PATCH",
+              headers: {
+                "Content-Type": "application/json",
+                "X-CSRF-Token": csrfToken,
+              },
+              body: JSON.stringify({
+                type_id: typeSelect.value ? Number(typeSelect.value) : null,
+                manufacturer: value("manufacturer") || null,
+                mpn: value("mpn") || null,
+                package: value("package") || null,
+                description: value("notes") || null,
+                parameters: collectParameters(),
+              }),
+            },
+          );
+        } catch {
+          errorEl.textContent = "Could not reach the server. Please try again.";
+          errorEl.hidden = false;
+          return;
+        }
+        if (!resp.ok) {
+          showCreateError(await resp.json().catch(() => null));
+          return;
+        }
+        dialog.close();
+        if (onCreated) {
+          try {
+            onCreated(await resp.json());
+          } catch {
+            /* swallow — the row was saved; only the caller's hook failed */
+          }
+        }
+        return;
+      }
+
       let created;
       try {
         const resp = await fetch("/api/components", {
@@ -460,7 +510,11 @@
     set("notes", prefill.notes);
     if (prefill.datasheetUrl) pendingDatasheetUrl = prefill.datasheetUrl;
 
-    const typeId = matchTypeByName(prefill.category);
+    // A staged import line knows its type by id; a BOM/shop prefill by category name.
+    const typeId =
+      prefill.typeId != null && prefill.typeId !== ""
+        ? String(prefill.typeId)
+        : matchTypeByName(prefill.category);
     if (!typeId) {
       loadParams(""); // no matching type — let the user pick one
       return;
@@ -471,9 +525,26 @@
     if (typeSelect.value !== typeId) return;
     if (prefill.value) setValueParam(prefill.value); // BOM: single value param
     if (prefill.params) setNamedParams(prefill.params); // shop: named params
-    // Last: fills only what's still empty, from the description plus the shop's
-    // own category text.
+    // Fill only what's still empty, from the description plus the shop's category.
     setFromDescription(prefill.notes, prefill.shopCategory);
+    // Values the user already entered in a prior review edit win over the guesses.
+    if (prefill.paramValues) setParamsById(prefill.paramValues);
+  }
+
+  // Set parameter inputs from stored [{parameter_definition_id, value}] pairs.
+  function setParamsById(pairs) {
+    for (const pair of pairs) {
+      const input = paramsBox.querySelector(
+        `[data-definition-id="${pair.parameter_definition_id}"]`,
+      );
+      if (!input) continue;
+      input.value =
+        input.dataset.dataType === "bool"
+          ? pair.value === true || pair.value === "true"
+            ? "true"
+            : "false"
+          : String(pair.value);
+    }
   }
 
   // "+ New type": open the New Type dialog (stacked on this one) and, on create,
@@ -582,10 +653,13 @@
     });
   }
 
-  // Open the dialog; `callback(created)` runs after a successful create. An
-  // optional `prefill` seeds the fields from a BOM line.
-  window.openComponentDialog = function (callback, prefill) {
+  // Open the dialog; `callback(result)` runs after a successful create (or, in stage
+  // mode, save). `prefill` seeds the fields (BOM line, shop import, or a staged import
+  // line by {typeId, paramValues}). `opts.stage = {invoiceId, importLineId}` switches
+  // to stage mode (PATCH the import line instead of creating a component).
+  window.openComponentDialog = function (callback, prefill, opts) {
     onCreated = callback || null;
+    stageTarget = (opts && opts.stage) || null;
     openToken += 1; // invalidate any in-flight shop lookup from a prior open
     form.reset();
     errorEl.hidden = true;
