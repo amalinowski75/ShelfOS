@@ -6,7 +6,7 @@ import pytest
 from app.models.enums import LocationType
 from app.services import label_service as lbl
 from app.services import location_service as ls
-from app.services.errors import NotFoundError
+from app.services.errors import NotFoundError, ValidationError
 from sqlmodel import Session
 
 
@@ -79,3 +79,15 @@ def test_build_labels_rejects_unknown_locations(session: Session) -> None:
         lbl.build_labels(session, root=999)
     with pytest.raises(NotFoundError):
         lbl.build_labels(session, ids=[999])
+
+
+def test_build_labels_dedupes_ids_and_caps_the_request(session: Session) -> None:
+    lab_id, _rack_id, _drawer_id = _hierarchy(session)
+    # Repeating an id costs one label, not one per repetition.
+    labels = lbl.build_labels(session, ids=[lab_id, lab_id, lab_id])
+    assert [label.id for label in labels] == [lab_id]
+
+    # The cap fires before any lookup or QR work — same limit as bulk create.
+    too_many = list(range(1, ls._MAX_BULK_NODES + 2))
+    with pytest.raises(ValidationError, match="at most"):
+        lbl.build_labels(session, ids=too_many)

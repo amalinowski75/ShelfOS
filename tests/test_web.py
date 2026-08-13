@@ -1244,6 +1244,33 @@ def test_labels_page_renders_qr_and_paths(client: TestClient) -> None:
     assert client.get("/labels/locations", params={"ids": "1,x"}).status_code == 422
 
 
+def test_labels_page_guards_hostile_query_params(client: TestClient) -> None:
+    room = client.post("/api/locations", json={"type": "room", "name": "Lab"}).json()
+
+    # Repeating an id yields one label, not one per repetition.
+    doubled = client.get(
+        "/labels/locations", params={"ids": f"{room['id']},{room['id']}"}
+    )
+    assert doubled.text.count('class="label"') == 1
+
+    # More ids than the bulk cap → a clean 422 before any QR work.
+    flood = ",".join(str(n) for n in range(1, 503))
+    assert client.get("/labels/locations", params={"ids": flood}).status_code == 422
+
+    # Ids past SQLite's 64-bit rowid range would overflow the driver as a 500.
+    huge = "9" * 26
+    assert client.get("/labels/locations", params={"ids": huge}).status_code == 422
+    assert client.get("/labels/locations", params={"root": huge}).status_code == 422
+
+    # NaN slips through min/max clamping — non-finite sizes fall back to defaults.
+    nan = client.get(
+        "/labels/locations", params={"root": room["id"], "w": "nan", "h": "inf"}
+    )
+    assert nan.status_code == 200
+    assert "size: 57.0mm 32.0mm" in nan.text
+    assert "nan" not in nan.text.split("</style>")[0]
+
+
 def test_labels_page_sheet_mode_flows_onto_a4(client: TestClient) -> None:
     room = client.post("/api/locations", json={"type": "room", "name": "Lab"}).json()
 

@@ -7,6 +7,7 @@ API (``/api/stock/*``) via ``fetch`` from the browser.
 
 from __future__ import annotations
 
+import math
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -58,6 +59,9 @@ _INVOICE_LIST_LIMIT = 200
 # It bounds one location, not the page: nothing caps the number of locations, and
 # build_location_stock loads every stocked slot regardless. See its docstring.
 _PARTS_PER_LOCATION = 50
+
+# SQLite's signed 64-bit rowid ceiling; anything above overflows the driver.
+_MAX_ROWID = 2**63 - 1
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -265,13 +269,26 @@ def location_labels_page(
                 status_code=422,
                 detail="ids must be a comma-separated list of numbers",
             ) from exc
+    # Python ints parse at any size, but past SQLite's 64-bit rowid range the
+    # driver raises OverflowError mid-query — an unmapped 500. Refuse up front.
+    for value in [*(id_list or []), *([root] if root is not None else [])]:
+        if not 0 < value <= _MAX_ROWID:
+            raise HTTPException(
+                status_code=422,
+                detail="location ids must be positive 64-bit integers",
+            )
     labels = lbl.build_labels(session, ids=id_list, root=root)
+    # Clamped so a typo'd size can't produce absurd page CSS. NaN slides
+    # through min/max (every comparison is False), so non-finite → default.
+    if not math.isfinite(w):
+        w = 57.0
+    if not math.isfinite(h):
+        h = 32.0
     return templates.TemplateResponse(
         request,
         "labels.html",
         {
             "labels": labels,
-            # Clamped so a typo'd size can't produce absurd page CSS.
             "w": min(max(w, 20.0), 200.0),
             "h": min(max(h, 10.0), 200.0),
             "sheet": sheet,

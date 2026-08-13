@@ -25,6 +25,7 @@ from sqlmodel import Session
 from app.models.location import Location
 from app.services import location_service as ls
 from app.services._common import require_entity
+from app.services.errors import ValidationError
 
 _QR_PREFIX = "SL"
 
@@ -67,7 +68,21 @@ def build_labels(
     root: int | None = None,
 ) -> list[LabelData]:
     """Labels for explicit ``ids``, for a subtree (``root`` and everything under
-    it), or — with neither — for every location, all in tree pre-order."""
+    it), or — with neither — for every location, all in tree pre-order.
+
+    ``ids`` are deduplicated (order preserved) and capped — the list arrives
+    straight from a query string, and each entry costs a QR render, so an
+    uncapped repeat-the-id request would be free heavy work for any reader.
+    The cap is the bulk-create one: what one request may create, one request
+    may print.
+    """
+    if ids is not None:
+        ids = list(dict.fromkeys(ids))
+        if len(ids) > ls._MAX_BULK_NODES:
+            raise ValidationError(
+                f"at most {ls._MAX_BULK_NODES} labels per request; "
+                "print a subtree with root=… instead"
+            )
     forest = ls.location_tree(session)
     nodes = ls.flatten_tree(forest)
     if root is not None:
