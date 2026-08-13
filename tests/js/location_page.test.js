@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { JSDOM } from "jsdom";
-import { describe, it, expect } from "vitest";
-import { loadPage } from "./harness.js";
+import { describe, it, expect, vi } from "vitest";
+import { loadPage, tick, CSRF } from "./harness.js";
 
 const SCRIPTS = ["shared.js", "locations.js"];
 
@@ -284,5 +284,174 @@ describe("locations.js — the empty/occupied filters", () => {
   it("does nothing at all on a page with no tree", () => {
     // The template omits the tree entirely when there are no locations.
     expect(() => loadPage(`<p>No locations yet.</p>`, SCRIPTS)).not.toThrow();
+  });
+});
+
+// A writer's tree — every row carries the identity data attributes and the
+// Edit/Delete buttons the template emits for writers. Lab(1) > Rack A(2).
+function actionsFixture() {
+  const actions = `
+    <span class="loc-actions">
+      <button type="button" class="btn loc-add">Add</button>
+      <button type="button" class="btn loc-edit">Edit</button>
+      <button type="button" class="btn loc-delete">Delete</button>
+    </span>`;
+  return `
+    <label class="check"><input type="checkbox" id="show-empty" checked /></label>
+    <label class="check"><input type="checkbox" id="show-occupied" checked /></label>
+    <ul class="loc-tree loc-tree-root" id="location-tree">
+      <li class="loc-item" data-occupied="false" data-id="1" data-type="room"
+          data-parent-id="" data-name="Lab">
+        <div class="loc-row">
+          <button type="button" class="tree-caret" aria-expanded="false"></button>
+          <span class="loc-name">Lab</span>
+          ${actions}
+        </div>
+        <div class="tree-children" hidden>
+          <ul class="loc-tree">
+            <li class="loc-item" data-occupied="false" data-id="2" data-type="rack"
+                data-parent-id="1" data-name="Rack A">
+              <div class="loc-row">
+                <span class="tree-caret-spacer"></span>
+                <span class="loc-name">Rack A</span>
+                ${actions}
+              </div>
+            </li>
+          </ul>
+        </div>
+      </li>
+    </ul>
+    <p class="empty" id="location-tree-empty" hidden></p>`;
+}
+
+describe("locations.js — per-node Edit / Delete", () => {
+  const editBtn = (document, name) =>
+    document.querySelector(`[data-name="${name}"] .loc-edit`);
+  const deleteBtn = (document, name) =>
+    document.querySelector(`[data-name="${name}"] .loc-delete`);
+
+  it("opens the edit dialog with the node's identity and its blocked parents", () => {
+    const { window, document } = loadPage(actionsFixture(), SCRIPTS);
+    const opened = (window.openLocationDialog = vi.fn());
+    editBtn(document, "Lab").click();
+    expect(opened).toHaveBeenCalledTimes(1);
+    const [, location] = opened.mock.calls[0];
+    expect(location).toMatchObject({
+      id: 1,
+      name: "Lab",
+      type: "room",
+      parentId: null,
+      disabledIds: [1, 2], // itself and its whole subtree
+    });
+  });
+
+  it("a child node offers its real parent and blocks only itself", () => {
+    const { window, document } = loadPage(actionsFixture(), SCRIPTS);
+    const opened = (window.openLocationDialog = vi.fn());
+    editBtn(document, "Rack A").click();
+    const [, location] = opened.mock.calls[0];
+    expect(location).toMatchObject({
+      id: 2,
+      name: "Rack A",
+      parentId: 1,
+      disabledIds: [2],
+    });
+  });
+
+  it("deletes after a confirm that names the full path", async () => {
+    const { window, document, fetchMock } = loadPage(actionsFixture(), SCRIPTS, {
+      fetchImpl: () => Promise.resolve({ ok: true }),
+    });
+    deleteBtn(document, "Rack A").click();
+    await tick();
+    expect(window.confirm).toHaveBeenCalledWith(
+      'Delete location "Lab / Rack A"?',
+    );
+    const [url, opts] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/locations/2");
+    expect(opts.method).toBe("DELETE");
+    expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
+  });
+
+  it("Add opens the create dialog with this node preselected as the parent", () => {
+    const { window, document } = loadPage(actionsFixture(), SCRIPTS);
+    const opened = (window.openLocationDialog = vi.fn());
+    document.querySelector('[data-name="Rack A"] .loc-add').click();
+    expect(opened).toHaveBeenCalledTimes(1);
+    const [, location, defaults] = opened.mock.calls[0];
+    expect(location).toBeNull();
+    expect(defaults).toEqual({ parentId: 2 });
+  });
+
+  it("remembers the user's expansion for the next load", () => {
+    const first = loadPage(actionsFixture(), SCRIPTS);
+    first.document
+      .querySelector('[data-name="Lab"] .tree-caret')
+      .click();
+    expect(
+      JSON.parse(first.window.sessionStorage.getItem("shelfos-locations-expanded")),
+    ).toEqual(["1"]);
+
+    // A reload (fresh DOM, same sessionStorage) starts with Lab open again…
+    const second = loadPage(actionsFixture(), SCRIPTS, {
+      sessionStorage: { "shelfos-locations-expanded": '["1"]' },
+    });
+    const branch = second.document.querySelector(
+      '[data-name="Lab"] > .tree-children',
+    );
+    expect(branch.hidden).toBe(false);
+
+    // …and collapsing it forgets it.
+    second.document.querySelector('[data-name="Lab"] .tree-caret').click();
+    expect(
+      JSON.parse(
+        second.window.sessionStorage.getItem("shelfos-locations-expanded"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("a branch delete warns with the count and asks for a recursive delete", async () => {
+    const { window, document, fetchMock } = loadPage(actionsFixture(), SCRIPTS, {
+      fetchImpl: () => Promise.resolve({ ok: true }),
+    });
+    deleteBtn(document, "Lab").click();
+    await tick();
+    expect(window.confirm).toHaveBeenCalledWith(
+      'Delete location "Lab" AND the 1 location under it?',
+    );
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/locations/1?recursive=true");
+  });
+
+  it("does nothing when the confirm is declined", async () => {
+    const { window, document, fetchMock } = loadPage(actionsFixture(), SCRIPTS);
+    window.confirm = vi.fn(() => false);
+    deleteBtn(document, "Lab").click();
+    await tick();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a refused delete as a toast, not a navigation", async () => {
+    const { document, fetchMock } = loadPage(actionsFixture(), SCRIPTS, {
+      fetchImpl: () =>
+        Promise.resolve({
+          ok: false,
+          json: async () => ({ detail: "location still holds stock" }),
+        }),
+    });
+    deleteBtn(document, "Lab").click();
+    await tick();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const toast = document.querySelector(".toast");
+    expect(toast).toBeTruthy();
+    expect(toast.textContent).toBe("location still holds stock");
+  });
+
+  it("surfaces a network failure as a toast", async () => {
+    const { document } = loadPage(actionsFixture(), SCRIPTS, {
+      fetchImpl: () => Promise.reject(new Error("down")),
+    });
+    deleteBtn(document, "Lab").click();
+    await tick();
+    expect(document.querySelector(".toast")).toBeTruthy();
   });
 });

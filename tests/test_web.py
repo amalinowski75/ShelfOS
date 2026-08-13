@@ -1218,6 +1218,60 @@ def test_locations_page_survives_a_cyclic_hierarchy(
     assert client.get("/locations").status_code == 200
 
 
+def test_labels_page_renders_qr_and_paths(client: TestClient) -> None:
+    room = client.post("/api/locations", json={"type": "room", "name": "Lab"}).json()
+    drawer = client.post(
+        "/api/locations",
+        json={"type": "drawer", "name": "D<1>", "parent_id": room["id"]},
+    ).json()
+
+    page = client.get("/labels/locations", params={"root": room["id"]})
+    assert page.status_code == 200
+    assert "<svg" in page.text
+    assert "D&lt;1&gt;" in page.text  # names are escaped, not trusted
+    # Defaults land in the @page rule; one label per location in the subtree.
+    assert "size: 57.0mm 32.0mm" in page.text
+    assert page.text.count('class="label"') == 2
+
+    sized = client.get(
+        "/labels/locations",
+        params={"ids": str(drawer["id"]), "w": 89, "h": 36},
+    )
+    assert "size: 89.0mm 36.0mm" in sized.text
+    assert sized.text.count('class="label"') == 1
+
+    assert client.get("/labels/locations", params={"root": 999}).status_code == 404
+    assert client.get("/labels/locations", params={"ids": "1,x"}).status_code == 422
+
+
+def test_labels_page_sheet_mode_flows_onto_a4(client: TestClient) -> None:
+    room = client.post("/api/locations", json={"type": "room", "name": "Lab"}).json()
+
+    sheet = client.get("/labels/locations", params={"root": room["id"], "sheet": 1})
+    assert sheet.status_code == 200
+    assert "size: A4" in sheet.text
+    # Labels flow instead of forcing one page each.
+    assert "page-break-after: always" not in sheet.text
+    # The toggle points back at the label-roll layout, and vice versa.
+    assert "Label roll" in sheet.text
+    roll = client.get("/labels/locations", params={"root": room["id"]})
+    assert "size: A4" not in roll.text
+    assert "page-break-after: always" in roll.text
+    assert "sheet=1" in roll.text
+
+
+def test_locations_page_offers_the_label_links(client: TestClient) -> None:
+    room = client.post("/api/locations", json={"type": "room", "name": "Lab"}).json()
+    page = client.get("/locations")
+    assert f"/labels/locations?root={room['id']}" in page.text
+    assert 'href="/labels/locations"' in page.text
+
+
+def test_labels_page_requires_login(anon_client: TestClient) -> None:
+    response = anon_client.get("/labels/locations", follow_redirects=False)
+    assert response.status_code in (302, 303, 307, 401)
+
+
 def test_locations_page_requires_login(anon_client: TestClient) -> None:
     resp = anon_client.get("/locations", follow_redirects=False)
     assert resp.status_code == 303

@@ -1,0 +1,57 @@
+{# "Generate hierarchy" dialog (§7): describe a cabinet once — N shelves, each
+   with M drawers… — and create the whole subtree in one go. Needs
+   `location_types` and `location_options` in context; behaviour lives in
+   bulk_location_dialog.js. #}
+<dialog id="bulk-location-dialog">
+  <article>
+    <header>
+      <strong>Generate hierarchy</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <form id="bulk-location-form">
+      <div class="field">
+        <label>Parent</label>
+        <select class="control" name="parent_id">
+          <option value="">None (top level)</option>
+          {% for loc in location_options %}
+          <option value="{{ loc.id }}">{{ loc.path }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label>Levels</label>
+        <p class="muted bulk-hint">Each level nests under the one above; every
+          location of a level gets that many children. <code>{n}</code> in a
+          name is the number.</p>
+        <div id="bulk-levels"></div>
+        <button type="button" class="btn btn-ghost btn-sm" id="bulk-add-level">+ Add sub-level</button>
+      </div>
+      <p class="muted" id="bulk-total"></p>
+      <div id="bulk-preview" hidden>
+        <ul id="bulk-preview-list" class="bulk-preview-list"></ul>
+      </div>
+      <p id="bulk-error" class="error" hidden></p>
+      <footer>
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="button" class="btn" id="bulk-preview-btn">Preview</button>
+        <button type="submit" class="btn btn-primary" id="bulk-create-btn">Create</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+
+<template id="bulk-level-template">
+  <div class="bulk-level">
+    <span class="bulk-depth" aria-hidden="true">&#8627;</span>
+    <select class="control" name="level-type">
+      {% for lt in location_types %}
+      <option value="{{ lt }}">{{ lt }}</option>
+      {% endfor %}
+    </select>
+    <input class="control" name="level-count" type="number" min="1" max="100" value="1"
+           aria-label="Count" />
+    <input class="control" name="level-pattern" aria-label="Name pattern" />
+    <button type="button" class="btn btn-ghost btn-sm bulk-level-remove"
+            aria-label="Remove level">&times;</button>
+  </div>
+</template>

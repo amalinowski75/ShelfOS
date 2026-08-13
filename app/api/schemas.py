@@ -123,6 +123,43 @@ class LocationCreate(BaseModel):
     parent_id: int | None = None
 
 
+class LocationUpdate(BaseModel):
+    """Partial edit of a location; omitted fields stay unchanged.
+
+    An explicit ``parent_id: null`` moves the location to the top level, so the
+    route must pass only the fields the client actually sent (``exclude_unset``).
+    """
+
+    name: str | None = None
+    parent_id: int | None = None
+    type: LocationType | None = None
+
+
+class LocationBulkLevel(BaseModel):
+    """One level of a generated hierarchy (spec §7): ``count`` children of
+    ``type`` under every location of the level above. ``{n}`` in the pattern is
+    the child's number; ``None`` falls back to ``"<Type> {n}"``."""
+
+    type: LocationType
+    count: int = Field(ge=1, le=100)
+    name_pattern: str | None = None
+
+
+class LocationBulkCreate(BaseModel):
+    levels: list[LocationBulkLevel] = Field(min_length=1, max_length=8)
+    parent_id: int | None = None
+    # True previews totals and sample paths without creating anything.
+    dry_run: bool = False
+
+
+class LocationBulkResult(BaseModel):
+    """Outcome of a bulk generation; ``created`` is 0 for a dry run."""
+
+    total: int
+    created: int
+    sample_paths: list[str]
+
+
 class StockAdd(BaseModel):
     component_id: int
     location_id: int

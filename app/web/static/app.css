@@ -262,7 +262,11 @@ table.kv tr:last-child th, table.kv tr:last-child td { border-bottom: none; }
 .loc-tree li { padding: 5px 0; }
 .loc-tree .loc-tree { margin: 4px 0 0 10px; padding-left: 14px; border-left: 1px solid var(--border); }
 .loc-tree .loc-name { font-weight: 550; margin-right: 8px; }
-.loc-row { display: flex; align-items: center; gap: 8px; }
+/* The hover wash spans the WHOLE row — name on the left, actions on the right —
+   so the revealed Edit/Delete buttons visibly belong to one highlighted strip
+   rather than floating next to whichever row the eye happens to land on. */
+.loc-row { display: flex; align-items: center; gap: 8px; padding: 2px 6px; border-radius: 7px; }
+.loc-row:hover, .loc-row:focus-within { background: var(--surface-2); }
 /* Same caret as the picker's, and deliberately the same shape: one visual idea
    for "expand this branch" across the app. */
 .tree-caret, .tree-caret-spacer { width: 20px; height: 24px; flex: none; }
@@ -276,12 +280,28 @@ table.kv tr:last-child th, table.kv tr:last-child td { border-bottom: none; }
 .tree-children { margin-top: 2px; }
 /* A location kept on screen only as the path to a match below it. */
 .loc-item.is-path > .loc-row { opacity: .6; }
+/* Per-node actions, revealed on hover or keyboard focus so the tree stays calm.
+   opacity (not visibility) keeps the buttons tabbable while hidden. */
+.loc-actions { margin-left: auto; display: inline-flex; gap: 6px; opacity: 0; transition: opacity .12s; }
+.loc-row:hover .loc-actions, .loc-actions:focus-within { opacity: 1; }
 /* What a location holds. Indented like a child branch so contents and sub-
    locations read as one nesting, and laid out as rows of small facts. */
 .loc-parts { list-style: none; margin: 4px 0 0 10px; padding-left: 14px;
   border-left: 1px solid var(--border); }
 .loc-parts li { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
 .loc-parts .muted { font-size: 13px; }
+
+/* One level row in the Generate-hierarchy dialog: type, count, name pattern.
+   Rows are staggered by depth (JS sets margin-left) with an ↳ marker, so the
+   dialog reads like the tree it is about to create. */
+.bulk-level { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+.bulk-depth { color: var(--muted); flex: none; }
+.bulk-level [name="level-count"] { width: 76px; flex: none; }
+.bulk-level [name="level-type"] { width: 130px; flex: none; }
+.bulk-hint { font-size: 13px; margin: 0 0 8px; }
+.bulk-preview-list { list-style: none; margin: 8px 0 0; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
+.bulk-preview-list li { padding: 2px 0; }
 
 /* A checkbox with its label, for filter bars. */
 .check {
