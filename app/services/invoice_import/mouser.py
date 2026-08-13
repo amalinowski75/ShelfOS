@@ -35,14 +35,18 @@ _ITEM = re.compile(
 # loudly on one the strict pattern couldn't read, instead of relying on a marker
 # count: an item's part-number cell doesn't always carry the "Numer katalogowy u
 # producenta:" label (seen in the wild as a bare "20 / <mpn>"), so counting the
-# labels under-counts even when every row parses. Such an item lands in review
-# with no MPN rather than aborting the import.
+# labels under-counts even when every row parses. The unlabelled form is read by
+# _UNLABELLED_MPN below, so the MPN is recovered either way.
 _LOOSE_ITEM = re.compile(r"^\s*\d+\s+\d{2,4}-\S")
 # The item table ends here; freight/handling/duty live in this totals block
 # (Merchandise / Handling / Freight / VAT / Tariff), never as an item row — so they
 # are not mis-parsed as components (they lack the "<digits>-<mpn>" SKU shape anyway).
 _STOP = re.compile(r"Wartość towarów|Merchandise|Informacje dotyczące")
 _MPN = re.compile(r"Numer katalogowy u producenta:\s*(\S+)")
+# The same cell without its label — seen in the wild as a bare "20 / UCLAMP2271P.TNT"
+# ("<customer no> / <MPN>", two single tokens). A description line never matches this
+# shape: its left side is "<Manufacturer> <title>", always several words.
+_UNLABELLED_MPN = re.compile(r"^(\S+)\s*/\s*(\S+)$")
 _SKIP_DESC = re.compile(r"Numer katalogowy|ECCN|TARIC|HTS|COO:")
 
 
@@ -114,6 +118,14 @@ def _line(item: re.Match[str], cont_lines: list[str]) -> ParsedLine:
         if mpn_match:
             mpn = mpn_match.group(1)
             continue
+        if mpn is None and description is None:
+            # The part-number cell in its unlabelled form, sitting where the labelled
+            # marker normally does (before the description). Take the MPN — and don't
+            # fall through, or the description branch would keep its left half ("20").
+            unlabelled = _UNLABELLED_MPN.match(stripped)
+            if unlabelled:
+                mpn = unlabelled.group(2)
+                continue
         is_desc = "/" in stripped and not _SKIP_DESC.search(stripped)
         if description is None and is_desc:
             # "<Manufacturer> <title> / <Polish category>" — keep the left side as

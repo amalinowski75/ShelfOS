@@ -178,15 +178,18 @@ def test_mouser_reads_comma_thousands_quantities() -> None:
 def test_mouser_bulk_invoice_comma_quantities_and_unlabelled_marker() -> None:
     # A real invoice (redacted) that broke the old count-based check: two items are
     # quantitied "2,500", and the last item's part-number cell carries no "Numer
-    # katalogowy u producenta:" label at all (just "20 / <mpn>" — atypical cell
-    # content, mid-page). All 11 rows parse; the comma quantities are 2500; the
-    # unlabelled item simply has no MPN (→ review) instead of crashing the import.
+    # katalogowy u producenta:" label — just "20 / UCLAMP2271P.TNT", where the token
+    # after the slash IS the MPN. All 11 rows parse; the comma quantities are 2500;
+    # the unlabelled cell yields the MPN (and must NOT leak "20" as the description).
     invoice = MouserInvoiceParser().parse(_text("mouser_bulk.txt"))
     assert invoice.invoice_number == "89923858"
     assert len(invoice.lines) == 11
     assert sum(1 for line in invoice.lines if line.quantity == 2500) == 2
-    assert invoice.lines[-1].mpn is None
-    assert invoice.lines[-1].supplier_part_number == "947-UCLAMP2271P.TNT"
+    last = invoice.lines[-1]
+    assert last.mpn == "UCLAMP2271P.TNT"
+    assert last.supplier_part_number == "947-UCLAMP2271P.TNT"
+    assert last.description is not None
+    assert last.description.startswith("Semtech")  # not the cell's "20" left half
 
 
 def test_digikey_raises_when_an_item_row_is_unparseable() -> None:
