@@ -27,13 +27,45 @@
     caretOf(item)?.setAttribute("aria-expanded", String(open));
   }
 
+  // The expansion the user built up, keyed by location id and kept in
+  // sessionStorage: every edit/delete/create reloads the page, and losing the
+  // whole unfolded tree to each small change made editing miserable. Session-
+  // scoped on purpose — a fresh visit still starts collapsed. Only the USER's
+  // own clicks are remembered; the filters' auto-expansion stays transient.
+  const EXPANDED_KEY = "shelfos-locations-expanded";
+  let expandedIds;
+  try {
+    expandedIds = new Set(JSON.parse(sessionStorage.getItem(EXPANDED_KEY)) || []);
+  } catch {
+    expandedIds = new Set();
+  }
+
+  function rememberExpansion(id, open) {
+    if (!id) return;
+    if (open) expandedIds.add(id);
+    else expandedIds.delete(id);
+    try {
+      sessionStorage.setItem(EXPANDED_KEY, JSON.stringify([...expandedIds]));
+    } catch {
+      /* storage full/blocked — the tree still works, it just won't remember */
+    }
+  }
+
+  if (expandedIds.size) {
+    for (const item of tree.querySelectorAll(".loc-item[data-id]")) {
+      if (expandedIds.has(item.dataset.id)) setExpanded(item, true);
+    }
+  }
+
   tree.addEventListener("click", (event) => {
     const caret = event.target.closest(".tree-caret");
     if (!caret || !tree.contains(caret)) return;
     // The button's own state, not the branch's: it is what the user reads and
     // what a screen reader announces, so it stays the single source of truth.
     const open = caret.getAttribute("aria-expanded") === "true";
-    setExpanded(caret.closest(".loc-item"), !open);
+    const item = caret.closest(".loc-item");
+    setExpanded(item, !open);
+    rememberExpansion(item.dataset.id, !open);
   });
 
   function applyFilters() {
@@ -103,4 +135,100 @@
   showEmpty.addEventListener("change", applyFilters);
   showOccupied.addEventListener("change", applyFilters);
   applyFilters();
+
+  // ----- per-node Edit / Delete actions (writers only; buttons absent otherwise)
+
+  // The full path ("Lab / Rack A / Shelf 1"), read off the DOM nesting, so the
+  // delete confirm names exactly what is about to go.
+  function pathOf(item) {
+    const parts = [];
+    for (let li = item; li; li = li.parentElement?.closest(".loc-item")) {
+      const name = li.querySelector(":scope > .loc-row .loc-name");
+      if (name) parts.unshift(name.textContent.trim());
+    }
+    return parts.join(" / ");
+  }
+
+  // One delete at a time: a double-click would otherwise fire two DELETEs and
+  // surface a spurious "not found" toast for the second.
+  let deleting = false;
+
+  tree.addEventListener("click", async (event) => {
+    const addBtn = event.target.closest(".loc-add");
+    const editBtn = event.target.closest(".loc-edit");
+    const deleteBtn = event.target.closest(".loc-delete");
+    if ((!addBtn && !editBtn && !deleteBtn) || !tree.contains(event.target))
+      return;
+    const item = event.target.closest(".loc-item");
+    if (!item) return;
+    const id = Number(item.dataset.id);
+
+    if (addBtn) {
+      // Expand this node in the remembered state before the reload, so the
+      // just-created child is on screen instead of behind a collapsed caret.
+      openLocationDialog(
+        () => {
+          rememberExpansion(item.dataset.id, true);
+          window.location.reload();
+        },
+        null,
+        { parentId: id },
+      );
+      return;
+    }
+
+    if (editBtn) {
+      // A location may not become its own parent nor land inside its own
+      // subtree: bar itself and every descendant in the dialog's parent select.
+      const disabledIds = [id];
+      for (const child of item.querySelectorAll(".loc-item[data-id]"))
+        disabledIds.push(Number(child.dataset.id));
+      openLocationDialog(() => window.location.reload(), {
+        id,
+        name:
+          item
+            .querySelector(":scope > .loc-row .loc-name")
+            ?.textContent.trim() ?? "",
+        type: item.dataset.type,
+        parentId: item.dataset.parentId ? Number(item.dataset.parentId) : null,
+        disabledIds,
+      });
+      return;
+    }
+
+    if (deleting) return;
+    // A branch goes down with everything under it — the confirm must say how
+    // much that is, not just name the top. Stock anywhere in the branch still
+    // blocks server-side, so "everything" can only be empty locations.
+    const descendants = item.querySelectorAll(".loc-item").length;
+    const message =
+      descendants > 0
+        ? `Delete location "${pathOf(item)}" AND the ${descendants} ` +
+          `location${descendants === 1 ? "" : "s"} under it?`
+        : `Delete location "${pathOf(item)}"?`;
+    if (!window.confirm(message)) return;
+    deleting = true;
+    try {
+      let resp;
+      try {
+        resp = await fetch(
+          `/api/locations/${id}${descendants > 0 ? "?recursive=true" : ""}`,
+          {
+            method: "DELETE",
+            headers: { "X-CSRF-Token": csrfToken },
+          },
+        );
+      } catch {
+        showToast("Could not reach the server. Please try again.");
+        return;
+      }
+      if (!resp.ok) {
+        showToast(await errorMessage(resp));
+        return;
+      }
+      window.location.reload();
+    } finally {
+      deleting = false;
+    }
+  });
 })();

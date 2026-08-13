@@ -1,10 +1,11 @@
-{# Shared "New location" dialog (§7). Include on any page whose context provides
+{# Shared location dialog (§7): creates locations, and edits one when opened with
+   an existing location. Include on any page whose context provides
    `location_types` and `location_options`; behaviour lives in location_dialog.js,
-   which exposes `openLocationDialog(onCreated)`. #}
+   which exposes `openLocationDialog(onDone, location?)`. #}
 <dialog id="location-dialog">
   <article>
     <header>
-      <strong>New location</strong>
+      <strong id="location-dialog-title">New location</strong>
       <button class="close" aria-label="Close" data-close></button>
     </header>
     <form id="location-form">
@@ -32,7 +33,7 @@
       <p id="location-error" class="error" hidden></p>
       <footer>
         <button type="button" class="btn btn-ghost" data-close>Cancel</button>
-        <button type="submit" class="btn btn-primary">Create location</button>
+        <button type="submit" class="btn btn-primary" id="location-submit">Create location</button>
       </footer>
     </form>
   </article>

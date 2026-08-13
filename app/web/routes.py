@@ -7,6 +7,7 @@ API (``/api/stock/*``) via ``fetch`` from the browser.
 
 from __future__ import annotations
 
+import math
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -33,6 +34,7 @@ from app.services import bom_service as boms_svc
 from app.services import component_service as cs
 from app.services import invoice_import_service as imp
 from app.services import invoice_service as inv
+from app.services import label_service as lbl
 from app.services import location_service as ls
 from app.services import stock_service as ss
 from app.services import user_service as us
@@ -57,6 +59,9 @@ _INVOICE_LIST_LIMIT = 200
 # It bounds one location, not the page: nothing caps the number of locations, and
 # build_location_stock loads every stocked slot regardless. See its docstring.
 _PARTS_PER_LOCATION = 50
+
+# SQLite's signed 64-bit rowid ceiling; anything above overflows the driver.
+_MAX_ROWID = 2**63 - 1
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -84,8 +89,7 @@ router = APIRouter(tags=["web"])
 def _location_options(tree: list[ls.LocationNode]) -> list[dict[str, Any]]:
     """Flat, path-sorted location options for a parent/location ``<select>``."""
     options = [
-        {"id": node.location.id, "path": node.path}
-        for node in ls.flatten_tree(tree)
+        {"id": node.location.id, "path": node.path} for node in ls.flatten_tree(tree)
     ]
     options.sort(key=lambda option: str(option["path"]).lower())
     return options
@@ -238,6 +242,61 @@ def locations_page(
     )
 
 
+@router.get("/labels/locations", response_class=HTMLResponse)
+def location_labels_page(
+    request: Request,
+    ids: str | None = None,
+    root: int | None = None,
+    w: float = 57,
+    h: float = 32,
+    sheet: bool = False,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_web_user),
+) -> HTMLResponse:
+    """Print-ready location labels: QR + readable path (spec §7).
+
+    ``ids`` picks explicit locations, ``root`` a whole subtree, neither prints
+    everything. ``w``/``h`` are the label size in mm — adjust to the stock the
+    label printer holds; the page's ``@page`` rule makes one label per page.
+    ``sheet`` flows the labels onto A4 pages instead, for an ordinary printer.
+    """
+    id_list: list[int] | None = None
+    if ids:
+        try:
+            id_list = [int(part) for part in ids.split(",") if part.strip()]
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail="ids must be a comma-separated list of numbers",
+            ) from exc
+    # Python ints parse at any size, but past SQLite's 64-bit rowid range the
+    # driver raises OverflowError mid-query — an unmapped 500. Refuse up front.
+    for value in [*(id_list or []), *([root] if root is not None else [])]:
+        if not 0 < value <= _MAX_ROWID:
+            raise HTTPException(
+                status_code=422,
+                detail="location ids must be positive 64-bit integers",
+            )
+    labels = lbl.build_labels(session, ids=id_list, root=root)
+    # Clamped so a typo'd size can't produce absurd page CSS. NaN slides
+    # through min/max (every comparison is False), so non-finite → default.
+    if not math.isfinite(w):
+        w = 57.0
+    if not math.isfinite(h):
+        h = 32.0
+    return templates.TemplateResponse(
+        request,
+        "labels.html",
+        {
+            "labels": labels,
+            "w": min(max(w, 20.0), 200.0),
+            "h": min(max(h, 10.0), 200.0),
+            "sheet": sheet,
+            "current_user": user,
+        },
+    )
+
+
 @router.get("/web/api/invoices")
 def invoices_feed(
     session: Session = Depends(get_session),
@@ -324,9 +383,7 @@ def bom_report_page(
     bom = boms_svc.get_bom(session, bom_id)  # raises NotFound → 404
     # The original CSV is the only thing attached to a bom, added first at import,
     # so the oldest-first list's first entry is it (None if it was removed).
-    csv_attachments = ats.list_attachments(
-        session, entity_type="bom", entity_id=bom_id
-    )
+    csv_attachments = ats.list_attachments(session, entity_type="bom", entity_id=bom_id)
     return templates.TemplateResponse(
         request,
         "bom_report.html",
@@ -337,9 +394,7 @@ def bom_report_page(
             # For the shared "New component" dialog (add a missing line to
             # inventory) — only writers get it, so skip the types query otherwise.
             "types": (
-                cs.list_types(session)
-                if user.role != UserRole.READ_ONLY
-                else []
+                cs.list_types(session) if user.role != UserRole.READ_ONLY else []
             ),
             "mounting_types": [mt.value for mt in MountingType],
         },

@@ -10,7 +10,10 @@
 {% macro location_node(node) %}
 {% set contents = location_stock.get(node.location.id, []) %}
 {% set expandable = node.children or contents %}
-<li class="loc-item" data-occupied="{{ 'true' if contents else 'false' }}">
+{% set writer = current_user.role.value != "read-only" %}
+<li class="loc-item" data-occupied="{{ 'true' if contents else 'false' }}"
+    data-id="{{ node.location.id }}" data-type="{{ node.location.type.value }}"
+    data-parent-id="{{ node.location.parent_id if node.location.parent_id is not none else '' }}">
   <div class="loc-row">
     {% if expandable %}
     {# Named by the visible label rather than a copy of it: a fixed "Expand X"
@@ -27,6 +30,21 @@
     {% if contents %}
     <span class="badge b-accent loc-count">{{ contents | length }}
       {{ "part" if contents | length == 1 else "parts" }}</span>
+    {% endif %}
+    {% if writer %}
+    {# describedby, not labelledby: the visible "Edit"/"Delete" stays the name and
+       the location's name is read after it, so rows don't announce identically. #}
+    <span class="loc-actions">
+      <a class="btn btn-ghost btn-sm" target="_blank"
+         href="/labels/locations?root={{ node.location.id }}"
+         aria-describedby="loc-name-{{ node.location.id }}">Labels</a>
+      <button type="button" class="btn btn-ghost btn-sm loc-add"
+              aria-describedby="loc-name-{{ node.location.id }}">Add</button>
+      <button type="button" class="btn btn-ghost btn-sm loc-edit"
+              aria-describedby="loc-name-{{ node.location.id }}">Edit</button>
+      <button type="button" class="btn btn-danger btn-sm loc-delete"
+              aria-describedby="loc-name-{{ node.location.id }}">Delete</button>
+    </span>
     {% endif %}
   </div>
   {% if expandable %}
@@ -71,8 +89,10 @@
     {% if location_tree %}
     <label class="check"><input type="checkbox" id="show-empty" checked /> Show empty</label>
     <label class="check"><input type="checkbox" id="show-occupied" checked /> Show occupied</label>
+    <a class="btn" href="/labels/locations" target="_blank">Print labels</a>
     {% endif %}
     {% if can_write %}
+    <button type="button" class="btn" id="generate-locations-btn">Generate hierarchy</button>
     <button type="button" class="btn btn-primary" id="new-location-btn">New Location</button>
     {% endif %}
   </div>
@@ -95,9 +115,11 @@
 
 {% if can_write %}
 {% include "_location_dialog.html" %}
+{% include "_bulk_location_dialog.html" %}
 {% endif %}
 {% endblock %}
 
 {% block scripts %}
 <script src="/static/locations.js?v={{ static_version() }}"></script>
+<script src="/static/bulk_location_dialog.js?v={{ static_version() }}"></script>
 {% endblock %}

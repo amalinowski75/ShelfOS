@@ -1067,6 +1067,91 @@ def test_location_path_endpoint(client: TestClient) -> None:
     assert [loc["name"] for loc in path.json()] == ["Lab", "D1"]
 
 
+def test_location_bulk_generate_endpoint(client: TestClient) -> None:
+    rack = client.post("/api/locations", json={"type": "rack", "name": "R1"}).json()
+    body = {
+        "parent_id": rack["id"],
+        "levels": [
+            {"type": "shelf", "count": 2},
+            {"type": "drawer", "count": 2, "name_pattern": "D{n}"},
+        ],
+    }
+
+    # A dry run answers 200 with the shape, and creates nothing.
+    preview = client.post("/api/locations/bulk", json={**body, "dry_run": True})
+    assert preview.status_code == 200
+    assert preview.json()["total"] == 6
+    assert preview.json()["created"] == 0
+    assert preview.json()["sample_paths"][0] == "R1 / Shelf 1 / D1"
+    assert client.get("/api/locations", params={"parent_id": rack["id"]}).json() == []
+
+    # The real run answers 201 and lands the hierarchy.
+    created = client.post("/api/locations/bulk", json=body)
+    assert created.status_code == 201
+    assert created.json()["created"] == 6
+    shelves = client.get("/api/locations", params={"parent_id": rack["id"]}).json()
+    assert [loc["name"] for loc in shelves] == ["Shelf 1", "Shelf 2"]
+
+    # Re-running the same plan reports the clash instead of doubling the cabinet.
+    clash = client.post("/api/locations/bulk", json=body)
+    assert clash.status_code == 422
+    assert "Shelf 1" in clash.json()["detail"]
+
+
+def test_location_update_and_delete_endpoints(client: TestClient) -> None:
+    room = client.post("/api/locations", json={"type": "room", "name": "Lab"}).json()
+    rack = client.post(
+        "/api/locations",
+        json={"type": "rack", "name": "Rack A", "parent_id": room["id"]},
+    ).json()
+
+    # Rename + retype + move to the top level in one PATCH.
+    updated = client.patch(
+        f"/api/locations/{rack['id']}",
+        json={"name": "Shelf X", "type": "shelf", "parent_id": None},
+    )
+    assert updated.status_code == 200
+    body = updated.json()
+    assert (body["name"], body["type"], body["parent_id"]) == ("Shelf X", "shelf", None)
+
+    # A partial PATCH moves it back without touching the name.
+    moved = client.patch(
+        f"/api/locations/{rack['id']}", json={"parent_id": room["id"]}
+    )
+    assert moved.status_code == 200
+    assert moved.json()["name"] == "Shelf X"
+
+    # Moving a location under its own descendant is a clean 422, not a cycle.
+    cycle = client.patch(
+        f"/api/locations/{room['id']}", json={"parent_id": rack["id"]}
+    )
+    assert cycle.status_code == 422
+
+    assert client.patch("/api/locations/9999", json={"name": "X"}).status_code == 404
+
+    # Delete refuses while children exist, then works bottom-up.
+    assert client.delete(f"/api/locations/{room['id']}").status_code == 422
+    assert client.delete(f"/api/locations/{rack['id']}").status_code == 204
+    assert client.delete(f"/api/locations/{room['id']}").status_code == 204
+    assert client.delete(f"/api/locations/{room['id']}").status_code == 404
+    assert client.get("/api/locations").json() == []
+
+
+def test_location_recursive_delete_endpoint(client: TestClient) -> None:
+    room = client.post("/api/locations", json={"type": "room", "name": "Lab"}).json()
+    client.post(
+        "/api/locations/bulk",
+        json={
+            "parent_id": room["id"],
+            "levels": [{"type": "rack", "count": 2}, {"type": "shelf", "count": 3}],
+        },
+    )
+
+    gone = client.delete(f"/api/locations/{room['id']}", params={"recursive": "true"})
+    assert gone.status_code == 204
+    assert client.get("/api/locations").json() == []
+
+
 def test_set_number_parameter_accepts_engineering_string(client: TestClient) -> None:
     ctype = client.post("/api/types", json={"name": "resistor"}).json()
     client.post(

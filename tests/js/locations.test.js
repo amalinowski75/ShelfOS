@@ -149,3 +149,115 @@ describe("location_dialog.js", () => {
     expect(showModal).toHaveBeenCalled();
   });
 });
+
+// The dialog markup with the header/submit elements edit mode relabels, and a
+// small hierarchy in the parent select: Lab(1) > Rack A(5) > Bin(9), Bench(2).
+function editableDialogFixture() {
+  return `
+    <dialog id="location-dialog">
+      <strong id="location-dialog-title">New location</strong>
+      <form id="location-form">
+        <select name="type">
+          <option value="room">room</option>
+          <option value="rack">rack</option>
+          <option value="shelf">shelf</option>
+        </select>
+        <input name="name" />
+        <select name="parent_id">
+          <option value="">None</option>
+          <option value="1">Lab</option>
+          <option value="5">Lab / Rack A</option>
+          <option value="9">Lab / Rack A / Bin</option>
+          <option value="2">Bench</option>
+        </select>
+        <p id="location-error" hidden></p>
+        <button type="submit" id="location-submit">Create location</button>
+      </form>
+    </dialog>`;
+}
+
+describe("location_dialog.js — edit mode", () => {
+  const rackA = {
+    id: 5,
+    name: "Rack A",
+    type: "rack",
+    parentId: 1,
+    disabledIds: [5, 9],
+  };
+
+  it("prefills the form and PATCHes the edited location", async () => {
+    const done = [];
+    const { window, document, fetchMock } = loadPage(
+      editableDialogFixture(),
+      SCRIPTS,
+      {
+        fetchImpl: () =>
+          Promise.resolve({
+            ok: true,
+            json: async () => ({ id: 5, name: "Rack B", type: "rack" }),
+          }),
+      },
+    );
+    window.openLocationDialog((saved) => done.push(saved), rackA);
+
+    expect(document.getElementById("location-dialog-title").textContent).toBe(
+      "Edit location",
+    );
+    expect(document.getElementById("location-submit").textContent).toBe(
+      "Save changes",
+    );
+    expect(document.querySelector('[name="name"]').value).toBe("Rack A");
+    expect(document.querySelector('[name="type"]').value).toBe("rack");
+    expect(document.querySelector('[name="parent_id"]').value).toBe("1");
+
+    document.querySelector('[name="name"]').value = "Rack B";
+    submit(document);
+    await tick();
+
+    const [url, opts] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/locations/5");
+    expect(opts.method).toBe("PATCH");
+    expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
+    expect(JSON.parse(opts.body)).toEqual({
+      type: "rack",
+      name: "Rack B",
+      parent_id: 1,
+    });
+    expect(done).toEqual([{ id: 5, name: "Rack B", type: "rack" }]);
+  });
+
+  it("bars itself and its descendants as the new parent", () => {
+    const { window, document } = loadPage(editableDialogFixture(), SCRIPTS);
+    window.openLocationDialog(null, rackA);
+    const option = (value) =>
+      document.querySelector(`[name="parent_id"] option[value="${value}"]`);
+    expect(option("5").disabled).toBe(true); // itself
+    expect(option("9").disabled).toBe(true); // its descendant
+    expect(option("1").disabled).toBe(false); // its parent stays offered
+    expect(option("2").disabled).toBe(false);
+  });
+
+  it("create mode preselects the parent passed as a default", () => {
+    const { window, document } = loadPage(editableDialogFixture(), SCRIPTS);
+    window.openLocationDialog(null, null, { parentId: 5 });
+    expect(document.getElementById("location-dialog-title").textContent).toBe(
+      "New location",
+    );
+    expect(document.querySelector('[name="parent_id"]').value).toBe("5");
+  });
+
+  it("a later create-open resets the labels and re-enables every parent", () => {
+    const { window, document } = loadPage(editableDialogFixture(), SCRIPTS);
+    window.openLocationDialog(null, rackA);
+    window.openLocationDialog();
+    expect(document.getElementById("location-dialog-title").textContent).toBe(
+      "New location",
+    );
+    expect(document.getElementById("location-submit").textContent).toBe(
+      "Create location",
+    );
+    for (const opt of document.querySelectorAll('[name="parent_id"] option')) {
+      expect(opt.disabled).toBe(false);
+    }
+  });
+});

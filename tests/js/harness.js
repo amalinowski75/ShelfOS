@@ -27,7 +27,7 @@ export const CSRF = "csrf-test-token";
 export function loadPage(
   bodyHtml,
   scripts,
-  { fetchImpl, role = "user", localStorage: storage } = {},
+  { fetchImpl, role = "user", localStorage: storage, sessionStorage: session } = {},
 ) {
   const virtualConsole = new VirtualConsole();
   // jsdom logs a "Not implemented: navigation" error for the reload/redirect
@@ -83,6 +83,10 @@ export function loadPage(
   // a module-level variable at load, so setting them afterwards would be too late.
   for (const [key, value] of Object.entries(storage ?? {})) {
     window.localStorage.setItem(key, value);
+  }
+  // Same for sessionStorage (locations.js restores tree expansion at load).
+  for (const [key, value] of Object.entries(session ?? {})) {
+    window.sessionStorage.setItem(key, value);
   }
 
   for (const name of scripts) {

@@ -1,0 +1,88 @@
+{# Print-ready location labels (§7), sized by the w/h query params (mm), in one
+   of two layouts: the default puts one label per page (a label printer treats
+   every label as its own page and cuts between them); ?sheet=1 flows the same
+   labels onto A4 pages instead, for an ordinary printer + scissors or adhesive
+   sheets. Standalone on purpose — no base.html chrome, so the browser's print
+   dialog sees nothing but labels. The QR SVGs are server-generated from
+   numeric ids (see label_service), hence the |safe; every name/path goes
+   through normal autoescaping. #}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Location labels — ShelfOS</title>
+  <style>
+    {% if sheet %}
+    @page { size: A4; margin: 10mm; }
+    {% else %}
+    @page { size: {{ w }}mm {{ h }}mm; margin: 0; }
+    {% endif %}
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+    .label {
+      width: {{ w }}mm; height: {{ h }}mm;
+      display: flex; align-items: center; gap: 2mm; padding: 1.5mm;
+      overflow: hidden;
+      {% if sheet %}
+      break-inside: avoid;
+      {% else %}
+      page-break-after: always; break-after: page;
+      {% endif %}
+    }
+    .qr { height: 100%; aspect-ratio: 1 / 1; flex: none; }
+    .qr svg { width: 100%; height: 100%; display: block; }
+    .text { min-width: 0; }
+    .name { font-weight: 700; font-size: 4mm; line-height: 1.15; }
+    .path { font-size: 2.5mm; color: #333; overflow-wrap: anywhere; margin-top: 0.8mm; }
+    .toolbar {
+      padding: 12px 16px; display: flex; gap: 12px; align-items: center;
+      border-bottom: 1px solid #ccc;
+    }
+    .toolbar p { margin: 0; color: #555; font-size: 14px; }
+    .toolbar button { font: inherit; padding: 6px 14px; cursor: pointer; }
+    @media screen {
+      .sheet { padding: 16px; display: flex; flex-wrap: wrap; gap: 8px; }
+      .label { border: 1px dashed #aaa; }
+    }
+    @media print {
+      .toolbar { display: none; }
+      {% if sheet %}
+      /* Same flow as the screen preview, plus a hairline to cut along. */
+      .sheet { display: flex; flex-wrap: wrap; gap: 2mm; align-content: flex-start; }
+      .label { border: 0.2mm solid #bbb; }
+      {% endif %}
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <button type="button" onclick="window.print()">Print</button>
+    {% if sheet %}
+    <a href="{{ request.url.remove_query_params('sheet') }}">Label roll (one per label)</a>
+    {% else %}
+    <a href="{{ request.url.include_query_params(sheet=1) }}">A4 sheet</a>
+    {% endif %}
+    <p>{{ labels | length }} label{{ "" if labels | length == 1 else "s" }},
+      {{ w }}&times;{{ h }}&nbsp;mm each (change with ?w=&hellip;&amp;h=&hellip;).
+      {% if sheet %}
+      Print on A4 at 100% scale — do not "fit to page", it would shrink the QR.
+      {% else %}
+      Set the print dialog's paper size to the label size and margins to none.
+      {% endif %}</p>
+  </div>
+  <div class="sheet">
+    {% for label in labels %}
+    <div class="label">
+      <div class="qr">{{ label.qr_svg | safe }}</div>
+      <div class="text">
+        <div class="name">{{ label.name }}</div>
+        <div class="path">{{ label.path }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% if not labels %}
+  <p style="padding: 16px; color: #555;">Nothing to print — no locations matched.</p>
+  {% endif %}
+</body>
+</html>
