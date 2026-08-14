@@ -37,6 +37,11 @@
   let target = null; // { kind: "import" | "line", row }
   let busy = false;
   let buffer = ""; // keystrokes collected since the last Enter
+  let queued = null; // a bag scan that arrived while the previous one was busy
+
+  // Give up on a hung request rather than holding `busy` forever — a stuck
+  // flag would silently eat every scan that follows.
+  const FETCH_TIMEOUT_MS = 10_000;
 
   const norm = (value) => (value || "").trim().toUpperCase();
 
@@ -106,10 +111,33 @@
     render(); // no focus() — see the header comment
   }
 
+  // An error the user must not miss mid-scanning: the small status line plus
+  // a toast (eyes are on the bags, not on the panel).
+  function scanError(message) {
+    setStatus(message, "error");
+    showToast(message, { tone: "warn" });
+  }
+
+  // Run a queued bag scan once nothing else is in flight and no dialog is up.
+  function drainQueue() {
+    if (queued && !busy && !dialog.open) {
+      const code = queued;
+      queued = null;
+      handleBagScan(code);
+    }
+  }
+
   async function handleBagScan(code) {
-    if (!code || busy) return;
+    if (!code) return;
+    if (busy || dialog.open) {
+      // NEVER drop a scan silently — hold the latest one and run it as soon
+      // as the current work (a parse, or a dialog mid-close) is done.
+      queued = code;
+      setStatus("One moment — finishing the previous scan…");
+      return;
+    }
     if (SL.test(code)) {
-      setStatus("That is a location label — scan a bag first.", "error");
+      scanError("That is a location label — scan a bag first.");
       return;
     }
     busy = true;
@@ -119,9 +147,10 @@
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
         body: JSON.stringify({ code }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
       if (!resp.ok) {
-        setStatus(await errorMessage(resp), "error");
+        scanError(await errorMessage(resp));
         return;
       }
       const parsed = await resp.json();
@@ -129,20 +158,21 @@
         [parsed.mpn, parsed.distributor_pn].filter(Boolean).map(norm),
       );
       if (!keys.size) {
-        setStatus("No part number in this code.", "error");
+        scanError("No part number in this code.");
         return;
       }
       const match = findRow(keys);
       if (!match) {
-        setStatus(`No line on this invoice matches ${[...keys].join(" / ")}.`, "error");
+        scanError(`No line on this invoice matches ${[...keys].join(" / ")}.`);
         return;
       }
       setStatus("");
       openPutaway(match);
     } catch {
-      setStatus("Could not reach the server.", "error");
+      scanError("Could not reach the server — scan again.");
     } finally {
       busy = false;
+      drainQueue();
     }
   }
 
@@ -188,6 +218,7 @@
         method: target.kind === "import" ? "PATCH" : "PUT",
         headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
         body: JSON.stringify({ location_id: locationId }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
       if (!resp.ok) {
         errorEl.textContent = await errorMessage(resp);
@@ -285,11 +316,13 @@
   });
 
   // However the dialog closes (save, Cancel, Escape), the collector switches
-  // back to the bag field — state, not focus, decides where scans go.
+  // back to the bag field — state, not focus, decides where scans go — and a
+  // bag scanned a beat too early gets its turn.
   dialog.addEventListener("close", () => {
     target = null;
     buffer = "";
     render();
+    drainQueue();
   });
 
   render(); // arm the bag field from the start

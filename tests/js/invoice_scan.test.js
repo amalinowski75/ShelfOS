@@ -241,6 +241,69 @@ describe("invoice_scan.js — bag scan", () => {
     expect(document.getElementById("putaway-dialog").showModal).not.toHaveBeenCalled();
   });
 
+  it("queues a scan that arrives mid-parse instead of dropping it", async () => {
+    // The silent-loss report: bag B scanned while bag A's parse is in flight
+    // vanished without a trace. It must wait its turn and then run.
+    const resolvers = [];
+    const codes = [];
+    const { document, fetchMock } = loadPage(scanFixture(), SCRIPTS, {
+      fetchImpl: (url, opts) => {
+        codes.push(JSON.parse(opts.body).code);
+        return new Promise((resolve) => {
+          resolvers.push(() =>
+            resolve({
+              ok: true,
+              json: () => Promise.resolve({ mpn: "UNKNOWN-1", distributor_pn: null }),
+            }),
+          );
+        });
+      },
+    });
+    syncDialogOpen(document);
+
+    scan(document, "AAA");
+    scan(document, "BBB"); // previous parse still pending
+    const status = document.getElementById("invoice-scan-status");
+    expect(status.textContent).toMatch(/finishing the previous scan/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    resolvers[0]();
+    await tick();
+    resolvers[1]?.();
+    await tick();
+    expect(codes).toEqual(["AAA", "BBB"]);
+  });
+
+  it("runs a queued scan after the dialog closes", async () => {
+    // Bag B scanned a beat too early, while A's parse was about to open the
+    // dialog: B holds until the dialog closes, then gets its turn.
+    const resolvers = [];
+    const { document, fetchMock } = loadPage(scanFixture(), SCRIPTS, {
+      fetchImpl: (url, opts) =>
+        new Promise((resolve) => {
+          resolvers.push(() =>
+            resolve({
+              ok: true,
+              json: () => Promise.resolve({ mpn: "ABC123", distributor_pn: null }),
+            }),
+          );
+        }),
+    });
+    syncDialogOpen(document);
+
+    scan(document, "bagA");
+    scan(document, "bagB"); // queued behind A
+    resolvers[0]();
+    await tick();
+    const dialog = document.getElementById("putaway-dialog");
+    expect(dialog.open).toBe(true); // A's dialog is up; B still waiting
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    dialog.close(); // user cancels A (Escape/Cancel)
+    await tick();
+    expect(fetchMock).toHaveBeenCalledTimes(2); // B fired on its own
+  });
+
   it("warns while the window is unfocused and clears the warning on return", () => {
     const { window, document } = loadPage(scanFixture(), SCRIPTS);
     window.dispatchEvent(new window.Event("blur"));
