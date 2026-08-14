@@ -66,8 +66,9 @@
 <div class="card card-pad" id="invoice-scan" style="margin-top: 20px"
      data-locations='{{ location_options | tojson }}'>
   <h2>Scan putaway</h2>
-  <p class="muted">Click the field, scan a bag&rsquo;s barcode to jump to its line,
-    then scan a location label (<span class="mono">SL&hellip;</span>) to file it.</p>
+  <p class="muted">Scan a bag&rsquo;s barcode to jump to its line, then scan a
+    location label (<span class="mono">SL&hellip;</span>) to file it &mdash; the scan
+    finds this field by itself.</p>
   <input class="control" id="invoice-scan-input" autocomplete="off"
          placeholder="Scan a bag&hellip;" />
   <p id="invoice-scan-status" hidden></p>

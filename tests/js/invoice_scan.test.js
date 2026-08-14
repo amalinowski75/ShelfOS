@@ -146,6 +146,30 @@ describe("invoice_scan.js — bag scan", () => {
     expect(document.getElementById("putaway-dialog").close).toHaveBeenCalled();
   });
 
+  it("routes a scan fired without focus into the scan field", () => {
+    // Hands are on the scanner, not the mouse: a printable keystroke landing on
+    // the page body must move focus to the scan field so the payload collects
+    // there instead of vanishing.
+    const { document } = loadPage(scanFixture(), SCRIPTS);
+    document.body.dispatchEvent(
+      new document.defaultView.KeyboardEvent("keydown", {
+        key: "Q",
+        bubbles: true,
+      }),
+    );
+    expect(document.activeElement).toBe(
+      document.getElementById("invoice-scan-input"),
+    );
+
+    // …but typing into a real form control is left alone.
+    const select = document.getElementById("putaway-select");
+    select.focus();
+    select.dispatchEvent(
+      new document.defaultView.KeyboardEvent("keydown", { key: "D", bubbles: true }),
+    );
+    expect(document.activeElement).toBe(select);
+  });
+
   it("rejects a location label scanned into the bag field", async () => {
     const { document, fetchMock } = loadPage(scanFixture(), SCRIPTS);
     pressEnter(document, "invoice-scan-input", "SL5");
