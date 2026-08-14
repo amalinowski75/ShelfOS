@@ -257,7 +257,16 @@
           return;
       }
       if (event.key === "Enter") {
-        if (!buffer) return; // let plain Enter reach forms/buttons untouched
+        if (!buffer) {
+          // A scanner's extra terminator (CR+LF, double CR) arrives right
+          // after the code's own Enter — with the dialog just opened and its
+          // close button holding focus, letting it through "clicks" that
+          // button and the dialog vanishes before the user ever sees it.
+          // Swallow stray Enters while the dialog is up; elsewhere plain
+          // Enter keeps reaching forms and buttons untouched.
+          if (dialog.open) event.preventDefault();
+          return;
+        }
         event.preventDefault();
         const code = buffer.trim();
         buffer = "";

@@ -384,6 +384,31 @@ describe("invoice_scan.js — location scan in the dialog", () => {
     expect(document.querySelector(".ril-location").value).toBe("5");
   });
 
+  it("swallows a scanner's stray extra terminator while the dialog is open", async () => {
+    // CR+LF-suffixed scanners fire a second Enter right after the code's own;
+    // with the dialog freshly open and its close button focused, an unhandled
+    // Enter would "click" it and the dialog would vanish unseen.
+    const { document } = await openOnStagedRow();
+    const stray = new document.defaultView.KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    });
+    document.body.dispatchEvent(stray);
+    expect(stray.defaultPrevented).toBe(true); // buffer empty, dialog open
+    expect(document.getElementById("putaway-dialog").open).toBe(true);
+
+    // With no dialog up, a plain Enter stays untouched (forms, buttons).
+    document.getElementById("putaway-dialog").close();
+    const plain = new document.defaultView.KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    });
+    document.body.dispatchEvent(plain);
+    expect(plain.defaultPrevented).toBe(false);
+  });
+
   it("refuses a location code that is not on this ShelfOS", async () => {
     const { document, fetchMock } = await openOnStagedRow();
 
