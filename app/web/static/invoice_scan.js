@@ -1,9 +1,16 @@
-// Scan-driven putaway on a draft invoice: scan a bag's barcode into the panel
-// field → the matching line's "Set location" dialog opens; scan an SL<id>
-// location label into it → the location is saved, the dialog closes and focus
-// returns to the panel for the next bag. Uses shared.js helpers (csrfToken,
-// errorMessage, showToast). The wedge scanner is a keyboard, so every step is
-// "focused input + Enter" — no camera, no special APIs.
+// Scan-driven putaway on a draft invoice: scan a bag's barcode → the matching
+// line's "Set location" dialog opens; scan an SL<id> location label → the
+// location is saved, the dialog closes, ready for the next bag. Uses shared.js
+// helpers (csrfToken, errorMessage, showToast).
+//
+// The wedge scanner is a keyboard, but this deliberately does NOT type into a
+// focused input. Keystrokes are collected in a document-level capture-phase
+// buffer and the (readonly) fields only DISPLAY it. Field tested: password
+// managers (Keeper) pounce on a programmatically focused input and shove their
+// own overlay iframe in front of it — focus leaves the document entirely
+// (document.hasFocus() === false with the ring still painted) and every
+// keystroke vanishes into the extension. No focused input, no overlay, no
+// stolen scans — and where focus happens to rest stops mattering at all.
 (() => {
   const panel = document.getElementById("invoice-scan");
   if (!panel) return; // read-only viewer, finalized invoice, or no lines
@@ -29,8 +36,20 @@
 
   let target = null; // { kind: "import" | "line", row }
   let busy = false;
+  let buffer = ""; // keystrokes collected since the last Enter
 
   const norm = (value) => (value || "").trim().toUpperCase();
+
+  // The live field displays the buffer; the idle one sits empty. Both are
+  // readonly — they are gauges, not text entry.
+  function render() {
+    const live = dialog.open ? locationInput : scanInput;
+    const idle = dialog.open ? scanInput : locationInput;
+    live.value = buffer;
+    idle.value = "";
+    live.classList.add("scan-armed");
+    idle.classList.remove("scan-armed");
+  }
 
   function setStatus(message, tone) {
     statusEl.textContent = message;
@@ -77,19 +96,17 @@
     partEl.textContent = rowLabel(match.row);
     descEl.textContent = match.row.dataset.description || "";
     descEl.hidden = !descEl.textContent;
-    locationInput.value = "";
     locationSelect.value =
       match.kind === "import"
         ? match.row.querySelector(".ril-location")?.value || ""
         : match.row.dataset.locationId || "";
     errorEl.hidden = true;
+    buffer = "";
     dialog.showModal();
-    locationInput.focus();
+    render(); // no focus() — see the header comment
   }
 
-  async function handleBagScan() {
-    const code = scanInput.value.trim();
-    scanInput.value = "";
+  async function handleBagScan(code) {
     if (!code || busy) return;
     if (SL.test(code)) {
       setStatus("That is a location label — scan a bag first.", "error");
@@ -127,6 +144,17 @@
     } finally {
       busy = false;
     }
+  }
+
+  function handleLocationScan(code) {
+    const matched = SL.exec(code);
+    if (!matched) {
+      errorEl.textContent =
+        "That is not a location label — scan the SL… code on the shelf.";
+      errorEl.hidden = false;
+      return;
+    }
+    saveLocation(Number(matched[1]));
   }
 
   function applyToRow(match, locationId, path) {
@@ -179,69 +207,51 @@
     }
   }
 
-  // The wedge scanner terminates its payload with Enter.
-  scanInput.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter") return;
-    event.preventDefault();
-    handleBagScan();
-  });
-
-  // A scan fired with focus anywhere else must not be lost — hands are on the
-  // scanner, not the mouse, and after alt-tab or a dialog close the browser
-  // can park focus in odd places (the body, a row's select, even somewhere a
-  // mouse click can't reach). So the rule is inverted from a skip-list: unless
-  // the user is genuinely typing somewhere else, every printable keystroke is
-  // PULLED into whichever scan field is live — the dialog's location field
-  // while it is open, the bag field otherwise — and the rest of the payload
-  // follows it there. "Genuinely typing" means: any other open dialog owns its
-  // own keys; free-text areas stay untouched; and the dialog's manual
-  // location select keeps its keyboard behaviour.
-  document.addEventListener("keydown", (event) => {
-    if (event.ctrlKey || event.altKey || event.metaKey) return;
-    if (event.key.length !== 1) return; // printable characters only
-    const t = event.target instanceof HTMLElement ? event.target : null;
-    if (t) {
-      const openDialog = t.closest("dialog[open]");
-      if (openDialog && openDialog !== dialog) return;
-      if (t.isContentEditable || t.tagName === "TEXTAREA") return;
-      if (dialog.open && t === locationSelect) return;
-    }
-    const live = dialog.open ? locationInput : scanInput;
-    if (t === live) return; // already where it belongs
-    live.focus(); // the character lands in the field after the focus shift
-  });
-
-  locationInput.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter") return;
-    event.preventDefault();
-    const code = locationInput.value.trim();
-    locationInput.value = "";
-    const matched = SL.exec(code);
-    if (!matched) {
-      errorEl.textContent =
-        "That is not a location label — scan the SL… code on the shelf.";
-      errorEl.hidden = false;
-      return;
-    }
-    saveLocation(Number(matched[1]));
-  });
-
-  // Manual fallback for a torn or missing label: pick from the select and Save.
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    if (!locationSelect.value) {
-      errorEl.textContent = "Scan a location label or pick one from the list.";
-      errorEl.hidden = false;
-      return;
-    }
-    saveLocation(Number(locationSelect.value));
-  });
+  // The collector. Capture phase on the document, so it sees every keystroke
+  // before any control can swallow it, wherever focus happens to rest. It
+  // stands down only where the user is genuinely typing: any OTHER open dialog
+  // owns its keys, and so do free-text areas and inputs that aren't ours.
+  // (The putaway dialog's manual select stays mouse-operated — letting it keep
+  // keyboard behaviour would reopen the focus-dependence this design removes.)
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.ctrlKey || event.altKey || event.metaKey) return;
+      const t = event.target instanceof HTMLElement ? event.target : null;
+      if (t) {
+        const openDialog = t.closest("dialog[open]");
+        if (openDialog && openDialog !== dialog) return;
+        if (t.isContentEditable || t.tagName === "TEXTAREA") return;
+        if (t.tagName === "INPUT" && t !== scanInput && t !== locationInput)
+          return;
+      }
+      if (event.key === "Enter") {
+        if (!buffer) return; // let plain Enter reach forms/buttons untouched
+        event.preventDefault();
+        const code = buffer.trim();
+        buffer = "";
+        render();
+        if (dialog.open) handleLocationScan(code);
+        else handleBagScan(code);
+        return;
+      }
+      if (event.key === "Backspace" && buffer) {
+        event.preventDefault();
+        buffer = buffer.slice(0, -1);
+        render();
+        return;
+      }
+      if (event.key.length !== 1) return; // printable characters only
+      event.preventDefault();
+      buffer += event.key;
+      render();
+    },
+    true,
+  );
 
   // A scan can't reach this page while ANOTHER OS window holds focus — which
   // looks exactly like a dead field, because the browser keeps the focus ring
-  // painted in an unfocused window. Say so loudly instead of staying silent,
-  // and heal the field focus the moment the window is focused again (so
-  // alt-tabbing back is enough — no click needed).
+  // painted in an unfocused window. Say so loudly instead of staying silent.
   let blurWarned = false;
   window.addEventListener("blur", () => {
     blurWarned = true;
@@ -260,17 +270,27 @@
     blurWarned = false;
     setStatus("");
     errorEl.hidden = true;
-    (dialog.open ? locationInput : scanInput).focus();
   });
 
-  // However the dialog closes (save, Cancel, Escape), the next bag scan should
-  // land in the panel without the user reaching for the mouse. The browser runs
-  // its OWN focus restoration after this event fires (back to whatever was
-  // focused at showModal time), which can override a synchronous focus() here
-  // and leave the field looking focused but not receiving keys — so refocus a
-  // tick later, after the browser has had its turn.
+  // Manual fallback for a torn or missing label: pick from the select (by
+  // mouse) and Save.
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!locationSelect.value) {
+      errorEl.textContent = "Scan a location label or pick one from the list.";
+      errorEl.hidden = false;
+      return;
+    }
+    saveLocation(Number(locationSelect.value));
+  });
+
+  // However the dialog closes (save, Cancel, Escape), the collector switches
+  // back to the bag field — state, not focus, decides where scans go.
   dialog.addEventListener("close", () => {
     target = null;
-    setTimeout(() => scanInput.focus(), 0);
+    buffer = "";
+    render();
   });
+
+  render(); // arm the bag field from the start
 })();

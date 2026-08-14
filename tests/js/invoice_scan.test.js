@@ -11,7 +11,7 @@ function scanFixture({ pendingLocation = "" } = {}) {
     <div id="invoice-detail" data-invoice-id="7"></div>
     <div id="invoice-scan"
          data-locations='[{"id": 5, "path": "Lab / Rack A / D1"}, {"id": 9, "path": "Lab / Shelf 02"}]'>
-      <input id="invoice-scan-input" />
+      <input id="invoice-scan-input" readonly />
       <p id="invoice-scan-status" hidden></p>
     </div>
     <table id="invoice-review"><tbody>
@@ -38,7 +38,7 @@ function scanFixture({ pendingLocation = "" } = {}) {
       <form id="putaway-form">
         <p id="putaway-part"></p>
         <p id="putaway-desc"></p>
-        <input id="putaway-scan" />
+        <input id="putaway-scan" readonly />
         <select id="putaway-select">
           <option value=""></option>
           <option value="5">D1</option>
@@ -59,36 +59,103 @@ function parseRouting(parsed) {
   };
 }
 
-function pressEnter(document, id, value) {
-  const input = document.getElementById(id);
-  input.value = value;
-  input.dispatchEvent(
+// A wedge scanner is a fast keyboard: emit the payload as per-key keydown
+// events on the given target (the body by default — focus must not matter),
+// terminated with Enter. The collector listens on the document, capture phase.
+function scan(document, code, { target } = {}) {
+  const el = target || document.body;
+  for (const key of code) {
+    el.dispatchEvent(
+      new document.defaultView.KeyboardEvent("keydown", {
+        key,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  }
+  el.dispatchEvent(
     new document.defaultView.KeyboardEvent("keydown", {
       key: "Enter",
-      cancelable: true,
       bubbles: true,
+      cancelable: true,
     }),
   );
 }
 
+// jsdom's showModal is a stub, so reflect the state the browser would set.
+function syncDialogOpen(document) {
+  const dialog = document.getElementById("putaway-dialog");
+  dialog.showModal.mockImplementation(() => {
+    dialog.open = true;
+  });
+  dialog.close.mockImplementation(() => {
+    dialog.open = false;
+    dialog.dispatchEvent(new document.defaultView.Event("close"));
+  });
+}
+
 describe("invoice_scan.js — bag scan", () => {
-  it("parses the code server-side and opens the dialog on the matching staged row", async () => {
+  it("collects a scan typed with focus anywhere and opens the dialog on the match", async () => {
     const { document, fetchMock } = loadPage(scanFixture(), SCRIPTS, {
       fetchImpl: parseRouting({ mpn: "ABC123", distributor_pn: null }),
     });
+    syncDialogOpen(document);
 
-    pressEnter(document, "invoice-scan-input", "[)>...1PABC123...");
+    scan(document, "[)>x1PABC123x");
+    // The buffer is mirrored into the (readonly) display field as it grows —
+    // checked before Enter fires via a fresh partial scan below.
     await tick();
 
     const [url, opts] = fetchMock.mock.calls[0];
     expect(url).toBe("/api/shops/parse");
     expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
-    expect(fetchBody(fetchMock)).toEqual({ code: "[)>...1PABC123..." });
+    expect(fetchBody(fetchMock)).toEqual({ code: "[)>x1PABC123x" });
     const dialog = document.getElementById("putaway-dialog");
     expect(dialog.showModal).toHaveBeenCalledTimes(1);
+    expect(dialog.open).toBe(true);
     expect(document.getElementById("putaway-part").textContent).toBe("ABC123");
     expect(document.getElementById("putaway-desc").textContent).toBe("A widget");
     expect(document.getElementById("invoice-scan-input").value).toBe("");
+  });
+
+  it("mirrors the buffer into the display field and honours Backspace", () => {
+    const { document } = loadPage(scanFixture(), SCRIPTS);
+    const field = document.getElementById("invoice-scan-input");
+    for (const key of ["A", "B", "C"]) {
+      document.body.dispatchEvent(
+        new document.defaultView.KeyboardEvent("keydown", {
+          key,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    }
+    expect(field.value).toBe("ABC");
+    document.body.dispatchEvent(
+      new document.defaultView.KeyboardEvent("keydown", {
+        key: "Backspace",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    expect(field.value).toBe("AB");
+    expect(field.classList.contains("scan-armed")).toBe(true);
+  });
+
+  it("collects keystrokes even when focus is stuck on a page control", async () => {
+    // The field-tested failure: focus parked on a control (or eaten by a
+    // password-manager overlay wrapping one). The collector must not care.
+    const { document } = loadPage(scanFixture(), SCRIPTS, {
+      fetchImpl: parseRouting({ mpn: "ABC123", distributor_pn: null }),
+    });
+    syncDialogOpen(document);
+    const rowSelect = document.querySelector(".ril-location");
+    rowSelect.focus();
+
+    scan(document, "bagcode", { target: rowSelect });
+    await tick();
+
+    expect(document.getElementById("putaway-dialog").open).toBe(true);
   });
 
   it("prefers a row that still lacks a location when the same part appears twice", async () => {
@@ -101,10 +168,11 @@ describe("invoice_scan.js — bag scan", () => {
     const { document } = loadPage(fixture, SCRIPTS, {
       fetchImpl: parseRouting({ mpn: "ABC123", distributor_pn: null }),
     });
+    syncDialogOpen(document);
 
-    pressEnter(document, "invoice-scan-input", "bag");
+    scan(document, "bag");
     await tick();
-    pressEnter(document, "putaway-scan", "SL9");
+    scan(document, "SL9");
     await tick();
 
     // Saved to the LINE endpoint — the location-less match won.
@@ -118,11 +186,12 @@ describe("invoice_scan.js — bag scan", () => {
     const { document } = loadPage(scanFixture(), SCRIPTS, {
       fetchImpl: parseRouting({ mpn: "71-ABC123", distributor_pn: null }),
     });
+    syncDialogOpen(document);
 
-    pressEnter(document, "invoice-scan-input", "QTY:5 PN:71-ABC123 https://tme.eu/x");
+    scan(document, "QTY:5 PN:71-ABC123");
     await tick();
 
-    expect(document.getElementById("putaway-dialog").showModal).toHaveBeenCalled();
+    expect(document.getElementById("putaway-dialog").open).toBe(true);
     expect(document.getElementById("putaway-part").textContent).toBe("ABC123");
   });
 
@@ -130,10 +199,11 @@ describe("invoice_scan.js — bag scan", () => {
     const { document, fetchMock } = loadPage(scanFixture(), SCRIPTS, {
       fetchImpl: parseRouting({ mpn: "NOPE-1", distributor_pn: "SPN-9" }),
     });
+    syncDialogOpen(document);
 
-    pressEnter(document, "invoice-scan-input", "bag");
+    scan(document, "bag");
     await tick();
-    pressEnter(document, "putaway-scan", "sl9"); // case-insensitive
+    scan(document, "sl9"); // case-insensitive
     await tick();
 
     const save = fetchMock.mock.calls[1];
@@ -143,92 +213,12 @@ describe("invoice_scan.js — bag scan", () => {
     const row = document.querySelector("#invoice-lines tr");
     expect(row.dataset.locationId).toBe("9");
     expect(row.children[2].textContent).toBe("Lab / Shelf 02");
-    expect(document.getElementById("putaway-dialog").close).toHaveBeenCalled();
-  });
-
-  it("routes a scan fired without focus into the scan field", () => {
-    // Hands are on the scanner, not the mouse: a printable keystroke landing on
-    // the page body must move focus to the scan field so the payload collects
-    // there instead of vanishing.
-    const { document } = loadPage(scanFixture(), SCRIPTS);
-    document.body.dispatchEvent(
-      new document.defaultView.KeyboardEvent("keydown", {
-        key: "Q",
-        bubbles: true,
-      }),
-    );
-    expect(document.activeElement).toBe(
-      document.getElementById("invoice-scan-input"),
-    );
-
-    // …including when focus is STUCK on a control a scan can't use, like a
-    // review row's location select — the exact dead state seen in the field:
-    // keystrokes vanished into the select until the user clicked something.
-    const rowSelect = document.querySelector(".ril-location");
-    rowSelect.focus();
-    rowSelect.dispatchEvent(
-      new document.defaultView.KeyboardEvent("keydown", { key: "T", bubbles: true }),
-    );
-    expect(document.activeElement).toBe(
-      document.getElementById("invoice-scan-input"),
-    );
-  });
-
-  it("warns while the window is unfocused and heals the field on return", () => {
-    const { window, document } = loadPage(scanFixture(), SCRIPTS);
-    window.dispatchEvent(new window.Event("blur"));
-    const status = document.getElementById("invoice-scan-status");
-    expect(status.hidden).toBe(false);
-    expect(status.textContent).toMatch(/not focused/);
-
-    window.dispatchEvent(new window.Event("focus"));
-    expect(status.hidden).toBe(true);
-    expect(document.activeElement).toBe(
-      document.getElementById("invoice-scan-input"),
-    );
-  });
-
-  it("leaves the manual select and other dialogs' typing alone", () => {
-    const { document } = loadPage(scanFixture(), SCRIPTS);
-
-    // The putaway dialog's own fallback select keeps its keyboard behaviour.
-    const dialog = document.getElementById("putaway-dialog");
-    dialog.open = true;
-    const select = document.getElementById("putaway-select");
-    select.focus();
-    select.dispatchEvent(
-      new document.defaultView.KeyboardEvent("keydown", { key: "D", bubbles: true }),
-    );
-    expect(document.activeElement).toBe(select);
-    dialog.open = false;
-
-    // A different open dialog (edit line, finalize, …) owns its own keys.
-    document.body.insertAdjacentHTML(
-      "beforeend",
-      '<dialog id="other-dialog" open><input id="other-input" /></dialog>',
-    );
-    const other = document.getElementById("other-input");
-    other.focus();
-    other.dispatchEvent(
-      new document.defaultView.KeyboardEvent("keydown", { key: "X", bubbles: true }),
-    );
-    expect(document.activeElement).toBe(other);
-  });
-
-  it("routes a focus-less scan to the location field while the dialog is open", () => {
-    // Alt-tabbing away and back drops focus on the body; the next scan must
-    // land in the dialog's location field, not the (covered) bag field.
-    const { document } = loadPage(scanFixture(), SCRIPTS);
-    document.getElementById("putaway-dialog").open = true; // as after showModal()
-    document.body.dispatchEvent(
-      new document.defaultView.KeyboardEvent("keydown", { key: "S", bubbles: true }),
-    );
-    expect(document.activeElement).toBe(document.getElementById("putaway-scan"));
+    expect(document.getElementById("putaway-dialog").open).toBe(false);
   });
 
   it("rejects a location label scanned into the bag field", async () => {
     const { document, fetchMock } = loadPage(scanFixture(), SCRIPTS);
-    pressEnter(document, "invoice-scan-input", "SL5");
+    scan(document, "SL5");
     await tick();
 
     expect(fetchMock).not.toHaveBeenCalled();
@@ -242,13 +232,40 @@ describe("invoice_scan.js — bag scan", () => {
     const { document } = loadPage(scanFixture(), SCRIPTS, {
       fetchImpl: parseRouting({ mpn: "UNKNOWN-99", distributor_pn: null }),
     });
-    pressEnter(document, "invoice-scan-input", "bag");
+    scan(document, "bag");
     await tick();
 
     const status = document.getElementById("invoice-scan-status");
     expect(status.className).toBe("error");
     expect(status.textContent).toContain("UNKNOWN-99");
     expect(document.getElementById("putaway-dialog").showModal).not.toHaveBeenCalled();
+  });
+
+  it("warns while the window is unfocused and clears the warning on return", () => {
+    const { window, document } = loadPage(scanFixture(), SCRIPTS);
+    window.dispatchEvent(new window.Event("blur"));
+    const status = document.getElementById("invoice-scan-status");
+    expect(status.hidden).toBe(false);
+    expect(status.textContent).toMatch(/not focused/);
+
+    window.dispatchEvent(new window.Event("focus"));
+    expect(status.hidden).toBe(true);
+  });
+
+  it("leaves other dialogs' typing alone", async () => {
+    const { document, fetchMock } = loadPage(scanFixture(), SCRIPTS);
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      '<dialog id="other-dialog" open><input id="other-input" /></dialog>',
+    );
+    const other = document.getElementById("other-input");
+    other.focus();
+    scan(document, "typing", { target: other });
+    await tick();
+
+    // Nothing collected, nothing parsed.
+    expect(document.getElementById("invoice-scan-input").value).toBe("");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
@@ -258,7 +275,8 @@ describe("invoice_scan.js — location scan in the dialog", () => {
       fetchImpl: parseRouting({ mpn: "ABC123", distributor_pn: null }),
       ...overrides,
     });
-    pressEnter(page.document, "invoice-scan-input", "bag");
+    syncDialogOpen(page.document);
+    scan(page.document, "bag");
     await tick();
     return page;
   }
@@ -266,7 +284,7 @@ describe("invoice_scan.js — location scan in the dialog", () => {
   it("saves a scanned SL code to the import line and updates the row in place", async () => {
     const { document, fetchMock } = await openOnStagedRow();
 
-    pressEnter(document, "putaway-scan", "SL5");
+    scan(document, "SL5");
     await tick();
 
     const save = fetchMock.mock.calls[1];
@@ -276,17 +294,37 @@ describe("invoice_scan.js — location scan in the dialog", () => {
     const row = document.querySelector("#invoice-review tr");
     expect(row.querySelector(".ril-location").value).toBe("5");
     expect(row.classList.contains("is-incomplete")).toBe(false); // type was set
-    expect(document.getElementById("putaway-dialog").close).toHaveBeenCalled();
+    expect(document.getElementById("putaway-dialog").open).toBe(false);
     // A toast names the part and the human-readable path it went to.
     expect(document.querySelector(".toast-ok").textContent).toBe(
       "ABC123 → Lab / Rack A / D1",
     );
+    // The collector is armed for the next bag again.
+    expect(
+      document
+        .getElementById("invoice-scan-input")
+        .classList.contains("scan-armed"),
+    ).toBe(true);
+  });
+
+  it("collects the location scan while the dialog is open, wherever focus is", async () => {
+    const { document } = await openOnStagedRow();
+
+    // Keystrokes land on the dialog's select (where a browser may park focus);
+    // the collector still owns them — the select is mouse-operated by design.
+    const select = document.getElementById("putaway-select");
+    select.focus();
+    scan(document, "SL5", { target: select });
+    await tick();
+
+    expect(document.getElementById("putaway-dialog").open).toBe(false);
+    expect(document.querySelector(".ril-location").value).toBe("5");
   });
 
   it("refuses a location code that is not on this ShelfOS", async () => {
     const { document, fetchMock } = await openOnStagedRow();
 
-    pressEnter(document, "putaway-scan", "SL777");
+    scan(document, "SL777");
     await tick();
 
     expect(fetchMock).toHaveBeenCalledTimes(1); // only the parse; no save
@@ -298,12 +336,12 @@ describe("invoice_scan.js — location scan in the dialog", () => {
   it("refuses a non-location scan and keeps the dialog open", async () => {
     const { document, fetchMock } = await openOnStagedRow();
 
-    pressEnter(document, "putaway-scan", "[)>another bag");
+    scan(document, "[)>another bag");
     await tick();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(document.getElementById("putaway-error").hidden).toBe(false);
-    expect(document.getElementById("putaway-dialog").close).not.toHaveBeenCalled();
+    expect(document.getElementById("putaway-dialog").open).toBe(true);
   });
 
   it("falls back to the manual select on submit", async () => {
@@ -331,13 +369,13 @@ describe("invoice_scan.js — location scan in the dialog", () => {
             }),
     });
 
-    pressEnter(document, "putaway-scan", "SL5");
+    scan(document, "SL5");
     await tick();
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const error = document.getElementById("putaway-error");
     expect(error.hidden).toBe(false);
     expect(error.textContent).toContain("location not found");
-    expect(document.getElementById("putaway-dialog").close).not.toHaveBeenCalled();
+    expect(document.getElementById("putaway-dialog").open).toBe(true);
   });
 });

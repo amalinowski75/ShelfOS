@@ -67,9 +67,11 @@
      data-locations='{{ location_options | tojson }}'>
   <h2>Scan putaway</h2>
   <p class="muted">Scan a bag&rsquo;s barcode to jump to its line, then scan a
-    location label (<span class="mono">SL&hellip;</span>) to file it &mdash; the scan
-    finds this field by itself.</p>
-  <input class="control" id="invoice-scan-input" autocomplete="off"
+    location label (<span class="mono">SL&hellip;</span>) to file it &mdash; just scan,
+    no clicking needed.</p>
+  {# Readonly on purpose: scans are collected document-wide and only DISPLAYED
+     here, so focus (and password-manager overlays) can't eat them. #}
+  <input class="control" id="invoice-scan-input" readonly tabindex="-1"
          placeholder="Scan a bag&hellip;" />
   <p id="invoice-scan-status" hidden></p>
 </div>
@@ -299,7 +301,7 @@
       <p class="muted small" id="putaway-desc"></p>
       <div class="field">
         <label>Scan a location label</label>
-        <input class="control mono" id="putaway-scan" autocomplete="off"
+        <input class="control mono" id="putaway-scan" readonly tabindex="-1"
                placeholder="SL&hellip;" />
       </div>
       <div class="field">
