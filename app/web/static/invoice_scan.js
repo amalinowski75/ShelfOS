@@ -186,26 +186,29 @@
     handleBagScan();
   });
 
-  // A scan fired with focus anywhere else (the natural state — hands are on
-  // the scanner, not the mouse, and alt-tabbing away and back drops focus on
-  // the body) must not be lost: route the first printable keystroke into
-  // whichever scan field is live — the dialog's location field while it is
-  // open, the bag field otherwise. The rest of the payload follows it there.
-  // Real typing targets (inputs, selects, textareas) are left alone.
+  // A scan fired with focus anywhere else must not be lost — hands are on the
+  // scanner, not the mouse, and after alt-tab or a dialog close the browser
+  // can park focus in odd places (the body, a row's select, even somewhere a
+  // mouse click can't reach). So the rule is inverted from a skip-list: unless
+  // the user is genuinely typing somewhere else, every printable keystroke is
+  // PULLED into whichever scan field is live — the dialog's location field
+  // while it is open, the bag field otherwise — and the rest of the payload
+  // follows it there. "Genuinely typing" means: any other open dialog owns its
+  // own keys; free-text areas stay untouched; and the dialog's manual
+  // location select keeps its keyboard behaviour.
   document.addEventListener("keydown", (event) => {
     if (event.ctrlKey || event.altKey || event.metaKey) return;
     if (event.key.length !== 1) return; // printable characters only
-    const t = event.target;
-    if (
-      t instanceof HTMLElement &&
-      (t.isContentEditable ||
-        t.tagName === "INPUT" ||
-        t.tagName === "TEXTAREA" ||
-        t.tagName === "SELECT")
-    )
-      return;
-    // The character lands in the field after the focus shift.
-    (dialog.open ? locationInput : scanInput).focus();
+    const t = event.target instanceof HTMLElement ? event.target : null;
+    if (t) {
+      const openDialog = t.closest("dialog[open]");
+      if (openDialog && openDialog !== dialog) return;
+      if (t.isContentEditable || t.tagName === "TEXTAREA") return;
+      if (dialog.open && t === locationSelect) return;
+    }
+    const live = dialog.open ? locationInput : scanInput;
+    if (t === live) return; // already where it belongs
+    live.focus(); // the character lands in the field after the focus shift
   });
 
   locationInput.addEventListener("keydown", (event) => {

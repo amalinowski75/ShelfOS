@@ -161,13 +161,44 @@ describe("invoice_scan.js — bag scan", () => {
       document.getElementById("invoice-scan-input"),
     );
 
-    // …but typing into a real form control is left alone.
+    // …including when focus is STUCK on a control a scan can't use, like a
+    // review row's location select — the exact dead state seen in the field:
+    // keystrokes vanished into the select until the user clicked something.
+    const rowSelect = document.querySelector(".ril-location");
+    rowSelect.focus();
+    rowSelect.dispatchEvent(
+      new document.defaultView.KeyboardEvent("keydown", { key: "T", bubbles: true }),
+    );
+    expect(document.activeElement).toBe(
+      document.getElementById("invoice-scan-input"),
+    );
+  });
+
+  it("leaves the manual select and other dialogs' typing alone", () => {
+    const { document } = loadPage(scanFixture(), SCRIPTS);
+
+    // The putaway dialog's own fallback select keeps its keyboard behaviour.
+    const dialog = document.getElementById("putaway-dialog");
+    dialog.open = true;
     const select = document.getElementById("putaway-select");
     select.focus();
     select.dispatchEvent(
       new document.defaultView.KeyboardEvent("keydown", { key: "D", bubbles: true }),
     );
     expect(document.activeElement).toBe(select);
+    dialog.open = false;
+
+    // A different open dialog (edit line, finalize, …) owns its own keys.
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      '<dialog id="other-dialog" open><input id="other-input" /></dialog>',
+    );
+    const other = document.getElementById("other-input");
+    other.focus();
+    other.dispatchEvent(
+      new document.defaultView.KeyboardEvent("keydown", { key: "X", bubbles: true }),
+    );
+    expect(document.activeElement).toBe(other);
   });
 
   it("routes a focus-less scan to the location field while the dialog is open", () => {
