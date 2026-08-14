@@ -161,15 +161,18 @@ class DigiKeyProvider:
 
         The invoice's Digi-Key number ("…-ND") comes first — the product-details
         endpoint's path parameter is Digi-Key's own part number, with MPN accepted as
-        a best-match fallback — then the parsed MPN. The last failure is re-raised.
+        a best-match fallback — then the parsed MPN. A fully-failed lookup raises with
+        EVERY candidate's failure, so the first error isn't lost behind the last.
         """
-        error: ValidationError | None = None
+        failures: list[str] = []
         for candidate in candidates:
             try:
                 return self.fetch_by_mpn(candidate, transport=transport)
             except ValidationError as exc:
-                error = exc
-        raise error or ValidationError("no candidate number to look up")
+                failures.append(f"{candidate}: {exc}")
+        raise ValidationError(
+            "; ".join(failures) or "no candidate number to look up"
+        )
 
     def fetch_by_mpn(
         self, mpn: str, *, transport: httpx.BaseTransport | None = None

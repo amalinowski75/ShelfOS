@@ -77,16 +77,19 @@ class MouserProvider:
 
         The invoice's own Mouser number ("771-NX3P1108UKZ") comes first — it is the
         canonical key and ``mouserPartNumber`` matches Mouser's own SKU directly —
-        with the parsed MPN as the fallback. The last failure is re-raised so a
-        fully-failed lookup stays loud.
+        with the parsed MPN as the fallback. A fully-failed lookup raises with EVERY
+        candidate's failure, so the (often more diagnostic) first error isn't lost
+        behind the last one.
         """
-        error: ValidationError | None = None
+        failures: list[str] = []
         for candidate in candidates:
             try:
                 return self.fetch_by_mpn(candidate, transport=transport)
             except ValidationError as exc:
-                error = exc
-        raise error or ValidationError("no candidate number to look up")
+                failures.append(f"{candidate}: {exc}")
+        raise ValidationError(
+            "; ".join(failures) or "no candidate number to look up"
+        )
 
     def fetch_by_mpn(
         self, mpn: str, *, transport: httpx.BaseTransport | None = None

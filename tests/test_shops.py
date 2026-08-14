@@ -213,10 +213,12 @@ def test_fetch_by_index_falls_back_to_the_next_candidate(monkeypatch) -> None:  
     assert provider.fetch_by_index(["771-BROKEN", "NX3P1108UKZ"]) is hit
 
 
-def test_fetch_by_index_reraises_the_last_failure(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_fetch_by_index_reports_every_candidates_failure(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     def fake(self, number, *, transport=None):  # type: ignore[no-untyped-def]
         raise ValidationError(f"no product found for {number}")
 
     monkeypatch.setattr(MouserProvider, "fetch_by_mpn", fake)
-    with pytest.raises(ValidationError, match="MPN-2"):
+    # BOTH failures surface, in candidate order — the first (often the more
+    # diagnostic, e.g. "not configured") isn't lost behind the last.
+    with pytest.raises(ValidationError, match="SKU-1.*MPN-2"):
         MouserProvider().fetch_by_index(["SKU-1", "MPN-2"])

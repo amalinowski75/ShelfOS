@@ -80,6 +80,31 @@ def test_tme_sets_the_supplier_symbol_including_a_rewrapped_one() -> None:
     assert shipping.supplier_part_number is None
 
 
+def test_tme_does_not_fabricate_a_symbol_from_a_coincidental_suffix() -> None:
+    # The description's first token being a suffix of the MPN triggers the notes
+    # cleanup, but the symbol is re-glued ONLY when article + fragment equals the
+    # MPN exactly. Here it doesn't ("ABC123" + "23" != "XYZ23"), so the symbol must
+    # stay the raw article — a fabricated "ABC12323" could collide with some real,
+    # unrelated TME symbol and poison the API lookup.
+    from app.services.invoice_import.tme import _ITEM, _line
+
+    row = _ITEM.match(
+        "1         ABC123                 10 SZT           1,00/SZT           "
+        "23                             10,00"
+    )
+    assert row is not None
+    parsed = _line(
+        row,
+        [
+            "23 Kondensator:foo;bar",
+            "Producent: ACME; Symbol producenta: XYZ23;",
+            "Zgodność RoHS",
+        ],
+    )
+    assert parsed.mpn == "XYZ23"
+    assert parsed.supplier_part_number == "ABC123"  # NOT "ABC12323"
+
+
 def test_tme_per_pack_unit_price() -> None:
     invoice = TmeInvoiceParser().parse(_text("tme.txt"))
     # "2,01/1000 SZT" is a price per 1000 → 0.002010 per unit, quantity 10 000.

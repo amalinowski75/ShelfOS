@@ -371,3 +371,47 @@ def test_eviction_does_not_discard_a_token_another_thread_just_cached() -> None:
     assert digikey._token_cache[0] == "newer"
     digikey._forget_token("newer")
     assert digikey._token_cache is None
+
+
+# --- fetch_by_index (invoice-import enrichment) ------------------------------
+
+
+def test_fetch_by_index_first_hit_wins(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from app.services.shops.base import ProductData
+
+    calls: list[str] = []
+    hit = ProductData(mpn="AP22615AWU-7")
+
+    def fake(self, number, *, transport=None):  # type: ignore[no-untyped-def]
+        calls.append(number)
+        return hit
+
+    monkeypatch.setattr(DigiKeyProvider, "fetch_by_mpn", fake)
+    result = DigiKeyProvider().fetch_by_index(
+        ["AP22615AWU-7DICT-ND", "AP22615AWU-7"]
+    )
+    assert result is hit
+    # The Digi-Key "-ND" number is tried first and, succeeding, is the only call.
+    assert calls == ["AP22615AWU-7DICT-ND"]
+
+
+def test_fetch_by_index_falls_back_and_reports_every_failure(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from app.services.shops.base import ProductData
+
+    hit = ProductData(mpn="AP22615AWU-7")
+
+    def fake_fallback(self, number, *, transport=None):  # type: ignore[no-untyped-def]
+        if number.endswith("-ND"):
+            raise ValidationError("no product found")
+        return hit
+
+    monkeypatch.setattr(DigiKeyProvider, "fetch_by_mpn", fake_fallback)
+    assert DigiKeyProvider().fetch_by_index(["X-ND", "AP22615AWU-7"]) is hit
+
+    def fake_all_fail(self, number, *, transport=None):  # type: ignore[no-untyped-def]
+        raise ValidationError(f"failed for {number}")
+
+    monkeypatch.setattr(DigiKeyProvider, "fetch_by_mpn", fake_all_fail)
+    # BOTH candidates' failures surface — the first isn't lost behind the last.
+    with pytest.raises(ValidationError, match="X-ND.*MPN-2"):
+        DigiKeyProvider().fetch_by_index(["X-ND", "MPN-2"])

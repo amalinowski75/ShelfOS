@@ -112,13 +112,17 @@ def _line(header: re.Match[str], cont_lines: list[str]) -> ParsedLine:
     description = joined.split("Producent:")[0].strip() or None
     # The wrapped tail of the article column ("GRM022R60J104KE1" + "5L") lands at the
     # front of the description; when that leading token is a suffix of the real MPN,
-    # it's the wrap fragment — drop it from the notes and glue it back onto the
-    # symbol, which was truncated by the same wrap.
+    # it's the wrap fragment — drop it from the notes. Re-glue it onto the symbol
+    # ONLY when article + fragment equals the MPN exactly (both observed wraps do):
+    # a looser rule could fabricate a never-printed string that collides with some
+    # unrelated real TME symbol and poison the API lookup, which is worse than
+    # keeping the truncated article (the MPN candidate still covers the lookup).
     if description and mpn:
         head, _, rest = description.partition(" ")
         if rest and head and mpn.endswith(head):
             description = rest
-            symbol = (symbol or "") + head
+            if (symbol or "") + head == mpn:
+                symbol = mpn
     return ParsedLine(
         quantity=to_int(qty_s),
         unit_price=unit_price(price_s, per, decimal_sep=","),
