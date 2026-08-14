@@ -235,9 +235,13 @@
   });
 
   // However the dialog closes (save, Cancel, Escape), the next bag scan should
-  // land in the panel without the user reaching for the mouse.
+  // land in the panel without the user reaching for the mouse. The browser runs
+  // its OWN focus restoration after this event fires (back to whatever was
+  // focused at showModal time), which can override a synchronous focus() here
+  // and leave the field looking focused but not receiving keys — so refocus a
+  // tick later, after the browser has had its turn.
   dialog.addEventListener("close", () => {
     target = null;
-    scanInput.focus();
+    setTimeout(() => scanInput.focus(), 0);
   });
 })();
