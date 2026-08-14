@@ -59,6 +59,21 @@
   {% if invoice.notes %}<p class="muted" style="margin: 14px 0 0">{{ invoice.notes }}</p>{% endif %}
 </div>
 
+{% if can_edit and (lines or pending_import_lines) %}
+{# Scan-driven putaway: scan a bag's barcode → that line's location dialog
+   opens; scan an SL<id> location label → saved, closed, ready for the next
+   bag. The wedge scanner types into whatever is focused, hence the input. #}
+<div class="card card-pad" id="invoice-scan" style="margin-top: 20px"
+     data-locations='{{ location_options | tojson }}'>
+  <h2>Scan putaway</h2>
+  <p class="muted">Click the field, scan a bag&rsquo;s barcode to jump to its line,
+    then scan a location label (<span class="mono">SL&hellip;</span>) to file it.</p>
+  <input class="control" id="invoice-scan-input" autocomplete="off"
+         placeholder="Scan a bag&hellip;" />
+  <p id="invoice-scan-status" hidden></p>
+</div>
+{% endif %}
+
 {% if can_edit and pending_import_lines %}
 <div class="card card-pad" id="invoice-pending" style="margin-top: 20px">
   <h2>Imported — review <span class="badge b-warn">{{ pending_import_lines | length }}</span></h2>
@@ -84,6 +99,7 @@
         <tr data-import-line-id="{{ p.id }}"
             data-type-id="{{ p.type_id or '' }}"
             data-mpn="{{ p.mpn or '' }}"
+            data-spn="{{ p.supplier_part_number or '' }}"
             data-manufacturer="{{ p.manufacturer or '' }}"
             data-package="{{ p.package or '' }}"
             data-description="{{ p.description or '' }}"
@@ -144,6 +160,7 @@
             data-quantity="{{ l.quantity }}"
             data-unit-price="{{ format_money(l.unit_price) }}"
             data-spn="{{ l.supplier_part_number or '' }}"
+            data-mpn="{{ (l.component.mpn or '') if l.component else '' }}"
             data-location-id="{{ l.location_id if l.location_id is not none else '' }}">
           <td>
             {% if l.component %}
@@ -270,6 +287,38 @@
 {% include "_location_dialog.html" %}
 
 {% if lines or pending_import_lines %}
+<dialog id="putaway-dialog">
+  <article>
+    <header>
+      <strong>Set location</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <form id="putaway-form">
+      <p class="mono" id="putaway-part"></p>
+      <p class="muted small" id="putaway-desc"></p>
+      <div class="field">
+        <label>Scan a location label</label>
+        <input class="control mono" id="putaway-scan" autocomplete="off"
+               placeholder="SL&hellip;" />
+      </div>
+      <div class="field">
+        <label>&hellip;or pick it by hand</label>
+        <select class="control" id="putaway-select">
+          <option value="">&mdash; choose a location &mdash;</option>
+          {% for opt in location_options %}
+          <option value="{{ opt.id }}">{{ opt.path }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <p id="putaway-error" class="error" hidden></p>
+      <footer>
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+
 <dialog id="invoice-finalize-dialog">
   <article>
     <header>
@@ -297,5 +346,6 @@
 {% block scripts %}
 <script src="/static/type_dialog.js?v={{ static_version() }}"></script>
 <script src="/static/invoices.js?v={{ static_version() }}"></script>
+<script src="/static/invoice_scan.js?v={{ static_version() }}"></script>
 <script src="/static/attachments.js?v={{ static_version() }}"></script>
 {% endblock %}

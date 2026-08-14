@@ -9,10 +9,28 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.schemas import ShopLookup, ShopParameter, ShopProductRead
+from app.api.schemas import ScanParseRead, ShopLookup, ShopParameter, ShopProductRead
 from app.services import shops
+from app.services.shops.scan import parse_scan
 
 router = APIRouter(prefix="/api/shops", tags=["shops"])
+
+
+@router.post("/parse", response_model=ScanParseRead)
+def parse_code(payload: ShopLookup) -> ScanParseRead:
+    """Decode a scanned label to its identifiers without calling any shop API.
+
+    For flows that match the scan against data already at hand (a draft
+    invoice's lines), where a full lookup would spend API quota for nothing.
+    """
+    result = parse_scan(payload.code)  # ValidationError → 422
+    return ScanParseRead(
+        mpn=result.mpn,
+        manufacturer=result.manufacturer,
+        distributor_pn=result.distributor_pn,
+        shop=result.shop,
+        url=result.url,
+    )
 
 
 @router.post("/lookup", response_model=ShopProductRead)

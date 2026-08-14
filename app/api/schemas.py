@@ -389,6 +389,21 @@ class ShopLookup(BaseModel):
     code: str = Field(max_length=2048)
 
 
+class ScanParseRead(BaseModel):
+    """A scanned supplier label decoded to its identifiers — no shop API call.
+
+    Everything a client needs to match the scan against data it already has
+    (e.g. a draft invoice's lines); ``url`` covers a TME QR, whose payload is a
+    product URL rather than identifier fields.
+    """
+
+    mpn: str | None = None
+    manufacturer: str | None = None
+    distributor_pn: str | None = None
+    shop: str | None = None
+    url: str | None = None
+
+
 class ShopParameter(BaseModel):
     name: str
     value: str

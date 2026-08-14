@@ -21,9 +21,7 @@ def test_registry_dispatches_each_shop_by_host() -> None:
     assert list(resolved.values()) == ["Mouser", "Digi-Key", "TME", None]
 
 
-def _read_only_headers(
-    client: TestClient, anon_client: TestClient
-) -> dict[str, str]:
+def _read_only_headers(client: TestClient, anon_client: TestClient) -> dict[str, str]:
     client.post(
         "/api/admin/users",
         json={"username": "viewer", "password": "password123", "role": "read-only"},
@@ -100,5 +98,50 @@ def test_lookup_forbidden_for_read_only(
     headers = _read_only_headers(client, anon_client)
     resp = anon_client.post(
         "/api/shops/lookup", json={"code": "https://www.mouser.com/x"}, headers=headers
+    )
+    assert resp.status_code == 403
+
+
+# --- /api/shops/parse: decode a label with no shop API call -----------------
+
+
+def test_parse_decodes_a_datamatrix_offline(client: TestClient) -> None:
+    """The identifiers come back as-is — no provider, no API key, no lookup."""
+    label = "\x1d".join(
+        ["[)>\x1e06", "1PESQ-106-33-T-S", "30PSAM11086-ND", "1VSamtec", "Q20"]
+    )
+    resp = client.post("/api/shops/parse", json={"code": label})
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "mpn": "ESQ-106-33-T-S",
+        "manufacturer": "Samtec",
+        "distributor_pn": "SAM11086-ND",
+        "shop": "digikey",
+        "url": None,
+    }
+
+
+def test_parse_returns_a_tme_qr_url_and_pn(client: TestClient) -> None:
+    resp = client.post(
+        "/api/shops/parse",
+        json={"code": "QTY:5 PN:MIC334 https://www.tme.eu/details/MIC334"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["url"] == "https://www.tme.eu/details/MIC334"
+    assert data["mpn"] == "MIC334"
+
+
+def test_parse_rejects_an_unreadable_code(client: TestClient) -> None:
+    resp = client.post("/api/shops/parse", json={"code": "not a label"})
+    assert resp.status_code == 422
+
+
+def test_parse_forbidden_for_read_only(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    headers = _read_only_headers(client, anon_client)
+    resp = anon_client.post(
+        "/api/shops/parse", json={"code": "PN:MIC334"}, headers=headers
     )
     assert resp.status_code == 403
