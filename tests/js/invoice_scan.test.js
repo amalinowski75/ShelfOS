@@ -174,6 +174,20 @@ describe("invoice_scan.js — bag scan", () => {
     );
   });
 
+  it("warns while the window is unfocused and heals the field on return", () => {
+    const { window, document } = loadPage(scanFixture(), SCRIPTS);
+    window.dispatchEvent(new window.Event("blur"));
+    const status = document.getElementById("invoice-scan-status");
+    expect(status.hidden).toBe(false);
+    expect(status.textContent).toMatch(/not focused/);
+
+    window.dispatchEvent(new window.Event("focus"));
+    expect(status.hidden).toBe(true);
+    expect(document.activeElement).toBe(
+      document.getElementById("invoice-scan-input"),
+    );
+  });
+
   it("leaves the manual select and other dialogs' typing alone", () => {
     const { document } = loadPage(scanFixture(), SCRIPTS);
 

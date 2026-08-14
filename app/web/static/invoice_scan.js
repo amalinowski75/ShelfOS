@@ -237,6 +237,32 @@
     saveLocation(Number(locationSelect.value));
   });
 
+  // A scan can't reach this page while ANOTHER OS window holds focus — which
+  // looks exactly like a dead field, because the browser keeps the focus ring
+  // painted in an unfocused window. Say so loudly instead of staying silent,
+  // and heal the field focus the moment the window is focused again (so
+  // alt-tabbing back is enough — no click needed).
+  let blurWarned = false;
+  window.addEventListener("blur", () => {
+    blurWarned = true;
+    const message =
+      "This window is not focused — scans are going elsewhere. " +
+      "Click the page (or alt-tab back) to resume.";
+    if (dialog.open) {
+      errorEl.textContent = message;
+      errorEl.hidden = false;
+    } else {
+      setStatus(message, "error");
+    }
+  });
+  window.addEventListener("focus", () => {
+    if (!blurWarned) return;
+    blurWarned = false;
+    setStatus("");
+    errorEl.hidden = true;
+    (dialog.open ? locationInput : scanInput).focus();
+  });
+
   // However the dialog closes (save, Cancel, Escape), the next bag scan should
   // land in the panel without the user reaching for the mouse. The browser runs
   // its OWN focus restoration after this event fires (back to whatever was
