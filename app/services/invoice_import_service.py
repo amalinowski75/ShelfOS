@@ -31,7 +31,7 @@ from app.services.errors import (
     ValidationError,
 )
 from app.services.invoice_import import ParsedInvoice, ParsedLine, parse_invoice
-from app.services.shops.base import ProductData, infer_category
+from app.services.shops.base import ProductData, ShopLookupMiss, infer_category
 
 _logger = logging.getLogger("shelfos")
 
@@ -87,12 +87,23 @@ def import_invoice(
         )
         added = 0
         line_no = 0
+        # Shops whose enrichment hard-failed during THIS import (unconfigured,
+        # unreachable, rejecting): every later line would fail identically, so one
+        # warning is burned and the rest of the import skips the API instead of
+        # stacking a full timeout per line. A plain per-part miss does NOT trip this.
+        enrich_disabled: set[str] = set()
         for parsed_line in parsed.lines:
             if parsed_line.kind != "component":
                 continue  # a freight/handling charge is noted, not a component line
             line_no += 1
             added_line = _resolve_line(
-                session, invoice_id, parsed.shop_key, parsed_line, line_no, user_id
+                session,
+                invoice_id,
+                parsed.shop_key,
+                parsed_line,
+                line_no,
+                user_id,
+                enrich_disabled,
             )
             if added_line:
                 added += 1
@@ -137,6 +148,7 @@ def _resolve_line(
     line: ParsedLine,
     line_no: int,
     user_id: int,
+    enrich_disabled: set[str],
 ) -> bool:
     """Add a real line if we can, else stage it. Returns True if a line was added."""
 
@@ -164,7 +176,7 @@ def _resolve_line(
     #    manufacturer the invoice omitted (Mouser), so matching happens AFTER it —
     #    never guess a same-MPN part by number alone while a real manufacturer is a
     #    lookup away.
-    product = _enrich(shop_key, line)
+    product = _enrich(shop_key, line, enrich_disabled)
     manufacturer = product.manufacturer or line.manufacturer
     mpn = product.mpn or line.mpn
 
@@ -200,7 +212,9 @@ def _resolve_line(
     return False
 
 
-def _enrich(shop_key: str, line: ParsedLine) -> ProductData:
+def _enrich(
+    shop_key: str, line: ParsedLine, enrich_disabled: set[str]
+) -> ProductData:
     """Best product data for a missing component: the shop API, else the parsed text.
 
     Keyed by the shop's OWN catalogue index first (Mouser SKU, Digi-Key "…-ND"
@@ -208,6 +222,11 @@ def _enrich(shop_key: str, line: ParsedLine) -> ProductData:
     mangled description cell that would corrupt or lose the parsed MPN — with the
     MPN as the second candidate. The canonical MPN/manufacturer then come from the
     API's answer; the invoice text remains the fallback when no lookup succeeds.
+
+    A per-part miss degrades just this line. Any other failure (unconfigured,
+    unreachable, rejected) marks the shop in ``enrich_disabled`` so the REST of the
+    import skips the API — it would fail identically per line, each burning a full
+    round-trip or timeout inside one synchronous request.
     """
     provider = shops._BY_INDEX.get(shop_key)
     candidates = [
@@ -215,13 +234,18 @@ def _enrich(shop_key: str, line: ParsedLine) -> ProductData:
         for key in dict.fromkeys((line.supplier_part_number, line.mpn))
         if key
     ]
-    if provider is not None and candidates:
+    if provider is not None and candidates and shop_key not in enrich_disabled:
         try:
             return provider.fetch_by_index(candidates)
+        except ShopLookupMiss as exc:
+            _logger.info("no shop product for %s: %s", candidates, exc)
         except ValidationError as exc:
-            # A missing API key or a lookup miss shouldn't sink the whole import —
-            # degrade to what the invoice itself told us, and log why.
-            _logger.warning("invoice enrich failed for %s: %s", candidates, exc)
+            enrich_disabled.add(shop_key)
+            _logger.warning(
+                "shop enrichment disabled for the rest of this import (%s): %s",
+                shop_key,
+                exc,
+            )
     return ProductData(
         mpn=line.mpn,
         manufacturer=line.manufacturer,

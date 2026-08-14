@@ -9,7 +9,7 @@ import pytest
 from app import config
 from app.services import shops
 from app.services.errors import ValidationError
-from app.services.shops.base import ProductData, infer_category
+from app.services.shops.base import ProductData, ShopLookupMiss, infer_category
 from app.services.shops.mouser import MouserProvider
 
 _MOUSER_OK = {
@@ -64,14 +64,15 @@ def test_fetch_uses_the_part_number_from_the_url(monkeypatch) -> None:  # type: 
         seen["body"] = json.loads(req.content)
         return httpx.Response(200, json=_MOUSER_OK)
 
+    # The queried number matches the fixture part, so the exact-match check passes.
     MouserProvider().fetch(
-        "https://www.mouser.pl/pl/ProductDetail/Walsin/MR04X1201FTL?qs=abc%3D%3D",
+        "https://www.mouser.pl/pl/ProductDetail/Vishay/CRCW040210K0FKED?qs=abc%3D%3D",
         transport=httpx.MockTransport(handler),
     )
     body = seen["body"]
     assert isinstance(body, dict)
     # The last path segment, with the query stripped.
-    assert body["SearchByPartRequest"]["mouserPartNumber"] == "MR04X1201FTL"
+    assert body["SearchByPartRequest"]["mouserPartNumber"] == "CRCW040210K0FKED"
 
 
 def test_fetch_normalises_a_mouser_product(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -200,25 +201,49 @@ def test_fetch_by_index_first_hit_wins(monkeypatch) -> None:  # type: ignore[no-
     assert calls == ["771-NX3P1108UKZ"]
 
 
-def test_fetch_by_index_falls_back_to_the_next_candidate(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_fetch_by_index_falls_back_on_a_miss_only(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     provider = MouserProvider()
     hit = ProductData(mpn="NX3P1108UKZ")
 
     def fake(self, number, *, transport=None):  # type: ignore[no-untyped-def]
         if number == "771-BROKEN":
-            raise ValidationError("no product found")
+            raise ShopLookupMiss("no product found")
         return hit
 
     monkeypatch.setattr(MouserProvider, "fetch_by_mpn", fake)
     assert provider.fetch_by_index(["771-BROKEN", "NX3P1108UKZ"]) is hit
 
 
-def test_fetch_by_index_reports_every_candidates_failure(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_fetch_by_index_reports_every_candidates_miss(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     def fake(self, number, *, transport=None):  # type: ignore[no-untyped-def]
-        raise ValidationError(f"no product found for {number}")
+        raise ShopLookupMiss(f"no product found for {number}")
 
     monkeypatch.setattr(MouserProvider, "fetch_by_mpn", fake)
-    # BOTH failures surface, in candidate order — the first (often the more
-    # diagnostic, e.g. "not configured") isn't lost behind the last.
-    with pytest.raises(ValidationError, match="SKU-1.*MPN-2"):
+    # BOTH misses surface, in candidate order — the first isn't lost behind the last.
+    with pytest.raises(ShopLookupMiss, match="SKU-1.*MPN-2"):
         MouserProvider().fetch_by_index(["SKU-1", "MPN-2"])
+
+
+def test_fetch_by_index_raises_a_hard_failure_immediately(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    # An unconfigured integration / transport error would fail identically for every
+    # candidate — it must NOT fall through and burn another round-trip (or timeout).
+    calls: list[str] = []
+
+    def fake(self, number, *, transport=None):  # type: ignore[no-untyped-def]
+        calls.append(number)
+        raise ValidationError("Mouser integration is not configured")
+
+    monkeypatch.setattr(MouserProvider, "fetch_by_mpn", fake)
+    with pytest.raises(ValidationError, match="not configured"):
+        MouserProvider().fetch_by_index(["SKU-1", "MPN-2"])
+    assert calls == ["SKU-1"]  # the second candidate was never attempted
+
+
+def test_fetch_by_mpn_rejects_a_partial_match(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    # SearchByPartRequest matches partially: querying a number that is a PREFIX of
+    # the returned part must be a miss, not a silent import of the wrong variant.
+    monkeypatch.setattr(config, "MOUSER_API_KEY", "key")
+    with pytest.raises(ShopLookupMiss, match="no exact match"):
+        MouserProvider().fetch_by_mpn(
+            "CRCW04021", transport=_transport(_MOUSER_OK)
+        )

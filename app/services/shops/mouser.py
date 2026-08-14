@@ -9,7 +9,12 @@ import httpx
 
 from app import config
 from app.services.errors import ValidationError
-from app.services.shops.base import ProductData, infer_category
+from app.services.shops.base import (
+    ProductData,
+    ShopLookupMiss,
+    fetch_first_match,
+    infer_category,
+)
 
 _API_URL = "https://api.mouser.com/api/v1/search/partnumber"
 _logger = logging.getLogger("shelfos")
@@ -77,18 +82,12 @@ class MouserProvider:
 
         The invoice's own Mouser number ("771-NX3P1108UKZ") comes first — it is the
         canonical key and ``mouserPartNumber`` matches Mouser's own SKU directly —
-        with the parsed MPN as the fallback. A fully-failed lookup raises with EVERY
-        candidate's failure, so the (often more diagnostic) first error isn't lost
-        behind the last one.
+        with the parsed MPN as the fallback (see ``fetch_first_match`` for the
+        miss-only fallthrough and error aggregation).
         """
-        failures: list[str] = []
-        for candidate in candidates:
-            try:
-                return self.fetch_by_mpn(candidate, transport=transport)
-            except ValidationError as exc:
-                failures.append(f"{candidate}: {exc}")
-        raise ValidationError(
-            "; ".join(failures) or "no candidate number to look up"
+        return fetch_first_match(
+            lambda number: self.fetch_by_mpn(number, transport=transport),
+            candidates,
         )
 
     def fetch_by_mpn(
@@ -127,10 +126,28 @@ class MouserProvider:
             _logger.warning("Mouser lookup failed: %s", detail)
             raise ValidationError(f"Mouser rejected the request: {detail}")
         if not parts:
-            raise ValidationError("no product found")
-        part = parts[0]
-        if not isinstance(part, dict):
-            raise ValidationError("could not read the Mouser response")
+            raise ShopLookupMiss("no product found")
+        # SearchByPartRequest matches PARTIALLY (a queried number that is a prefix of
+        # a reel variant returns the variant), so never take parts[0] on faith: accept
+        # only a part whose Mouser or manufacturer number equals what was asked for.
+        # Anything else is a miss — the next candidate (or review) beats silently
+        # importing a different part's identity.
+        queried = mpn.strip().casefold()
+        part = next(
+            (
+                p
+                for p in parts
+                if isinstance(p, dict)
+                and queried
+                in (
+                    str(p.get("MouserPartNumber") or "").strip().casefold(),
+                    str(p.get("ManufacturerPartNumber") or "").strip().casefold(),
+                )
+            ),
+            None,
+        )
+        if part is None:
+            raise ShopLookupMiss(f"no exact match for {mpn!r}")
 
         parameters: list[tuple[str, str]] = []
         for attr in part.get("ProductAttributes") or []:

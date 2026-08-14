@@ -395,23 +395,51 @@ def test_fetch_by_index_first_hit_wins(monkeypatch) -> None:  # type: ignore[no-
     assert calls == ["AP22615AWU-7DICT-ND"]
 
 
-def test_fetch_by_index_falls_back_and_reports_every_failure(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    from app.services.shops.base import ProductData
+def test_fetch_by_index_miss_fallback_and_aggregation(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from app.services.shops.base import ProductData, ShopLookupMiss
 
     hit = ProductData(mpn="AP22615AWU-7")
 
     def fake_fallback(self, number, *, transport=None):  # type: ignore[no-untyped-def]
         if number.endswith("-ND"):
-            raise ValidationError("no product found")
+            raise ShopLookupMiss("no product found")
         return hit
 
     monkeypatch.setattr(DigiKeyProvider, "fetch_by_mpn", fake_fallback)
     assert DigiKeyProvider().fetch_by_index(["X-ND", "AP22615AWU-7"]) is hit
 
-    def fake_all_fail(self, number, *, transport=None):  # type: ignore[no-untyped-def]
-        raise ValidationError(f"failed for {number}")
+    def fake_all_miss(self, number, *, transport=None):  # type: ignore[no-untyped-def]
+        raise ShopLookupMiss(f"failed for {number}")
 
-    monkeypatch.setattr(DigiKeyProvider, "fetch_by_mpn", fake_all_fail)
-    # BOTH candidates' failures surface — the first isn't lost behind the last.
-    with pytest.raises(ValidationError, match="X-ND.*MPN-2"):
+    monkeypatch.setattr(DigiKeyProvider, "fetch_by_mpn", fake_all_miss)
+    # BOTH candidates' misses surface — the first isn't lost behind the last.
+    with pytest.raises(ShopLookupMiss, match="X-ND.*MPN-2"):
         DigiKeyProvider().fetch_by_index(["X-ND", "MPN-2"])
+
+
+def test_fetch_by_index_raises_a_hard_failure_immediately(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    # A transport/config failure repeats identically per candidate — no fallthrough.
+    calls: list[str] = []
+
+    def fake(self, number, *, transport=None):  # type: ignore[no-untyped-def]
+        calls.append(number)
+        raise ValidationError("could not reach Digi-Key")
+
+    monkeypatch.setattr(DigiKeyProvider, "fetch_by_mpn", fake)
+    with pytest.raises(ValidationError, match="could not reach"):
+        DigiKeyProvider().fetch_by_index(["X-ND", "MPN-2"])
+    assert calls == ["X-ND"]
+
+
+def test_fetch_by_mpn_rejects_a_non_json_200_body(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    # A proxy/WAF page on a 200 must become a clean ValidationError, not an escaped
+    # JSONDecodeError that sinks the whole invoice import.
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/token"):
+            return httpx.Response(200, json={"access_token": "t", "expires_in": 300})
+        return httpx.Response(200, text="<html>maintenance</html>")
+
+    with pytest.raises(ValidationError, match="could not read the Digi-Key response"):
+        DigiKeyProvider().fetch_by_mpn(
+            "AP22615AWU-7", transport=httpx.MockTransport(handler)
+        )

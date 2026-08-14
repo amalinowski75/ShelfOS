@@ -34,6 +34,8 @@ _ITEM = re.compile(
 )
 _STOP = re.compile(r"Razem:|Legenda:|Do zapłaty:|z przeniesienia")
 _MANUFACTURER = re.compile(r"Producent:\s*(.+?)\s*;")
+# The article column's observed wrap point: an article this long may be truncated.
+_WRAP_WIDTH = 16
 _MPN = re.compile(r"Symbol producenta:\s*(.+?)\s*;")
 
 
@@ -123,6 +125,13 @@ def _line(header: re.Match[str], cont_lines: list[str]) -> ParsedLine:
             description = rest
             if (symbol or "") + head == mpn:
                 symbol = mpn
+    # The article column wraps at ~16 characters (both observed wraps break there).
+    # An article that long may be a truncated fragment, and unless it verified as
+    # the MPN above there is no way to tell — a truncated string offered to the API
+    # could collide with an unrelated real symbol. Drop it; the MPN candidate still
+    # covers the lookup, and the review row keeps the accurate parsed identity.
+    if symbol and symbol != mpn and len(symbol) >= _WRAP_WIDTH:
+        symbol = None
     return ParsedLine(
         quantity=to_int(qty_s),
         unit_price=unit_price(price_s, per, decimal_sep=","),

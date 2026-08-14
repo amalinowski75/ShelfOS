@@ -80,6 +80,40 @@ def test_tme_sets_the_supplier_symbol_including_a_rewrapped_one() -> None:
     assert shipping.supplier_part_number is None
 
 
+def test_tme_drops_a_possibly_truncated_long_article() -> None:
+    # The article column wraps at ~16 chars. A >=16-char article that does NOT match
+    # the MPN can't be verified whole — it may be a truncated fragment of a house
+    # symbol, and a truncated string offered to the API could collide with an
+    # unrelated real symbol. It must be dropped, not persisted.
+    from app.services.invoice_import.tme import _ITEM, _line
+
+    row = _ITEM.match(
+        "1         HOUSESYMBOL16CHR                 10 SZT           1,00/SZT   "
+        "        23                             10,00"
+    )
+    assert row is not None
+    parsed = _line(
+        row,
+        [
+            "Kondensator:foo;bar",
+            "Producent: ACME; Symbol producenta: OTHER-MPN;",
+        ],
+    )
+    assert len("HOUSESYMBOL16CHR") == 16
+    assert parsed.mpn == "OTHER-MPN"
+    assert parsed.supplier_part_number is None  # unverifiable → dropped
+    # A short article (can't have wrapped) is kept even when it differs from the MPN.
+    short = _ITEM.match(
+        "2         SHORTSYM                 10 SZT           1,00/SZT           "
+        "23                             10,00"
+    )
+    assert short is not None
+    parsed_short = _line(
+        short, ["Producent: ACME; Symbol producenta: OTHER-MPN;"]
+    )
+    assert parsed_short.supplier_part_number == "SHORTSYM"
+
+
 def test_tme_does_not_fabricate_a_symbol_from_a_coincidental_suffix() -> None:
     # The description's first token being a suffix of the MPN triggers the notes
     # cleanup, but the symbol is re-glued ONLY when article + fragment equals the

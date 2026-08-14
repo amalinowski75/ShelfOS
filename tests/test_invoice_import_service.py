@@ -168,6 +168,53 @@ def test_enrich_deduplicates_identical_index_and_mpn(
     assert seen == [["AO3400A"]]
 
 
+def test_a_hard_enrich_failure_disables_the_api_for_the_rest_of_the_import(
+    session: Session, monkeypatch
+) -> None:
+    # An unconfigured/unreachable shop fails identically for every line — after the
+    # first hard failure the import must stop calling the API (each call can burn a
+    # full timeout inside one synchronous request).
+    calls: list[list[str]] = []
+
+    class _Hard:
+        def fetch_by_index(self, candidates):  # type: ignore[no-untyped-def]
+            calls.append(list(candidates))
+            raise ValidationError("could not reach Mouser")
+
+    monkeypatch.setitem(shops._BY_INDEX, "mouser", _Hard())
+    _patch_parse(
+        monkeypatch,
+        _invoice(
+            _line(mpn="A1"), _line(mpn="B2"), _line(mpn="C3"), shop_key="mouser"
+        ),
+    )
+
+    iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
+    assert len(calls) == 1  # lines 2 and 3 skipped the API entirely
+
+
+def test_a_plain_miss_keeps_trying_the_api_for_later_lines(
+    session: Session, monkeypatch
+) -> None:
+    from app.services.shops.base import ShopLookupMiss
+
+    calls: list[list[str]] = []
+
+    class _Miss:
+        def fetch_by_index(self, candidates):  # type: ignore[no-untyped-def]
+            calls.append(list(candidates))
+            raise ShopLookupMiss("no product found")
+
+    monkeypatch.setitem(shops._BY_INDEX, "mouser", _Miss())
+    _patch_parse(
+        monkeypatch,
+        _invoice(_line(mpn="A1"), _line(mpn="B2"), shop_key="mouser"),
+    )
+
+    iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
+    assert len(calls) == 2  # a per-part miss doesn't condemn the next part
+
+
 # --- case 3: no matching type → parked ---------------------------------------
 
 

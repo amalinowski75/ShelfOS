@@ -723,3 +723,43 @@ def test_fetch_by_index_is_the_uniform_entry() -> None:
         ["MR04X1201FTL"], transport=_transport()
     )
     assert product.mpn == "MR04X1201FTL"
+
+
+def test_fetch_by_symbols_drops_a_comma_bearing_candidate() -> None:
+    # TME rejects the WHOLE batched request over one bad symbol; a comma-suffixed
+    # MPN ("PESD5V0S1BA,115") must be filtered out so the valid symbol still gets
+    # looked up.
+    seen: dict[str, httpx.Request] = {}
+    TmeProvider().fetch_by_symbols(
+        ["PESD5V0S1BA,115", "MR04X1201FTL"], transport=_transport(seen=seen)
+    )
+    url = str(seen["/products"].url)
+    assert "MR04X1201FTL" in url
+    assert "PESD5V0S1BA" not in url
+
+
+def test_fetch_by_index_does_not_take_the_shop_symbol_as_the_mpn() -> None:
+    # The invoice path has an accurate parsed MPN; when the API's product carries no
+    # manufacturer symbol, ProductData.mpn must stay None so the orchestrator's
+    # `product.mpn or line.mpn` keeps the parsed one — not TME's catalogue symbol.
+    product_no_mfr = {
+        "status": "OK",
+        "data": {
+            "elements": [
+                {
+                    "symbol": "MR04X1201FTL",
+                    "manufacturer_symbols": [],
+                    "manufacturer": {"id": 1, "name": "Walsin"},
+                    "description": "Resistor: thick film",
+                    "category": {"id": 2, "name": "Resistors"},
+                }
+            ]
+        },
+    }
+    via_index = TmeProvider().fetch_by_index(
+        ["MR04X1201FTL"], transport=_transport(product=product_no_mfr)
+    )
+    assert via_index.mpn is None  # orchestrator falls back to the parsed MPN
+    # The URL path keeps the symbol fallback (better than nothing on a scan).
+    via_url = TmeProvider().fetch(_URL, transport=_transport(product=product_no_mfr))
+    assert via_url.mpn == "MR04X1201FTL"
