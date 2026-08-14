@@ -30,6 +30,8 @@
   let pendingDatasheetUrl = null;
   // The shop URL the component was imported from, saved as a `shop` link on create.
   let pendingShopUrl = null;
+  // The last shop-imported product, kept so switching type can re-run the engine.
+  let lastImport = null;
   // Bumped on every open so a slow shop-lookup can't prefill a reopened dialog.
   let openToken = 0;
 
@@ -123,7 +125,16 @@
     return params;
   }
 
-  typeSelect.addEventListener("change", (event) => loadParams(event.target.value));
+  typeSelect.addEventListener("change", async (event) => {
+    const typeId = event.target.value;
+    await loadParams(typeId);
+    // After a shop import, picking a different type refills its parameters from the
+    // engine (the import filled the auto-inferred type; a correction should too).
+    if (lastImport && typeId) {
+      const proposal = await fetchProposal(typeId, lastImport);
+      if (proposal && typeSelect.value === typeId) applyProposal(proposal);
+    }
+  });
 
   // Download a datasheet URL as a file attachment via the SSRF-guarded endpoint.
   // Returns true on success; a non-2xx or a network error is a handled false, never
@@ -229,6 +240,7 @@
                 manufacturer: value("manufacturer") || null,
                 mpn: value("mpn") || null,
                 package: value("package") || null,
+                mounting_type: form.querySelector('[name="mounting_type"]').value,
                 description: value("notes") || null,
                 parameters: collectParameters(),
               }),
@@ -358,145 +370,15 @@
     if (input) input.value = String(rawValue).split(/[\s/]/)[0];
   }
 
-  // Normalise a parameter name for matching (drop case and punctuation/spaces).
-  function normalizeName(name) {
-    return String(name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-  }
-
-  // Turn a shop value like "10 kOhms" into "10k" for a NUMBER field (µ→u, K→k).
-  // Applied ONLY to number fields, so a matched text value (e.g. a marking code
-  // that starts with digits) isn't silently truncated.
-  const _MULTIPLIERS = new Set(["p", "n", "u", "k", "M", "G", "m"]);
-  function cleanNumberValue(raw) {
-    const text = String(raw ?? "").trim();
-    const m = text.match(/^[±\s]*([0-9]+(?:\.[0-9]+)?)\s*([A-Za-zµΩ]*)/);
-    if (!m) return text;
-    const first = { µ: "u", K: "k" }[m[2][0]] || m[2][0] || "";
-    return m[1] + (_MULTIPLIERS.has(first) ? first : "");
-  }
-
-  // Some shops (Mouser) return only logistics in their attributes — the real specs
-  // sit in the free-text description ("Thick Film Resistors - SMD 1.2 kOhms 50 V
-  // 100 mW 1 % 0402"). Rather than a parser per category, scan the description with
-  // the TYPE'S OWN parameter units: a resistor's Ω/W/% params pick up their values
-  // and the stray "50 V" is ignored (it has no volt parameter), while a capacitor's
-  // F/V params pick up theirs. Units are keyed lowercase.
-  const _UNIT_PATTERNS = {
-    ohm: "(?:[Oo]hms?|Ω)",
-    ω: "(?:[Oo]hms?|Ω)",
-    "%": "%",
-    w: "W",
-    v: "V",
-    f: "F",
-    a: "A",
-    h: "H",
-    hz: "Hz",
-  };
-
-  // A number, possibly a fraction: resistor power is quoted as "1/16W", and taking
-  // just the digits before the unit would read that as 16 W.
-  const _NUMBER = "\\d+(?:\\.\\d+)?(?:/\\d+(?:\\.\\d+)?)?";
-
-  function findValueForUnit(text, unit) {
-    const pattern = _UNIT_PATTERNS[String(unit || "").trim().toLowerCase()];
-    if (!pattern) return null;
-    // The multiplier stays case-sensitive (m = milli vs M = mega); the unit pattern
-    // is written case-tolerantly. The lookahead stops "W" matching inside a word.
-    const match = text.match(
-      new RegExp(`(${_NUMBER})\\s*([pnµukKMGm])?\\s*${pattern}(?![A-Za-z])`),
-    );
-    if (!match) return null;
-    let number = match[1];
-    if (number.includes("/")) {
-      const [top, bottom] = number.split("/").map(Number);
-      if (!bottom) return null;
-      number = String(top / bottom); // 1/16 W → 0.0625
-    }
-    const mult = { µ: "u", K: "k" }[match[2]] || match[2] || "";
-    return number + (_MULTIPLIERS.has(mult) ? mult : "");
-  }
-
-  // Some descriptions give the primary value with no unit at all ("Thin Film
-  // Resistors - SMD TNPW-0402 1.2K 0.1% T-9"). Fill the type's VALUE parameter
-  // (lowest (sort_order, id) NUMBER — the same one the BOM report uses) from the
-  // first bare engineering token. Deliberately limited to that one field: a bare
-  // number elsewhere is usually a package code or a temperature coefficient. A
-  // multiplier is required, so "0402" and "100 PPM" can't be mistaken for a value.
-  const _BARE_ENGINEERING = /(?:^|[\s\-])(\d+(?:\.\d+)?)([pnµukKMG])(?![A-Za-z0-9])/;
-
-  function setValueParamFromDescription(text) {
-    const id = valueParamId();
-    if (id == null) return;
-    const input = paramsBox.querySelector(`input[data-definition-id="${id}"]`);
-    if (!input || input.value) return; // a unit-matched value already won
-    const match = text.match(_BARE_ENGINEERING);
-    if (!match) return;
-    input.value = match[1] + ({ µ: "u", K: "k" }[match[2]] || match[2]);
-  }
-
-  const _EIA_PACKAGE = /\b(0201|0402|0603|0805|1206|1210|1812|2010|2512)\b/;
-
-  // Fill still-EMPTY fields from the description; never overwrite a structured
-  // value (a shop that returns real parameters always wins).
-  // `hints` is extra free text that is NOT the description — currently the shop's
-  // own category name. It joins the package/mounting scan (TME files a 100nF part
-  // under "MLCC SMD capacitors" while its description never says SMD) but is kept
-  // out of the unit scan, where a category's stray digits could land in a number
-  // field as a bogus measurement.
-  function setFromDescription(text, hints) {
-    const scan = [text, hints].filter(Boolean).join(" ");
-    if (!scan) return;
-    if (text) {
-      for (const def of currentDefinitions) {
-        if (def.data_type !== "number" || !def.unit) continue;
-        const input = paramsBox.querySelector(`input[data-definition-id="${def.id}"]`);
-        if (!input || input.value) continue;
-        const value = findValueForUnit(text, def.unit);
-        if (value) input.value = value;
-      }
-      setValueParamFromDescription(text); // last resort for a unitless value
-    }
-
-    const pkg = form.querySelector('[name="package"]');
-    const eia = scan.match(_EIA_PACKAGE);
-    if (pkg && !pkg.value && eia) pkg.value = eia[1];
-
-    const mounting = form.querySelector('[name="mounting_type"]');
-    let wanted = null;
-    // Digi-Key spells it out ("Chip Resistor - Surface Mount") where TME abbreviates.
-    if (/\bSM[DT]\b/.test(scan) || /surface[- ]mount/i.test(scan)) wanted = "SMT";
-    else if (/\bTHT\b/.test(scan) || /through[- ]hole/i.test(scan)) wanted = "THT";
-    if (mounting && wanted && [...mounting.options].some((o) => o.value === wanted)) {
-      mounting.value = wanted;
-    }
-  }
-
-  // Fill each named shop parameter into the field of the matching definition
-  // (by label or name). Only plain <input> fields (number/text) are set; enum/bool
-  // <select>s are left alone. NUMBER fields get engineering-cleaned; text fields get
-  // the raw value. Unmatched params are dropped — best-effort, reviewed.
-  function setNamedParams(params) {
-    for (const { name, value } of params) {
-      const target = normalizeName(name);
-      if (!target) continue;
-      const def = currentDefinitions.find(
-        (d) => normalizeName(d.label) === target || normalizeName(d.name) === target,
-      );
-      if (!def) continue;
-      const input = paramsBox.querySelector(`[data-definition-id="${def.id}"]`);
-      if (input && input.tagName === "INPUT") {
-        input.value = def.data_type === "number" ? cleanNumberValue(value) : value;
-      }
-    }
-  }
-
   // Pre-fill the dialog. From a BOM line: { category, value, mpn, manufacturer }.
-  // From a shop import, additionally: { notes, package, params:[{name,value}],
-  // datasheetUrl }. Runs async (loads the matched type's parameters); fired after
+  // From a shop import, additionally: { notes, package, proposal }, where the SERVER's
+  // matching engine already worked out the type, mounting and parameter values (the
+  // dialog no longer guesses). Runs async (loads the type's parameters); fired after
   // the dialog is shown or when Import completes.
   async function applyPrefill(prefill) {
     pendingDatasheetUrl = null;
     pendingShopUrl = null; // a non-shop prefill (e.g. from a BOM) has no shop URL
+    lastImport = null; // no shop import behind a BOM/blank prefill
     if (!prefill) {
       loadParams(""); // clears the fields and shows the hint
       return;
@@ -510,11 +392,15 @@
     set("notes", prefill.notes);
     if (prefill.datasheetUrl) pendingDatasheetUrl = prefill.datasheetUrl;
 
-    // A staged import line knows its type by id; a BOM/shop prefill by category name.
+    const proposal = prefill.proposal || null;
+    // The type is known by: a staged line's id, else the engine's proposal, else a
+    // BOM prefill's category name.
     const typeId =
       prefill.typeId != null && prefill.typeId !== ""
         ? String(prefill.typeId)
-        : matchTypeByName(prefill.category);
+        : proposal && proposal.type_id != null
+          ? String(proposal.type_id)
+          : matchTypeByName(prefill.category);
     if (!typeId) {
       loadParams(""); // no matching type — let the user pick one
       return;
@@ -523,12 +409,56 @@
     await loadParams(typeId); // render the type's parameter fields
     // Only fill parameters if the user hasn't changed the type while we loaded.
     if (typeSelect.value !== typeId) return;
+    // A staged review row carries a mounting the engine already inferred.
+    if (prefill.mountingType) {
+      const mounting = form.querySelector('[name="mounting_type"]');
+      if (mounting && [...mounting.options].some((o) => o.value === prefill.mountingType)) {
+        mounting.value = prefill.mountingType;
+      }
+    }
     if (prefill.value) setValueParam(prefill.value); // BOM: single value param
-    if (prefill.params) setNamedParams(prefill.params); // shop: named params
-    // Fill only what's still empty, from the description plus the shop's category.
-    setFromDescription(prefill.notes, prefill.shopCategory);
+    if (proposal) applyProposal(proposal); // shop: the engine's field guesses
     // Values the user already entered in a prior review edit win over the guesses.
     if (prefill.paramValues) setParamsById(prefill.paramValues);
+  }
+
+  // Apply the engine's proposal to the form: package, mounting, and parameter values
+  // (by definition id). Never overwrites a package the user/shop already gave.
+  function applyProposal(proposal) {
+    if (proposal.package) {
+      const pkg = form.querySelector('[name="package"]');
+      if (pkg && !pkg.value) pkg.value = proposal.package;
+    }
+    if (proposal.mounting_type) {
+      const mounting = form.querySelector('[name="mounting_type"]');
+      const ok =
+        mounting &&
+        [...mounting.options].some((o) => o.value === proposal.mounting_type);
+      if (ok) mounting.value = proposal.mounting_type;
+    }
+    if (proposal.parameters) setParamsById(proposal.parameters);
+  }
+
+  // Re-run the engine server-side for a chosen type over the last imported product,
+  // so switching type refills the parameter fields. Returns a proposal or null.
+  async function fetchProposal(typeId, product) {
+    try {
+      const resp = await fetch("/api/matching/proposal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body: JSON.stringify({
+          type_id: Number(typeId),
+          category: product.category,
+          shop_category: product.shop_category,
+          description: product.description,
+          package: product.package,
+          parameters: product.parameters,
+        }),
+      });
+      return resp.ok ? await resp.json() : null;
+    } catch {
+      return null;
+    }
   }
 
   // Set parameter inputs from stored [{parameter_definition_id, value}] pairs.
@@ -614,15 +544,16 @@
           mpn: product.mpn,
           manufacturer: product.manufacturer,
           notes: product.description,
-          shopCategory: product.shop_category,
           package: product.package,
-          params: product.parameters,
           datasheetUrl: product.datasheet_url,
+          proposal: product.proposal,
         });
-        // applyPrefill cleared it; restore the shop link from the URL the SERVER
+        // applyPrefill cleared these; restore the shop link from the URL the SERVER
         // resolved — a TME QR buries its URL among other tokens, and a barcode has
-        // none at all, so the raw code must never be stored as a link.
+        // none at all, so the raw code must never be stored as a link — and keep the
+        // product so a later type change can re-run the engine.
         pendingShopUrl = product.source_url || null;
+        lastImport = product;
         // "warn", not "error": the import partly succeeded and the fields ARE
         // filled — red is reserved for the cases where nothing landed.
         importStatus.className = product.from_label_only ? "warn" : "muted";

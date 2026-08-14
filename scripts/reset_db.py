@@ -30,11 +30,13 @@ from app import config
 from app.db import engine, init_db
 from sqlmodel import SQLModel
 
-# Tables kept by --keep-types: the component-type taxonomy plus the login accounts.
+# Tables kept by --keep-types: the component-type taxonomy, the enrichment matching
+# rules (also taxonomy), plus the login accounts.
 _KEEP_TABLES = {
     "component_types",
     "parameter_definitions",
     "parameter_enum_values",
+    "match_rules",
     "users",
 }
 

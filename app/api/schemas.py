@@ -306,6 +306,7 @@ class InvoiceImportLineRead(BaseModel):
     shop_key: str
     type_id: int | None
     location_id: int | None
+    mounting_type: MountingType
     parameters: list[ParameterValueSet]
     reason: str
 
@@ -323,6 +324,7 @@ class InvoiceImportLineUpdate(BaseModel):
     manufacturer: str | None = None
     mpn: str | None = None
     package: str | None = None
+    mounting_type: MountingType | None = None
     description: str | None = None
     parameters: list[ParameterValueSet] | None = None
 
@@ -394,6 +396,27 @@ class ShopParameter(BaseModel):
     value: str
 
 
+class MatchProposalRead(BaseModel):
+    """What the matching engine worked out for the dialog to apply, all reviewable."""
+
+    type_id: int | None = None
+    mounting_type: MountingType | None = None
+    package: str | None = None
+    # Values keyed by definition id (already gated), ready for the dialog's fields.
+    parameters: list[ParameterValueSet] = Field(default_factory=list)
+
+
+class MatchProposalRequest(BaseModel):
+    """Re-run the engine for a chosen type (the dialog calls this on a type change)."""
+
+    type_id: int | None = None
+    category: str | None = None
+    shop_category: str | None = None
+    description: str | None = None
+    package: str | None = None
+    parameters: list[ShopParameter] = Field(default_factory=list)
+
+
 class ShopProductRead(BaseModel):
     """A distributor product normalised toward the New Component dialog's fields."""
 
@@ -413,6 +436,8 @@ class ShopProductRead(BaseModel):
     source_url: str | None = None
     # True when only the scanned label could be read — the shop's API added nothing.
     from_label_only: bool = False
+    # The engine's proposal (type/mounting/package/parameters) for the dialog to apply.
+    proposal: MatchProposalRead = Field(default_factory=MatchProposalRead)
 
 
 class BomLineRead(BaseModel):

@@ -116,6 +116,55 @@ def test_missing_component_with_known_type_is_staged_ready_not_created(
     assert row.reason == ""  # ready — no review reason
 
 
+def test_enrichment_fills_parameters_and_mounting_on_the_staged_row(
+    session: Session, monkeypatch
+) -> None:
+    from app.models.enums import MountingType
+    from app.services import match_rule_service as mrs
+
+    rtype = cs.create_type(session, "resistor")
+    resistance = cs.add_parameter_definition(
+        session, rtype.id, name="resistance", label="Resistance",
+        data_type=cs.ParameterDataType.NUMBER, unit="Ω",
+    )
+    mrs.seed_default_rules(session)  # gives SMD -> SMT
+    _fake_provider(
+        monkeypatch,
+        "mouser",
+        ProductData(
+            mpn="RC0402",
+            manufacturer="YAGEO",
+            category="resistor",
+            shop_category="Chip Resistor - Surface Mount",
+            description="Thick Film Resistors - SMD 10 kOhms 0402",
+            parameters=[("Resistance", "10 kOhms")],
+        ),
+    )
+    _patch_parse(monkeypatch, _invoice(_line(mpn="RC0402"), shop_key="mouser"))
+
+    result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
+
+    row = iis.list_pending(session, result.invoice_id)[0]
+    assert row.type_id == rtype.id
+    assert row.mounting_type is MountingType.SMT
+    assert row.package == "0402"
+    # The engine placed the resistance value onto the staged row — previously dropped.
+    assert row.parameters == [
+        {"parameter_definition_id": resistance.id, "value": "10k"}
+    ]
+
+    # Finalize materialises a component carrying those values + mounting.
+    iis.update_pending(
+        session, result.invoice_id, row.id, location_id=_make_location(session)
+    )
+    invoice_service.finalize_invoice(session, result.invoice_id, user_id=1)
+    component = cs.list_components(session)[0]
+    assert component.mounting_type is MountingType.SMT
+    values = cs.list_parameter_values(session, component.id)
+    assert values[0].parameter_definition_id == resistance.id
+    assert values[0].value_num == 10000.0
+
+
 # --- enrichment is keyed by the shop's own index -----------------------------
 
 

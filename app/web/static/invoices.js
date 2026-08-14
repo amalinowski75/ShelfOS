@@ -393,6 +393,7 @@ if (detail && lineDialog) {
           mpn: row.dataset.mpn || null,
           manufacturer: row.dataset.manufacturer || null,
           package: row.dataset.package || null,
+          mountingType: row.dataset.mountingType || null,
           notes: row.dataset.description || null,
           paramValues: stored,
         },
