@@ -18,7 +18,12 @@ import httpx
 
 from app import config
 from app.services.errors import ValidationError
-from app.services.shops.base import ProductData, infer_category
+from app.services.shops.base import (
+    ProductData,
+    ShopLookupMiss,
+    fetch_first_match,
+    infer_category,
+)
 
 _logger = logging.getLogger("shelfos")
 
@@ -154,6 +159,21 @@ class DigiKeyProvider:
         # reuses fetch_by_mpn.
         return self.fetch_by_mpn(_part_number(url), transport=transport)
 
+    def fetch_by_index(
+        self, candidates: list[str], *, transport: httpx.BaseTransport | None = None
+    ) -> ProductData:
+        """Try each candidate number in order; first hit wins (invoice import).
+
+        The invoice's Digi-Key number ("…-ND") comes first — the product-details
+        endpoint's path parameter is Digi-Key's own part number, with MPN accepted as
+        a best-match fallback — then the parsed MPN (see ``fetch_first_match`` for
+        the miss-only fallthrough and error aggregation).
+        """
+        return fetch_first_match(
+            lambda number: self.fetch_by_mpn(number, transport=transport),
+            candidates,
+        )
+
     def fetch_by_mpn(
         self, mpn: str, *, transport: httpx.BaseTransport | None = None
     ) -> ProductData:
@@ -198,15 +218,20 @@ class DigiKeyProvider:
                     )
                 if resp.status_code >= 400:
                     raise _api_error(resp, "product lookup")
+                # Inside the try: a 200 carrying a non-JSON body (a proxy/WAF page)
+                # raises ValueError here, which must become a clean ValidationError
+                # like Mouser's and TME's — not escape and sink the whole import.
                 payload = resp.json()
         except httpx.HTTPError:
             raise ValidationError("could not reach Digi-Key") from None
+        except ValueError:
+            raise ValidationError("could not read the Digi-Key response") from None
 
         if not isinstance(payload, dict):
             raise ValidationError("could not read the Digi-Key response")
         product = payload.get("Product")
         if not isinstance(product, dict):
-            raise ValidationError("no product found")
+            raise ShopLookupMiss("no product found")
 
         def _nested(key: str, field: str) -> str | None:
             value = product.get(key)

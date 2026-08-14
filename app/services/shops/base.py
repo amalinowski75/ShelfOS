@@ -9,8 +9,21 @@ review before creating — so imperfect guesses are corrected, not committed bli
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
+
+from app.services.errors import ValidationError
+
+
+class ShopLookupMiss(ValidationError):
+    """The shop answered but had no (matching) product for the queried number.
+
+    Distinct from the other lookup failures (unconfigured integration, transport
+    errors, API rejections) because only a miss is worth retrying with the NEXT
+    candidate number — the rest would fail identically and just burn another full
+    API round-trip (or a whole timeout) per candidate.
+    """
 
 
 @dataclass
@@ -92,6 +105,28 @@ def infer_category(*texts: str | None) -> str | None:
         if keyword in blob:
             return category
     return None
+
+
+def fetch_first_match(
+    fetch_one: Callable[[str], ProductData], candidates: list[str]
+) -> ProductData:
+    """Try each candidate number in order; the first hit wins (invoice import).
+
+    Shared by the per-number providers (Mouser, Digi-Key — and the next one), so the
+    loop's semantics can't drift between copies: only a :class:`ShopLookupMiss` falls
+    through to the next candidate — an unconfigured integration, a transport error or
+    an API rejection is raised immediately, since it would fail identically for every
+    candidate and burn a full round-trip (or timeout) each time. A fully-missed
+    lookup raises with EVERY candidate's message, so the first (often the more
+    diagnostic) isn't lost behind the last.
+    """
+    misses: list[str] = []
+    for candidate in candidates:
+        try:
+            return fetch_one(candidate)
+        except ShopLookupMiss as exc:
+            misses.append(f"{candidate}: {exc}")
+    raise ShopLookupMiss("; ".join(misses) or "no candidate number to look up")
 
 
 # Note: parameter values are returned RAW here. Engineering cleaning ("10 kOhms"

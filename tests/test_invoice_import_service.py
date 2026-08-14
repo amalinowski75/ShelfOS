@@ -3,7 +3,7 @@
 Parsing is covered separately (``test_invoice_import_parsers``); here ``parse_invoice``
 is monkeypatched to return a crafted :class:`ParsedInvoice`, so the tests exercise the
 match/enrich/stage decisions without depending on a PDF. Shop enrichment is faked via
-``shops._BY_MPN``.
+``shops._BY_INDEX``.
 """
 
 from __future__ import annotations
@@ -46,10 +46,10 @@ def _patch_parse(monkeypatch, invoice: ParsedInvoice) -> None:
 
 def _fake_provider(monkeypatch, shop_key: str, product: ProductData) -> None:
     class _Fake:
-        def fetch_by_mpn(self, mpn, *, transport=None):  # type: ignore[no-untyped-def]
+        def fetch_by_index(self, candidates):  # type: ignore[no-untyped-def]
             return product
 
-    monkeypatch.setitem(shops._BY_MPN, shop_key, _Fake())
+    monkeypatch.setitem(shops._BY_INDEX, shop_key, _Fake())
 
 
 def _line(**kw) -> ParsedLine:  # type: ignore[no-untyped-def]
@@ -114,6 +114,105 @@ def test_missing_component_with_known_type_is_staged_ready_not_created(
     assert row.mpn == "NX3P1108UKZ"
     assert row.package == "XSON8"
     assert row.reason == ""  # ready — no review reason
+
+
+# --- enrichment is keyed by the shop's own index -----------------------------
+
+
+def test_enrich_offers_the_supplier_index_before_the_mpn(
+    session: Session, monkeypatch
+) -> None:
+    seen: list[list[str]] = []
+
+    class _Recorder:
+        def fetch_by_index(self, candidates):  # type: ignore[no-untyped-def]
+            seen.append(list(candidates))
+            return ProductData(mpn="NX3P1108UKZ", manufacturer="NXP")
+
+    monkeypatch.setitem(shops._BY_INDEX, "mouser", _Recorder())
+    _patch_parse(
+        monkeypatch,
+        _invoice(
+            _line(mpn="NX3P1108UKZ", supplier_part_number="771-NX3P1108UKZ"),
+            shop_key="mouser",
+        ),
+    )
+
+    iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
+
+    # The shop's own catalogue number leads; the parsed MPN is the fallback.
+    assert seen == [["771-NX3P1108UKZ", "NX3P1108UKZ"]]
+
+
+def test_enrich_deduplicates_identical_index_and_mpn(
+    session: Session, monkeypatch
+) -> None:
+    # TME's symbol often IS the MPN — it must be offered once, not twice.
+    seen: list[list[str]] = []
+
+    class _Recorder:
+        def fetch_by_index(self, candidates):  # type: ignore[no-untyped-def]
+            seen.append(list(candidates))
+            return ProductData(mpn="AO3400A")
+
+    monkeypatch.setitem(shops._BY_INDEX, "tme", _Recorder())
+    _patch_parse(
+        monkeypatch,
+        _invoice(
+            _line(mpn="AO3400A", supplier_part_number="AO3400A", manufacturer="AOS"),
+            shop_key="tme",
+        ),
+    )
+
+    iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
+    assert seen == [["AO3400A"]]
+
+
+def test_a_hard_enrich_failure_disables_the_api_for_the_rest_of_the_import(
+    session: Session, monkeypatch
+) -> None:
+    # An unconfigured/unreachable shop fails identically for every line — after the
+    # first hard failure the import must stop calling the API (each call can burn a
+    # full timeout inside one synchronous request).
+    calls: list[list[str]] = []
+
+    class _Hard:
+        def fetch_by_index(self, candidates):  # type: ignore[no-untyped-def]
+            calls.append(list(candidates))
+            raise ValidationError("could not reach Mouser")
+
+    monkeypatch.setitem(shops._BY_INDEX, "mouser", _Hard())
+    _patch_parse(
+        monkeypatch,
+        _invoice(
+            _line(mpn="A1"), _line(mpn="B2"), _line(mpn="C3"), shop_key="mouser"
+        ),
+    )
+
+    iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
+    assert len(calls) == 1  # lines 2 and 3 skipped the API entirely
+
+
+def test_a_plain_miss_keeps_trying_the_api_for_later_lines(
+    session: Session, monkeypatch
+) -> None:
+    from app.services.shops.base import ShopLookupMiss
+
+    calls: list[list[str]] = []
+
+    class _Miss:
+        def fetch_by_index(self, candidates):  # type: ignore[no-untyped-def]
+            calls.append(list(candidates))
+            raise ShopLookupMiss("no product found")
+
+    monkeypatch.setitem(shops._BY_INDEX, "mouser", _Miss())
+    _patch_parse(
+        monkeypatch,
+        _invoice(_line(mpn="A1"), _line(mpn="B2"), shop_key="mouser"),
+    )
+
+    iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
+    assert len(calls) == 2  # a per-part miss doesn't condemn the next part
 
 
 # --- case 3: no matching type → parked ---------------------------------------
@@ -473,10 +572,10 @@ def test_enrichment_failure_degrades_to_parsed_data(
     session: Session, monkeypatch
 ) -> None:
     class _Broken:
-        def fetch_by_mpn(self, mpn, *, transport=None):  # type: ignore[no-untyped-def]
+        def fetch_by_index(self, candidates):  # type: ignore[no-untyped-def]
             raise ValidationError("Mouser integration is not configured")
 
-    monkeypatch.setitem(shops._BY_MPN, "mouser", _Broken())
+    monkeypatch.setitem(shops._BY_INDEX, "mouser", _Broken())
     _patch_parse(
         monkeypatch,
         _invoice(_line(mpn="NX3P1108UKZ", description="a switch"), shop_key="mouser"),

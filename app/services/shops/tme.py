@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 import threading
 import time
+from collections.abc import Iterable
 from typing import Any
 from urllib.parse import unquote, urljoin, urlsplit
 
@@ -23,7 +25,7 @@ import httpx
 
 from app import config
 from app.services.errors import ValidationError
-from app.services.shops.base import ProductData, infer_category
+from app.services.shops.base import ProductData, ShopLookupMiss, infer_category
 
 _logger = logging.getLogger("shelfos")
 
@@ -172,13 +174,35 @@ def _symbol_candidates(url: str) -> list[str]:
     except ValueError:
         raise ValidationError("could not read a product symbol from the URL") from None
 
-    candidates: list[str] = []
-    for segment in segments[index + 1 :]:
-        symbol = unquote(segment).upper()
-        if _MIN_SYMBOL <= len(symbol) <= _MAX_SYMBOL and symbol not in candidates:
-            candidates.append(symbol)
+    candidates = _usable_symbols(unquote(s) for s in segments[index + 1 :])
     if not candidates:
         raise ValidationError("could not read a product symbol from the URL")
+    return candidates
+
+
+# A conservative sketch of what TME accepts in a symbol: letters, digits and the
+# separators seen in real symbols. One rejected symbol fails the WHOLE batched
+# request — losing the valid candidates in it — so anything outside this set (a
+# comma-suffixed MPN like "PESD5V0S1BA,115", prose, whitespace) is dropped up front.
+_SYMBOL_CHARS = re.compile(r"[A-Z0-9._/+-]+")
+
+
+def _usable_symbols(raw: Iterable[str]) -> list[str]:
+    """Normalise candidate symbols: strip/upper-case, filter, dedupe (order kept).
+
+    The ONE pipeline for both candidate sources (URL segments and invoice numbers),
+    so the URL and invoice paths can't drift apart on what counts as a symbol.
+    Filtered to TME's documented 2..18 characters and the accepted charset.
+    """
+    candidates: list[str] = []
+    for entry in raw:
+        symbol = entry.strip().upper()
+        usable = (
+            _MIN_SYMBOL <= len(symbol) <= _MAX_SYMBOL
+            and _SYMBOL_CHARS.fullmatch(symbol) is not None
+        )
+        if usable and symbol not in candidates:
+            candidates.append(symbol)
     return candidates
 
 
@@ -201,7 +225,9 @@ def _pick_product(payload: object, candidates: list[str]) -> dict[str, Any]:
     }
     matched = [c for c in candidates if c in found]
     if not matched:
-        raise ValidationError("no product found for this URL")
+        # Candidate-neutral: this raise serves both the URL path and the invoice
+        # path (which has no URL at all).
+        raise ShopLookupMiss("no product found for the offered symbols")
     for candidate in matched:
         mpns = found[candidate].get("manufacturer_symbols")
         if isinstance(mpns, list) and any(
@@ -310,9 +336,49 @@ class TmeProvider:
     def fetch(
         self, url: str, *, transport: httpx.BaseTransport | None = None
     ) -> ProductData:
+        # The URL is only a carrier for symbol candidates; the API call itself is
+        # URL-independent, so an invoice import reuses fetch_by_symbols directly.
         if not (config.TME_TOKEN and config.TME_SECRET):
             raise ValidationError("TME integration is not configured")
-        candidates = _symbol_candidates(url)
+        return self.fetch_by_symbols(_symbol_candidates(url), transport=transport)
+
+    def fetch_by_index(
+        self, candidates: list[str], *, transport: httpx.BaseTransport | None = None
+    ) -> ProductData:
+        """Uniform invoice-import entry: TME's index IS its symbol (one API call).
+
+        ``mpn_from_symbol=False``: on this path a parsed MPN from the invoice exists
+        and is accurate ("Symbol producenta:"), so when the API's answer carries no
+        manufacturer symbol the ProductData must NOT substitute TME's own catalogue
+        symbol for it — the orchestrator's ``product.mpn or line.mpn`` would then
+        overwrite the correct parsed MPN with a shop-internal number.
+        """
+        return self.fetch_by_symbols(
+            candidates, transport=transport, mpn_from_symbol=False
+        )
+
+    def fetch_by_symbols(
+        self,
+        symbols: list[str],
+        *,
+        transport: httpx.BaseTransport | None = None,
+        mpn_from_symbol: bool = True,
+    ) -> ProductData:
+        """Look a product up by candidate TME symbols directly (invoice import).
+
+        Candidates are normalised by ``_usable_symbols`` (the same pipeline as the
+        URL path) — one bad symbol fails the WHOLE request, not just its own entry.
+        The API silently omits candidates that don't exist, so offering several (a
+        possibly-truncated invoice article plus the MPN) and letting it pick is the
+        same oracle trick the URL path uses. ``mpn_from_symbol`` keeps the URL/scan
+        behaviour of falling back to TME's own symbol when the product carries no
+        manufacturer symbol; the invoice path disables it (see fetch_by_index).
+        """
+        if not (config.TME_TOKEN and config.TME_SECRET):
+            raise ValidationError("TME integration is not configured")
+        candidates = _usable_symbols(symbols)
+        if not candidates:
+            raise ValidationError("no usable TME symbol to look up")
         # A list of pairs, not a dict: the same key repeats once per candidate.
         lookup_params: list[tuple[str, str | int | float | bool | None]] = [
             ("symbols[]", c) for c in candidates
@@ -383,11 +449,13 @@ class TmeProvider:
         # Everything below is shop-controlled JSON, so no field's type is assumed.
         # A bare string where a list belongs would otherwise be iterated character
         # by character and yield an mpn of "M".
-        symbols = product.get("manufacturer_symbols")
-        # TME's own sample product has an empty list, so the fallback matters.
-        mpn = _text(product.get("symbol"))
-        if isinstance(symbols, list):
-            mpn = next((s for s in symbols if isinstance(s, str) and s), mpn)
+        mfr_symbols = product.get("manufacturer_symbols")
+        # TME's own sample product has an empty list, so the URL/scan path falls back
+        # to TME's own symbol (better than nothing there); the invoice path must not
+        # (mpn_from_symbol=False) — its parsed MPN is accurate and must win instead.
+        mpn = _text(product.get("symbol")) if mpn_from_symbol else None
+        if isinstance(mfr_symbols, list):
+            mpn = next((s for s in mfr_symbols if isinstance(s, str) and s), mpn)
         description = _text(product.get("description"))
         category = _nested_name(product.get("category"))
         return ProductData(

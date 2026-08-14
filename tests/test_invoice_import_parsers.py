@@ -66,6 +66,79 @@ def test_tme_description_drops_the_wrapped_article_fragment() -> None:
     assert line.description.startswith("Kondensator")
 
 
+def test_tme_sets_the_supplier_symbol_including_a_rewrapped_one() -> None:
+    invoice = TmeInvoiceParser().parse(_text("tme.txt"))
+    # The article column is TME's own symbol — the supplier index enrichment keys on.
+    line = _by_mpn(invoice, "0402WGF1004TCE")
+    assert line.supplier_part_number == "0402WGF1004TCE"
+    # A wrapped article ("GRM022R60J104KE1" + "5L") is glued back together, so the
+    # stored symbol is whole, not the truncated first row.
+    wrapped = _by_mpn(invoice, "GRM022R60J104KE15L")
+    assert wrapped.supplier_part_number == "GRM022R60J104KE15L"
+    # A charge line carries no symbol (its article cell is prose).
+    shipping = next(row for row in invoice.lines if row.kind == "shipping")
+    assert shipping.supplier_part_number is None
+
+
+def test_tme_drops_a_possibly_truncated_long_article() -> None:
+    # The article column wraps at ~16 chars. A >=16-char article that does NOT match
+    # the MPN can't be verified whole — it may be a truncated fragment of a house
+    # symbol, and a truncated string offered to the API could collide with an
+    # unrelated real symbol. It must be dropped, not persisted.
+    from app.services.invoice_import.tme import _ITEM, _line
+
+    row = _ITEM.match(
+        "1         HOUSESYMBOL16CHR                 10 SZT           1,00/SZT   "
+        "        23                             10,00"
+    )
+    assert row is not None
+    parsed = _line(
+        row,
+        [
+            "Kondensator:foo;bar",
+            "Producent: ACME; Symbol producenta: OTHER-MPN;",
+        ],
+    )
+    assert len("HOUSESYMBOL16CHR") == 16
+    assert parsed.mpn == "OTHER-MPN"
+    assert parsed.supplier_part_number is None  # unverifiable → dropped
+    # A short article (can't have wrapped) is kept even when it differs from the MPN.
+    short = _ITEM.match(
+        "2         SHORTSYM                 10 SZT           1,00/SZT           "
+        "23                             10,00"
+    )
+    assert short is not None
+    parsed_short = _line(
+        short, ["Producent: ACME; Symbol producenta: OTHER-MPN;"]
+    )
+    assert parsed_short.supplier_part_number == "SHORTSYM"
+
+
+def test_tme_does_not_fabricate_a_symbol_from_a_coincidental_suffix() -> None:
+    # The description's first token being a suffix of the MPN triggers the notes
+    # cleanup, but the symbol is re-glued ONLY when article + fragment equals the
+    # MPN exactly. Here it doesn't ("ABC123" + "23" != "XYZ23"), so the symbol must
+    # stay the raw article — a fabricated "ABC12323" could collide with some real,
+    # unrelated TME symbol and poison the API lookup.
+    from app.services.invoice_import.tme import _ITEM, _line
+
+    row = _ITEM.match(
+        "1         ABC123                 10 SZT           1,00/SZT           "
+        "23                             10,00"
+    )
+    assert row is not None
+    parsed = _line(
+        row,
+        [
+            "23 Kondensator:foo;bar",
+            "Producent: ACME; Symbol producenta: XYZ23;",
+            "Zgodność RoHS",
+        ],
+    )
+    assert parsed.mpn == "XYZ23"
+    assert parsed.supplier_part_number == "ABC123"  # NOT "ABC12323"
+
+
 def test_tme_per_pack_unit_price() -> None:
     invoice = TmeInvoiceParser().parse(_text("tme.txt"))
     # "2,01/1000 SZT" is a price per 1000 → 0.002010 per unit, quantity 10 000.
