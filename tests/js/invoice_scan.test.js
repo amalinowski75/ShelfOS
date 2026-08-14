@@ -112,6 +112,20 @@ describe("invoice_scan.js — bag scan", () => {
     expect(row.dataset.locationId).toBe("9");
   });
 
+  it("matches a staged row by the supplier part number (a TME bag's PN)", async () => {
+    // A TME QR yields the ordering symbol as `mpn`; on the invoice that value
+    // lives in supplier_part_number, not the manufacturer part number.
+    const { document } = loadPage(scanFixture(), SCRIPTS, {
+      fetchImpl: parseRouting({ mpn: "71-ABC123", distributor_pn: null }),
+    });
+
+    pressEnter(document, "invoice-scan-input", "QTY:5 PN:71-ABC123 https://tme.eu/x");
+    await tick();
+
+    expect(document.getElementById("putaway-dialog").showModal).toHaveBeenCalled();
+    expect(document.getElementById("putaway-part").textContent).toBe("ABC123");
+  });
+
   it("matches a regular line by the distributor part number", async () => {
     const { document, fetchMock } = loadPage(scanFixture(), SCRIPTS, {
       fetchImpl: parseRouting({ mpn: "NOPE-1", distributor_pn: "SPN-9" }),
