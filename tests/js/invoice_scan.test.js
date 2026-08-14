@@ -170,6 +170,17 @@ describe("invoice_scan.js — bag scan", () => {
     expect(document.activeElement).toBe(select);
   });
 
+  it("routes a focus-less scan to the location field while the dialog is open", () => {
+    // Alt-tabbing away and back drops focus on the body; the next scan must
+    // land in the dialog's location field, not the (covered) bag field.
+    const { document } = loadPage(scanFixture(), SCRIPTS);
+    document.getElementById("putaway-dialog").open = true; // as after showModal()
+    document.body.dispatchEvent(
+      new document.defaultView.KeyboardEvent("keydown", { key: "S", bubbles: true }),
+    );
+    expect(document.activeElement).toBe(document.getElementById("putaway-scan"));
+  });
+
   it("rejects a location label scanned into the bag field", async () => {
     const { document, fetchMock } = loadPage(scanFixture(), SCRIPTS);
     pressEnter(document, "invoice-scan-input", "SL5");

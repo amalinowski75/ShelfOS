@@ -186,12 +186,13 @@
     handleBagScan();
   });
 
-  // A scan fired with focus anywhere else on the page (the natural mistake —
-  // hands are on the scanner, not the mouse) must not be lost: route the first
-  // printable keystroke into the scan field; the rest of the payload follows it
-  // there. Real typing targets (inputs, selects, textareas) are left alone.
+  // A scan fired with focus anywhere else (the natural state — hands are on
+  // the scanner, not the mouse, and alt-tabbing away and back drops focus on
+  // the body) must not be lost: route the first printable keystroke into
+  // whichever scan field is live — the dialog's location field while it is
+  // open, the bag field otherwise. The rest of the payload follows it there.
+  // Real typing targets (inputs, selects, textareas) are left alone.
   document.addEventListener("keydown", (event) => {
-    if (dialog.open) return; // the dialog manages its own focus
     if (event.ctrlKey || event.altKey || event.metaKey) return;
     if (event.key.length !== 1) return; // printable characters only
     const t = event.target;
@@ -203,7 +204,8 @@
         t.tagName === "SELECT")
     )
       return;
-    scanInput.focus(); // the character lands in the field after the focus shift
+    // The character lands in the field after the focus shift.
+    (dialog.open ? locationInput : scanInput).focus();
   });
 
   locationInput.addEventListener("keydown", (event) => {
