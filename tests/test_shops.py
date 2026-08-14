@@ -9,7 +9,7 @@ import pytest
 from app import config
 from app.services import shops
 from app.services.errors import ValidationError
-from app.services.shops.base import infer_category
+from app.services.shops.base import ProductData, infer_category
 from app.services.shops.mouser import MouserProvider
 
 _MOUSER_OK = {
@@ -180,3 +180,43 @@ def test_import_code_rejects_a_malformed_url() -> None:
 )
 def test_infer_category(text: str, expected: str | None) -> None:
     assert infer_category(text) == expected
+
+
+# --- fetch_by_index (invoice-import enrichment) ------------------------------
+
+
+def test_fetch_by_index_first_hit_wins(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    provider = MouserProvider()
+    calls: list[str] = []
+    hit = ProductData(mpn="NX3P1108UKZ")
+
+    def fake(self, number, *, transport=None):  # type: ignore[no-untyped-def]
+        calls.append(number)
+        return hit
+
+    monkeypatch.setattr(MouserProvider, "fetch_by_mpn", fake)
+    assert provider.fetch_by_index(["771-NX3P1108UKZ", "NX3P1108UKZ"]) is hit
+    # The shop's own SKU is tried first and, succeeding, is the only call made.
+    assert calls == ["771-NX3P1108UKZ"]
+
+
+def test_fetch_by_index_falls_back_to_the_next_candidate(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    provider = MouserProvider()
+    hit = ProductData(mpn="NX3P1108UKZ")
+
+    def fake(self, number, *, transport=None):  # type: ignore[no-untyped-def]
+        if number == "771-BROKEN":
+            raise ValidationError("no product found")
+        return hit
+
+    monkeypatch.setattr(MouserProvider, "fetch_by_mpn", fake)
+    assert provider.fetch_by_index(["771-BROKEN", "NX3P1108UKZ"]) is hit
+
+
+def test_fetch_by_index_reraises_the_last_failure(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    def fake(self, number, *, transport=None):  # type: ignore[no-untyped-def]
+        raise ValidationError(f"no product found for {number}")
+
+    monkeypatch.setattr(MouserProvider, "fetch_by_mpn", fake)
+    with pytest.raises(ValidationError, match="MPN-2"):
+        MouserProvider().fetch_by_index(["SKU-1", "MPN-2"])

@@ -70,6 +70,24 @@ class MouserProvider:
             raise ValidationError("could not read a part number from the URL")
         return self.fetch_by_mpn(part_number, transport=transport)
 
+    def fetch_by_index(
+        self, candidates: list[str], *, transport: httpx.BaseTransport | None = None
+    ) -> ProductData:
+        """Try each candidate number in order; first hit wins (invoice import).
+
+        The invoice's own Mouser number ("771-NX3P1108UKZ") comes first — it is the
+        canonical key and ``mouserPartNumber`` matches Mouser's own SKU directly —
+        with the parsed MPN as the fallback. The last failure is re-raised so a
+        fully-failed lookup stays loud.
+        """
+        error: ValidationError | None = None
+        for candidate in candidates:
+            try:
+                return self.fetch_by_mpn(candidate, transport=transport)
+            except ValidationError as exc:
+                error = exc
+        raise error or ValidationError("no candidate number to look up")
+
     def fetch_by_mpn(
         self, mpn: str, *, transport: httpx.BaseTransport | None = None
     ) -> ProductData:

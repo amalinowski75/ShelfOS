@@ -310,9 +310,45 @@ class TmeProvider:
     def fetch(
         self, url: str, *, transport: httpx.BaseTransport | None = None
     ) -> ProductData:
+        # The URL is only a carrier for symbol candidates; the API call itself is
+        # URL-independent, so an invoice import reuses fetch_by_symbols directly.
         if not (config.TME_TOKEN and config.TME_SECRET):
             raise ValidationError("TME integration is not configured")
-        candidates = _symbol_candidates(url)
+        return self.fetch_by_symbols(_symbol_candidates(url), transport=transport)
+
+    def fetch_by_index(
+        self, candidates: list[str], *, transport: httpx.BaseTransport | None = None
+    ) -> ProductData:
+        """Uniform invoice-import entry: TME's index IS its symbol (one API call)."""
+        return self.fetch_by_symbols(candidates, transport=transport)
+
+    def fetch_by_symbols(
+        self,
+        symbols: list[str],
+        *,
+        transport: httpx.BaseTransport | None = None,
+    ) -> ProductData:
+        """Look a product up by candidate TME symbols directly (invoice import).
+
+        Candidates outside TME's documented 2..18-character range, or containing
+        whitespace, are dropped up front — one bad symbol fails the WHOLE request,
+        not just its own entry. The API silently omits candidates that don't exist,
+        so offering several (a possibly-truncated invoice article plus the MPN) and
+        letting it pick is the same oracle trick the URL path uses.
+        """
+        if not (config.TME_TOKEN and config.TME_SECRET):
+            raise ValidationError("TME integration is not configured")
+        candidates: list[str] = []
+        for raw in symbols:
+            symbol = raw.strip().upper()
+            usable = (
+                _MIN_SYMBOL <= len(symbol) <= _MAX_SYMBOL
+                and not any(ch.isspace() for ch in symbol)
+            )
+            if usable and symbol not in candidates:
+                candidates.append(symbol)
+        if not candidates:
+            raise ValidationError("no usable TME symbol to look up")
         # A list of pairs, not a dict: the same key repeats once per candidate.
         lookup_params: list[tuple[str, str | int | float | bool | None]] = [
             ("symbols[]", c) for c in candidates
@@ -383,11 +419,11 @@ class TmeProvider:
         # Everything below is shop-controlled JSON, so no field's type is assumed.
         # A bare string where a list belongs would otherwise be iterated character
         # by character and yield an mpn of "M".
-        symbols = product.get("manufacturer_symbols")
+        mfr_symbols = product.get("manufacturer_symbols")
         # TME's own sample product has an empty list, so the fallback matters.
         mpn = _text(product.get("symbol"))
-        if isinstance(symbols, list):
-            mpn = next((s for s in symbols if isinstance(s, str) and s), mpn)
+        if isinstance(mfr_symbols, list):
+            mpn = next((s for s in mfr_symbols if isinstance(s, str) and s), mpn)
         description = _text(product.get("description"))
         category = _nested_name(product.get("category"))
         return ProductData(

@@ -66,6 +66,20 @@ def test_tme_description_drops_the_wrapped_article_fragment() -> None:
     assert line.description.startswith("Kondensator")
 
 
+def test_tme_sets_the_supplier_symbol_including_a_rewrapped_one() -> None:
+    invoice = TmeInvoiceParser().parse(_text("tme.txt"))
+    # The article column is TME's own symbol — the supplier index enrichment keys on.
+    line = _by_mpn(invoice, "0402WGF1004TCE")
+    assert line.supplier_part_number == "0402WGF1004TCE"
+    # A wrapped article ("GRM022R60J104KE1" + "5L") is glued back together, so the
+    # stored symbol is whole, not the truncated first row.
+    wrapped = _by_mpn(invoice, "GRM022R60J104KE15L")
+    assert wrapped.supplier_part_number == "GRM022R60J104KE15L"
+    # A charge line carries no symbol (its article cell is prose).
+    shipping = next(row for row in invoice.lines if row.kind == "shipping")
+    assert shipping.supplier_part_number is None
+
+
 def test_tme_per_pack_unit_price() -> None:
     invoice = TmeInvoiceParser().parse(_text("tme.txt"))
     # "2,01/1000 SZT" is a price per 1000 → 0.002010 per unit, quantity 10 000.

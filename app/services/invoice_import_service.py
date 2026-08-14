@@ -201,15 +201,27 @@ def _resolve_line(
 
 
 def _enrich(shop_key: str, line: ParsedLine) -> ProductData:
-    """Best product data for a missing component: the shop API, else the parsed text."""
-    provider = shops._BY_MPN.get(shop_key)
-    if provider is not None and line.mpn:
+    """Best product data for a missing component: the shop API, else the parsed text.
+
+    Keyed by the shop's OWN catalogue index first (Mouser SKU, Digi-Key "…-ND"
+    number, TME symbol) — it sits in the strict item row itself, so it survives a
+    mangled description cell that would corrupt or lose the parsed MPN — with the
+    MPN as the second candidate. The canonical MPN/manufacturer then come from the
+    API's answer; the invoice text remains the fallback when no lookup succeeds.
+    """
+    provider = shops._BY_INDEX.get(shop_key)
+    candidates = [
+        key
+        for key in dict.fromkeys((line.supplier_part_number, line.mpn))
+        if key
+    ]
+    if provider is not None and candidates:
         try:
-            return provider.fetch_by_mpn(line.mpn)
+            return provider.fetch_by_index(candidates)
         except ValidationError as exc:
             # A missing API key or a lookup miss shouldn't sink the whole import —
             # degrade to what the invoice itself told us, and log why.
-            _logger.warning("invoice enrich failed for %s: %s", line.mpn, exc)
+            _logger.warning("invoice enrich failed for %s: %s", candidates, exc)
     return ProductData(
         mpn=line.mpn,
         manufacturer=line.manufacturer,

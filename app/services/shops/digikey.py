@@ -154,6 +154,23 @@ class DigiKeyProvider:
         # reuses fetch_by_mpn.
         return self.fetch_by_mpn(_part_number(url), transport=transport)
 
+    def fetch_by_index(
+        self, candidates: list[str], *, transport: httpx.BaseTransport | None = None
+    ) -> ProductData:
+        """Try each candidate number in order; first hit wins (invoice import).
+
+        The invoice's Digi-Key number ("…-ND") comes first — the product-details
+        endpoint's path parameter is Digi-Key's own part number, with MPN accepted as
+        a best-match fallback — then the parsed MPN. The last failure is re-raised.
+        """
+        error: ValidationError | None = None
+        for candidate in candidates:
+            try:
+                return self.fetch_by_mpn(candidate, transport=transport)
+            except ValidationError as exc:
+                error = exc
+        raise error or ValidationError("no candidate number to look up")
+
     def fetch_by_mpn(
         self, mpn: str, *, transport: httpx.BaseTransport | None = None
     ) -> ProductData:

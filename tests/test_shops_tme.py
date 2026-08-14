@@ -681,3 +681,45 @@ def test_eviction_does_not_discard_a_token_another_thread_just_cached() -> None:
     assert tme._token_cache[0] == "newer"
     tme._forget_token("newer")
     assert tme._token_cache is None
+
+
+# --- fetch_by_symbols (invoice-import enrichment) ----------------------------
+
+
+def test_fetch_by_symbols_looks_up_a_symbol_directly() -> None:
+    seen: dict[str, httpx.Request] = {}
+    product = TmeProvider().fetch_by_symbols(
+        ["MR04X1201FTL"], transport=_transport(seen=seen)
+    )
+    assert product.mpn == "MR04X1201FTL"
+    assert product.manufacturer == "Walsin Technology Corporation"
+    assert "symbols%5B%5D=MR04X1201FTL" in str(seen["/products"].url)
+
+
+def test_fetch_by_symbols_drops_unusable_candidates_and_uppercases() -> None:
+    # One over-long candidate would fail the WHOLE request server-side, and a
+    # whitespace-bearing one is prose, not a symbol — both are dropped up front;
+    # the lower-cased real symbol is offered upper-cased.
+    seen: dict[str, httpx.Request] = {}
+    TmeProvider().fetch_by_symbols(
+        ["kondensatory-mlcc-smd-oraz-inne", "Koszty wysyłki", "mr04x1201ftl"],
+        transport=_transport(seen=seen),
+    )
+    url = str(seen["/products"].url)
+    assert "symbols%5B%5D=MR04X1201FTL" in url
+    assert "kondensatory" not in url.lower()
+    assert "koszty" not in url.lower()
+
+
+def test_fetch_by_symbols_rejects_no_usable_candidates() -> None:
+    with pytest.raises(ValidationError, match="no usable TME symbol"):
+        TmeProvider().fetch_by_symbols(
+            ["a-way-too-long-symbol-name-here"], transport=_transport()
+        )
+
+
+def test_fetch_by_index_is_the_uniform_entry() -> None:
+    product = TmeProvider().fetch_by_index(
+        ["MR04X1201FTL"], transport=_transport()
+    )
+    assert product.mpn == "MR04X1201FTL"

@@ -27,15 +27,36 @@ class MpnProvider(Protocol):
     def fetch_by_mpn(self, mpn: str) -> ProductData: ...
 
 
+class IndexProvider(Protocol):
+    """A provider that can look a part up by the shop's own catalogue index.
+
+    ``candidates`` are tried best-first (the invoice's shop index, then the parsed
+    MPN); how they are consumed is the provider's business — Mouser/Digi-Key try
+    them one call at a time, TME offers them all in a single call.
+    """
+
+    def fetch_by_index(self, candidates: list[str]) -> ProductData: ...
+
+
 _mouser = MouserProvider()
 _digikey = DigiKeyProvider()
+_tme = TmeProvider()
 
-_PROVIDERS: list[ShopProvider] = [_mouser, _digikey, TmeProvider()]
+_PROVIDERS: list[ShopProvider] = [_mouser, _digikey, _tme]
 
 # Shops whose DataMatrix label we can look up by part number alone. TME is absent
 # on purpose: its API keys on TME's own symbol, not the MPN — and a scanned TME QR
 # carries a product URL anyway, so it takes the URL path.
 _BY_MPN: dict[str, MpnProvider] = {"mouser": _mouser, "digikey": _digikey}
+
+# Invoice-import enrichment, keyed by the shop's own catalogue index (the invoice
+# always carries it in the item row itself). ALL three shops — including TME, whose
+# symbol is exactly that index, giving it API enrichment the MPN path never could.
+_BY_INDEX: dict[str, IndexProvider] = {
+    "mouser": _mouser,
+    "digikey": _digikey,
+    "tme": _tme,
+}
 
 
 def resolve(url: str) -> ShopProvider | None:
