@@ -130,11 +130,70 @@ def test_a_configured_visible_separator_is_accepted(monkeypatch) -> None:  # typ
     assert parse_scan(_label(_MOUSER_FIELDS, "|")).mpn == "5277"
 
 
+def test_a_visible_separator_is_recognised_without_being_configured() -> None:
+    """The user's scanner prints "|" for GS and cannot be told otherwise.
+
+    Both payloads are the real ones it produced. Nothing is configured here —
+    the split is accepted because it yields data identifiers we know, which a
+    wrong separator would not produce.
+    """
+    mouser = parse_scan(
+        "[)>06|K37887399|14K004|1P5270|Q25|11K088130615|4LCN|1VKeystone"
+    )
+    assert (mouser.mpn, mouser.manufacturer, mouser.shop) == (
+        "5270",
+        "Keystone",
+        "mouser",
+    )
+    digikey = parse_scan(
+        "[)>06|PSAM11086-ND|1PESQ-106-33-T-S|30PSAM11086-ND|K|1K97898569|11ZPICK|20Z"
+    )
+    assert digikey.mpn == "ESQ-106-33-T-S"
+    assert digikey.distributor_pn == "SAM11086-ND"
+    assert digikey.shop == "digikey"
+
+
+def test_auto_detection_never_splits_on_a_character_inside_a_value() -> None:
+    """A hyphen "separator" would shred ESQ-106-33-T-S into convincing rubbish.
+
+    The candidate list holds only characters that cannot occur inside a part
+    number, so a label whose only repeated character is one of those is refused
+    rather than mis-read.
+    """
+    with pytest.raises(ValidationError) as exc:
+        parse_scan("[)>06-1PESQ-106-33-T-S-1VSamtec")
+    assert "separator" in str(exc.value)
+
+
+def test_a_candidate_separator_without_evidence_is_refused() -> None:
+    """Splitting cleanly is not enough — the fields must say something.
+
+    This is the branch that guards the whole feature: the candidate IS present,
+    so the loop runs, but no field carries an identifier we know. Accepting it
+    would hand every caller an all-None ScanResult that reads as a successful
+    parse.
+    """
+    with pytest.raises(ValidationError):
+        parse_scan("[)>06|junk|more|stuff")
+
+
+def test_the_separator_that_reads_the_most_fields_wins() -> None:
+    """A stray candidate inside a value must not beat the real separator.
+
+    Here "|" sits inside a value on a "^"-separated label. Splitting on "|"
+    finds one identifier; splitting on "^" finds two — and the MPN is only in
+    the second, so first-past-the-post would silently lose it.
+    """
+    scan = parse_scan("[)>06^1PAB|1VXX^1VSamtec")
+    assert scan.mpn == "AB|1VXX"  # the "|" belongs to the value, not to us
+    assert scan.manufacturer == "Samtec"
+
+
 def test_a_concatenated_datamatrix_is_refused_not_guessed() -> None:
     """No separators → the field boundaries are ambiguous, so we must not guess."""
     with pytest.raises(ValidationError) as exc:
         parse_scan("".join(_MOUSER_FIELDS).replace("\x1e", ""))
-    assert "separators" in str(exc.value)
+    assert "separator" in str(exc.value)
 
 
 def test_a_scanner_that_keeps_rs_but_drops_gs_is_refused_too() -> None:
@@ -146,7 +205,7 @@ def test_a_scanner_that_keeps_rs_but_drops_gs_is_refused_too() -> None:
     body = "".join(_MOUSER_FIELDS[1:])
     with pytest.raises(ValidationError) as exc:
         parse_scan(f"[)>\x1e06{body}")
-    assert "separators" in str(exc.value)
+    assert "separator" in str(exc.value)
 
 
 def test_a_label_with_no_identifier_we_read_does_not_blame_the_scanner() -> None:
