@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import pytest
 from app.models.enums import ContainerType, LocationType, StockReason
+from app.models.location import ComponentLocation
 from app.seed import ensure_system_user
 from app.services import component_service as cs
 from app.services import location_service as ls
 from app.services import stock_service as ss
 from app.services.errors import InsufficientStockError, NotFoundError, ValidationError
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 
 @pytest.fixture
@@ -295,9 +296,7 @@ def test_unknown_component_raises(session: Session) -> None:
         )
 
 
-def test_apply_correction_rejects_zero_delta(
-    fixture_ids, session: Session
-) -> None:
+def test_apply_correction_rejects_zero_delta(fixture_ids, session: Session) -> None:
     component_id, location_id, user_id = fixture_ids
     with pytest.raises(ValidationError):
         ss.apply_correction(
@@ -309,9 +308,7 @@ def test_apply_correction_rejects_zero_delta(
         )
 
 
-def test_verify_cache_consistency_detects_drift(
-    fixture_ids, session: Session
-) -> None:
+def test_verify_cache_consistency_detects_drift(fixture_ids, session: Session) -> None:
     """A cached quantity that no longer matches the movement ledger is caught."""
     from app.models.location import ComponentLocation
     from sqlmodel import select
@@ -401,3 +398,171 @@ def test_occupied_location_ids_reports_each_location_once(
             user_id=user_id,
         )
     assert ss.occupied_location_ids(session) == [location_id]
+
+
+# --- move_stock: relocating a bag between drawers (scan putaway) -------------
+
+
+def test_move_stock_relocates_everything_by_default(
+    fixture_ids, session: Session
+) -> None:
+    component_id, location_id, user_id = fixture_ids
+    shelf = ls.create_location(session, type=LocationType.SHELF, name="S1")
+    ss.add_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=100,
+        user_id=user_id,
+    )
+
+    out, into = ss.move_stock(
+        session,
+        component_id=component_id,
+        from_location_id=location_id,
+        to_location_id=shelf.id,
+        user_id=user_id,
+    )
+
+    assert ss.get_quantity(session, component_id, location_id) == 0
+    assert ss.get_quantity(session, component_id, shelf.id) == 100
+    assert ss.total_quantity(session, component_id) == 100  # nothing created/lost
+    # Both legs are recorded as a move, so history doesn't read as usage +
+    # purchase; the ledger still reconstructs each slot.
+    assert (out.reason, into.reason) == (StockReason.MOVE, StockReason.MOVE)
+    assert (out.delta_quantity, into.delta_quantity) == (-100, 100)
+    assert ss.quantity_from_movements(session, component_id, shelf.id) == 100
+    assert ss.quantity_from_movements(session, component_id, location_id) == 0
+
+
+def test_move_stock_can_move_part_of_a_slot(fixture_ids, session: Session) -> None:
+    component_id, location_id, user_id = fixture_ids
+    shelf = ls.create_location(session, type=LocationType.SHELF, name="S1")
+    ss.add_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=100,
+        user_id=user_id,
+    )
+
+    ss.move_stock(
+        session,
+        component_id=component_id,
+        from_location_id=location_id,
+        to_location_id=shelf.id,
+        quantity=30,
+        user_id=user_id,
+    )
+    assert ss.get_quantity(session, component_id, location_id) == 70
+    assert ss.get_quantity(session, component_id, shelf.id) == 30
+
+
+def test_move_stock_refuses_more_than_the_source_holds(
+    fixture_ids, session: Session
+) -> None:
+    component_id, location_id, user_id = fixture_ids
+    shelf = ls.create_location(session, type=LocationType.SHELF, name="S1")
+    ss.add_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=10,
+        user_id=user_id,
+    )
+    with pytest.raises(ValidationError, match="only 10 in stock"):
+        ss.move_stock(
+            session,
+            component_id=component_id,
+            from_location_id=location_id,
+            to_location_id=shelf.id,
+            quantity=11,
+            user_id=user_id,
+        )
+    assert ss.get_quantity(session, component_id, location_id) == 10  # untouched
+
+
+def test_move_stock_refuses_an_empty_source_and_a_no_op(
+    fixture_ids, session: Session
+) -> None:
+    component_id, location_id, user_id = fixture_ids
+    shelf = ls.create_location(session, type=LocationType.SHELF, name="S1")
+    with pytest.raises(ValidationError, match="no stock to move"):
+        ss.move_stock(
+            session,
+            component_id=component_id,
+            from_location_id=location_id,
+            to_location_id=shelf.id,
+            user_id=user_id,
+        )
+    with pytest.raises(ValidationError, match="same location"):
+        ss.move_stock(
+            session,
+            component_id=component_id,
+            from_location_id=location_id,
+            to_location_id=location_id,
+            user_id=user_id,
+        )
+
+
+def test_move_stock_leaves_nothing_behind_when_the_destination_is_unknown(
+    fixture_ids, session: Session
+) -> None:
+    """Both legs share one transaction: a bad destination must not empty the source."""
+    component_id, location_id, user_id = fixture_ids
+    ss.add_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=100,
+        user_id=user_id,
+    )
+    with pytest.raises(NotFoundError):
+        ss.move_stock(
+            session,
+            component_id=component_id,
+            from_location_id=location_id,
+            to_location_id=999_999,
+            user_id=user_id,
+        )
+    session.rollback()
+    assert ss.get_quantity(session, component_id, location_id) == 100
+    assert ss.quantity_from_movements(session, component_id, location_id) == 100
+
+
+def test_move_stock_carries_the_packaging_to_the_new_slot(
+    fixture_ids, session: Session
+) -> None:
+    """A reel put in another drawer is still a reel.
+
+    Without this the destination slot takes the LOOSE default while the emptied
+    source keeps the real value, so the two rows disagree about one bag.
+    """
+    component_id, location_id, user_id = fixture_ids
+    shelf = ls.create_location(session, type=LocationType.SHELF, name="S1")
+    ss.add_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=100,
+        user_id=user_id,
+        container_type=ContainerType.REEL,
+    )
+
+    ss.move_stock(
+        session,
+        component_id=component_id,
+        from_location_id=location_id,
+        to_location_id=shelf.id,
+        user_id=user_id,
+    )
+
+    slots = {
+        slot.location_id: slot
+        for slot in session.exec(
+            select(ComponentLocation).where(
+                ComponentLocation.component_id == component_id
+            )
+        ).all()
+    }
+    assert slots[shelf.id].container_type is ContainerType.REEL

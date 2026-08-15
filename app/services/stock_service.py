@@ -85,6 +85,67 @@ def remove_stock(
     )
 
 
+def move_stock(
+    session: Session,
+    *,
+    component_id: int,
+    from_location_id: int,
+    to_location_id: int,
+    quantity: int | None = None,
+    user_id: int,
+    note: str | None = None,
+) -> tuple[StockMovement, StockMovement]:
+    """Relocate stock from one location to another (scan putaway).
+
+    ``quantity=None`` moves everything the source holds — the scanning flow's
+    case, where a whole bag changes drawer. Both legs share one transaction, so
+    stock is never briefly missing from both places (or present in both).
+
+    Returns the (out, in) movements.
+    """
+    if from_location_id == to_location_id:
+        raise ValidationError("source and destination are the same location")
+    held = get_quantity(session, component_id, from_location_id)
+    moved = held if quantity is None else quantity
+    if moved <= 0:
+        raise ValidationError("there is no stock to move from that location")
+    if moved > held:
+        raise ValidationError(
+            f"only {held} in stock at the source location, cannot move {moved}"
+        )
+    # The packaging travels with the parts: a reel put in another drawer is still
+    # a reel. Without this the destination slot would be created with the LOOSE
+    # default while the emptied source row keeps the real value, so the two rows
+    # would disagree about the same bag.
+    source_slot = _find_component_location(session, component_id, from_location_id)
+    container_type = source_slot.container_type if source_slot else None
+    out = _record_movement(
+        session,
+        component_id=component_id,
+        location_id=from_location_id,
+        delta=-moved,
+        reason=StockReason.MOVE,
+        user_id=user_id,
+        note=note,
+        commit=False,
+    )
+    into = _record_movement(
+        session,
+        component_id=component_id,
+        location_id=to_location_id,
+        delta=moved,
+        reason=StockReason.MOVE,
+        user_id=user_id,
+        container_type=container_type,
+        note=note,
+        commit=False,
+    )
+    session.commit()
+    session.refresh(out)
+    session.refresh(into)
+    return out, into
+
+
 def apply_correction(
     session: Session,
     *,

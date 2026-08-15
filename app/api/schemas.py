@@ -179,6 +179,16 @@ class StockRemove(BaseModel):
     note: str | None = None
 
 
+class StockMove(BaseModel):
+    """Relocate stock; ``quantity: null`` moves everything the source holds."""
+
+    component_id: int
+    from_location_id: int
+    to_location_id: int
+    quantity: int | None = Field(default=None, gt=0)
+    note: str | None = None
+
+
 class StockCorrection(BaseModel):
     component_id: int
     location_id: int
@@ -327,6 +337,8 @@ class InvoiceImportLineUpdate(BaseModel):
     mounting_type: MountingType | None = None
     description: str | None = None
     parameters: list[ParameterValueSet] | None = None
+    # What the bag actually holds, when that differs from the invoice.
+    quantity: int | None = Field(default=None, gt=0)
 
 
 class AttachmentRead(BaseModel):
@@ -403,10 +415,41 @@ class ScanParseRead(BaseModel):
     manufacturer: str | None = None
     distributor_pn: str | None = None
     shop: str | None = None
+    manufacturer_pn: str | None = None
     url: str | None = None
     # Symbol candidates read out of ``url`` (TME puts its own symbol in the
     # path, at no fixed position) — the only identifiers a URL-only QR offers.
     url_symbols: list[str] = Field(default_factory=list)
+
+
+class ScannedStockRead(BaseModel):
+    """Where a scanned component currently sits, and how much of it."""
+
+    id: int
+    path: str
+    quantity: int
+
+
+class ScannedComponentRead(BaseModel):
+    """A component a scan resolved to, with the stock a relocation would move."""
+
+    id: int
+    mpn: str | None
+    manufacturer: str | None
+    description: str | None
+    locations: list[ScannedStockRead]
+
+
+class ComponentScanRead(BaseModel):
+    """What a scanned bag resolves to: the identifiers read, and the matches.
+
+    ``matches`` is empty when nothing in the inventory carries the part number,
+    and may hold several — MPN is not unique — which the caller must not guess
+    between.
+    """
+
+    identifiers: list[str]
+    matches: list[ScannedComponentRead]
 
 
 class ShopParameter(BaseModel):

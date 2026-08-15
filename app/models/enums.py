@@ -54,6 +54,10 @@ class StockReason(enum.StrEnum):
     CORRECTION = "correction"
     USAGE = "usage"
     DAMAGED_LOST = "damaged_lost"
+    # Relocation: the same units leaving one place and arriving in another, as a
+    # pair of movements. Distinct from a correction so a bag moved between
+    # drawers doesn't read as inventory appearing and disappearing.
+    MOVE = "move"
 
 
 class ComponentStatus(enum.StrEnum):

@@ -707,6 +707,22 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, .82); }
   color: var(--ok);
 }
 
+/* The scan panel's message line. Fixed to one line whatever it says (or when
+   it says nothing), so the panel's height is constant: the components table is
+   sized to the whole page, and a panel that grows re-lays out the table, which
+   rebuilds the row button a click is landing on. Long messages ellipsize here
+   and arrive in full as a toast. */
+.scan-status {
+  /* A fixed box, not min-height: an empty <p> and a line of text must measure
+     the SAME, so height and line-height are pinned together. */
+  height: 1.4rem;
+  line-height: 1.4rem;
+  margin: 6px 0 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* The scan field currently collecting keystrokes (scan putaway): an always-on
    ring, since it is armed by state, not by focus. */
 .scan-armed {

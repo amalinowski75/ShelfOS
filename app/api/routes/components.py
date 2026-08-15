@@ -6,14 +6,87 @@ from fastapi import APIRouter, Depends, status
 from sqlmodel import Session
 
 from app.api.deps import get_session
-from app.api.schemas import ComponentCreate, ComponentUpdate, ParameterValueSet
+from app.api.schemas import (
+    ComponentCreate,
+    ComponentScanRead,
+    ComponentUpdate,
+    ParameterValueSet,
+    ScannedComponentRead,
+    ScannedStockRead,
+    ShopLookup,
+)
 from app.auth.deps import current_user_id, require_admin
 from app.models.component import Component, ComponentParameter
 from app.models.user import User
 from app.services import component_service as cs
+from app.services import location_service as ls
+from app.services import stock_service as ss
 from app.services.errors import DuplicateComponentError
+from app.services.shops.scan import parse_scan
 
 router = APIRouter(prefix="/api/components", tags=["components"])
+
+
+def _scan_identifiers(code: str) -> list[str]:
+    """Part numbers a scanned label offers, best first, de-duplicated.
+
+    The manufacturer's own number leads because that is what a component
+    stores; a shop's symbol (TME's ``PN:``, a DataMatrix 30P) only matches when
+    the two happen to agree, and the URL's segments are the last resort of a
+    QR that states nothing outright.
+    """
+    scan = parse_scan(code)  # ValidationError → 422
+    candidates = [scan.manufacturer_pn, scan.mpn, scan.distributor_pn]
+    if not any(candidates):
+        from app.api.routes.shops import _url_symbols
+
+        candidates = list(_url_symbols(scan.url))
+    seen: dict[str, str] = {}
+    for value in candidates:
+        if value and value.casefold() not in seen:
+            seen[value.casefold()] = value
+    return list(seen.values())
+
+
+@router.post("/scan", response_model=ComponentScanRead)
+def scan_component(
+    payload: ShopLookup,
+    session: Session = Depends(get_session),
+) -> ComponentScanRead:
+    """Resolve a scanned bag label to the component(s) it identifies.
+
+    Used by scan putaway on the components page: one round trip gives the
+    match and the stock a relocation would move, so the client never has to
+    guess between identifiers or fetch the slots separately.
+    """
+    identifiers = _scan_identifiers(payload.code)
+    matches: list[ScannedComponentRead] = []
+    seen_ids: set[int] = set()
+    for identifier in identifiers:
+        for component in cs.find_components_by_mpn(session, identifier):
+            component_id = component.id
+            if component_id is None or component_id in seen_ids:
+                continue
+            seen_ids.add(component_id)
+            matches.append(
+                ScannedComponentRead(
+                    id=component_id,
+                    mpn=component.mpn,
+                    manufacturer=component.manufacturer,
+                    description=component.notes,
+                    locations=[
+                        ScannedStockRead(
+                            id=slot.location_id,
+                            path=ls.format_path(session, slot.location_id),
+                            quantity=slot.quantity,
+                        )
+                        for slot in ss.list_component_locations(session, component_id)
+                    ],
+                )
+            )
+        if matches:
+            break  # a better identifier already answered; don't widen the net
+    return ComponentScanRead(identifiers=identifiers, matches=matches)
 
 
 @router.post("", response_model=Component, status_code=status.HTTP_201_CREATED)

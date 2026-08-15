@@ -94,6 +94,19 @@ def test_digikey_datamatrix_reads_the_manufacturer_part_number() -> None:
     assert scan.shop == "digikey"
 
 
+def test_tme_qr_keeps_the_manufacturer_part_number_separately() -> None:
+    # A TME bag states both: PN: is TME's ordering symbol, MPN: the
+    # manufacturer's. Only the latter matches a stored component, and "\bPN:"
+    # must not match inside "MPN:" or the two would be confused.
+    scan = parse_scan(
+        "QTY:100 PN:T821-1-08-S1 MFR:AMPHENOL MPN:T821108A1S100CEU CoO:CN"
+    )
+    assert scan.mpn == "T821-1-08-S1"
+    assert scan.manufacturer_pn == "T821108A1S100CEU"
+    # A label with only the manufacturer's number still parses.
+    assert parse_scan("MPN:ABC-123").manufacturer_pn == "ABC-123"
+
+
 def test_datamatrix_keeps_the_distributor_part_number() -> None:
     # 30P is the shop's own SKU — the value an invoice line stores as its
     # supplier_part_number, so a scanned bag can be matched against a draft

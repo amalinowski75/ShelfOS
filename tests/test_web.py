@@ -790,19 +790,48 @@ def test_scan_putaway_panel_renders_on_a_draft_and_not_after_finalize(
     """
     invoice = _invoice_with_line(client)["invoice"]
     html = client.get(f"/invoices/{invoice['id']}").text  # type: ignore[index]
-    assert 'id="invoice-scan"' in html
+    assert 'id="scan-panel"' in html
     assert "data-locations=" in html
     assert '"path": "D1"' in html  # the id→path map, via | tojson
     assert 'id="putaway-dialog"' in html
     assert 'id="putaway-scan"' in html
     assert 'id="putaway-select"' in html
-    assert "invoice_scan.js" in html
+    assert "scan_putaway.js" in html and "invoice_scan.js" in html
     assert 'data-spn="SPN-9"' in html
     assert 'data-mpn="R-100"' in html
 
     client.post(f"/api/invoices/{invoice['id']}/finalize", json={})  # type: ignore[index]
     html = client.get(f"/invoices/{invoice['id']}").text  # type: ignore[index]
-    assert 'id="invoice-scan"' not in html
+    assert 'id="scan-panel"' not in html
+    assert 'id="putaway-dialog"' not in html
+
+
+def test_components_page_offers_scan_putaway_for_writers(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    """The same two-step scan surface as a draft invoice, on the main page.
+
+    It shares the markup with the invoice flow (one partial, one collector);
+    only the adapter differs, so what must be checked here is that the panel,
+    the dialog and both scripts are rendered — and gated on the writer role.
+    """
+    client.post("/api/locations", json={"type": "drawer", "name": "D1"})
+    html = client.get("/").text
+    assert 'id="scan-panel"' in html
+    assert 'id="putaway-dialog"' in html
+    assert '"path": "D1"' in html  # the id→path map the toast reads
+    assert "scan_putaway.js" in html and "components_scan.js" in html
+
+    # Read-only accounts get neither the panel nor the dialog.
+    client.post(
+        "/api/admin/users",
+        json={"username": "viewer2", "password": "password123", "role": "read-only"},
+    )
+    token = client.post(
+        "/api/auth/token", json={"username": "viewer2", "password": "password123"}
+    ).json()["access_token"]
+    html = anon_client.get("/", headers={"Authorization": f"Bearer {token}"}).text
+    assert 'id="scan-panel"' not in html
     assert 'id="putaway-dialog"' not in html
 
 

@@ -1,0 +1,69 @@
+{# Scan putaway, shared by the draft invoice and the components page.
+
+   Both surfaces are the same two steps — scan a thing, scan the shelf label it
+   goes on — so they share this markup and app/web/static/scan_putaway.js; only
+   what a scan resolves to, and what "save" means, differ (their adapters).
+
+   The ids are page-unique rather than prefixed: only one of these surfaces is
+   ever rendered at a time. #}
+
+{% macro putaway_panel(location_options, what, hint) %}
+<div class="card card-pad" id="scan-panel" style="margin-top: 20px"
+     data-locations='{{ location_options | tojson }}'>
+  <h2>Scan putaway</h2>
+  <p class="muted">{{ hint }}</p>
+  {# Readonly on purpose: scans are collected document-wide and only DISPLAYED
+     here, so focus (and password-manager overlays) can't eat them. #}
+  <input class="control" id="scan-input" readonly tabindex="-1"
+         placeholder="Scan {{ what }}&hellip;" />
+  {# Always in flow, one line tall, never hidden: this panel must not change
+     height. The components table is sized to fit the whole page (shared.js
+     frameTable), so a message appearing here re-lays out the table — and a row
+     button rebuilt between mousedown and mouseup swallows the click that was
+     already on its way. #}
+  <p id="scan-status" class="scan-status"></p>
+</div>
+{% endmacro %}
+
+{% macro putaway_dialog(location_options) %}
+<dialog id="putaway-dialog">
+  <article>
+    <header>
+      <strong>Set location</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <form id="putaway-form">
+      <p class="mono" id="putaway-part"></p>
+      <p class="muted small" id="putaway-desc"></p>
+      {# Prefilled with the usual answer (the whole bag / the invoiced count) so
+         the scan-only flow needs no typing, but editable for the times it isn't.
+         Enter leaves the field — it must not submit, and the collector has to
+         get the keyboard back for the location scan. #}
+      <div class="field">
+        <label for="putaway-qty">Quantity</label>
+        <input class="control mono" id="putaway-qty" type="number" min="1" step="1" />
+        <p class="muted small" id="putaway-qty-hint"></p>
+      </div>
+      <div class="field">
+        <label>Scan a location label</label>
+        <input class="control mono" id="putaway-scan" readonly tabindex="-1"
+               placeholder="SL&hellip;" />
+      </div>
+      <div class="field">
+        <label>&hellip;or pick it by hand</label>
+        <select class="control" id="putaway-select">
+          <option value="">&mdash; choose a location &mdash;</option>
+          {% for opt in location_options %}
+          <option value="{{ opt.id }}">{{ opt.path }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <p id="putaway-error" class="error" hidden></p>
+      <footer>
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+{% endmacro %}

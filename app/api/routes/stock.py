@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, status
 from sqlmodel import Session
 
 from app.api.deps import get_session
-from app.api.schemas import StockAdd, StockCorrection, StockRemove
+from app.api.schemas import StockAdd, StockCorrection, StockMove, StockRemove
 from app.auth.deps import current_user_id
 from app.models.stock import StockMovement
 from app.services import stock_service as ss
@@ -67,6 +67,29 @@ def correct_stock(
         user_id=user_id,
         note=payload.note,
     )
+
+
+@router.post("/move", response_model=StockMovement, status_code=status.HTTP_201_CREATED)
+def move_stock(
+    payload: StockMove,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> StockMovement:
+    """Relocate stock between locations; returns the arriving movement.
+
+    Omit ``quantity`` to move everything the source holds — what a scanned bag
+    changing drawers means.
+    """
+    _out, into = ss.move_stock(
+        session,
+        component_id=payload.component_id,
+        from_location_id=payload.from_location_id,
+        to_location_id=payload.to_location_id,
+        quantity=payload.quantity,
+        user_id=user_id,
+        note=payload.note,
+    )
+    return into
 
 
 @router.get("/quantity")
