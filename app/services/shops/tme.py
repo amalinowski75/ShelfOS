@@ -318,6 +318,20 @@ def _datasheet_url(payload: object) -> str | None:
     return _absolute(str(documents[0]["url"]))  # no Documentation — take what we have
 
 
+def url_symbols(url: str) -> list[str]:
+    """Symbol candidates in a product URL, or ``[]`` if it carries none.
+
+    The forgiving face of :func:`_symbol_candidates`, for callers that merely
+    want identifiers to match against data they already hold (a scanned QR
+    against a draft invoice's lines) rather than a product to look up — a URL
+    with no readable symbol is an empty answer there, not an error.
+    """
+    try:
+        return _symbol_candidates(url)
+    except ValidationError:
+        return []
+
+
 class TmeProvider:
     name = "TME"
 
@@ -389,6 +403,7 @@ class TmeProvider:
             with httpx.Client(
                 timeout=config.SHOP_API_TIMEOUT, transport=transport
             ) as client:
+
                 def _headers(token: str) -> dict[str, str]:
                     return {
                         "Authorization": f"Bearer {token}",

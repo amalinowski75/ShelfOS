@@ -52,6 +52,10 @@ class ScanResult:
     mpn: str | None = None
     manufacturer: str | None = None
     shop: str | None = None  # "mouser" | "digikey" | None
+    # The 30P field: the DISTRIBUTOR's own part number (Mouser No, Digi-Key
+    # "…-ND"). Matches an invoice line's supplier_part_number, which is exactly
+    # what a bag scanned against a draft invoice needs to be matched by.
+    distributor_pn: str | None = None
 
 
 def parse_scan(code: str) -> ScanResult:
@@ -133,4 +137,5 @@ def _parse_datamatrix(text: str) -> ScanResult:
         mpn=mpn or None,
         manufacturer=manufacturer or None,
         shop="digikey" if is_digikey else "mouser",
+        distributor_pn=distributor_pn or None,
     )
