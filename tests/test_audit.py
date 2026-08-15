@@ -7,9 +7,11 @@ from decimal import Decimal
 
 import pytest
 from app.models.enums import LocationType, ParameterDataType
+from app.models.invoice import InvoiceImportLine
 from app.seed import ensure_system_user
 from app.services import audit_service as audit
 from app.services import component_service as cs
+from app.services import invoice_import_service as imp
 from app.services import invoice_service as inv
 from app.services import location_service as ls
 from app.services import stock_service as ss
@@ -224,6 +226,197 @@ def test_finalization_is_audited(ctx, session: Session) -> None:
     # The prior gross is the real stored zero, not a placeholder ``None``.
     assert fields["total_gross"].old_value == "0.000000"
     assert fields["total_gross"].new_value == "15.000000"
+
+
+def _staged_line(session: Session, number: str = "INV-STAGE") -> tuple[int, int]:
+    """A draft invoice with one staged import row: (invoice id, row id)."""
+    invoice = inv.create_invoice(
+        session,
+        supplier="TME",
+        invoice_number=number,
+        invoice_date=date(2026, 7, 8),
+        currency="PLN",
+    )
+    staging = InvoiceImportLine(
+        invoice_id=invoice.id,
+        line_no=1,
+        mpn="R1",
+        manufacturer="Acme",
+        quantity=100,
+        unit_price=Decimal("1.00"),
+        shop_key="tme",
+        reason="",
+    )
+    session.add(staging)
+    session.commit()
+    session.refresh(staging)
+    return int(invoice.id), int(staging.id)
+
+
+def test_staged_line_review_edits_are_audited(ctx, session: Session) -> None:
+    # What scan putaway writes on a draft invoice: the bag's shelf and, when the
+    # count came up short, its quantity. The staged row is deleted at finalize,
+    # so the log is the only lasting record of who decided either.
+    invoice_id, staged_id = _staged_line(session)
+    imp.update_pending(
+        session,
+        invoice_id,
+        staged_id,
+        location_id=ctx["location_id"],
+        quantity=98,
+        user_id=ctx["user_id"],
+    )
+
+    # Keyed by (invoice, line_no) — a staging id is reused, see the id-reuse test.
+    entries = audit.list_entries(session, entity_type="invoice", entity_id=invoice_id)
+    fields = {e.field: e for e in entries}
+    assert set(fields) == {"import-line:1:location_id", "import-line:1:quantity"}
+    fields = {audit.import_line_of(k)[1]: v for k, v in fields.items()}
+    assert fields["location_id"].old_value is None
+    assert fields["location_id"].new_value == str(ctx["location_id"])
+    assert fields["quantity"].old_value == "100"
+    assert fields["quantity"].new_value == "98"
+    assert all(e.user_id == ctx["user_id"] for e in entries)
+
+
+def test_staged_line_no_op_edit_writes_nothing(ctx, session: Session) -> None:
+    invoice_id, staged_id = _staged_line(session)
+    # Re-sending the value it already holds is not a change — a scan rescanning
+    # the shelf a row already has.
+    imp.update_pending(
+        session, invoice_id, staged_id, quantity=100, user_id=ctx["user_id"]
+    )
+
+    assert (
+        audit.list_entries(session, entity_type="invoice", entity_id=invoice_id) == []
+    )
+
+
+def test_dismissed_staged_line_is_audited(ctx, session: Session) -> None:
+    invoice_id, staged_id = _staged_line(session)
+    imp.dismiss_pending(session, invoice_id, staged_id, user_id=ctx["user_id"])
+
+    entries = audit.list_entries(session, entity_type="invoice", entity_id=invoice_id)
+    assert len(entries) == 1
+    assert entries[0].field == "import-line:1:deleted"
+    assert entries[0].new_value == "true"
+
+
+def test_staged_line_histories_survive_a_reused_row_id(ctx, session: Session) -> None:
+    """Two invoices, one recycled staging id, two separate histories.
+
+    ``invoice_import_lines`` has a plain INTEGER PRIMARY KEY and finalize deletes
+    every staged row, so SQLite hands the next import the same ids back. Keyed by
+    the row id, the two invoices' edits would splice into one unreadable history.
+    """
+    first_invoice, first_row = _staged_line(session, number="FV-1")
+    imp.dismiss_pending(session, first_invoice, first_row, user_id=ctx["user_id"])
+    second_invoice, second_row = _staged_line(session, number="FV-2")
+    assert second_row == first_row  # the id really is handed out again
+    imp.update_pending(
+        session, second_invoice, second_row, quantity=7, user_id=ctx["user_id"]
+    )
+
+    first = audit.list_entries(session, entity_type="invoice", entity_id=first_invoice)
+    second = audit.list_entries(
+        session, entity_type="invoice", entity_id=second_invoice
+    )
+    assert [e.field for e in first] == ["import-line:1:deleted"]
+    assert [e.field for e in second] == ["import-line:1:quantity"]
+
+
+def test_location_rename_and_move_are_audited(ctx, session: Session) -> None:
+    parent = ls.create_location(session, type=LocationType.RACK, name="Rack A")
+    ls.update_location(
+        session,
+        ctx["location_id"],
+        name="D2",
+        parent_id=parent.id,
+        user_id=ctx["user_id"],
+    )
+
+    entries = audit.list_entries(
+        session, entity_type="location", entity_id=ctx["location_id"]
+    )
+    fields = {e.field: e for e in entries}
+    assert set(fields) == {"name", "parent_id"}  # the type never changed
+    assert fields["name"].old_value == "D1"
+    assert fields["name"].new_value == "D2"
+    assert fields["parent_id"].old_value is None
+    assert fields["parent_id"].new_value == str(parent.id)
+
+    # Setting the same values again changes nothing, so it logs nothing.
+    ls.update_location(
+        session,
+        ctx["location_id"],
+        name="D2",
+        parent_id=parent.id,
+        user_id=ctx["user_id"],
+    )
+    again = audit.list_entries(
+        session, entity_type="location", entity_id=ctx["location_id"]
+    )
+    assert len(again) == 2
+
+
+def test_location_deletion_audits_the_branch_and_the_lines_it_orphans(
+    ctx, session: Session
+) -> None:
+    # A recursive delete is the one that can quietly rewrite other pages: every
+    # invoice line pointing into the branch loses its destination.
+    rack = ls.create_location(session, type=LocationType.RACK, name="Rack A")
+    shelf = ls.create_location(
+        session, type=LocationType.SHELF, name="S1", parent_id=rack.id
+    )
+    staged_invoice, staged_row = _staged_line(session, number="FV-STAGED")
+    imp.update_pending(
+        session,
+        staged_invoice,
+        staged_row,
+        location_id=shelf.id,
+        user_id=ctx["user_id"],
+    )
+    invoice = inv.create_invoice(
+        session,
+        supplier="Mouser",
+        invoice_number="INV-DEL",
+        invoice_date=date(2026, 7, 8),
+        currency="EUR",
+    )
+    line = inv.add_line(
+        session,
+        invoice.id,
+        component_id=ctx["component_id"],
+        quantity=1,
+        unit_price=Decimal("1.00"),
+        location_id=shelf.id,
+    )
+
+    ls.delete_location(session, rack.id, recursive=True, user_id=ctx["user_id"])
+
+    deleted = {
+        e.entity_id: e
+        for e in audit.list_entries(session, entity_type="location")
+        if e.field == "deleted"
+    }
+    assert set(deleted) == {rack.id, shelf.id}
+    assert all(e.new_value == "true" for e in deleted.values())
+
+    cleared = audit.list_entries(session, entity_type="invoice_line", entity_id=line.id)
+    assert len(cleared) == 1
+    assert cleared[0].field == "location_id"
+    assert cleared[0].old_value == str(shelf.id)
+    assert cleared[0].new_value is None
+
+    # A staged import row points at a location too, and its clearing is the one
+    # that would otherwise make the invoice un-finalizable with no explanation.
+    staged_entries = audit.list_entries(
+        session, entity_type="invoice", entity_id=staged_invoice
+    )
+    latest = staged_entries[0]
+    assert latest.field == "import-line:1:location_id"
+    assert latest.old_value == str(shelf.id)
+    assert latest.new_value is None
 
 
 def test_audit_endpoint_is_admin_only(client: TestClient) -> None:

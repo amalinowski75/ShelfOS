@@ -144,3 +144,15 @@ def test_set_password_rejects_empty(session: Session) -> None:
     user = us.create_user(session, username="carol", password="pw")
     with pytest.raises(ValidationError):
         us.set_password(session, user.id, "")
+
+
+def test_names_by_id_maps_known_ids_and_skips_the_rest(session: Session) -> None:
+    """Attribution lookup for log rows: one query, missing ids simply absent."""
+    zoe = us.create_user(session, username="zoe", password="pw")
+    amy = us.create_user(session, username="amy", password="pw")
+
+    assert us.names_by_id(session, [zoe.id, amy.id]) == {zoe.id: "zoe", amy.id: "amy"}
+    # A row pointing at an account that is not there must not take the caller's
+    # whole result with it — the page still has a movement to render.
+    assert us.names_by_id(session, [zoe.id, 9999]) == {zoe.id: "zoe"}
+    assert us.names_by_id(session, []) == {}

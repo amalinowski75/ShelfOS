@@ -22,7 +22,7 @@ from app.models.component import ComponentType
 from app.models.enums import AttachmentKind, MountingType
 from app.models.invoice import Invoice, InvoiceImportLine, InvoiceLine
 from app.models.location import Location
-from app.services import attachment_service, invoice_service, shops
+from app.services import attachment_service, audit_service, invoice_service, shops
 from app.services import component_service as cs
 from app.services._common import require_entity
 from app.services.errors import (
@@ -39,6 +39,22 @@ _logger = logging.getLogger("shelfos")
 
 # Sentinel for "field not provided" in update_pending (so None can mean "clear it").
 _UNSET: Any = object()
+
+# Audit vocabulary for a staged row: the attributes worth a log entry, mapped to
+# the canonical field names. ``line_no``/``reason`` are left out — one identifies
+# the row (see audit_service.import_line_field), the other is derived from
+# ``type_id`` and would double every type change.
+_AUDITED_FIELDS = {
+    "type_id": audit_service.FIELD_TYPE_ID,
+    "location_id": audit_service.FIELD_LOCATION_ID,
+    "manufacturer": audit_service.FIELD_MANUFACTURER,
+    "mpn": audit_service.FIELD_MPN,
+    "package": audit_service.FIELD_PACKAGE,
+    "mounting_type": audit_service.FIELD_MOUNTING_TYPE,
+    "description": audit_service.FIELD_DESCRIPTION,
+    "quantity": audit_service.FIELD_QUANTITY,
+    "parameters": audit_service.FIELD_PARAMETERS,
+}
 
 _REASON_NO_TYPE = "no matching type — create or pick one"
 _REASON_AMBIGUOUS = "several components share this MPN — pick one"
@@ -364,10 +380,32 @@ def _require_draft_invoice(session: Session, invoice_id: int) -> None:
         raise InvoiceFinalizedError(f"invoice {invoice_id} is finalized (read-only)")
 
 
-def dismiss_pending(session: Session, invoice_id: int, import_line_id: int) -> None:
-    """Drop a pending line the user chose not to add."""
+def dismiss_pending(
+    session: Session,
+    invoice_id: int,
+    import_line_id: int,
+    *,
+    user_id: int,
+) -> None:
+    """Drop a pending line the user chose not to add.
+
+    Audited against the invoice (§19): the row leaves no other trace, so without
+    the log a line that arrived on the PDF and never became stock is
+    indistinguishable from one that was never imported.
+    """
     _require_draft_invoice(session, invoice_id)
     staging = get_pending(session, invoice_id, import_line_id)
+    audit_service.record_change(
+        session,
+        entity_type="invoice",
+        entity_id=invoice_id,
+        field=audit_service.import_line_field(
+            staging.line_no, audit_service.FIELD_DELETED
+        ),
+        old_value=False,
+        new_value=True,
+        user_id=user_id,
+    )
     session.delete(staging)
     session.commit()
 
@@ -386,6 +424,7 @@ def update_pending(
     description: str | None = _UNSET,
     parameters: list[dict[str, Any]] | None = _UNSET,
     quantity: int = _UNSET,
+    user_id: int,
 ) -> InvoiceImportLine:
     """Edit a staged line during review (only the fields provided are changed).
 
@@ -393,9 +432,19 @@ def update_pending(
     ``None`` sends it back to needs-review. Changing the type also clears ``parameters``
     (they are the old type's). ``location_id`` is required before finalize. The identity
     fields + parameters seed the component created at finalize. Nothing is created here.
+
+    Each field that actually changes is audited (§19), against the invoice rather
+    than the staging row (see ``audit_service.import_line_field``). Review is
+    where a bag's shelf and its recount are decided — the scan-putaway flow
+    writes nothing else — and a staged row is deleted at finalize, so without the
+    log those decisions leave no record of who made them.
     """
     _require_draft_invoice(session, invoice_id)
     staging = get_pending(session, invoice_id, import_line_id)
+    # Snapshot before the edits and diff after, rather than auditing at each
+    # branch: it keeps one comparison rule for nine fields, and it catches the
+    # parameters a type change clears as the change it is.
+    before = {attr: getattr(staging, attr) for attr in _AUDITED_FIELDS}
     if type_id is not _UNSET:
         if type_id is not None:
             require_entity(session, ComponentType, type_id, "component type")
@@ -431,6 +480,19 @@ def update_pending(
         if quantity <= 0:
             raise ValidationError("quantity must be positive")
         staging.quantity = quantity
+    for attr, field in _AUDITED_FIELDS.items():
+        old_value = before[attr]
+        new_value = getattr(staging, attr)
+        if old_value != new_value:
+            audit_service.record_change(
+                session,
+                entity_type="invoice",
+                entity_id=invoice_id,
+                field=audit_service.import_line_field(staging.line_no, field),
+                old_value=old_value,
+                new_value=new_value,
+                user_id=user_id,
+            )
     session.add(staging)
     session.commit()
     session.refresh(staging)

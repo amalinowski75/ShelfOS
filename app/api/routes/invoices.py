@@ -202,13 +202,16 @@ def update_import_line(
     import_line_id: int,
     payload: InvoiceImportLineUpdate,
     session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
 ) -> InvoiceImportLineRead:
     """Review-edit a staged import line — type/location/identity/parameters (writers).
 
     Only the fields present in the request are changed (``type_id: null`` clears it).
     """
     changes = payload.model_dump(exclude_unset=True)
-    staging = imp.update_pending(session, invoice_id, import_line_id, **changes)
+    staging = imp.update_pending(
+        session, invoice_id, import_line_id, **changes, user_id=user_id
+    )
     return InvoiceImportLineRead.model_validate(staging)
 
 
@@ -220,9 +223,10 @@ def dismiss_import_line(
     invoice_id: int,
     import_line_id: int,
     session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
 ) -> None:
     """Drop a parked PDF-import line the user chose not to add (writers)."""
-    imp.dismiss_pending(session, invoice_id, import_line_id)
+    imp.dismiss_pending(session, invoice_id, import_line_id, user_id=user_id)
 
 
 @router.put("/{invoice_id}/lines/{line_id}", response_model=InvoiceLine)

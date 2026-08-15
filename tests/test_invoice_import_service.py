@@ -156,7 +156,7 @@ def test_enrichment_fills_parameters_and_mounting_on_the_staged_row(
     # Finalize materialises a component carrying those values + mounting.
     iis.update_pending(
         session, result.invoice_id, row.id, location_id=_make_location(session)
-    )
+    , user_id=1)
     invoice_service.finalize_invoice(session, result.invoice_id, user_id=1)
     component = cs.list_components(session)[0]
     assert component.mounting_type is MountingType.SMT
@@ -197,7 +197,9 @@ def test_changing_the_type_clears_parameters_but_keeps_mounting(
 
     # Switching type drops the old type's parameters, but mounting is type-independent
     # and must survive — it was never re-derived on a type change.
-    updated = iis.update_pending(session, result.invoice_id, row.id, type_id=other.id)
+    updated = iis.update_pending(
+        session, result.invoice_id, row.id, type_id=other.id, user_id=1
+    )
     assert updated.type_id == other.id
     assert updated.parameters == []
     assert updated.mounting_type is MountingType.SMT
@@ -226,7 +228,7 @@ def test_update_pending_ignores_a_null_mounting_type(
     # not write None into the NOT-NULL column and break template rendering.
     updated = iis.update_pending(
         session, result.invoice_id, row.id, mounting_type=None
-    )
+    , user_id=1)
     assert updated.mounting_type is MountingType.SMT
 
 
@@ -403,7 +405,7 @@ def _import_one_ready(session, monkeypatch, *, mpn="R1", manufacturer="Acme"):
 def test_finalize_materializes_a_ready_row(session: Session, monkeypatch) -> None:
     invoice_id, row = _import_one_ready(session, monkeypatch)
     location = _make_location(session)
-    iis.update_pending(session, invoice_id, row.id, location_id=location)
+    iis.update_pending(session, invoice_id, row.id, location_id=location, user_id=1)
     assert cs.list_components(session) == []  # still nothing created
 
     invoice_service.finalize_invoice(session, invoice_id, user_id=1)
@@ -433,7 +435,7 @@ def test_finalize_blocked_by_a_needs_review_row(
         invoice_service.finalize_invoice(session, result.invoice_id, user_id=1)
 
     # Dismissing it (and it was the only line) then leaves nothing to finalize.
-    iis.dismiss_pending(session, result.invoice_id, row.id)
+    iis.dismiss_pending(session, result.invoice_id, row.id, user_id=1)
     with pytest.raises(ValidationError, match="no lines"):
         invoice_service.finalize_invoice(session, result.invoice_id, user_id=1)
 
@@ -457,7 +459,7 @@ def test_finalize_does_not_partially_materialize(
     ready = next(p for p in pending if p.type_id is not None)
     iis.update_pending(
         session, result.invoice_id, ready.id, location_id=_make_location(session)
-    )
+    , user_id=1)
 
     with pytest.raises(ValidationError, match="need a type"):
         invoice_service.finalize_invoice(session, result.invoice_id, user_id=1)
@@ -487,7 +489,7 @@ def test_finalize_blocked_by_a_case1_line_without_location_creates_nothing(
     ready = next(p for p in iis.list_pending(session, result.invoice_id) if p.type_id)
     iis.update_pending(
         session, result.invoice_id, ready.id, location_id=_make_location(session)
-    )
+    , user_id=1)
 
     with pytest.raises(ValidationError, match="location"):
         invoice_service.finalize_invoice(session, result.invoice_id, user_id=1)
@@ -514,7 +516,9 @@ def test_finalize_rolls_back_the_whole_unit_on_a_mid_materialize_failure(
     )
     result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
     for row in iis.list_pending(session, result.invoice_id):
-        iis.update_pending(session, result.invoice_id, row.id, location_id=location)
+        iis.update_pending(
+            session, result.invoice_id, row.id, location_id=location, user_id=1
+        )
 
     real_create = cs.create_component_with_values
     calls = {"n": 0}
@@ -572,7 +576,7 @@ def test_finalize_applies_parameters_entered_during_review(
         row.id,
         location_id=_make_location(session),
         parameters=[{"parameter_definition_id": resistance.id, "value": "4k7"}],
-    )
+     user_id=1)
 
     invoice_service.finalize_invoice(session, result.invoice_id, user_id=1)
 
@@ -604,10 +608,10 @@ def test_changing_the_type_clears_reviewed_parameters(
     iis.update_pending(
         session, result.invoice_id, row.id,
         parameters=[{"parameter_definition_id": resistance.id, "value": "1k"}],
-    )
+     user_id=1)
     assert iis.get_pending(session, result.invoice_id, row.id).parameters
 
-    iis.update_pending(session, result.invoice_id, row.id, type_id=other.id)
+    iis.update_pending(session, result.invoice_id, row.id, type_id=other.id, user_id=1)
     assert iis.get_pending(session, result.invoice_id, row.id).parameters == []
 
 
@@ -622,7 +626,7 @@ def test_finalize_reuses_an_existing_matching_component(
     ctype = cs.list_types(session)[0]
     existing = cs.create_component(session, ctype.id, manufacturer="Acme", mpn="R1")
     location = _make_location(session)
-    iis.update_pending(session, invoice_id, row.id, location_id=location)
+    iis.update_pending(session, invoice_id, row.id, location_id=location, user_id=1)
 
     invoice_service.finalize_invoice(session, invoice_id, user_id=1)
 
@@ -811,9 +815,9 @@ def test_update_and_dismiss_pending_refuse_a_finalized_invoice(
 
     # A finalized invoice is read-only — a stray review PATCH/dismiss is refused.
     with pytest.raises(InvoiceFinalizedError):
-        iis.dismiss_pending(session, invoice.id, 999)
+        iis.dismiss_pending(session, invoice.id, 999, user_id=1)
     with pytest.raises(InvoiceFinalizedError):
-        iis.update_pending(session, invoice.id, 999, location_id=location)
+        iis.update_pending(session, invoice.id, 999, location_id=location, user_id=1)
 
 
 # --- delete a draft clears its import artefacts -------------------------------
@@ -855,7 +859,7 @@ def test_dismiss_drops_a_pending_line(session: Session, monkeypatch) -> None:
     result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
     staged = iis.list_pending(session, result.invoice_id)[0]
 
-    iis.dismiss_pending(session, result.invoice_id, staged.id)
+    iis.dismiss_pending(session, result.invoice_id, staged.id, user_id=1)
     assert iis.list_pending(session, result.invoice_id) == []
 
 
@@ -868,4 +872,4 @@ def test_dismiss_rejects_a_foreign_invoice_id(session: Session, monkeypatch) -> 
     staged = iis.list_pending(session, result.invoice_id)[0]
     # The staging row exists, but not under this (wrong) invoice id.
     with pytest.raises(NotFoundError):
-        iis.dismiss_pending(session, result.invoice_id + 999, staged.id)
+        iis.dismiss_pending(session, result.invoice_id + 999, staged.id, user_id=1)

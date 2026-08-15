@@ -604,6 +604,10 @@ def component_detail(
     ]
 
     movements = ss.list_movements(session, component_id)
+    # Who moved the stock. The ledger stores the id; the page needs the name, and
+    # one lookup for the whole table beats a join that would have to be threaded
+    # through the service's return type for this one caller.
+    movement_authors = us.names_by_id(session, (m.user_id for m in movements))
 
     # For the Add/Take stock dialog and the "New location" it can reach inline.
     # Only a writer gets that dialog, so only a writer pays for the queries.
@@ -620,6 +624,7 @@ def component_detail(
             "locations": locations,
             "history": history,
             "movements": movements,
+            "movement_authors": movement_authors,
             "location_tree": tree,
             "location_types": [lt.value for lt in LocationType] if can_write else [],
             "location_options": _location_options(tree) if can_write else [],

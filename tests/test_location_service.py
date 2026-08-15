@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -9,6 +10,7 @@ from app.models.enums import LocationType, StockReason
 from app.models.invoice import InvoiceLine
 from app.models.location import ComponentLocation
 from app.models.stock import StockMovement
+from app.services import component_service as cs
 from app.services import location_service as ls
 from app.services.errors import NotFoundError, ValidationError
 from sqlmodel import Session, select
@@ -216,7 +218,7 @@ def test_update_location_renames_retypes_and_moves(session: Session) -> None:
 
     updated = ls.update_location(
         session, rack.id, name="Shelf X", type=LocationType.SHELF, parent_id=bench.id
-    )
+    , user_id=1)
     assert (updated.name, updated.type, updated.parent_id) == (
         "Shelf X",
         LocationType.SHELF,
@@ -225,7 +227,7 @@ def test_update_location_renames_retypes_and_moves(session: Session) -> None:
     assert ls.format_path(session, rack.id) == "Bench / Shelf X"
 
     # An omitted field stays untouched; parent_id=None moves to the top level.
-    moved = ls.update_location(session, rack.id, parent_id=None)
+    moved = ls.update_location(session, rack.id, parent_id=None, user_id=1)
     assert moved.name == "Shelf X"
     assert moved.parent_id is None
 
@@ -233,13 +235,13 @@ def test_update_location_renames_retypes_and_moves(session: Session) -> None:
 def test_update_location_rejects_empty_name_and_unknowns(session: Session) -> None:
     lab = ls.create_location(session, type=LocationType.ROOM, name="Lab")
     with pytest.raises(ValidationError):
-        ls.update_location(session, lab.id, name="  ")
+        ls.update_location(session, lab.id, name="  ", user_id=1)
     with pytest.raises(ValidationError):
-        ls.update_location(session, lab.id, name=None)
+        ls.update_location(session, lab.id, name=None, user_id=1)
     with pytest.raises(NotFoundError):
-        ls.update_location(session, 999, name="X")
+        ls.update_location(session, 999, name="X", user_id=1)
     with pytest.raises(NotFoundError):
-        ls.update_location(session, lab.id, parent_id=999)
+        ls.update_location(session, lab.id, parent_id=999, user_id=1)
 
 
 def test_update_location_rejects_cycles(session: Session) -> None:
@@ -252,9 +254,9 @@ def test_update_location_rejects_cycles(session: Session) -> None:
     )
 
     with pytest.raises(ValidationError, match="under itself"):
-        ls.update_location(session, lab.id, parent_id=lab.id)
+        ls.update_location(session, lab.id, parent_id=lab.id, user_id=1)
     with pytest.raises(ValidationError, match="under itself"):
-        ls.update_location(session, lab.id, parent_id=shelf.id)
+        ls.update_location(session, lab.id, parent_id=shelf.id, user_id=1)
     # The tree is untouched after the rejected moves.
     assert ls.format_path(session, shelf.id) == "Lab / Rack A / Shelf 1"
 
@@ -274,9 +276,9 @@ def test_update_location_move_respects_depth_cap(session: Session) -> None:
     top = ls.create_location(session, type=LocationType.BOX, name="top")
     ls.create_location(session, type=LocationType.BOX, name="kid", parent_id=top.id)
     with pytest.raises(ValidationError, match="deeper than"):
-        ls.update_location(session, top.id, parent_id=chain[-1])
+        ls.update_location(session, top.id, parent_id=chain[-1], user_id=1)
     # …but fits one level higher (depth 30 + height 2 = 32).
-    ls.update_location(session, top.id, parent_id=chain[-2])
+    ls.update_location(session, top.id, parent_id=chain[-2], user_id=1)
     assert ls.get_path(session, top.id)[-2].id == chain[-2]
 
 
@@ -286,15 +288,15 @@ def test_delete_location_blocked_by_children_and_stock(session: Session) -> None
         session, type=LocationType.DRAWER, name="D1", parent_id=lab.id
     )
     with pytest.raises(ValidationError, match="child locations"):
-        ls.delete_location(session, lab.id)
+        ls.delete_location(session, lab.id, user_id=1)
 
     session.add(ComponentLocation(component_id=1, location_id=drawer.id, quantity=5))
     session.commit()
     with pytest.raises(ValidationError, match="holds stock"):
-        ls.delete_location(session, drawer.id)
+        ls.delete_location(session, drawer.id, user_id=1)
 
     with pytest.raises(NotFoundError):
-        ls.delete_location(session, 999)
+        ls.delete_location(session, 999, user_id=1)
 
 
 def test_delete_location_recursive_takes_the_whole_branch(session: Session) -> None:
@@ -320,7 +322,7 @@ def test_delete_location_recursive_takes_the_whole_branch(session: Session) -> N
     )
     session.commit()
 
-    assert ls.delete_location(session, lab.id, recursive=True) == 3
+    assert ls.delete_location(session, lab.id, recursive=True, user_id=1) == 3
     assert [loc.name for loc in ls.list_all(session)] == ["Bench"]
     assert session.exec(select(ComponentLocation)).all() == []
     assert session.exec(select(InvoiceLine)).one().location_id is None
@@ -342,8 +344,50 @@ def test_delete_location_recursive_blocked_by_stock_anywhere(
 
     # The error names WHERE the stock sits, and nothing was deleted.
     with pytest.raises(ValidationError, match="Lab / Rack A / D1"):
-        ls.delete_location(session, lab.id, recursive=True)
+        ls.delete_location(session, lab.id, recursive=True, user_id=1)
     assert len(ls.list_all(session)) == 3
+
+
+def test_delete_location_detaches_a_staged_import_line(session: Session) -> None:
+    """A staged row points at a location too, and finalize re-checks that id.
+
+    Left dangling, the invoice became un-finalizable with a bare "location N not
+    found" — an error naming nothing the user could act on. Cleared, finalize
+    asks for the location it is actually missing.
+    """
+    from app.models.invoice import InvoiceImportLine
+    from app.services import invoice_service as inv
+
+    drawer = ls.create_location(session, type=LocationType.DRAWER, name="D1")
+    invoice = inv.create_invoice(
+        session,
+        supplier="TME",
+        invoice_number="FV-1",
+        invoice_date=date(2026, 7, 8),
+        currency="PLN",
+    )
+    ctype = cs.create_type(session, "resistor")
+    session.add(
+        InvoiceImportLine(
+            invoice_id=invoice.id,
+            line_no=1,
+            mpn="R1",
+            quantity=1,
+            unit_price=Decimal("1.00"),
+            shop_key="tme",
+            type_id=ctype.id,
+            location_id=drawer.id,
+            reason="",
+        )
+    )
+    session.commit()
+
+    ls.delete_location(session, drawer.id, user_id=1)
+
+    staged = session.exec(select(InvoiceImportLine)).one()
+    assert staged.location_id is None
+    with pytest.raises(ValidationError, match="must have a location"):
+        inv.finalize_invoice(session, invoice.id, user_id=1)
 
 
 def test_delete_location_cleans_cache_and_invoice_lines(session: Session) -> None:
@@ -372,7 +416,7 @@ def test_delete_location_cleans_cache_and_invoice_lines(session: Session) -> Non
     )
     session.commit()
 
-    ls.delete_location(session, drawer.id)
+    ls.delete_location(session, drawer.id, user_id=1)
 
     assert ls.list_all(session) == []
     assert session.exec(select(ComponentLocation)).all() == []
