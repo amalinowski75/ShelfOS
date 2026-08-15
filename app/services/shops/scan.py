@@ -33,6 +33,9 @@ from app.services.errors import ValidationError
 # resolve perfectly well.
 _URL = re.compile(r"https?://[^\s\x00-\x20]+", re.IGNORECASE)
 _TME_PN = re.compile(r"\bPN:([^\s\x00-\x20]+)", re.IGNORECASE)
+# The manufacturer's own part number, printed beside the shop's. ``\b`` before
+# "PN:" does not match inside "MPN:", so the two tokens never collide.
+_TME_MPN = re.compile(r"\bMPN:([^\s\x00-\x20]+)", re.IGNORECASE)
 _TRAILING = ".,;:!?'\"()[]{}<>"
 # The Digi-Key-only Z data identifiers — a strong signal it's a Digi-Key label.
 _DIGIKEY_Z = ("11Z", "12Z", "13Z", "20Z")
@@ -56,6 +59,11 @@ class ScanResult:
     # "…-ND"). Matches an invoice line's supplier_part_number, which is exactly
     # what a bag scanned against a draft invoice needs to be matched by.
     distributor_pn: str | None = None
+    # The MANUFACTURER's part number where the label states it separately (a TME
+    # QR's ``MPN:`` token; on a DataMatrix the 1P field already lands in ``mpn``).
+    # This is what matches a stored component, whose ``mpn`` is the
+    # manufacturer's — a TME bag's ``PN:`` is TME's own symbol and often differs.
+    manufacturer_pn: str | None = None
 
 
 def parse_scan(code: str) -> ScanResult:
@@ -70,10 +78,14 @@ def parse_scan(code: str) -> ScanResult:
     # fallback), or the user pasted a shop URL directly.
     url_match = _URL.search(text)
     pn_match = _TME_PN.search(text)
-    if url_match or pn_match:
+    mpn_match = _TME_MPN.search(text)
+    if url_match or pn_match or mpn_match:
         return ScanResult(
             url=url_match.group(0).rstrip(_TRAILING) if url_match else None,
             mpn=pn_match.group(1).rstrip(_TRAILING) if pn_match else None,
+            manufacturer_pn=(
+                mpn_match.group(1).rstrip(_TRAILING) if mpn_match else None
+            ),
         )
     raise ValidationError("unrecognised code — expected a shop URL or a barcode")
 

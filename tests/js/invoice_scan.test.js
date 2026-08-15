@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { loadPage, tick, CSRF, fetchBody } from "./harness.js";
 
-const SCRIPTS = ["shared.js", "invoice_scan.js"];
+const SCRIPTS = ["shared.js", "scan_putaway.js", "invoice_scan.js"];
 
 // The draft-invoice putaway surface: scan panel, one staged import row, one
 // regular line row, and the putaway dialog (markup mirrors invoice_detail.html).
@@ -9,10 +9,10 @@ function scanFixture({ pendingLocation = "" } = {}) {
   const selected = (v) => (pendingLocation === v ? "selected" : "");
   return `
     <div id="invoice-detail" data-invoice-id="7"></div>
-    <div id="invoice-scan"
+    <div id="scan-panel"
          data-locations='[{"id": 5, "path": "Lab / Rack A / D1"}, {"id": 9, "path": "Lab / Shelf 02"}]'>
-      <input id="invoice-scan-input" readonly />
-      <p id="invoice-scan-status" hidden></p>
+      <input id="scan-input" readonly />
+      <p id="scan-status" hidden></p>
     </div>
     <table id="invoice-review"><tbody>
       <tr data-import-line-id="21" class="is-incomplete" data-type-id="3"
@@ -111,12 +111,12 @@ describe("invoice_scan.js — bag scan", () => {
     expect(dialog.open).toBe(true);
     expect(document.getElementById("putaway-part").textContent).toBe("ABC123");
     expect(document.getElementById("putaway-desc").textContent).toBe("A widget");
-    expect(document.getElementById("invoice-scan-input").value).toBe("");
+    expect(document.getElementById("scan-input").value).toBe("");
   });
 
   it("mirrors the buffer into the display field and honours Backspace", () => {
     const { document } = loadPage(scanFixture(), SCRIPTS);
-    const field = document.getElementById("invoice-scan-input");
+    const field = document.getElementById("scan-input");
     for (const key of ["A", "B", "C"]) {
       document.body.dispatchEvent(
         new document.defaultView.KeyboardEvent("keydown", {
@@ -226,7 +226,7 @@ describe("invoice_scan.js — bag scan", () => {
     await tick();
 
     expect(document.getElementById("putaway-dialog").open).toBe(false);
-    expect(document.getElementById("invoice-scan-status").textContent).toContain(
+    expect(document.getElementById("scan-status").textContent).toContain(
       "NOT-ON-THIS-INVOICE",
     );
   });
@@ -258,7 +258,7 @@ describe("invoice_scan.js — bag scan", () => {
     await tick();
 
     expect(fetchMock).not.toHaveBeenCalled();
-    const status = document.getElementById("invoice-scan-status");
+    const status = document.getElementById("scan-status");
     expect(status.hidden).toBe(false);
     expect(status.className).toBe("error");
     expect(status.textContent).toMatch(/location label/);
@@ -271,7 +271,7 @@ describe("invoice_scan.js — bag scan", () => {
     scan(document, "bag");
     await tick();
 
-    const status = document.getElementById("invoice-scan-status");
+    const status = document.getElementById("scan-status");
     expect(status.className).toBe("error");
     expect(status.textContent).toContain("UNKNOWN-99");
     expect(document.getElementById("putaway-dialog").showModal).not.toHaveBeenCalled();
@@ -299,7 +299,7 @@ describe("invoice_scan.js — bag scan", () => {
 
     scan(document, "AAA");
     scan(document, "BBB"); // previous parse still pending
-    const status = document.getElementById("invoice-scan-status");
+    const status = document.getElementById("scan-status");
     expect(status.textContent).toMatch(/finishing the previous scan/);
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
@@ -343,7 +343,7 @@ describe("invoice_scan.js — bag scan", () => {
   it("warns while the window is unfocused and clears the warning on return", () => {
     const { window, document } = loadPage(scanFixture(), SCRIPTS);
     window.dispatchEvent(new window.Event("blur"));
-    const status = document.getElementById("invoice-scan-status");
+    const status = document.getElementById("scan-status");
     expect(status.hidden).toBe(false);
     expect(status.textContent).toMatch(/not focused/);
 
@@ -357,7 +357,7 @@ describe("invoice_scan.js — bag scan", () => {
     });
     scan(document, "bag");
     await tick();
-    const status = document.getElementById("invoice-scan-status");
+    const status = document.getElementById("scan-status");
     expect(status.textContent).toContain("UNKNOWN-99");
 
     window.dispatchEvent(new window.Event("blur"));
@@ -377,7 +377,7 @@ describe("invoice_scan.js — bag scan", () => {
       fetchImpl: parseRouting({ mpn: "ABC123", distributor_pn: null }),
     });
     syncDialogOpen(document);
-    const field = document.getElementById("invoice-scan-input");
+    const field = document.getElementById("scan-input");
 
     for (const key of "PN:ABC") {
       press(document, key);
@@ -409,12 +409,12 @@ describe("invoice_scan.js — bag scan", () => {
     expect(press(document, " ", button).defaultPrevented).toBe(false);
     expect(press(document, "Enter", button).defaultPrevented).toBe(false);
     // None of it was collected, and the panel says the keyboard is elsewhere.
-    expect(document.getElementById("invoice-scan-input").value).toBe("");
-    expect(document.getElementById("invoice-scan-status").textContent).toMatch(
+    expect(document.getElementById("scan-input").value).toBe("");
+    expect(document.getElementById("scan-status").textContent).toMatch(
       /Keyboard is with the page/,
     );
     expect(
-      document.getElementById("invoice-scan-input").classList.contains("scan-armed"),
+      document.getElementById("scan-input").classList.contains("scan-armed"),
     ).toBe(false);
   });
 
@@ -439,24 +439,24 @@ describe("invoice_scan.js — bag scan", () => {
     const { document } = loadPage(scanFixture(), SCRIPTS);
     const rowSelect = document.querySelector(".ril-location");
     rowSelect.focus();
-    expect(document.getElementById("invoice-scan-status").textContent).toMatch(
+    expect(document.getElementById("scan-status").textContent).toMatch(
       /Keyboard is with the page/,
     );
 
     press(document, "Escape", rowSelect);
     expect(document.activeElement).not.toBe(rowSelect);
     expect(
-      document.getElementById("invoice-scan-input").classList.contains("scan-armed"),
+      document.getElementById("scan-input").classList.contains("scan-armed"),
     ).toBe(true);
     // …and the next scan is collected again.
     press(document, "X");
-    expect(document.getElementById("invoice-scan-input").value).toBe("X");
+    expect(document.getElementById("scan-input").value).toBe("X");
   });
 
   it("drops an unterminated buffer so strays can't prefix the next scan", async () => {
     const { document } = loadPage(scanFixture(), SCRIPTS);
     press(document, "L"); // focus is on the body: this IS collected
-    const field = document.getElementById("invoice-scan-input");
+    const field = document.getElementById("scan-input");
     expect(field.value).toBe("L");
 
     await new Promise((resolve) => setTimeout(resolve, 1300)); // idle window
@@ -510,7 +510,7 @@ describe("invoice_scan.js — bag scan", () => {
     await tick();
 
     // Nothing collected, nothing parsed.
-    expect(document.getElementById("invoice-scan-input").value).toBe("");
+    expect(document.getElementById("scan-input").value).toBe("");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
@@ -548,7 +548,7 @@ describe("invoice_scan.js — location scan in the dialog", () => {
     // The collector is armed for the next bag again.
     expect(
       document
-        .getElementById("invoice-scan-input")
+        .getElementById("scan-input")
         .classList.contains("scan-armed"),
     ).toBe(true);
   });

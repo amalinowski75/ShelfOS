@@ -116,6 +116,7 @@ def test_parse_decodes_a_datamatrix_offline(client: TestClient) -> None:
         "mpn": "ESQ-106-33-T-S",
         "manufacturer": "Samtec",
         "distributor_pn": "SAM11086-ND",
+        "manufacturer_pn": None,
         "shop": "digikey",
         "url": None,
         "url_symbols": [],

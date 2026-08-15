@@ -421,9 +421,7 @@ def test_list_invoices_tie_break_by_id_desc(client: TestClient) -> None:
 def test_invoice_detail_survives_deleted_component(client: TestClient) -> None:
     """Hard-deleting a component leaves its invoice line readable (component null)."""
     ctype = client.post("/api/types", json={"name": "resistor"}).json()
-    component = client.post(
-        "/api/components", json={"type_id": ctype["id"]}
-    ).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
     location = client.post(
         "/api/locations", json={"type": "drawer", "name": "D1"}
     ).json()
@@ -618,10 +616,12 @@ def test_import_invoice_creates_draft_and_reports_counts(
         currency="PLN",
         shop_key="digikey",
         lines=[
-            ParsedLine(quantity=5, unit_price=Decimal("1"), mpn="1N4148",
-                       manufacturer="Onsemi"),
-            ParsedLine(quantity=2, unit_price=Decimal("2"), mpn="NOPE",
-                       manufacturer="Acme"),  # no type → parked
+            ParsedLine(
+                quantity=5, unit_price=Decimal("1"), mpn="1N4148", manufacturer="Onsemi"
+            ),
+            ParsedLine(
+                quantity=2, unit_price=Decimal("2"), mpn="NOPE", manufacturer="Acme"
+            ),  # no type → parked
         ],
     )
     _stub_parsed(monkeypatch, tmp_path, invoice)
@@ -657,8 +657,13 @@ def test_review_import_line_then_finalize_materializes_the_component(
         currency="PLN",
         shop_key="tme",
         lines=[
-            ParsedLine(quantity=5, unit_price=Decimal("2"), mpn="R1",
-                       manufacturer="Acme", description="Rezystor:x"),
+            ParsedLine(
+                quantity=5,
+                unit_price=Decimal("2"),
+                mpn="R1",
+                manufacturer="Acme",
+                description="Rezystor:x",
+            ),
         ],
     )
     _stub_parsed(monkeypatch, tmp_path, invoice)
@@ -700,10 +705,20 @@ def test_patch_import_line_can_send_a_row_back_to_needs_review(
         monkeypatch,
         tmp_path,
         ParsedInvoice(
-            supplier="TME", invoice_number="INV-Q", invoice_date=date(2026, 1, 1),
-            currency="PLN", shop_key="tme",
-            lines=[ParsedLine(quantity=1, unit_price=Decimal("1"), mpn="R1",
-                              manufacturer="Acme", description="Rezystor:x")],
+            supplier="TME",
+            invoice_number="INV-Q",
+            invoice_date=date(2026, 1, 1),
+            currency="PLN",
+            shop_key="tme",
+            lines=[
+                ParsedLine(
+                    quantity=1,
+                    unit_price=Decimal("1"),
+                    mpn="R1",
+                    manufacturer="Acme",
+                    description="Rezystor:x",
+                )
+            ],
         ),
     )
     iid = client.post(
@@ -738,10 +753,20 @@ def test_patch_import_line_stores_reviewed_parameters(
         monkeypatch,
         tmp_path,
         ParsedInvoice(
-            supplier="TME", invoice_number="INV-P2", invoice_date=date(2026, 1, 1),
-            currency="PLN", shop_key="tme",
-            lines=[ParsedLine(quantity=1, unit_price=Decimal("1"), mpn="R1",
-                              manufacturer="Acme", description="Rezystor:x")],
+            supplier="TME",
+            invoice_number="INV-P2",
+            invoice_date=date(2026, 1, 1),
+            currency="PLN",
+            shop_key="tme",
+            lines=[
+                ParsedLine(
+                    quantity=1,
+                    unit_price=Decimal("1"),
+                    mpn="R1",
+                    manufacturer="Acme",
+                    description="Rezystor:x",
+                )
+            ],
         ),
     )
     iid = client.post(
@@ -878,10 +903,12 @@ def test_dismiss_pending_import_line(
         currency="PLN",
         shop_key="tme",
         lines=[
-            ParsedLine(quantity=3, unit_price=Decimal("1"), mpn="AAA",
-                       manufacturer="Acme"),
-            ParsedLine(quantity=4, unit_price=Decimal("1"), mpn="BBB",
-                       manufacturer="Acme"),
+            ParsedLine(
+                quantity=3, unit_price=Decimal("1"), mpn="AAA", manufacturer="Acme"
+            ),
+            ParsedLine(
+                quantity=4, unit_price=Decimal("1"), mpn="BBB", manufacturer="Acme"
+            ),
         ],
     )
     _stub_parsed(monkeypatch, tmp_path, invoice)
@@ -924,9 +951,7 @@ def test_delete_draft_invoice(client: TestClient) -> None:
 def test_delete_finalized_invoice_is_rejected(client: TestClient) -> None:
     ctype = client.post("/api/types", json={"name": "resistor"}).json()
     component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
-    location = client.post(
-        "/api/locations", json={"type": "box", "name": "Bin"}
-    ).json()
+    location = client.post("/api/locations", json={"type": "box", "name": "Bin"}).json()
     invoice = client.post(
         "/api/invoices",
         json={
@@ -1070,9 +1095,7 @@ def test_invoice_line_subresource_endpoints(client: TestClient) -> None:
     assert located.json()["location_id"] == location["id"]
 
     assert (
-        client.delete(
-            f"/api/invoices/{invoice['id']}/lines/{line['id']}"
-        ).status_code
+        client.delete(f"/api/invoices/{invoice['id']}/lines/{line['id']}").status_code
         == 204
     )
     assert client.get(f"/api/invoices/{invoice['id']}/lines").json() == []
@@ -1102,9 +1125,7 @@ def test_stock_correction_and_total_endpoints(client: TestClient) -> None:
 
 
 def test_location_path_endpoint(client: TestClient) -> None:
-    parent = client.post(
-        "/api/locations", json={"type": "room", "name": "Lab"}
-    ).json()
+    parent = client.post("/api/locations", json={"type": "room", "name": "Lab"}).json()
     child = client.post(
         "/api/locations",
         json={"type": "drawer", "name": "D1", "parent_id": parent["id"]},
@@ -1163,16 +1184,12 @@ def test_location_update_and_delete_endpoints(client: TestClient) -> None:
     assert (body["name"], body["type"], body["parent_id"]) == ("Shelf X", "shelf", None)
 
     # A partial PATCH moves it back without touching the name.
-    moved = client.patch(
-        f"/api/locations/{rack['id']}", json={"parent_id": room["id"]}
-    )
+    moved = client.patch(f"/api/locations/{rack['id']}", json={"parent_id": room["id"]})
     assert moved.status_code == 200
     assert moved.json()["name"] == "Shelf X"
 
     # Moving a location under its own descendant is a clean 422, not a cycle.
-    cycle = client.patch(
-        f"/api/locations/{room['id']}", json={"parent_id": rack["id"]}
-    )
+    cycle = client.patch(f"/api/locations/{room['id']}", json={"parent_id": rack["id"]})
     assert cycle.status_code == 422
 
     assert client.patch("/api/locations/9999", json={"name": "X"}).status_code == 404
@@ -1497,8 +1514,13 @@ def _number_type_and_component(client: TestClient) -> tuple[int, int]:
         json={
             "name": "resistor",
             "parameters": [
-                {"name": "resistance", "label": "R", "data_type": "number",
-                 "unit": "Ω", "sort_order": 0},
+                {
+                    "name": "resistance",
+                    "label": "R",
+                    "data_type": "number",
+                    "unit": "Ω",
+                    "sort_order": 0,
+                },
             ],
         },
     ).json()
@@ -1506,7 +1528,9 @@ def _number_type_and_component(client: TestClient) -> tuple[int, int]:
     component = client.post(
         "/api/components",
         json={
-            "type_id": ctype["id"], "mpn": "R-1", "manufacturer": "YAGEO",
+            "type_id": ctype["id"],
+            "mpn": "R-1",
+            "manufacturer": "YAGEO",
             "parameters": [{"parameter_definition_id": definition_id, "value": "1k"}],
         },
     ).json()
@@ -1516,8 +1540,12 @@ def _number_type_and_component(client: TestClient) -> tuple[int, int]:
 def _edit_body(**overrides: object) -> dict[str, object]:
     """A full ComponentUpdate body (all scalar fields required)."""
     return {
-        "manufacturer": "YAGEO", "package": None, "mounting_type": "Other",
-        "notes": None, "parameters": [], **overrides,
+        "manufacturer": "YAGEO",
+        "package": None,
+        "mounting_type": "Other",
+        "notes": None,
+        "parameters": [],
+        **overrides,
     }
 
 
@@ -1526,7 +1554,8 @@ def test_admin_can_edit_a_component(client: TestClient) -> None:
     resp = client.patch(
         f"/api/components/{component_id}",
         json=_edit_body(
-            manufacturer="TDK", mounting_type="SMT",
+            manufacturer="TDK",
+            mounting_type="SMT",
             parameters=[{"parameter_definition_id": definition_id, "value": "2k2"}],
         ),
     )
@@ -1554,9 +1583,7 @@ def test_edit_cannot_change_mpn_and_preserves_sent_fields(client: TestClient) ->
 def test_edit_requires_the_full_scalar_set(client: TestClient) -> None:
     component_id, _ = _number_type_and_component(client)
     # A partial body (only notes) is a 422, not a silent wipe of the other fields.
-    resp = client.patch(
-        f"/api/components/{component_id}", json={"notes": "just this"}
-    )
+    resp = client.patch(f"/api/components/{component_id}", json={"notes": "just this"})
     assert resp.status_code == 422
 
 
@@ -1600,10 +1627,144 @@ def test_read_only_cannot_edit_a_component(
     client: TestClient, anon_client: TestClient
 ) -> None:
     component_id, _ = _number_type_and_component(client)
-    headers = _account_headers(
-        client, anon_client, username="viewer", role="read-only"
-    )
+    headers = _account_headers(client, anon_client, username="viewer", role="read-only")
     resp = anon_client.patch(
         f"/api/components/{component_id}", json=_edit_body(), headers=headers
     )
     assert resp.status_code == 403
+
+
+# --- scan putaway on the components page ------------------------------------
+
+
+def _scan_fixture(client: TestClient) -> dict[str, int]:
+    """A component stocked in D1, plus an empty S1 to move it to."""
+    ctype = client.post("/api/types", json={"name": "connector"}).json()
+    component = client.post(
+        "/api/components",
+        json={
+            "type_id": ctype["id"],
+            "mpn": "T821108A1S100CEU",
+            "manufacturer": "Amphenol",
+        },
+    ).json()
+    drawer = client.post("/api/locations", json={"type": "drawer", "name": "D1"}).json()
+    shelf = client.post("/api/locations", json={"type": "shelf", "name": "S1"}).json()
+    client.post(
+        "/api/stock/add",
+        json={
+            "component_id": component["id"],
+            "location_id": drawer["id"],
+            "quantity": 100,
+        },
+    )
+    return {
+        "component": component["id"],
+        "drawer": drawer["id"],
+        "shelf": shelf["id"],
+    }
+
+
+def test_component_scan_resolves_a_tme_bag_by_its_manufacturer_number(
+    client: TestClient,
+) -> None:
+    """A TME QR states both numbers; only ``MPN:`` matches a stored component.
+
+    ``PN:`` is TME's own ordering symbol (T821-1-08-S1 here) and is not what a
+    component records, so the manufacturer's number has to be read and tried
+    first — otherwise a real bag resolves to nothing.
+    """
+    ids = _scan_fixture(client)
+    resp = client.post(
+        "/api/components/scan",
+        json={
+            "code": (
+                "QTY:100 PN:T821-1-08-S1 PO:35154624/1 MFR:AMPHENOL "
+                "MPN:T821108A1S100CEU CoO:CN RoHS "
+                "https://www.tme.eu/details/T821-1-08-S1"
+            )
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["identifiers"][0] == "T821108A1S100CEU"  # manufacturer's, first
+    assert "T821-1-08-S1" in body["identifiers"]  # the shop symbol still offered
+    assert len(body["matches"]) == 1
+    match = body["matches"][0]
+    assert match["id"] == ids["component"]
+    assert match["locations"] == [{"id": ids["drawer"], "path": "D1", "quantity": 100}]
+
+
+def test_component_scan_reports_no_match_without_guessing(client: TestClient) -> None:
+    _scan_fixture(client)
+    resp = client.post("/api/components/scan", json={"code": "PN:NOTHING-LIKE-IT"})
+    assert resp.status_code == 200
+    assert resp.json() == {"identifiers": ["NOTHING-LIKE-IT"], "matches": []}
+    # An unreadable code is a 422 from the parser, as everywhere else.
+    assert client.post("/api/components/scan", json={"code": "junk"}).status_code == 422
+
+
+def test_component_scan_returns_every_component_sharing_the_number(
+    client: TestClient,
+) -> None:
+    """MPN is not unique, so the caller must be able to see the ambiguity."""
+    ids = _scan_fixture(client)
+    other_type = client.post("/api/types", json={"name": "spare"}).json()
+    client.post(
+        "/api/components",
+        json={"type_id": other_type["id"], "mpn": "T821108A1S100CEU"},
+    )
+    resp = client.post(
+        "/api/components/scan", json={"code": "MPN:T821108A1S100CEU"}
+    ).json()
+    assert [m["id"] for m in resp["matches"]][0] == ids["component"]
+    assert len(resp["matches"]) == 2
+
+
+def test_stock_move_relocates_and_is_atomic(client: TestClient) -> None:
+    ids = _scan_fixture(client)
+    moved = client.post(
+        "/api/stock/move",
+        json={
+            "component_id": ids["component"],
+            "from_location_id": ids["drawer"],
+            "to_location_id": ids["shelf"],
+        },
+    )
+    assert moved.status_code == 201
+    assert moved.json()["delta_quantity"] == 100  # the arriving leg
+
+    def quantity(location_id: int) -> int:
+        return client.get(
+            "/api/stock/quantity",
+            params={"component_id": ids["component"], "location_id": location_id},
+        ).json()["quantity"]
+
+    assert (quantity(ids["drawer"]), quantity(ids["shelf"])) == (0, 100)
+
+    # A move to a location that doesn't exist leaves the source untouched —
+    # both legs share one transaction.
+    failed = client.post(
+        "/api/stock/move",
+        json={
+            "component_id": ids["component"],
+            "from_location_id": ids["shelf"],
+            "to_location_id": 999_999,
+        },
+    )
+    assert failed.status_code == 404
+    assert quantity(ids["shelf"]) == 100
+
+
+def test_stock_move_rejects_an_empty_source(client: TestClient) -> None:
+    ids = _scan_fixture(client)
+    resp = client.post(
+        "/api/stock/move",
+        json={
+            "component_id": ids["component"],
+            "from_location_id": ids["shelf"],  # holds nothing
+            "to_location_id": ids["drawer"],
+        },
+    )
+    assert resp.status_code == 422
+    assert "no stock to move" in resp.text

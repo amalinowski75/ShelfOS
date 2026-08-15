@@ -56,6 +56,7 @@ def parse_code(payload: ShopLookup) -> ScanParseRead:
         mpn=result.mpn,
         manufacturer=result.manufacturer,
         distributor_pn=result.distributor_pn,
+        manufacturer_pn=result.manufacturer_pn,
         shop=result.shop,
         url=result.url,
         url_symbols=_url_symbols(result.url),
