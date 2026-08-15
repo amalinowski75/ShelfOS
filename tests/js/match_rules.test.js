@@ -277,7 +277,7 @@ describe("match_rules.js — create", () => {
 
     expect(document.getElementById("rule-scope-type").hidden).toBe(false);
     expect(form.elements.parameter.value).toBe("10");
-    // A scoped rule's target is free text (the parameter's name / an enum token).
+    // A param_name rule's target is free text (the parameter's canonical name).
     expect(form.elements.canonical_text.hidden).toBe(false);
 
     form.elements.alias.value = "Rezystancja";
@@ -294,6 +294,67 @@ describe("match_rules.js — create", () => {
       canonical: "resistance",
       sort_order: 0,
       parameter_definition_id: 10,
+    });
+  });
+
+  it("offers the parameter's enum values as the target for an enum_value rule", async () => {
+    const fetchImpl = (url) => {
+      if (url === "/api/types") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [{ id: 1, name: "cable" }],
+        });
+      }
+      if (url === "/api/types/1/parameters") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [
+            {
+              id: 20,
+              label: "Type",
+              data_type: "enum",
+              enum_values: ["ribbon", "coax", "power"],
+            },
+            { id: 21, label: "Length", data_type: "number", enum_values: [] },
+          ],
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    };
+    const { document, fetchMock } = loadPage(matchRulesPageFixture(), SCRIPTS, {
+      fetchImpl,
+    });
+    document.getElementById("rule-new-btn").click();
+    await tick();
+    await tick();
+    const form = document.getElementById("rule-new-form");
+    form.elements.domain.value = "enum_value";
+    fire(form.elements.domain, "change");
+    await tick();
+
+    // Only the enum parameter is offered (Length, a number, is filtered out).
+    expect([...form.elements.parameter.options].map((o) => o.value)).toEqual(["20"]);
+    // The Target is a dropdown of that parameter's allowed values, not free text.
+    expect(form.elements.canonical_enum.hidden).toBe(false);
+    expect(form.elements.canonical_text.hidden).toBe(true);
+    expect([...form.elements.canonical_enum.options].map((o) => o.value)).toEqual([
+      "ribbon",
+      "coax",
+      "power",
+    ]);
+
+    form.elements.alias.value = "taśma";
+    form.elements.canonical_enum.value = "coax";
+    submit(document, "rule-new-form");
+    await tick();
+
+    const post = fetchMock.mock.calls.find((c) => c[0] === "/api/admin/match-rules");
+    expect(JSON.parse(post[1].body)).toEqual({
+      domain: "enum_value",
+      alias: "taśma",
+      canonical: "coax", // chosen from the parameter's allowed values
+      sort_order: 0,
+      parameter_definition_id: 20,
     });
   });
 

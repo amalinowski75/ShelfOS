@@ -204,18 +204,22 @@ if (newRuleBtn) {
   const paramField = document.getElementById("rule-scope-param");
   const typeSelect = form.elements.type;
   const paramSelect = form.elements.parameter;
-  // The three possible "Target" controls; only the one matching the domain shows.
+  // The four possible "Target" controls; only the one matching the domain shows.
   const targetTypeSelect = form.elements.canonical_type; // type rule → a type name
   const targetMountingSelect = form.elements.canonical_mounting; // mounting → enum
-  const targetTextInput = form.elements.canonical_text; // param/enum → free text
+  const targetEnumSelect = form.elements.canonical_enum; // enum_value → allowed value
+  const targetTextInput = form.elements.canonical_text; // param_name → free text
+  // The selected type's parameter definitions (with data_type + enum_values), cached
+  // so the parameter picker and the enum-target dropdown can be built without refetch.
+  let dialogParams = [];
 
   function isScoped() {
     return SCOPED_DOMAINS.has(form.elements.domain.value);
   }
 
   // Reflect the chosen domain: show its scope pickers (param/enum only) and the one
-  // Target control that fits — an existing-type list, the mounting enum, or free
-  // text — so a bad target (e.g. a mistyped mounting) can't be entered.
+  // Target control that fits — an existing-type list, the mounting enum, the chosen
+  // parameter's allowed values, or free text — so a bad target can't be entered.
   async function syncFields() {
     const domain = form.elements.domain.value;
     const scoped = isScoped();
@@ -223,12 +227,14 @@ if (newRuleBtn) {
     paramField.hidden = !scoped;
     targetTypeSelect.hidden = domain !== "type";
     targetMountingSelect.hidden = domain !== "mounting";
-    targetTextInput.hidden = scoped === false && domain !== "type";
+    targetEnumSelect.hidden = domain !== "enum_value";
+    targetTextInput.hidden = domain !== "param_name";
     // The type list feeds both the scope picker and the type-target select, so load
     // it whenever either needs it.
     if ((scoped || domain === "type") && typeSelect.options.length === 0) {
       await loadTypes();
     }
+    if (scoped) populateParams(); // re-filter the picker + rebuild the enum target
   }
 
   async function loadTypes() {
@@ -252,20 +258,37 @@ if (newRuleBtn) {
 
   async function loadParams() {
     const typeId = typeSelect.value;
-    if (!typeId) {
-      paramSelect.innerHTML = "";
-      return;
-    }
     try {
-      const params = await fetch(`/api/types/${typeId}/parameters`).then((r) =>
-        r.json(),
-      );
-      paramSelect.innerHTML = params
-        .map((p) => `<option value="${p.id}">${esc(p.label)}</option>`)
-        .join("");
+      dialogParams = typeId
+        ? await fetch(`/api/types/${typeId}/parameters`).then((r) => r.json())
+        : [];
     } catch {
-      paramSelect.innerHTML = "";
+      dialogParams = [];
     }
+    populateParams();
+  }
+
+  // Fill the parameter picker; an enum_value rule only makes sense for an enum
+  // parameter, so those are all it offers.
+  function populateParams() {
+    const enumOnly = form.elements.domain.value === "enum_value";
+    const choices = enumOnly
+      ? dialogParams.filter((p) => p.data_type === "enum")
+      : dialogParams;
+    paramSelect.innerHTML = choices
+      .map((p) => `<option value="${p.id}">${esc(p.label)}</option>`)
+      .join("");
+    populateEnumTarget();
+  }
+
+  // For an enum_value rule, the Target is the chosen parameter's allowed values —
+  // the tokens defined when the type was built — so it can't be free-typed wrong.
+  function populateEnumTarget() {
+    if (form.elements.domain.value !== "enum_value") return;
+    const chosen = dialogParams.find((p) => String(p.id) === paramSelect.value);
+    targetEnumSelect.innerHTML = (chosen?.enum_values || [])
+      .map((v) => `<option value="${esc(v)}">${esc(v)}</option>`)
+      .join("");
   }
 
   // The target value comes from whichever control the domain exposes.
@@ -273,11 +296,13 @@ if (newRuleBtn) {
     const domain = form.elements.domain.value;
     if (domain === "type") return targetTypeSelect.value;
     if (domain === "mounting") return targetMountingSelect.value;
-    return targetTextInput.value.trim();
+    if (domain === "enum_value") return targetEnumSelect.value;
+    return targetTextInput.value.trim(); // param_name
   }
 
   form.elements.domain.addEventListener("change", syncFields);
   typeSelect.addEventListener("change", loadParams);
+  paramSelect.addEventListener("change", populateEnumTarget);
 
   newRuleBtn.addEventListener("click", async () => {
     form.reset();

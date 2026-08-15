@@ -208,6 +208,7 @@ export function matchRulesPageFixture() {
         <option value="Panel">Panel</option>
         <option value="Wire">Wire</option>
       </select>
+      <select name="canonical_enum" hidden></select>
       <input name="canonical_text" hidden />
       <input name="sort_order" type="number" value="0" />
       <p id="rule-new-error" hidden></p>

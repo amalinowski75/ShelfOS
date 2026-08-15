@@ -54,6 +54,8 @@
         <select class="control" name="canonical_mounting" hidden>
           {% for mt in mounting_types %}<option value="{{ mt }}">{{ mt }}</option>{% endfor %}
         </select>
+        <!-- enum_value: the chosen parameter's allowed values, filled in JS. -->
+        <select class="control" name="canonical_enum" hidden></select>
         <input class="control" name="canonical_text" hidden placeholder="e.g. resistance" />
       </div>
       <div class="field">
