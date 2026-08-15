@@ -472,9 +472,11 @@ def test_component_detail_movements_name_who_moved_the_stock(
 
     html = client.get(f"/components/{component['id']}").text
     assert "<th>Who</th>" in html
-    # Both authors, not just whoever the page happens to be rendered for.
-    assert "stocker" in html
-    assert "admin" in html
+    # Scoped to the table: base.html renders the signed-in user's name in the
+    # page chrome, so a bare `"admin" in html` would pass with no column at all.
+    rows = html.split("<th>Who</th>", 1)[1].split("</table>", 1)[0]
+    assert "stocker" in rows
+    assert "admin" in rows
 
 
 def test_component_detail_admin_sees_the_edit_dialog(client: TestClient) -> None:
