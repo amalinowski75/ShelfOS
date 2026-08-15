@@ -27,15 +27,19 @@ async function loadTypeNames() {
   }
 }
 
-// The in-place Target editor's options for a given row: a fixed list for the
-// domains with a vocabulary (mounting enum, existing types), free text otherwise —
-// the same constraint the create dialog applies, so a mistyped mounting can't slip
-// in through inline editing either.
+// The in-place Target editor's options for a given row: a fixed list for the three
+// domains with a vocabulary (mounting enum, existing types, an enum parameter's
+// allowed values — shipped on the row), free text only for a param_name target.
+// This mirrors the create dialog, so a mistyped mounting/enum can't slip in through
+// inline editing either. NB: Tabulator's list editor only accepts typed text when
+// `autocomplete` is on — a bare `freetext` is silently ignored and the cell becomes
+// un-editable, so param_name sets both.
 function targetEditorParams(cell) {
-  const domain = cell.getRow().getData().domain;
-  if (domain === "mounting") return { values: mountingValues() };
-  if (domain === "type") return { values: cachedTypeNames };
-  return { values: [], freetext: true };
+  const row = cell.getRow().getData();
+  if (row.domain === "mounting") return { values: mountingValues() };
+  if (row.domain === "type") return { values: cachedTypeNames };
+  if (row.domain === "enum_value") return { values: row.enum_values || [] };
+  return { values: [], autocomplete: true, freetext: true, listOnEmpty: true };
 }
 
 async function sendRuleWrite(url, method, payload) {
@@ -119,12 +123,13 @@ function ruleColumns() {
       hozAlign: "right",
       sorter: "number",
       editor: "number",
-      // Order only matters within a domain (type/mounting), where the engine takes
-      // the first matching alias — lower wins when several could match the same text.
+      // The engine takes the first matching alias, so lower wins when several aliases
+      // that could match the same text share a scope — type/mounting globally, and an
+      // enum_value parameter's aliases within that parameter.
       headerTooltip:
-        "Lower wins when several aliases in the same domain (type/mounting) " +
-        "could match the same text — e.g. 'led' before 'diode'. Ignored for " +
-        "parameter rules.",
+        "Lower wins when several aliases that could match the same text share a " +
+        "scope — e.g. 'led' before 'diode' for types, or two aliases of the same " +
+        "enum parameter.",
       cellEdited: (cell) => saveCellEdit(cell, "sort_order"),
     }),
     {
@@ -229,12 +234,14 @@ if (newRuleBtn) {
     targetMountingSelect.hidden = domain !== "mounting";
     targetEnumSelect.hidden = domain !== "enum_value";
     targetTextInput.hidden = domain !== "param_name";
-    // The type list feeds both the scope picker and the type-target select, so load
-    // it whenever either needs it.
-    if ((scoped || domain === "type") && typeSelect.options.length === 0) {
-      await loadTypes();
+    // Refetch the type list (and, for a scoped domain, its parameters) every time this
+    // runs — on dialog reopen `form.reset()` snaps Type back to its first option WITHOUT
+    // firing `change`, so without a reload the parameter picker would still hold the
+    // previous type's params and the rule would bind to the wrong parameter. Reloading
+    // also surfaces a type added since the page loaded.
+    if (scoped || domain === "type") {
+      await loadTypes(); // ends by calling loadParams -> populateParams for scoped
     }
-    if (scoped) populateParams(); // re-filter the picker + rebuild the enum target
   }
 
   async function loadTypes() {

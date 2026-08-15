@@ -1542,6 +1542,30 @@ def test_match_rules_feed_labels_a_scoped_rule(client: TestClient) -> None:
     assert any(r["parameter"] is None for r in feed)
 
 
+def test_match_rules_feed_carries_enum_values_for_an_enum_value_rule(
+    client: TestClient,
+) -> None:
+    # The inline Target editor offers the parameter's allowed values, so the feed
+    # ships them on each enum_value row (and nothing on other rows).
+    ctype = client.post("/api/types", json={"name": "cable"}).json()
+    client.post(
+        f"/api/types/{ctype['id']}/parameters",
+        json={"name": "ctype", "label": "Type", "data_type": "enum",
+              "enum_values": ["Flat", "Round"]},
+    )
+    definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
+    client.post(
+        "/api/admin/match-rules",
+        json={"domain": "enum_value", "alias": "wstazkowy", "canonical": "Flat",
+              "parameter_definition_id": definition["id"]},
+    )
+    feed = client.get("/web/api/match-rules").json()["data"]
+    enum_row = next(r for r in feed if r["alias"] == "wstazkowy")
+    assert enum_row["enum_values"] == ["Flat", "Round"]
+    # A global (non-enum) rule carries an empty list, not the parameter's values.
+    assert all(r["enum_values"] == [] for r in feed if r["domain"] != "enum_value")
+
+
 def test_match_rules_forbidden_for_non_admin_web(
     client: TestClient, anon_client: TestClient
 ) -> None:

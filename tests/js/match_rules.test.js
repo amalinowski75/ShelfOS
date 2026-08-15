@@ -85,17 +85,29 @@ describe("match_rules.js — columns", () => {
     const { window } = loadPage(matchRulesPageFixture(), SCRIPTS, { fetchImpl });
     await tick(); // let the startup /api/types fetch populate the type list
     const target = window.ruleColumns().find((c) => c.field === "canonical");
-    const paramsFor = (domain) =>
-      target.editorParams({ getRow: () => ({ getData: () => ({ domain }) }) });
+    const paramsFor = (row) =>
+      target.editorParams({ getRow: () => ({ getData: () => row }) });
 
     // Mounting → the fixed enum list, no free text.
-    expect(paramsFor("mounting")).toEqual({
+    expect(paramsFor({ domain: "mounting" })).toEqual({
       values: ["SMT", "THT", "Other", "Panel", "Wire"],
     });
     // Type → the existing type names.
-    expect(paramsFor("type")).toEqual({ values: ["resistor", "diode"] });
-    // A parameter rule → free text.
-    expect(paramsFor("enum_value")).toEqual({ values: [], freetext: true });
+    expect(paramsFor({ domain: "type" })).toEqual({ values: ["resistor", "diode"] });
+    // enum_value → the row's own allowed values (shipped by the feed), NOT free text —
+    // a free-typed enum target could never fire, so it must not be enterable.
+    expect(
+      paramsFor({ domain: "enum_value", enum_values: ["ribbon", "coax"] }),
+    ).toEqual({ values: ["ribbon", "coax"] });
+    // param_name → free text (a definition name). Tabulator's list editor only accepts
+    // typed text with `autocomplete` on, so both flags are set — a bare `freetext`
+    // leaves the cell un-editable.
+    expect(paramsFor({ domain: "param_name" })).toEqual({
+      values: [],
+      autocomplete: true,
+      freetext: true,
+      listOnEmpty: true,
+    });
   });
 });
 
@@ -295,6 +307,66 @@ describe("match_rules.js — create", () => {
       sort_order: 0,
       parameter_definition_id: 10,
     });
+  });
+
+  it("rebinds the parameter to the reset type when the dialog is reopened", async () => {
+    const fetchImpl = (url) => {
+      if (url === "/api/types") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [{ id: 1, name: "resistor" }, { id: 2, name: "cable" }],
+        });
+      }
+      if (url === "/api/types/1/parameters") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [{ id: 10, label: "Resistance" }],
+        });
+      }
+      if (url === "/api/types/2/parameters") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [{ id: 20, label: "Jacket" }],
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    };
+    const { document, fetchMock } = loadPage(matchRulesPageFixture(), SCRIPTS, {
+      fetchImpl,
+    });
+    const form = document.getElementById("rule-new-form");
+
+    // First open: scope the rule to a CABLE parameter (id 20).
+    document.getElementById("rule-new-btn").click();
+    await tick();
+    form.elements.domain.value = "param_name";
+    fire(form.elements.domain, "change");
+    await tick();
+    await tick();
+    form.elements.type.value = "2"; // cable
+    fire(form.elements.type, "change");
+    await tick();
+    expect(form.elements.parameter.value).toBe("20");
+    document.getElementById("rule-new-dialog").close();
+
+    // Reopen: form.reset() snaps Type back to resistor WITHOUT firing `change`. The
+    // parameter picker must follow to resistor's param, not keep cable's stale 20.
+    document.getElementById("rule-new-btn").click();
+    await tick();
+    await tick();
+    form.elements.domain.value = "param_name";
+    fire(form.elements.domain, "change");
+    await tick();
+    await tick();
+    expect(form.elements.type.value).toBe("1"); // resistor
+    expect(form.elements.parameter.value).toBe("10"); // resistor's, not cable's 20
+
+    form.elements.alias.value = "Rezystancja";
+    form.elements.canonical_text.value = "resistance";
+    submit(document, "rule-new-form");
+    await tick();
+    const post = fetchMock.mock.calls.find((c) => c[0] === "/api/admin/match-rules");
+    expect(JSON.parse(post[1].body).parameter_definition_id).toBe(10);
   });
 
   it("offers the parameter's enum values as the target for an enum_value rule", async () => {

@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 from app.models.enums import MatchDomain, MountingType
 from app.models.enums import ParameterDataType as DT
+from app.models.match_rule import MatchRule
 from app.services import component_service as cs
 from app.services import match_rule_service as mrs
 from app.services.matching import build_proposal
@@ -162,6 +163,34 @@ def test_enum_free_text_match_ignores_polish_accents(session: Session) -> None:
     assert _by_id(build_proposal(session, product))[def_id] == "Flat"
 
 
+def test_enum_value_matched_from_free_text_by_a_multi_word_alias(
+    session: Session,
+) -> None:
+    _, def_id = _cable_with_type_enum(session)
+    mrs.create_rule(
+        session, domain=MatchDomain.ENUM_VALUE, alias="taśma płaska",
+        canonical="Flat", parameter_definition_id=def_id,
+    )
+    # The alias spans two words in the description (no "label: value" structure); it
+    # must still match, not just fire on structured shop attributes.
+    product = ProductData(category="cable", description="Przewód taśma płaska 40 żył")
+    assert _by_id(build_proposal(session, product))[def_id] == "Flat"
+
+
+def test_enum_value_matched_from_free_text_by_a_hyphenated_alias(
+    session: Session,
+) -> None:
+    _, def_id = _cable_with_type_enum(session)
+    mrs.create_rule(
+        session, domain=MatchDomain.ENUM_VALUE, alias="flat-flex",
+        canonical="Flat", parameter_definition_id=def_id,
+    )
+    # "flat-flex" folds to "flatflex"; the description tokenises to "flat" + "flex",
+    # which the adjacent-word window rejoins.
+    product = ProductData(category="cable", description="Cable flat flex 20 way")
+    assert _by_id(build_proposal(session, product))[def_id] == "Flat"
+
+
 def test_enum_free_text_does_not_match_an_unrelated_description(
     session: Session,
 ) -> None:
@@ -176,11 +205,17 @@ def test_enum_free_text_does_not_match_an_unrelated_description(
 
 def test_enum_free_text_alias_to_a_non_member_is_dropped(session: Session) -> None:
     _, def_id = _cable_with_type_enum(session)
-    # The alias points at a token that isn't one of the def's allowed values.
-    mrs.create_rule(
-        session, domain=MatchDomain.ENUM_VALUE, alias="wstążkowy",
-        canonical="Ribbon", parameter_definition_id=def_id,
+    # A stale rule whose target is no longer one of the parameter's values. The store
+    # blocks creating one now, but an enum value could be removed after the fact — so
+    # the engine keeps its own membership gate and must refuse to emit it (the create
+    # path would reject a non-member). Inserted directly to bypass the store's guard.
+    session.add(
+        MatchRule(
+            domain=MatchDomain.ENUM_VALUE, alias="wstążkowy",
+            canonical="Ribbon", parameter_definition_id=def_id,
+        )
     )
+    session.commit()
     product = ProductData(category="cable", description="Przewód wstążkowy")
     assert def_id not in _by_id(build_proposal(session, product))
 

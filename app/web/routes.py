@@ -379,6 +379,16 @@ def match_rules_feed(
         owner = session.get(ComponentType, definition.type_id)
         prefix = f"{owner.name} / " if owner is not None else ""
         scope_labels[pid] = f"{prefix}{definition.label}"
+    # An enum_value rule's target must be one of its parameter's allowed values, so
+    # ship that list with the row — the inline Target editor offers exactly it (a
+    # free-typed target for this domain can never fire). One batched query.
+    enum_pids = [
+        rule.parameter_definition_id
+        for rule in rules
+        if rule.domain is MatchDomain.ENUM_VALUE
+        and rule.parameter_definition_id is not None
+    ]
+    enum_values = cs.enum_values_by_definition(session, enum_pids)
     return {
         "data": [
             {
@@ -391,6 +401,12 @@ def match_rules_feed(
                     scope_labels.get(rule.parameter_definition_id)
                     if rule.parameter_definition_id is not None
                     else None
+                ),
+                "enum_values": (
+                    enum_values.get(rule.parameter_definition_id, [])
+                    if rule.domain is MatchDomain.ENUM_VALUE
+                    and rule.parameter_definition_id is not None
+                    else []
                 ),
                 "sort_order": rule.sort_order,
             }

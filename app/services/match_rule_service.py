@@ -22,6 +22,7 @@ from app.models.component import ParameterDefinition
 from app.models.enums import MatchDomain, MountingType
 from app.models.match_rule import MatchRule
 from app.services._common import require_entity
+from app.services.component_service import enum_values_of
 from app.services.errors import ValidationError
 
 # Fold a shop's parameter label / value to a comparable key: lowercase, strip accents
@@ -107,14 +108,22 @@ def list_rules(
     )
 
 
-def _canonical_target(domain: MatchDomain, canonical: str) -> str:
+def _canonical_target(
+    session: Session,
+    domain: MatchDomain,
+    canonical: str,
+    parameter_definition_id: int | None,
+) -> str:
     """Validate/normalise a rule's target for the domains that have a fixed vocabulary.
 
-    A MOUNTING target must name a :class:`MountingType`; we fold it to the exact enum
-    spelling (so "tht" is stored as "THT"), because the engine matches the enum value
-    case-sensitively and a wrong case would make the rule silently do nothing. Other
-    domains keep the target verbatim (a type name is resolved case-insensitively; a
-    parameter/enum target is checked against the live vocabulary at match time).
+    A MOUNTING target must name a :class:`MountingType`, and an ENUM_VALUE target must
+    name one of its parameter's allowed enum tokens. Both are folded to the exact
+    stored spelling ("tht" -> "THT"), because the engine matches the target
+    case-sensitively (``canonical in allowed``) and a wrong case would make the rule
+    silently do nothing — the very "looks alive in the table but can never fire"
+    failure this guards against. A TYPE target is resolved case-insensitively by the
+    engine, and a PARAM_NAME target is a free-text definition name, so both are kept
+    verbatim.
     """
     if domain is MatchDomain.MOUNTING:
         for member in MountingType:
@@ -122,6 +131,16 @@ def _canonical_target(domain: MatchDomain, canonical: str) -> str:
                 return member.value
         allowed = ", ".join(m.value for m in MountingType)
         raise ValidationError(f"a mounting rule's target must be one of: {allowed}")
+    if domain is MatchDomain.ENUM_VALUE and parameter_definition_id is not None:
+        values = enum_values_of(session, parameter_definition_id)
+        for value in values:
+            if value.casefold() == canonical.casefold():
+                return value
+        allowed = ", ".join(values) or "(the parameter has no enum values)"
+        raise ValidationError(
+            f"an enum_value rule's target must be one of the parameter's "
+            f"values: {allowed}"
+        )
     return canonical
 
 
@@ -143,7 +162,6 @@ def create_rule(
     canonical = canonical.strip()
     if not alias or not canonical:
         raise ValidationError("a matching rule needs both an alias and a target")
-    canonical = _canonical_target(domain, canonical)
     scoped = domain in (MatchDomain.PARAM_NAME, MatchDomain.ENUM_VALUE)
     if scoped and parameter_definition_id is None:
         raise ValidationError(f"{domain.value} rules must name a parameter definition")
@@ -158,6 +176,9 @@ def create_rule(
             parameter_definition_id,
             "parameter definition",
         )
+    # Validate the target after the FK check — an enum_value target is checked against
+    # the parameter's own allowed values, which needs the definition to exist.
+    canonical = _canonical_target(session, domain, canonical, parameter_definition_id)
     existing = _find_duplicate(session, domain, alias, parameter_definition_id)
     if existing is not None:
         raise ValidationError(
@@ -212,7 +233,9 @@ def update_rule(
         canonical = canonical.strip()
         if not canonical:
             raise ValidationError("a matching rule needs a target")
-        rule.canonical = _canonical_target(rule.domain, canonical)
+        rule.canonical = _canonical_target(
+            session, rule.domain, canonical, rule.parameter_definition_id
+        )
     if sort_order is not None:
         rule.sort_order = sort_order
     session.add(rule)
@@ -235,14 +258,20 @@ def _find_duplicate(
     alias: str,
     parameter_definition_id: int | None,
 ) -> MatchRule | None:
-    # Same domain + same scope + same alias (case-insensitively) is a duplicate.
+    # Two aliases collide when the ENGINE would key them the same way — otherwise the
+    # loser sits in the admin table looking healthy but never fires. type/mounting are
+    # keyed by .lower(); the scoped domains by normalize() (which folds accents and
+    # punctuation), so there "wstążkowy" and "wstazkowy" are one alias, not two.
+    scoped = domain in (MatchDomain.PARAM_NAME, MatchDomain.ENUM_VALUE)
+    fold = normalize if scoped else str.lower
+    target = fold(alias)
     for rule in session.exec(
         select(MatchRule).where(
             MatchRule.domain == domain,
             MatchRule.parameter_definition_id == parameter_definition_id,
         )
     ).all():
-        if rule.alias.lower() == alias.lower():
+        if fold(rule.alias) == target:
             return rule
     return None
 

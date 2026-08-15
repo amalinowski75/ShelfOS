@@ -1916,6 +1916,42 @@ def test_patch_match_rule_duplicate_alias_is_rejected(client: TestClient) -> Non
     assert resp.status_code == 422
 
 
+def test_enum_value_rule_target_must_be_one_of_the_parameters_values(
+    client: TestClient,
+) -> None:
+    # An enum_value target isn't free text — it must name one of the parameter's
+    # allowed values, or the rule could never fire. Guard both create and patch.
+    ctype = client.post("/api/types", json={"name": "cable"}).json()
+    client.post(
+        f"/api/types/{ctype['id']}/parameters",
+        json={"name": "ctype", "label": "Type", "data_type": "enum",
+              "enum_values": ["Flat", "Round"]},
+    )
+    definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
+
+    bad = client.post(
+        "/api/admin/match-rules",
+        json={"domain": "enum_value", "alias": "wstazkowy", "canonical": "Flatt",
+              "parameter_definition_id": definition["id"]},
+    )
+    assert bad.status_code == 422
+
+    good = client.post(
+        "/api/admin/match-rules",
+        json={"domain": "enum_value", "alias": "wstazkowy", "canonical": "flat",
+              "parameter_definition_id": definition["id"]},
+    )
+    # A valid member is folded to its stored spelling.
+    assert good.status_code == 201 and good.json()["canonical"] == "Flat"
+    assert (
+        client.patch(
+            f"/api/admin/match-rules/{good.json()['id']}",
+            json={"canonical": "Coax"},
+        ).status_code
+        == 422
+    )
+
+
 def test_match_rules_forbidden_for_non_admin(
     client: TestClient, anon_client: TestClient
 ) -> None:

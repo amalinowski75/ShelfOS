@@ -122,6 +122,11 @@ _EIA_PACKAGE = re.compile(r"\b(0201|0402|0603|0805|1206|1210|1812|2010|2512)\b")
 _BOOL_TRUE = {"true", "yes", "1", "tak", "y", "t"}
 _BOOL_FALSE = {"false", "no", "0", "nie", "n", "f"}
 
+# The most tokens a free-text enum alias may span ("taśma płaska" is 2, "surface
+# mount" 2). An alias is stored normalized to a single spaceless blob, so to find it
+# in a description we compare it against joins of up to this many adjacent words.
+_MAX_ALIAS_WORDS = 4
+
 
 # --- the engine --------------------------------------------------------------
 
@@ -292,9 +297,20 @@ def _fill_enums_from_text(
     allowed tokens), so an incidental word can't be mistaken for a value; the first
     alias present wins (rules are ordered by sort_order). Matching is accent- and
     case-insensitive via ``normalize`` (so Polish spelling variants unify).
+
+    A stored alias is a single spaceless blob (``normalize`` drops spaces), so a
+    multi-word alias like "taśma płaska" (or hyphenated "flat-flex") is matched against
+    joins of up to ``_MAX_ALIAS_WORDS`` adjacent description words — otherwise it would
+    fire on structured data but be invisible here.
     """
-    words = {normalize(w) for w in re.findall(r"\w+", scan_text.lower())}
-    words.discard("")
+    tokens = [normalize(w) for w in re.findall(r"\w+", scan_text.lower())]
+    tokens = [t for t in tokens if t]
+    # Every join of 1..N adjacent tokens; a normalized alias equals one of these iff
+    # its words appear consecutively in the text.
+    windows: set[str] = set()
+    for size in range(1, _MAX_ALIAS_WORDS + 1):
+        for start in range(len(tokens) - size + 1):
+            windows.add("".join(tokens[start : start + size]))
     for definition in definitions:
         did = definition.id
         if (
@@ -305,7 +321,7 @@ def _fill_enums_from_text(
             continue
         allowed = allowed_enums.get(did, [])
         for alias, canonical in enum_aliases.get(did, {}).items():
-            if alias in words and canonical in allowed:
+            if alias in windows and canonical in allowed:
                 filled[did] = canonical
                 break
 

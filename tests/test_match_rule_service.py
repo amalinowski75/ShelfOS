@@ -167,6 +167,76 @@ def test_update_rule_folds_a_mounting_target_to_its_enum_case(
     assert updated.canonical == "Other"
 
 
+def _cable_enum_def(session: Session, values: list[str] | None = None):  # type: ignore[no-untyped-def]
+    """A cable type with a "Type" enum def — for scoped-rule tests."""
+    ctype = cs.create_type(session, "cable")
+    return cs.add_parameter_definition(
+        session, ctype.id, name="ctype", label="Type",
+        data_type=cs.ParameterDataType.ENUM,
+        enum_values=values if values is not None else ["Flat", "Round"],
+    )
+
+
+def test_duplicate_scoped_alias_collides_after_accent_folding(
+    session: Session,
+) -> None:
+    # The engine keys scoped aliases by normalize() (accent/punctuation-folded), so
+    # "wstążkowy" and "wstazkowy" are ONE alias there — the guard must reject the
+    # second, or it silently overwrites the first in the loaded RuleSet.
+    definition = _cable_enum_def(session)
+    mrs.create_rule(
+        session, domain=MatchDomain.ENUM_VALUE, alias="wstążkowy",
+        canonical="Flat", parameter_definition_id=definition.id,
+    )
+    with pytest.raises(ValidationError, match="already exists"):
+        mrs.create_rule(
+            session, domain=MatchDomain.ENUM_VALUE, alias="wstazkowy",
+            canonical="Round", parameter_definition_id=definition.id,
+        )
+    # Only the first rule survives — the second never displaced it.
+    loaded = mrs.load_rules(session)
+    assert loaded.enum_aliases[definition.id] == {"wstazkowy": "Flat"}
+
+
+def test_create_rule_folds_an_enum_value_target_to_its_stored_case(
+    session: Session,
+) -> None:
+    # The engine checks membership case-sensitively (canonical in allowed), so the
+    # store folds "flat" to the exact allowed token "Flat" — otherwise the rule would
+    # sit in the table looking alive but never fire.
+    definition = _cable_enum_def(session, ["Flat", "Round"])
+    rule = mrs.create_rule(
+        session, domain=MatchDomain.ENUM_VALUE, alias="wstazkowy",
+        canonical="flat", parameter_definition_id=definition.id,
+    )
+    assert rule.canonical == "Flat"
+
+
+def test_create_rule_rejects_an_enum_value_target_that_is_not_a_member(
+    session: Session,
+) -> None:
+    definition = _cable_enum_def(session, ["Flat", "Round"])
+    with pytest.raises(ValidationError, match="enum_value rule's target"):
+        mrs.create_rule(
+            session, domain=MatchDomain.ENUM_VALUE, alias="wstazkowy",
+            canonical="Flatt", parameter_definition_id=definition.id,
+        )
+
+
+def test_update_rule_rejects_an_enum_value_target_that_is_not_a_member(
+    session: Session,
+) -> None:
+    definition = _cable_enum_def(session, ["Flat", "Round"])
+    rule = mrs.create_rule(
+        session, domain=MatchDomain.ENUM_VALUE, alias="wstazkowy",
+        canonical="Flat", parameter_definition_id=definition.id,
+    )
+    with pytest.raises(ValidationError, match="enum_value rule's target"):
+        mrs.update_rule(session, rule.id, canonical="Coax")
+    # The rejected edit left the valid target intact.
+    assert session.get(type(rule), rule.id).canonical == "Flat"
+
+
 def test_normalize_folds_polish_accents() -> None:
     # An accent must fold to its base letter, not vanish — otherwise "wstążkowy" and
     # the un-accented "wstazkowy" a shop often writes would key differently.
