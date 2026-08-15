@@ -80,6 +80,80 @@ def test_tme_sets_the_supplier_symbol_including_a_rewrapped_one() -> None:
     assert shipping.supplier_part_number is None
 
 
+def test_tme_rejoins_an_article_broken_on_its_hyphen() -> None:
+    # From the field: TME broke "DS1052-082B2NA2060" after the hyphen, so the
+    # article cell read "DS1052-" and its tail stood alone on the row below.
+    # The symbol differs from the MPN here, so nothing could verify it — the
+    # invoice kept "DS1052-" and the tail leaked into the description, and a
+    # bag whose QR prints PN:DS1052-082B2NA2060 matched no line.
+    from app.services.invoice_import.tme import _ITEM, _line
+
+    row = _ITEM.match(
+        "4         DS1052-                 100 SZT           25,80/10 SZT       "
+        "23                             258,00"
+    )
+    assert row is not None
+    parsed = _line(
+        row,
+        [
+            "082B2NA2060",
+            "Kabel wstążkowy ze złączami",
+            "IDC;R.taśmy:1,27mm;0,6m;8x28AWG",
+            "Producent: CONNFLY; Symbol producenta:",
+            "DS1052-082B2NA206001; Zgodność RoHS",
+        ],
+    )
+    assert parsed.mpn == "DS1052-082B2NA206001"  # the manufacturer's
+    assert parsed.supplier_part_number == "DS1052-082B2NA2060"  # TME's own
+    assert parsed.description is not None
+    assert parsed.description.startswith("Kabel wstążkowy")
+    assert "082B2NA2060" not in parsed.description
+
+
+def test_tme_rejoins_an_article_that_wrapped_twice() -> None:
+    # A symbol long enough to wrap twice must be glued from BOTH tail rows: one
+    # of them would rebuild a string that is still truncated — a fabrication,
+    # and worse than the drop rule it would bypass.
+    from app.services.invoice_import.tme import _ITEM, _line
+
+    row = _ITEM.match(
+        "1         HOUSESYMBOL16CHR                 10 SZT           1,00/SZT   "
+        "        23                             10,00"
+    )
+    assert row is not None
+    parsed = _line(
+        row,
+        [
+            "CONTINUED",
+            "TAIL",
+            "Kondensator:foo;bar",
+            "Producent: ACME; Symbol producenta: OTHER-MPN;",
+        ],
+    )
+    assert parsed.supplier_part_number == "HOUSESYMBOL16CHRCONTINUEDTAIL"
+    assert parsed.description == "Kondensator:foo;bar"
+
+
+def test_tme_keeps_a_one_word_description_off_an_intact_article() -> None:
+    # The tail is only read as one when the article shows the break (column
+    # width, or the hyphen TME broke at). An article that shows neither wrapped
+    # nowhere, so a one-word description row underneath is description text.
+    from app.services.invoice_import.tme import _ITEM, _line
+
+    row = _ITEM.match(
+        "1         ZL262-40DG                 10 SZT           1,00/SZT         "
+        "  23                             10,00"
+    )
+    assert row is not None
+    parsed = _line(
+        # A bare ASCII word: indistinguishable from a tail but for the article.
+        row,
+        ["Transformator", "Producent: ACME; Symbol producenta: OTHER-MPN;"],
+    )
+    assert parsed.supplier_part_number == "ZL262-40DG"
+    assert parsed.description == "Transformator"
+
+
 def test_tme_drops_a_possibly_truncated_long_article() -> None:
     # The article column wraps at ~16 chars. A >=16-char article that does NOT match
     # the MPN can't be verified whole — it may be a truncated fragment of a house
@@ -108,9 +182,7 @@ def test_tme_drops_a_possibly_truncated_long_article() -> None:
         "23                             10,00"
     )
     assert short is not None
-    parsed_short = _line(
-        short, ["Producent: ACME; Symbol producenta: OTHER-MPN;"]
-    )
+    parsed_short = _line(short, ["Producent: ACME; Symbol producenta: OTHER-MPN;"])
     assert parsed_short.supplier_part_number == "SHORTSYM"
 
 
@@ -304,8 +376,7 @@ def test_mouser_unlabelled_form_requires_a_numeric_left_token() -> None:
     )
     invoice = MouserInvoiceParser().parse(text)
     line = next(
-        row for row in invoice.lines
-        if row.supplier_part_number == "771-NX3P1108UKZ"
+        row for row in invoice.lines if row.supplier_part_number == "771-NX3P1108UKZ"
     )
     assert line.mpn is None  # → review, not a fake MPN
     assert line.description == "Vishay"
