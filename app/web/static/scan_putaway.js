@@ -123,10 +123,16 @@ window.initScanPutaway = function (adapter) {
   let dialogError = "";
   let windowUnfocused = false;
 
+  // Text only — never `hidden`, never a height change. This panel shares the
+  // page with a table sized to fit it (shared.js frameTable), so a panel that
+  // grows or shrinks re-lays out that table, and a row button rebuilt between
+  // mousedown and mouseup eats the click that was already on its way. The line
+  // is reserved and clipped in CSS (.scan-status); the full text of anything
+  // long also goes out as a toast, and rides here as a tooltip.
   function paintStatus(message, tone) {
     statusEl.textContent = message;
-    statusEl.className = tone === "error" ? "error" : "muted";
-    statusEl.hidden = !message;
+    statusEl.className = `scan-status ${tone === "error" ? "error" : "muted"}`;
+    statusEl.title = message;
   }
 
   function refreshStatus() {

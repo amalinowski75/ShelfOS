@@ -11,7 +11,7 @@ function componentsFixture() {
     <div id="scan-panel"
          data-locations='[{"id": 5, "path": "Lab / Rack A / D1"}, {"id": 9, "path": "Lab / Shelf 02"}]'>
       <input id="scan-input" readonly />
-      <p id="scan-status" hidden></p>
+      <p id="scan-status" class="scan-status"></p>
     </div>
     <dialog id="putaway-dialog">
       <form id="putaway-form">
@@ -110,7 +110,7 @@ describe("components_scan.js — resolving a bag", () => {
   it("reports a code that matches nothing, naming what it read", async () => {
     const { document } = await openOn({ identifiers: ["NOPE-1"], matches: [] });
     const status = document.getElementById("scan-status");
-    expect(status.className).toBe("error");
+    expect(status.className).toContain("error");
     expect(status.textContent).toBe("No component matches NOPE-1.");
     expect(document.getElementById("putaway-dialog").open).toBe(false);
   });
@@ -168,6 +168,25 @@ describe("components_scan.js — resolving a bag", () => {
     expect(status).toContain("Lab / Rack A / D1 (60)");
     expect(status).toContain("Lab / Shelf 02 (40)");
     expect(document.getElementById("putaway-dialog").open).toBe(false);
+  });
+
+  it("keeps the panel's height fixed whatever it says", () => {
+    // Regression: the components table is sized to fit the whole page
+    // (shared.js frameTable), so a panel that grows when a message appears
+    // re-lays out the table — and a row button rebuilt between mousedown and
+    // mouseup swallows the click. The status line is therefore always in flow
+    // and never toggled hidden; only its text changes.
+    const { document, window } = loadPage(componentsFixture(), SCRIPTS);
+    const status = document.getElementById("scan-status");
+    expect(status.hidden).toBe(false);
+    expect(status.className).toContain("scan-status");
+
+    window.dispatchEvent(new window.Event("blur")); // a long message arrives
+    expect(status.hidden).toBe(false);
+    expect(status.className).toContain("scan-status");
+    window.dispatchEvent(new window.Event("focus")); // …and goes away again
+    expect(status.hidden).toBe(false);
+    expect(status.textContent).toBe("");
   });
 });
 

@@ -16,7 +16,12 @@
      here, so focus (and password-manager overlays) can't eat them. #}
   <input class="control" id="scan-input" readonly tabindex="-1"
          placeholder="Scan {{ what }}&hellip;" />
-  <p id="scan-status" hidden></p>
+  {# Always in flow, one line tall, never hidden: this panel must not change
+     height. The components table is sized to fit the whole page (shared.js
+     frameTable), so a message appearing here re-lays out the table — and a row
+     button rebuilt between mousedown and mouseup swallows the click that was
+     already on its way. #}
+  <p id="scan-status" class="scan-status"></p>
 </div>
 {% endmacro %}
 

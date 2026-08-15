@@ -12,7 +12,7 @@ function scanFixture({ pendingLocation = "" } = {}) {
     <div id="scan-panel"
          data-locations='[{"id": 5, "path": "Lab / Rack A / D1"}, {"id": 9, "path": "Lab / Shelf 02"}]'>
       <input id="scan-input" readonly />
-      <p id="scan-status" hidden></p>
+      <p id="scan-status" class="scan-status"></p>
     </div>
     <table id="invoice-review"><tbody>
       <tr data-import-line-id="21" class="is-incomplete" data-type-id="3"
@@ -259,8 +259,7 @@ describe("invoice_scan.js — bag scan", () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     const status = document.getElementById("scan-status");
-    expect(status.hidden).toBe(false);
-    expect(status.className).toBe("error");
+    expect(status.className).toContain("error");
     expect(status.textContent).toMatch(/location label/);
   });
 
@@ -272,7 +271,7 @@ describe("invoice_scan.js — bag scan", () => {
     await tick();
 
     const status = document.getElementById("scan-status");
-    expect(status.className).toBe("error");
+    expect(status.className).toContain("error");
     expect(status.textContent).toContain("UNKNOWN-99");
     expect(document.getElementById("putaway-dialog").showModal).not.toHaveBeenCalled();
   });
@@ -344,11 +343,10 @@ describe("invoice_scan.js — bag scan", () => {
     const { window, document } = loadPage(scanFixture(), SCRIPTS);
     window.dispatchEvent(new window.Event("blur"));
     const status = document.getElementById("scan-status");
-    expect(status.hidden).toBe(false);
     expect(status.textContent).toMatch(/not focused/);
 
     window.dispatchEvent(new window.Event("focus"));
-    expect(status.hidden).toBe(true);
+    expect(status.textContent).toBe("");
   });
 
   it("restores a real status message after an alt-tab round trip", async () => {
@@ -365,7 +363,6 @@ describe("invoice_scan.js — bag scan", () => {
     window.dispatchEvent(new window.Event("focus"));
     // The unacted-on error is back, not silently swallowed by the warning.
     expect(status.textContent).toContain("UNKNOWN-99");
-    expect(status.hidden).toBe(false);
   });
 
   it("assembles a payload whose keys arrive with uneven gaps", async () => {
