@@ -66,11 +66,16 @@ def test_duplicate_alias_is_rejected(session: Session) -> None:
     mrs.create_rule(
         session, domain=MatchDomain.MOUNTING, alias="SMD", canonical="SMT"
     )
-    with pytest.raises(ValidationError, match="already exists"):
+    with pytest.raises(ValidationError) as exc:
         # Same domain + same alias (case-insensitively) is a duplicate.
         mrs.create_rule(
             session, domain=MatchDomain.MOUNTING, alias="smd", canonical="SMT"
         )
+    # The message names the clashing rule (its alias + target) so the admin sees
+    # WHAT already exists, not just that something does.
+    assert "already exists" in str(exc.value)
+    assert "SMD" in str(exc.value)
+    assert "SMT" in str(exc.value)
 
 
 def test_blank_alias_or_target_is_rejected(session: Session) -> None:

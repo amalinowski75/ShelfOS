@@ -150,8 +150,12 @@ def create_rule(
             parameter_definition_id,
             "parameter definition",
         )
-    if _find_duplicate(session, domain, alias, parameter_definition_id) is not None:
-        raise ValidationError("an identical rule already exists")
+    existing = _find_duplicate(session, domain, alias, parameter_definition_id)
+    if existing is not None:
+        raise ValidationError(
+            f"the alias '{existing.alias}' already exists in this domain "
+            f"(it maps to '{existing.canonical}')"
+        )
     rule = MatchRule(
         domain=domain,
         alias=alias,
@@ -191,7 +195,10 @@ def update_rule(
             session, rule.domain, alias, rule.parameter_definition_id
         )
         if clash is not None and clash.id != rule.id:
-            raise ValidationError("an identical rule already exists")
+            raise ValidationError(
+                f"the alias '{clash.alias}' already exists in this domain "
+                f"(it maps to '{clash.canonical}')"
+            )
         rule.alias = alias
     if canonical is not None:
         canonical = canonical.strip()
