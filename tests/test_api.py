@@ -784,6 +784,54 @@ def test_patch_import_line_forbidden_for_read_only(
     )
 
 
+def test_matching_proposal_endpoint_fills_a_chosen_types_parameters(
+    client: TestClient,
+) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    client.post(
+        f"/api/types/{ctype['id']}/parameters",
+        json={"name": "resistance", "label": "Resistance",
+              "data_type": "number", "unit": "Ω"},
+    )
+    definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
+
+    resp = client.post(
+        "/api/matching/proposal",
+        json={
+            "type_id": ctype["id"],
+            "description": "Thick Film Resistors - SMD 1.2 kOhms 0402",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["type_id"] == ctype["id"]
+    assert body["mounting_type"] == "SMT"  # from the seeded default mounting rules
+    assert body["package"] == "0402"
+    assert body["parameters"] == [
+        {"parameter_definition_id": definition["id"], "value": "1.2k"}
+    ]
+
+
+def test_matching_proposal_forbidden_for_read_only(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    client.post(
+        "/api/admin/users",
+        json={"username": "viewer", "password": "pw", "role": "read-only"},
+    )
+    token = client.post(
+        "/api/auth/token", json={"username": "viewer", "password": "pw"}
+    ).json()["access_token"]
+    assert (
+        anon_client.post(
+            "/api/matching/proposal",
+            json={"type_id": 1, "description": "x"},
+            headers={"Authorization": f"Bearer {token}"},
+        ).status_code
+        == 403
+    )
+
+
 def test_import_invoice_forbidden_for_read_only(
     client: TestClient, anon_client: TestClient
 ) -> None:

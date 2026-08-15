@@ -28,6 +28,7 @@ from app.api.routes import (
     invoices,
     links,
     locations,
+    matching,
     shops,
     stock,
     types,
@@ -35,6 +36,7 @@ from app.api.routes import (
 from app.auth.deps import require_access, require_admin, require_csrf
 from app.db import engine, init_db
 from app.seed import ensure_system_user
+from app.services import match_rule_service
 from app.services import user_service as us
 from app.services.shops import scan
 from app.web import routes as web_routes
@@ -52,6 +54,7 @@ _PROTECTED_ROUTERS = (
     attachments,
     boms,
     shops,
+    matching,
     links,
 )
 
@@ -68,6 +71,7 @@ def _bootstrap() -> None:
             username=config.ADMIN_USERNAME,
             password=config.ADMIN_PASSWORD,
         )
+        match_rule_service.seed_default_rules(session)
 
 
 def _check_scan_separator() -> None:

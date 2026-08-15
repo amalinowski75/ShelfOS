@@ -65,6 +65,7 @@ def anon_client(engine: Engine) -> Iterator[object]:
 def client(engine: Engine) -> Iterator[object]:
     """An admin-authenticated TestClient (default for most tests)."""
     from app.models.enums import UserRole
+    from app.services import match_rule_service as mrs
     from app.services import user_service as us
     from fastapi.testclient import TestClient
 
@@ -73,6 +74,8 @@ def client(engine: Engine) -> Iterator[object]:
         us.create_user(
             setup_session, username="admin", password="admin", role=UserRole.ADMIN
         )
+        # Mirror the app's startup seed so the matching engine has its defaults.
+        mrs.seed_default_rules(setup_session)
 
     with TestClient(app) as test_client:
         token = test_client.post(

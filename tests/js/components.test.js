@@ -382,6 +382,7 @@ describe("component_dialog.js — stage mode (invoice import review)", () => {
         mpn: "R-1",
         manufacturer: "Acme",
         package: "0402",
+        mountingType: "THT",
         notes: "a res",
         paramValues: [{ parameter_definition_id: 10, value: "4k7" }],
       },
@@ -389,10 +390,13 @@ describe("component_dialog.js — stage mode (invoice import review)", () => {
     );
     await tick(); // params load + prefill
 
-    // Type selected, the type's params rendered, the stored value applied.
+    // Type selected, the type's params rendered, the stored value + mounting applied.
     expect(document.getElementById("component-type").value).toBe("1");
     expect(document.querySelector('[data-definition-id="10"]').value).toBe("4k7");
     expect(document.getElementById("component-form").mpn.value).toBe("R-1");
+    expect(
+      document.getElementById("component-form").mounting_type.value,
+    ).toBe("THT");
 
     fire(document.getElementById("component-form"), "submit");
     await tick();
@@ -409,6 +413,7 @@ describe("component_dialog.js — stage mode (invoice import review)", () => {
       manufacturer: "Acme",
       mpn: "R-1",
       package: "0402",
+      mounting_type: "THT",
       description: "a res",
       parameters: [{ parameter_definition_id: 10, value: "4k7" }],
     });
@@ -433,11 +438,17 @@ describe("component_dialog.js — shop import", () => {
     // shop link. Echoed back because a scanned code buries (or lacks) its URL.
     source_url: "https://www.mouser.com/x",
     from_label_only: false,
-    parameters: [
-      { name: "Resistance", value: "10 kOhms" }, // NUMBER field → cleaned to "10k"
-      { name: "Package", value: "1206 (3216 Metric)" }, // TEXT field → kept raw
-      { name: "Tolerance", value: "1" }, // no matching def in DEFS → dropped
-    ],
+    parameters: [{ name: "Resistance", value: "10 kOhms" }],
+    // The matching engine now runs SERVER-side; the dialog just applies its proposal.
+    proposal: {
+      type_id: 1,
+      mounting_type: "SMT",
+      package: "0402",
+      parameters: [
+        { parameter_definition_id: 10, value: "10k" }, // NUMBER field
+        { parameter_definition_id: 11, value: "1206 (3216 Metric)" }, // TEXT field
+      ],
+    },
   };
   const withLookup = (product) => (url, opts) =>
     url === "/api/shops/lookup"
@@ -452,7 +463,10 @@ describe("component_dialog.js — shop import", () => {
     await tick(); // lookup, then the type's parameters
   }
 
-  it("rich-prefills the dialog from a looked-up product", async () => {
+  it("applies the server proposal from a looked-up product", async () => {
+    // The matching (type, mounting, parameter values) is computed server-side now;
+    // the dialog applies the proposal it returns. The value-derivation logic itself
+    // is covered by the Python engine tests (test_matching.py).
     const { document } = loadPage(componentPageFixture(), SCRIPTS, {
       fetchImpl: withLookup(PRODUCT),
     });
@@ -464,93 +478,147 @@ describe("component_dialog.js — shop import", () => {
     expect(field("manufacturer")).toBe("YAGEO");
     expect(field("package")).toBe("0402");
     expect(field("notes")).toBe("10k 1% 0402 resistor");
-    // "Resistance" → the NUMBER field (DEFS id 10), engineering-cleaned.
+    expect(field("mounting_type")).toBe("SMT"); // from proposal.mounting_type
+    // Parameter values come straight from proposal.parameters (by definition id).
     expect(
       document.querySelector('#component-params [data-definition-id="10"]').value,
     ).toBe("10k");
-    // "Package" → the TEXT field (DEFS id 11), kept raw (not truncated).
     expect(
       document.querySelector('#component-params [data-definition-id="11"]').value,
     ).toBe("1206 (3216 Metric)");
   });
 
-  it("derives fields from the description when the API returns no specs", async () => {
-    // Mirrors a real Mouser response: ProductAttributes carry only logistics, so
-    // the specs must come out of the description.
-    const mouserish = {
-      category: "resistor",
-      mpn: "MR04X1201FTL",
-      manufacturer: "Walsin",
-      description:
-        "Thick Film Resistors - SMD 1.2 kOhms 50 V 100 mW 1 % 0402 100 PPM / C AEC-Q200",
-      datasheet_url: null,
-      parameters: [
-        { name: "Packaging", value: "Reel" },
-        { name: "Standard Pack Qty", value: "10000" },
-      ],
+  it("re-runs the engine for the newly chosen type when the type changes", async () => {
+    let proposalBody = null;
+    const impl = (url, opts) => {
+      if (url === "/api/shops/lookup") {
+        return Promise.resolve({ ok: true, json: async () => PRODUCT });
+      }
+      if (url === "/api/matching/proposal") {
+        proposalBody = JSON.parse(opts.body);
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            type_id: 2,
+            mounting_type: null,
+            package: null,
+            parameters: [{ parameter_definition_id: 10, value: "8k" }],
+          }),
+        });
+      }
+      return fetchImpl(url, opts);
     };
-    const { document } = loadPage(componentPageFixture(), SCRIPTS, {
-      fetchImpl: withLookup(mouserish),
-    });
+    const { document } = loadPage(
+      componentPageFixture([
+        { id: 1, name: "resistor" },
+        { id: 2, name: "capacitor" },
+      ]),
+      SCRIPTS,
+      { fetchImpl: impl },
+    );
     await openAndImport(document);
-    // Resistance (unit Ω) read from the description; the stray "50 V" is ignored
-    // because this type has no volt parameter.
+    // Switch the type: the dialog re-requests a proposal for it and applies it.
+    const select = document.getElementById("component-type");
+    select.value = "2";
+    fire(select, "change");
+    await tick();
+    await tick();
+    // The re-request carries the imported product's text so the server can re-match.
+    expect(proposalBody.type_id).toBe(2);
+    expect(proposalBody.description).toBe("10k 1% 0402 resistor");
     expect(
       document.querySelector('#component-params [data-definition-id="10"]').value,
-    ).toBe("1.2k");
-    expect(document.querySelector('#component-form [name="package"]').value).toBe(
-      "0402",
+    ).toBe("8k");
+  });
+
+  it("keeps a manually-corrected mounting when the type changes", async () => {
+    const impl = (url, opts) => {
+      if (url === "/api/shops/lookup") {
+        return Promise.resolve({ ok: true, json: async () => PRODUCT });
+      }
+      if (url === "/api/matching/proposal") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            type_id: 2,
+            mounting_type: "SMT", // the engine still guesses SMT for the new type
+            package: null,
+            parameters: [],
+          }),
+        });
+      }
+      return fetchImpl(url, opts);
+    };
+    const { document } = loadPage(
+      componentPageFixture([
+        { id: 1, name: "resistor" },
+        { id: 2, name: "capacitor" },
+      ]),
+      SCRIPTS,
+      { fetchImpl: impl },
     );
+    await openAndImport(document);
+    const mounting = document.querySelector(
+      '#component-form [name="mounting_type"]',
+    );
+    expect(mounting.value).toBe("SMT"); // applied from the initial proposal
+    mounting.value = "THT"; // the user corrects it by hand
+
+    const select = document.getElementById("component-type");
+    select.value = "2";
+    fire(select, "change");
+    await tick();
+    await tick();
+    // Mounting is type-independent; the re-fetch must not clobber the correction.
+    expect(mounting.value).toBe("THT");
+  });
+
+  it("discards a stale proposal for a superseded type", async () => {
+    const impl = (url, opts) => {
+      if (url === "/api/shops/lookup") {
+        return Promise.resolve({ ok: true, json: async () => PRODUCT });
+      }
+      if (url === "/api/matching/proposal") {
+        const body = JSON.parse(opts.body);
+        const value = body.type_id === 1 ? "99k" : "8k";
+        const delay = body.type_id === 1 ? 30 : 0; // the superseded one is slow
+        return new Promise((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                ok: true,
+                json: async () => ({
+                  type_id: body.type_id,
+                  mounting_type: null,
+                  package: null,
+                  parameters: [{ parameter_definition_id: 10, value }],
+                }),
+              }),
+            delay,
+          ),
+        );
+      }
+      return fetchImpl(url, opts);
+    };
+    const { document } = loadPage(
+      componentPageFixture([
+        { id: 1, name: "resistor" },
+        { id: 2, name: "capacitor" },
+      ]),
+      SCRIPTS,
+      { fetchImpl: impl },
+    );
+    await openAndImport(document);
+    const select = document.getElementById("component-type");
+    select.value = "1";
+    fire(select, "change"); // slow proposal (99k) — superseded
+    select.value = "2";
+    fire(select, "change"); // fast proposal (8k) — the live one
+    await new Promise((resolve) => setTimeout(resolve, 60)); // let both settle
+    // The stale type-1 response resolves last but must not overwrite the type-2 value.
     expect(
-      document.querySelector('#component-form [name="mounting_type"]').value,
-    ).toBe("SMT");
-  });
-
-  // A resistor type with both a Ω and a W parameter, to exercise the unit scan.
-  const RES_DEFS = [
-    { id: 10, label: "Resistance", data_type: "number", unit: "Ω", enum_values: [], sort_order: 0 },
-    { id: 14, label: "Power", data_type: "number", unit: "W", enum_values: [], sort_order: 2 },
-  ];
-  const withLookupAndResDefs = (product) => (url, opts) => {
-    if (url === "/api/shops/lookup") {
-      return Promise.resolve({ ok: true, json: async () => product });
-    }
-    if (url.startsWith("/api/types/") && url.endsWith("/parameters")) {
-      return Promise.resolve({ ok: true, json: async () => RES_DEFS });
-    }
-    return fetchImpl(url, opts);
-  };
-  const param = (document, id) =>
-    document.querySelector(`#component-params [data-definition-id="${id}"]`).value;
-
-  it("reads a fractional power rating (1/16W), not its denominator", async () => {
-    const { document } = loadPage(componentPageFixture(), SCRIPTS, {
-      fetchImpl: withLookupAndResDefs({
-        category: "resistor",
-        description: "Thick Film Resistors 1.2kOhms 1/16W 0402 5% AEC-Q200",
-        parameters: [],
-      }),
-    });
-    await openAndImport(document);
-    expect(param(document, 10)).toBe("1.2k");
-    expect(param(document, 14)).toBe("0.0625"); // 1/16 W, not 16 W
-  });
-
-  it("reads a unitless engineering value into the value parameter", async () => {
-    const { document } = loadPage(componentPageFixture(), SCRIPTS, {
-      fetchImpl: withLookupAndResDefs({
-        category: "resistor",
-        description: "Thin Film Resistors - SMD TNPW-0402 1.2K 0.1% T-9 RT7",
-        parameters: [],
-      }),
-    });
-    await openAndImport(document);
-    // "1.2K" carries no unit but is plainly the resistance…
-    expect(param(document, 10)).toBe("1.2k");
-    // …and the package code must not be mistaken for it.
-    expect(document.querySelector('#component-form [name="package"]').value).toBe(
-      "0402",
-    );
+      document.querySelector('#component-params [data-definition-id="10"]').value,
+    ).toBe("8k");
   });
 
   it("attaches the imported datasheet after the component is created", async () => {

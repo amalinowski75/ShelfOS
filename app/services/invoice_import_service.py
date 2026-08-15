@@ -19,7 +19,7 @@ from typing import Any, cast
 from sqlmodel import Session, col, select
 
 from app.models.component import ComponentType
-from app.models.enums import AttachmentKind
+from app.models.enums import AttachmentKind, MountingType
 from app.models.invoice import Invoice, InvoiceImportLine, InvoiceLine
 from app.models.location import Location
 from app.services import attachment_service, invoice_service, shops
@@ -31,6 +31,8 @@ from app.services.errors import (
     ValidationError,
 )
 from app.services.invoice_import import ParsedInvoice, ParsedLine, parse_invoice
+from app.services.match_rule_service import RuleSet, load_rules
+from app.services.matching import MatchProposal, build_proposal
 from app.services.shops.base import ProductData, ShopLookupMiss, infer_category
 
 _logger = logging.getLogger("shelfos")
@@ -92,6 +94,8 @@ def import_invoice(
         # warning is burned and the rest of the import skips the API instead of
         # stacking a full timeout per line. A plain per-part miss does NOT trip this.
         enrich_disabled: set[str] = set()
+        # The matching rules are the same for every line — load them once.
+        rules = load_rules(session)
         for parsed_line in parsed.lines:
             if parsed_line.kind != "component":
                 continue  # a freight/handling charge is noted, not a component line
@@ -104,6 +108,7 @@ def import_invoice(
                 line_no,
                 user_id,
                 enrich_disabled,
+                rules,
             )
             if added_line:
                 added += 1
@@ -149,6 +154,7 @@ def _resolve_line(
     line_no: int,
     user_id: int,
     enrich_disabled: set[str],
+    rules: RuleSet,
 ) -> bool:
     """Add a real line if we can, else stage it. Returns True if a line was added."""
 
@@ -200,14 +206,17 @@ def _resolve_line(
             return False
 
     # 5. New part: stage it for review — the component is NOT created now, only at
-    #    finalize. If its type could be inferred the row is "ready" (needs just a
-    #    location); otherwise it needs the user to pick/create a type. Either way the
-    #    auto-guess is visible and correctable before anything is committed.
-    type_id = _resolve_type_id(session, product.category)
-    reason = "" if type_id else (_REASON_NO_MPN if not mpn else _REASON_NO_TYPE)
+    #    finalize. The matching engine works out the type, mounting and as many
+    #    parameter values as it can from the enriched data + the invoice text; if it
+    #    found a type the row is "ready" (needs just a location), otherwise the user
+    #    picks one. Every guess is visible and correctable before anything is committed.
+    proposal = build_proposal(session, product, rules=rules)
+    reason = (
+        "" if proposal.type_id else (_REASON_NO_MPN if not mpn else _REASON_NO_TYPE)
+    )
     _stage(
         session, invoice_id, shop_key, line, line_no, reason,
-        product=product, type_id=type_id,
+        product=product, proposal=proposal,
     )
     return False
 
@@ -254,17 +263,6 @@ def _enrich(
     )
 
 
-def _resolve_type_id(session: Session, category: str | None) -> int | None:
-    """A ShelfOS type id whose name matches ``category`` (case-insensitive), or None."""
-    if not category:
-        return None
-    target = category.strip().casefold()
-    for ctype in cs.list_types(session):
-        if ctype.name.casefold() == target:
-            return cast(int, ctype.id)
-    return None
-
-
 def _stage(
     session: Session,
     invoice_id: int,
@@ -274,13 +272,23 @@ def _stage(
     reason: str,
     *,
     product: ProductData | None = None,
-    type_id: int | None = None,
+    proposal: MatchProposal | None = None,
 ) -> None:
     """Park a line for review, prefilled with the best data we have.
 
-    ``type_id`` set marks the row "ready" (auto-classified); left None it needs the
-    user to choose a type. Nothing is created here — materialisation is at finalize.
+    A ``proposal`` from the matching engine carries the inferred type, mounting,
+    package and parameter values; without one (an ambiguous MPN match) the row is
+    parked bare. Nothing is created here — materialisation is at finalize.
     """
+    parameters = (
+        [{"parameter_definition_id": pid, "value": value}
+         for pid, value in proposal.parameters]
+        if proposal
+        else []
+    )
+    package = (proposal.package if proposal else None) or (
+        product.package if product else None
+    )
     session.add(
         InvoiceImportLine(
             invoice_id=invoice_id,
@@ -291,11 +299,16 @@ def _stage(
                 (product.manufacturer if product else None) or line.manufacturer
             ),
             description=(product.description if product else None) or line.description,
-            package=product.package if product else None,
+            package=package,
             quantity=line.quantity,
             unit_price=line.unit_price,
             shop_key=shop_key,
-            type_id=type_id,
+            type_id=proposal.type_id if proposal else None,
+            mounting_type=(
+                proposal.mounting_type if proposal and proposal.mounting_type
+                else MountingType.OTHER
+            ),
+            parameters=parameters,
             reason=reason,
         )
     )
@@ -368,6 +381,7 @@ def update_pending(
     manufacturer: str | None = _UNSET,
     mpn: str | None = _UNSET,
     package: str | None = _UNSET,
+    mounting_type: MountingType = _UNSET,
     description: str | None = _UNSET,
     parameters: list[dict[str, Any]] | None = _UNSET,
 ) -> InvoiceImportLine:
@@ -397,6 +411,11 @@ def update_pending(
         staging.mpn = mpn
     if package is not _UNSET:
         staging.package = package
+    if mounting_type is not _UNSET and mounting_type is not None:
+        # Mounting has no "cleared" state (NOT-NULL, defaults to OTHER); a stray null
+        # from the API would break the model invariant and later template rendering,
+        # so an explicit null leaves the current value untouched.
+        staging.mounting_type = mounting_type
     if description is not _UNSET:
         staging.description = description
     if parameters is not _UNSET:
@@ -476,6 +495,7 @@ def _materialize_component(
         manufacturer=row.manufacturer,
         mpn=row.mpn,
         package=row.package,
+        mounting_type=row.mounting_type,
         notes=row.description,
         values=values,
         user_id=user_id,

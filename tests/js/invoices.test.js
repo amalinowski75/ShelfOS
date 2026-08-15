@@ -159,6 +159,7 @@ describe("invoices.js — review imported lines inline", () => {
       mpn: "ABC123",
       manufacturer: "Acme",
       package: "SOT23",
+      mountingType: "THT",
       notes: "A widget",
       paramValues: [{ parameter_definition_id: 9, value: "4k7" }],
     });

@@ -13,6 +13,8 @@ from typing import Any
 from sqlalchemy import JSON, Column, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
+from app.models.enums import MountingType, enum_column
+
 # Monetary precision shared by all amount columns (decision D5).
 _MONEY_DIGITS = 18
 _MONEY_PLACES = 6
@@ -88,6 +90,11 @@ class InvoiceImportLine(SQLModel, table=True):
     type_id: int | None = Field(default=None, foreign_key="component_types.id")
     # Destination stock location, assigned during review; required before finalize.
     location_id: int | None = Field(default=None, foreign_key="locations.id")
+    # Auto-inferred (or user-corrected) mounting, carried onto the component at
+    # finalize. Type-independent, so it is NOT cleared when the type changes.
+    mounting_type: MountingType = Field(
+        default=MountingType.OTHER, sa_column=enum_column(MountingType)
+    )
     # Initial EAV parameter values the user entered during review, as a list of
     # ``{"parameter_definition_id": int, "value": ...}`` (same shape the component
     # create API takes). Applied when the component is created at finalize; cleared

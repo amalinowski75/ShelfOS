@@ -74,6 +74,20 @@ class ParameterDataType(enum.StrEnum):
     ENUM = "enum"
 
 
+class MatchDomain(enum.StrEnum):
+    """Which kind of thing a matching rule resolves (the enrichment engine).
+
+    A rule maps a free-text ``alias`` seen on a shop page/invoice to a ``canonical``
+    ShelfOS value. TYPE and MOUNTING are global; PARAM_NAME and ENUM_VALUE are scoped
+    to one parameter definition.
+    """
+
+    TYPE = "type"  # canonical = a component type name
+    MOUNTING = "mounting"  # canonical = a MountingType value
+    PARAM_NAME = "param_name"  # canonical = a parameter definition's name
+    ENUM_VALUE = "enum_value"  # canonical = one of a definition's allowed enum values
+
+
 class AttachmentKind(enum.StrEnum):
     """Kind of attached file (spec §10)."""
 

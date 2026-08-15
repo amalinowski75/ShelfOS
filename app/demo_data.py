@@ -20,6 +20,7 @@ from app.models.component import ComponentType
 from app.models.enums import (
     ContainerType,
     LocationType,
+    MatchDomain,
     MountingType,
     ParameterDataType,
     StockReason,
@@ -29,6 +30,7 @@ from app.services import bom_service as bs
 from app.services import component_service as cs
 from app.services import invoice_service as inv
 from app.services import location_service as ls
+from app.services import match_rule_service as mrs
 from app.services import stock_service as ss
 from app.units import parse_engineering
 
@@ -44,6 +46,7 @@ def populate_demo(session: Session, *, seed: int = 1) -> dict[str, int]:
 
     drawers = _build_locations(session)
     types = _build_types(session)
+    _seed_match_rules(session, types)
     components = _build_components(session, types, rng)
     movements = _stock_components(session, components, drawers, user.id, rng)
     invoices = _build_invoices(session, components, drawers, user.id, rng)
@@ -199,6 +202,41 @@ def _build_types(session: Session) -> dict[str, dict[str, int]]:
 
     types["ic"] = {"id": _tid(cs.create_type(session, "ic"))}
     return types
+
+
+def _seed_match_rules(
+    session: Session, types: dict[str, dict[str, int]]
+) -> None:
+    """Install the universal type/mounting rules plus a few scoped demo examples.
+
+    The scoped ones show what the engine can do beyond the built-ins: cross-language
+    parameter names and enum-value synonyms tied to specific demo definitions.
+    """
+    mrs.seed_default_rules(session)
+
+    def rule(
+        domain: MatchDomain, alias: str, canonical: str, definition_id: int
+    ) -> None:
+        if not mrs.rule_exists(
+            session, domain=domain, alias=alias, parameter_definition_id=definition_id
+        ):
+            mrs.create_rule(
+                session,
+                domain=domain,
+                alias=alias,
+                canonical=canonical,
+                parameter_definition_id=definition_id,
+            )
+
+    name = MatchDomain.PARAM_NAME
+    value = MatchDomain.ENUM_VALUE
+    # Cross-language parameter-name synonyms (a Polish shop label -> a demo definition).
+    rule(name, "Rezystancja", "resistance", types["resistor"]["resistance"])
+    rule(name, "Pojemność", "capacitance", types["capacitor"]["capacitance"])
+    rule(name, "RDS(on)", "rds_on", types["mosfet"]["rds_on"])
+    # Enum-value synonyms (a shop's spelling -> the canonical allowed token).
+    rule(value, "X7R Dielectric", "X7R", types["capacitor"]["dielectric"])
+    rule(value, "czerwony", "red", types["led"]["color"])
 
 
 def _make(
