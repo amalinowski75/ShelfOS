@@ -72,11 +72,23 @@
       const resp = await scanFetch("/api/shops/parse", "POST", { code });
       if (!resp.ok) throw new ScanMiss(await errorMessage(resp));
       const parsed = await resp.json();
+      // Every number the label states outright, because an invoice line can
+      // carry either of them: a TME bag prints BOTH the shop's ordering symbol
+      // (PN: → parsed.mpn, matching a line's supplier_part_number) and the
+      // manufacturer's own (MPN: → parsed.manufacturer_pn, matching the
+      // component's mpn). Which one the line has to offer is not the scanner's
+      // business — TME's PDF truncates its symbol column where it wraps, so the
+      // manufacturer's number is sometimes the only one the row carries.
+      //
       // A QR that is only the product URL still has an identifier: the shop's
       // own symbol, somewhere in the path. Strictly a FALLBACK — the path also
       // yields category/manufacturer segments, and letting those compete with
       // a real part number could file the bag against the wrong line.
-      const identifiers = [parsed.mpn, parsed.distributor_pn].filter(Boolean);
+      const identifiers = [
+        parsed.manufacturer_pn,
+        parsed.mpn,
+        parsed.distributor_pn,
+      ].filter(Boolean);
       const keys = new Set(
         (identifiers.length ? identifiers : parsed.url_symbols || []).map(norm),
       );
