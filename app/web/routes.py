@@ -19,11 +19,12 @@ from sqlmodel import Session
 
 from app.api.deps import get_session
 from app.auth.deps import get_optional_user, issue_csrf_token
-from app.models.component import ComponentType
+from app.models.component import ComponentType, ParameterDefinition
 from app.models.enums import (
     AttachmentKind,
     LinkKind,
     LocationType,
+    MatchDomain,
     MountingType,
     ParameterDataType,
     UserRole,
@@ -36,6 +37,7 @@ from app.services import invoice_import_service as imp
 from app.services import invoice_service as inv
 from app.services import label_service as lbl
 from app.services import location_service as ls
+from app.services import match_rule_service as mrs
 from app.services import stock_service as ss
 from app.services import user_service as us
 from app.services._common import require_entity
@@ -350,6 +352,63 @@ def users_page(
         request,
         "users.html",
         {"current_user": user, "roles": [role.value for role in UserRole]},
+    )
+
+
+@router.get("/web/api/match-rules")
+def match_rules_feed(
+    session: Session = Depends(get_session),
+    user: User = Depends(require_web_admin),
+) -> dict[str, Any]:
+    """JSON feed for the matching-rules table (admin only).
+
+    A scoped rule (param_name/enum_value) is attached to a parameter definition; the
+    table shows that as "Type / Parameter" so the admin knows what it applies to.
+    """
+    rules = mrs.list_rules(session)
+    # Resolve each scoped rule's parameter to a readable "Type / Label" once.
+    scope_labels: dict[int, str] = {}
+    for rule in rules:
+        pid = rule.parameter_definition_id
+        if pid is None or pid in scope_labels:
+            continue
+        definition = session.get(ParameterDefinition, pid)
+        if definition is None:
+            scope_labels[pid] = "(deleted parameter)"
+            continue
+        owner = session.get(ComponentType, definition.type_id)
+        prefix = f"{owner.name} / " if owner is not None else ""
+        scope_labels[pid] = f"{prefix}{definition.label}"
+    return {
+        "data": [
+            {
+                "id": rule.id,
+                "domain": rule.domain.value,
+                "alias": rule.alias,
+                "canonical": rule.canonical,
+                "parameter_definition_id": rule.parameter_definition_id,
+                "parameter": (
+                    scope_labels.get(rule.parameter_definition_id)
+                    if rule.parameter_definition_id is not None
+                    else None
+                ),
+                "sort_order": rule.sort_order,
+            }
+            for rule in rules
+        ]
+    }
+
+
+@router.get("/match-rules", response_class=HTMLResponse)
+def match_rules_page(
+    request: Request,
+    user: User = Depends(require_web_admin),
+) -> HTMLResponse:
+    """Matching-rules shell; rows load from /web/api/match-rules (admin only)."""
+    return templates.TemplateResponse(
+        request,
+        "match_rules.html",
+        {"current_user": user, "domains": [d.value for d in MatchDomain]},
     )
 
 

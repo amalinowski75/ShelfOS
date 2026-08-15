@@ -14,9 +14,10 @@ from sqlmodel import Session
 
 from app.api.deps import get_session
 from app.auth.deps import current_user_id
-from app.models.enums import UserRole
+from app.models.enums import MatchDomain, UserRole
 from app.services import audit_service
 from app.services import component_service as cs
+from app.services import match_rule_service as mrs
 from app.services import user_service as us
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -64,6 +65,35 @@ class AuditEntryRead(BaseModel):
     new_value: str | None
     user_id: int
     timestamp: datetime
+
+
+class MatchRuleRead(BaseModel):
+    """One matching rule, as the admin table shows it."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    domain: MatchDomain
+    alias: str
+    canonical: str
+    parameter_definition_id: int | None
+    sort_order: int
+
+
+class MatchRuleCreate(BaseModel):
+    domain: MatchDomain
+    alias: str
+    canonical: str
+    parameter_definition_id: int | None = None
+    sort_order: int = 0
+
+
+class MatchRuleUpdate(BaseModel):
+    """Inline edit of a rule; the domain and scope are fixed, so they're absent."""
+
+    alias: str | None = None
+    canonical: str | None = None
+    sort_order: int | None = None
 
 
 @router.delete("/components/{component_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -127,3 +157,46 @@ def list_audit(
         session, entity_type=entity_type, entity_id=entity_id, limit=limit
     )
     return [AuditEntryRead.model_validate(e) for e in entries]
+
+
+@router.get("/match-rules", response_model=list[MatchRuleRead])
+def list_match_rules(session: Session = Depends(get_session)) -> list[MatchRuleRead]:
+    """Every matching rule, for the engine's editable vocabulary (admin)."""
+    return [MatchRuleRead.model_validate(r) for r in mrs.list_rules(session)]
+
+
+@router.post(
+    "/match-rules",
+    response_model=MatchRuleRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_match_rule(
+    payload: MatchRuleCreate, session: Session = Depends(get_session)
+) -> MatchRuleRead:
+    rule = mrs.create_rule(
+        session,
+        domain=payload.domain,
+        alias=payload.alias,
+        canonical=payload.canonical,
+        parameter_definition_id=payload.parameter_definition_id,
+        sort_order=payload.sort_order,
+    )
+    return MatchRuleRead.model_validate(rule)
+
+
+@router.patch("/match-rules/{rule_id}", response_model=MatchRuleRead)
+def update_match_rule(
+    rule_id: int,
+    payload: MatchRuleUpdate,
+    session: Session = Depends(get_session),
+) -> MatchRuleRead:
+    """Edit a rule's alias/target/order in place (only the fields sent change)."""
+    changes = payload.model_dump(exclude_unset=True)
+    return MatchRuleRead.model_validate(mrs.update_rule(session, rule_id, **changes))
+
+
+@router.delete("/match-rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_match_rule(
+    rule_id: int, session: Session = Depends(get_session)
+) -> None:
+    mrs.delete_rule(session, rule_id)

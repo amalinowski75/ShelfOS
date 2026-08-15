@@ -146,6 +146,47 @@ def create_rule(
     return rule
 
 
+def update_rule(
+    session: Session,
+    rule_id: int,
+    *,
+    alias: str | None = None,
+    canonical: str | None = None,
+    sort_order: int | None = None,
+) -> MatchRule:
+    """Edit a rule's alias, target or order in place (only the fields given change).
+
+    The rule's domain and scope are fixed — changing them would make it a different
+    rule (delete and re-add instead). The same duplicate guard as :func:`create_rule`
+    applies to a rename: an alias already used in this domain + scope is rejected, so
+    the same text never maps two different ways.
+    """
+    rule = session.get(MatchRule, rule_id)
+    if rule is None:
+        raise ValidationError("matching rule not found")
+    if alias is not None:
+        alias = alias.strip()
+        if not alias:
+            raise ValidationError("a matching rule needs an alias")
+        clash = _find_duplicate(
+            session, rule.domain, alias, rule.parameter_definition_id
+        )
+        if clash is not None and clash.id != rule.id:
+            raise ValidationError("an identical rule already exists")
+        rule.alias = alias
+    if canonical is not None:
+        canonical = canonical.strip()
+        if not canonical:
+            raise ValidationError("a matching rule needs a target")
+        rule.canonical = canonical
+    if sort_order is not None:
+        rule.sort_order = sort_order
+    session.add(rule)
+    session.commit()
+    session.refresh(rule)
+    return rule
+
+
 def delete_rule(session: Session, rule_id: int) -> None:
     rule = session.get(MatchRule, rule_id)
     if rule is None:

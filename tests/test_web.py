@@ -1504,3 +1504,49 @@ def test_bom_report_has_no_add_component_dialog_for_read_only(
         f"/boms/{bom_id}", headers={"Authorization": f"Bearer {token}"}
     ).text
     assert 'id="component-dialog"' not in html
+
+
+# --- match-rules admin page ---------------------------------------------------
+
+
+def test_match_rules_page_renders_for_admin(client: TestClient) -> None:
+    html = client.get("/match-rules").text
+    assert 'id="rules-table"' in html
+    assert "match_rules.js" in html
+    # The nav exposes the admin-only link.
+    assert 'href="/match-rules"' in html
+
+
+def test_match_rules_feed_labels_a_scoped_rule(client: TestClient) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    client.post(
+        f"/api/types/{ctype['id']}/parameters",
+        json={"name": "resistance", "label": "Resistance", "data_type": "number",
+              "unit": "Ω"},
+    )
+    definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
+    client.post(
+        "/api/admin/match-rules",
+        json={"domain": "param_name", "alias": "Rezystancja", "canonical": "resistance",
+              "parameter_definition_id": definition["id"]},
+    )
+    feed = client.get("/web/api/match-rules").json()["data"]
+    row = next(r for r in feed if r["alias"] == "Rezystancja")
+    # A scoped rule shows "Type / Parameter" so the admin knows what it applies to.
+    assert row["parameter"] == "resistor / Resistance"
+    # A global rule (seeded default) carries no parameter label.
+    assert any(r["parameter"] is None for r in feed)
+
+
+def test_match_rules_forbidden_for_non_admin_web(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    token = _non_admin_token(client, role="user", username="writer_web")
+    headers = {"Authorization": f"Bearer {token}"}
+    # Both the page and its feed redirect a non-admin away rather than serving them.
+    page = anon_client.get("/match-rules", headers=headers, follow_redirects=False)
+    assert page.status_code == 303 and page.headers["location"] == "/"
+    feed = anon_client.get(
+        "/web/api/match-rules", headers=headers, follow_redirects=False
+    )
+    assert feed.status_code == 303

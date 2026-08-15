@@ -1,0 +1,236 @@
+import { describe, it, expect, vi } from "vitest";
+import { loadPage, tick, CSRF, matchRulesPageFixture, fetchBody } from "./harness.js";
+
+const SCRIPTS = ["shared.js", "match_rules.js"];
+
+// A minimal Tabulator cell double: the value being edited + its row's data, plus a
+// spy for the revert the code calls when the server rejects an edit.
+function editCell(value, row = { id: 7 }) {
+  return {
+    getValue: () => value,
+    getRow: () => ({ getData: () => row }),
+    restoreOldValue: vi.fn(),
+  };
+}
+
+function submit(document, formId) {
+  document
+    .getElementById(formId)
+    .dispatchEvent(
+      new document.defaultView.Event("submit", { cancelable: true, bubbles: true }),
+    );
+}
+
+function fire(el, type) {
+  el.dispatchEvent(
+    new el.ownerDocument.defaultView.Event(type, { cancelable: true, bubbles: true }),
+  );
+}
+
+describe("match_rules.js — columns", () => {
+  it("labels the columns and escapes the editable text", () => {
+    const { window } = loadPage(matchRulesPageFixture(), SCRIPTS);
+    const columns = window.ruleColumns();
+    expect(columns.map((c) => c.field)).toEqual([
+      "domain",
+      "alias",
+      "canonical",
+      "parameter",
+      "sort_order",
+      "actions",
+    ]);
+    // Alias/target render escaped so a stray "<" can't inject markup.
+    const alias = columns.find((c) => c.field === "alias");
+    expect(alias.formatter(editCell("<b>x"))).toBe(
+      '<span class="cell-mono">&lt;b&gt;x</span>',
+    );
+    // A global rule has no parameter scope — the cell renders empty, not "null".
+    const param = columns.find((c) => c.field === "parameter");
+    expect(param.formatter(editCell(null))).toBe("");
+    expect(param.formatter(editCell("resistor / Resistance"))).toBe(
+      "resistor / Resistance",
+    );
+  });
+
+  it("marks alias/target/order editable but leaves domain and parameter fixed", () => {
+    const { window } = loadPage(matchRulesPageFixture(), SCRIPTS);
+    const byField = Object.fromEntries(
+      window.ruleColumns().map((c) => [c.field, c]),
+    );
+    expect(byField.alias.editor).toBe("input");
+    expect(byField.canonical.editor).toBe("input");
+    expect(byField.sort_order.editor).toBe("number");
+    expect(byField.domain.editor).toBeUndefined();
+    expect(byField.parameter.editor).toBeUndefined();
+  });
+});
+
+describe("match_rules.js — inline edit", () => {
+  it("PATCHes a single field when a cell is edited", async () => {
+    const { window, fetchMock } = loadPage(matchRulesPageFixture(), SCRIPTS);
+    const alias = window.ruleColumns().find((c) => c.field === "alias");
+    await alias.cellEdited(editCell("opornik", { id: 42 }));
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/admin/match-rules/42");
+    expect(fetchMock.mock.calls[0][1].method).toBe("PATCH");
+    expect(fetchMock.mock.calls[0][1].headers["X-CSRF-Token"]).toBe(CSRF);
+    expect(fetchBody(fetchMock)).toEqual({ alias: "opornik" });
+  });
+
+  it("sends the order as a number", async () => {
+    const { window, fetchMock } = loadPage(matchRulesPageFixture(), SCRIPTS);
+    const order = window.ruleColumns().find((c) => c.field === "sort_order");
+    await order.cellEdited(editCell("5", { id: 3 }));
+    expect(fetchBody(fetchMock)).toEqual({ sort_order: 5 });
+  });
+
+  it("reverts the cell and alerts when the server rejects the edit", async () => {
+    // The duplicate-alias guard the admin asked for surfaces here.
+    const fetchImpl = () =>
+      Promise.resolve({
+        ok: false,
+        json: async () => ({ detail: "an identical rule already exists" }),
+      });
+    const { window } = loadPage(matchRulesPageFixture(), SCRIPTS, { fetchImpl });
+    window.alert = vi.fn();
+    const cell = editCell("smd", { id: 9 });
+    const alias = window.ruleColumns().find((c) => c.field === "alias");
+    await alias.cellEdited(cell);
+
+    expect(window.alert).toHaveBeenCalledWith("an identical rule already exists");
+    expect(cell.restoreOldValue).toHaveBeenCalled();
+  });
+});
+
+describe("match_rules.js — loading & delete", () => {
+  it("fetches the feed and sets the data", async () => {
+    const feed = {
+      data: [{ id: 1, domain: "type", alias: "rezystor", canonical: "resistor" }],
+    };
+    const fetchImpl = () => Promise.resolve({ ok: true, json: async () => feed });
+    const { window } = loadPage(matchRulesPageFixture(), SCRIPTS, { fetchImpl });
+    const setData = vi.spyOn(window.Tabulator.prototype, "setData");
+
+    await window.loadRules();
+    await tick();
+
+    expect(setData).toHaveBeenCalledWith(feed.data);
+  });
+
+  it("deletes only after confirmation", async () => {
+    const { window, fetchMock } = loadPage(matchRulesPageFixture(), SCRIPTS);
+
+    window.confirm = vi.fn(() => false);
+    window.deleteRule({ id: 5, alias: "x", canonical: "ic" });
+    await tick();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    window.confirm = vi.fn(() => true);
+    window.deleteRule({ id: 5, alias: "x", canonical: "ic" });
+    await tick();
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/admin/match-rules/5");
+    expect(fetchMock.mock.calls[0][1].method).toBe("DELETE");
+  });
+});
+
+describe("match_rules.js — create", () => {
+  it("creates a global rule with no parameter scope", async () => {
+    const { document, fetchMock } = loadPage(matchRulesPageFixture(), SCRIPTS);
+    document.getElementById("rule-new-btn").click();
+    await tick();
+    const form = document.getElementById("rule-new-form");
+    form.elements.domain.value = "mounting";
+    form.elements.alias.value = "  przewlekany  ";
+    form.elements.canonical.value = "THT";
+    form.elements.sort_order.value = "2";
+
+    submit(document, "rule-new-form");
+    await tick();
+
+    const [url, opts] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/admin/match-rules");
+    expect(opts.method).toBe("POST");
+    expect(fetchBody(fetchMock)).toEqual({
+      domain: "mounting",
+      alias: "przewlekany", // trimmed
+      canonical: "THT",
+      sort_order: 2,
+      parameter_definition_id: null,
+    });
+  });
+
+  it("loads types/params for a scoped domain and posts the parameter id", async () => {
+    const fetchImpl = (url) => {
+      if (url === "/api/types") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [{ id: 1, name: "resistor" }],
+        });
+      }
+      if (url === "/api/types/1/parameters") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [{ id: 10, label: "Resistance" }],
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    };
+    const { document, fetchMock } = loadPage(matchRulesPageFixture(), SCRIPTS, {
+      fetchImpl,
+    });
+    document.getElementById("rule-new-btn").click();
+    await tick();
+    const form = document.getElementById("rule-new-form");
+    // Switch to a scoped domain: the type/param pickers appear and populate.
+    form.elements.domain.value = "param_name";
+    fire(form.elements.domain, "change");
+    await tick();
+    await tick();
+
+    expect(document.getElementById("rule-scope-type").hidden).toBe(false);
+    expect(form.elements.parameter.value).toBe("10");
+
+    form.elements.alias.value = "Rezystancja";
+    form.elements.canonical.value = "resistance";
+    submit(document, "rule-new-form");
+    await tick();
+
+    const post = fetchMock.mock.calls.find(
+      (c) => c[0] === "/api/admin/match-rules",
+    );
+    expect(JSON.parse(post[1].body)).toEqual({
+      domain: "param_name",
+      alias: "Rezystancja",
+      canonical: "resistance",
+      sort_order: 0,
+      parameter_definition_id: 10,
+    });
+  });
+
+  it("refuses a scoped rule with no parameter chosen", async () => {
+    // No fetchImpl for types → the param select stays empty; submit must not POST.
+    const fetchImpl = (url) => {
+      if (url === "/api/types") return Promise.resolve({ ok: true, json: async () => [] });
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    };
+    const { document, fetchMock } = loadPage(matchRulesPageFixture(), SCRIPTS, {
+      fetchImpl,
+    });
+    document.getElementById("rule-new-btn").click();
+    await tick();
+    const form = document.getElementById("rule-new-form");
+    form.elements.domain.value = "enum_value";
+    fire(form.elements.domain, "change");
+    await tick();
+    form.elements.alias.value = "czerwony";
+    form.elements.canonical.value = "red";
+
+    submit(document, "rule-new-form");
+    await tick();
+
+    expect(
+      fetchMock.mock.calls.some((c) => c[0] === "/api/admin/match-rules"),
+    ).toBe(false);
+    expect(document.getElementById("rule-new-error").hidden).toBe(false);
+  });
+});

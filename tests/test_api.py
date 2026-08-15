@@ -1837,3 +1837,97 @@ def test_import_line_quantity_can_be_corrected_during_review(
     )
     assert cleared.status_code == 200
     assert cleared.json()["quantity"] == 95
+
+
+# --- match-rule admin API ----------------------------------------------------
+
+
+def _non_admin_token(
+    client: TestClient, *, role: str = "user", username: str = "editor"
+) -> str:
+    client.post(
+        "/api/admin/users",
+        json={"username": username, "password": "pw", "role": role},
+    )
+    return client.post(
+        "/api/auth/token", json={"username": username, "password": "pw"}
+    ).json()["access_token"]
+
+
+def test_match_rule_admin_crud(client: TestClient) -> None:
+    # Aliases the seeded defaults don't already use, so the create/rename isn't a
+    # duplicate against a shipped rule.
+    created = client.post(
+        "/api/admin/match-rules",
+        json={"domain": "type", "alias": "opornik", "canonical": "resistor"},
+    )
+    assert created.status_code == 201
+    rule_id = created.json()["id"]
+
+    # The new rule shows up in the list.
+    listed = client.get("/api/admin/match-rules").json()
+    assert any(r["id"] == rule_id and r["alias"] == "opornik" for r in listed)
+
+    # Inline edit of the alias.
+    patched = client.patch(
+        f"/api/admin/match-rules/{rule_id}", json={"alias": "oporniczek"}
+    )
+    assert patched.status_code == 200
+    assert patched.json()["alias"] == "oporniczek"
+
+    # Delete removes it.
+    assert client.delete(f"/api/admin/match-rules/{rule_id}").status_code == 204
+    after = client.get("/api/admin/match-rules").json()
+    assert not any(r["id"] == rule_id for r in after)
+
+
+def test_create_scoped_match_rule_binds_to_a_parameter(client: TestClient) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    client.post(
+        f"/api/types/{ctype['id']}/parameters",
+        json={"name": "resistance", "label": "Resistance", "data_type": "number",
+              "unit": "Ω"},
+    )
+    definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
+    resp = client.post(
+        "/api/admin/match-rules",
+        json={"domain": "param_name", "alias": "Rezystancja", "canonical": "resistance",
+              "parameter_definition_id": definition["id"]},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["parameter_definition_id"] == definition["id"]
+
+
+def test_patch_match_rule_duplicate_alias_is_rejected(client: TestClient) -> None:
+    # Custom aliases (not shipped defaults) so the two creates both succeed.
+    client.post(
+        "/api/admin/match-rules",
+        json={"domain": "mounting", "alias": "topside", "canonical": "SMT"},
+    )
+    other = client.post(
+        "/api/admin/match-rules",
+        json={"domain": "mounting", "alias": "backside", "canonical": "THT"},
+    ).json()
+    # Renaming onto an alias already used in this domain must fail (the guard the
+    # admin asked for), not silently create a second mapping for the same text.
+    resp = client.patch(
+        f"/api/admin/match-rules/{other['id']}", json={"alias": "TopSide"}
+    )
+    assert resp.status_code == 422
+
+
+def test_match_rules_forbidden_for_non_admin(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    # A plain writer (non-admin) can create components but not touch the rule store.
+    token = _non_admin_token(client, role="user", username="writer1")
+    headers = {"Authorization": f"Bearer {token}"}
+    assert anon_client.get("/api/admin/match-rules", headers=headers).status_code == 403
+    assert (
+        anon_client.post(
+            "/api/admin/match-rules",
+            json={"domain": "type", "alias": "x", "canonical": "ic"},
+            headers=headers,
+        ).status_code
+        == 403
+    )

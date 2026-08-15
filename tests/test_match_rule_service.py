@@ -88,6 +88,51 @@ def test_delete_rule(session: Session) -> None:
     assert not mrs.list_rules(session, domain=MatchDomain.TYPE)
 
 
+def test_update_rule_changes_alias_target_and_order(session: Session) -> None:
+    rule = mrs.create_rule(
+        session, domain=MatchDomain.TYPE, alias="rezystor", canonical="resistor"
+    )
+    updated = mrs.update_rule(
+        session, rule.id, alias="opornik", canonical="resistor", sort_order=5
+    )
+    assert updated.alias == "opornik"
+    assert updated.sort_order == 5
+    # The rename is what the engine now loads.
+    loaded = mrs.load_rules(session)
+    assert ("opornik", "resistor") in loaded.types
+    assert ("rezystor", "resistor") not in loaded.types
+
+
+def test_update_rule_rejects_a_duplicate_alias(session: Session) -> None:
+    mrs.create_rule(session, domain=MatchDomain.MOUNTING, alias="SMD", canonical="SMT")
+    other = mrs.create_rule(
+        session, domain=MatchDomain.MOUNTING, alias="THT", canonical="THT"
+    )
+    # Renaming onto an alias already used in the same domain is rejected, so the
+    # same text never maps two different ways.
+    with pytest.raises(ValidationError, match="already exists"):
+        mrs.update_rule(session, other.id, alias="smd")
+    # The rejected edit left the original alias intact.
+    assert session.get(type(other), other.id).alias == "THT"
+
+
+def test_update_rule_rejects_a_blank_alias(session: Session) -> None:
+    rule = mrs.create_rule(
+        session, domain=MatchDomain.TYPE, alias="widget", canonical="ic"
+    )
+    with pytest.raises(ValidationError):
+        mrs.update_rule(session, rule.id, alias="   ")
+
+
+def test_update_rule_can_rename_to_the_same_alias(session: Session) -> None:
+    # Editing only the target must not trip the duplicate guard on the rule itself.
+    rule = mrs.create_rule(
+        session, domain=MatchDomain.TYPE, alias="chip", canonical="ic"
+    )
+    updated = mrs.update_rule(session, rule.id, alias="chip", canonical="mosfet")
+    assert updated.canonical == "mosfet"
+
+
 def test_match_rules_survive_reset_db_keep_types() -> None:
     # The rules are taxonomy; --keep-types must not wipe them.
     from scripts import reset_db
