@@ -367,28 +367,65 @@ describe("invoice_scan.js — bag scan", () => {
     expect(status.hidden).toBe(false);
   });
 
-  it("leaves a burst-opening key to the focused control and restarts the buffer", async () => {
-    // Type-ahead on a select and Space on a button must keep working: the key
-    // that OPENS a burst is never consumed, and it starts a fresh buffer so
-    // human strays can't prefix the next scan. Human keystrokes are spaced far
-    // wider than the burst gap, so each one opens its own "burst".
+  it("assembles a payload whose keys arrive with uneven gaps", async () => {
+    // Regression: real scanners stall mid-payload (HID polling, a layout
+    // switch for ":" or "/"). A gap must never be read as "a new scan" and
+    // truncate the code — the field cleared three times mid-scan and the
+    // server got a fragment.
+    const { document, fetchMock } = loadPage(scanFixture(), SCRIPTS, {
+      fetchImpl: parseRouting({ mpn: "ABC123", distributor_pn: null }),
+    });
+    syncDialogOpen(document);
+    const field = document.getElementById("invoice-scan-input");
+
+    for (const key of "PN:ABC") {
+      press(document, key);
+      await new Promise((resolve) => setTimeout(resolve, 90)); // slow scanner
+    }
+    for (const key of "123") press(document, key); // then a fast run
+    expect(field.value).toBe("PN:ABC123"); // nothing was dropped
+    press(document, "Enter");
+    await tick();
+
+    expect(fetchBody(fetchMock)).toEqual({ code: "PN:ABC123" });
+    expect(document.getElementById("putaway-dialog").open).toBe(true);
+  });
+
+  it("leaves a deliberate keypress to a focused page control", async () => {
+    // Type-ahead on a select and Space on a button keep working: an isolated
+    // press on a control outside the dialog is the user working the UI.
     const { document } = loadPage(scanFixture(), SCRIPTS);
-    const gap = () => new Promise((resolve) => setTimeout(resolve, 80));
+    const gap = () => new Promise((resolve) => setTimeout(resolve, 300));
 
     const rowSelect = document.querySelector(".ril-location");
     rowSelect.focus();
     await gap();
-    const typed = press(document, "L", rowSelect);
-    expect(typed.defaultPrevented).toBe(false);
+    expect(press(document, "L", rowSelect).defaultPrevented).toBe(false);
 
     const button = document.createElement("button");
     document.body.appendChild(button);
     button.focus();
     await gap();
-    const space = press(document, " ", button);
-    expect(space.defaultPrevented).toBe(false);
-    // …and the field shows only the latest stray, not "L ".
-    expect(document.getElementById("invoice-scan-input").value).toBe(" ");
+    expect(press(document, " ", button).defaultPrevented).toBe(false);
+
+    // Inside the dialog nothing is deliberate: a payload's Space must not
+    // click the close button showModal focused.
+    document.getElementById("putaway-dialog").open = true;
+    const close = document.createElement("button");
+    document.getElementById("putaway-dialog").appendChild(close);
+    close.focus();
+    await gap();
+    expect(press(document, " ", close).defaultPrevented).toBe(true);
+  });
+
+  it("drops an unterminated buffer so strays can't prefix the next scan", async () => {
+    const { document } = loadPage(scanFixture(), SCRIPTS);
+    press(document, "L");
+    const field = document.getElementById("invoice-scan-input");
+    expect(field.value).toBe("L");
+
+    await new Promise((resolve) => setTimeout(resolve, 1300)); // idle window
+    expect(field.value).toBe("");
   });
 
   it("consumes the rest of a burst so a scan can't leak into a control", async () => {

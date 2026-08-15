@@ -39,19 +39,25 @@
   let buffer = ""; // keystrokes collected since the last Enter
   let queued = null; // a bag scan that arrived while the previous one was busy
   let lastKeyAt = -Infinity;
+  let idleTimer = null;
 
   // Give up on a hung request rather than holding `busy` forever — a stuck
   // flag would silently eat every scan that follows.
   const FETCH_TIMEOUT_MS = 10_000;
-  // A wedge scanner types at machine speed; a human does not. Keys further
-  // apart than this open a NEW buffer and are left to whatever has focus, so
-  // stray human keystrokes can neither be stolen from a control (select
-  // type-ahead, Space activating a button) nor accumulate into the next scan.
-  // Everything inside a burst is captured.
-  const BURST_GAP_MS = 60;
+  // A wedge scanner types faster than a human, but NOT uniformly: real
+  // payloads show occasional long gaps (HID polling, a layout switch for ":"
+  // or "/"), so this threshold decides one thing only — whether a keypress is
+  // deliberate enough to be left to a focused control (Space activating a
+  // button, a select's type-ahead). It NEVER splits a payload: characters are
+  // appended unconditionally, because a buffer reset mid-scan truncates the
+  // code and was exactly that bug.
+  const BURST_GAP_MS = 250;
   // An Enter this long after the last character terminates nothing — the
   // buffer is human leftovers, not a scan.
   const TERMINATOR_MS = 400;
+  // A buffer nobody terminated is dropped, so stray keystrokes can never
+  // prefix the next scan. Far longer than any gap inside a real payload.
+  const IDLE_RESET_MS = 1200;
 
   const norm = (value) => (value || "").trim().toUpperCase();
 
@@ -94,6 +100,27 @@
   function setDialogError(message) {
     dialogError = message;
     paintDialogError(message);
+  }
+
+  // Drop a buffer that never got its terminator (a stray keypress, an aborted
+  // scan), so it cannot prefix the next code. Rearmed on every keystroke, so
+  // it can only fire between scans, never inside one.
+  function armIdleReset() {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      if (!buffer) return;
+      buffer = "";
+      render();
+    }, IDLE_RESET_MS);
+  }
+
+  // A control whose own keyboard behaviour a deliberate keypress should keep.
+  // Inside the putaway dialog nothing qualifies: there the keyboard exists to
+  // scan (its buttons stay mouse- and Escape-operated), and a payload's stray
+  // Space must never "click" the close button that showModal focused.
+  function isPageControl(node) {
+    if (!node || dialog.contains(node)) return false;
+    return ["BUTTON", "SELECT", "A", "SUMMARY"].includes(node.tagName);
   }
 
   function rowLabel(row) {
@@ -291,10 +318,13 @@
   // the user is genuinely typing: any OTHER open dialog owns its keys, and so
   // do free-text areas and inputs that aren't ours.
   //
-  // Within that, SPEED decides. Only keys arriving inside a burst are consumed;
-  // a key that opens a burst is left to whatever has focus, so a select's
-  // type-ahead and Space-activates-a-button keep working, and an isolated
-  // human keypress restarts the buffer instead of prefixing the next scan.
+  // Within that, every key is APPENDED — a scanner's payload is never split,
+  // whatever its internal timing — and only an unterminated buffer expires
+  // (armIdleReset). Speed decides one narrower question: an isolated keypress
+  // on a page control outside this flow's dialog is the user working the UI,
+  // so it is left to that control (Space activates a button, a select's
+  // type-ahead runs); everything else is consumed, so a payload's characters
+  // can never click a button or steer a select.
   document.addEventListener(
     "keydown",
     (event) => {
@@ -325,6 +355,7 @@
           return;
         }
         event.preventDefault();
+        clearTimeout(idleTimer);
         const code = buffer.trim();
         buffer = "";
         render();
@@ -337,15 +368,16 @@
         lastKeyAt = now;
         buffer = buffer.slice(0, -1);
         render();
+        armIdleReset();
         return;
       }
       if (event.key.length !== 1) return; // printable characters only
-      const inBurst = now - lastKeyAt <= BURST_GAP_MS;
+      const deliberate = now - lastKeyAt > BURST_GAP_MS && isPageControl(t);
       lastKeyAt = now;
-      if (!inBurst) buffer = ""; // a new burst, or a lone human keypress
       buffer += event.key;
       render();
-      if (inBurst) event.preventDefault();
+      armIdleReset();
+      if (!deliberate) event.preventDefault();
     },
     true,
   );
