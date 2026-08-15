@@ -88,7 +88,7 @@ def test_lookup_reports_a_scanner_that_drops_the_separators(
     """A concatenated DataMatrix is refused with an explanation, not guessed at."""
     resp = client.post("/api/shops/lookup", json={"code": "[)>061P5277Q251VKeystone"})
     assert resp.status_code == 422
-    assert "separators" in resp.text
+    assert "separator" in resp.text
 
 
 def test_lookup_forbidden_for_read_only(

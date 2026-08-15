@@ -8,11 +8,17 @@ Two shapes reach us, both as plain text a keyboard-wedge scanner typed into a fi
   and fields separated by the group/record separator, each starting with a Data
   Identifier (``1P``=MPN, ``30P``=distributor PN, ``1V``=manufacturer, …).
 
-The DataMatrix is only parseable when the field separators are present. Many scanners
-emit the separator as a *key* (e.g. F-key), which never reaches an ``<input>`` value,
-so the fields concatenate and their boundaries become genuinely ambiguous — we refuse
-to guess and say so plainly. Configure the scanner to keep the separators (GS ``0x1D``,
-or a visible one via ``SHELFOS_SCAN_SEPARATOR``) for DataMatrix support.
+The DataMatrix is only parseable when the field separators survive the trip. Three
+things a scanner does with them, and what happens here:
+
+* **Sends GS/RS as characters** — parsed directly, nothing to work out.
+* **Prints a visible stand-in** (this user's scanner sends ``|``) — detected
+  automatically, but only on evidence: a candidate is accepted when splitting on it
+  yields a Data Identifier we know. ``SHELFOS_SCAN_SEPARATOR`` still declares one
+  outright for anything the candidate list doesn't cover.
+* **Emits the separator as a *key*** (e.g. an F-key), which never reaches an
+  ``<input>`` value — the fields concatenate and their boundaries become genuinely
+  ambiguous, so we refuse to guess and say so plainly.
 """
 
 from __future__ import annotations
@@ -46,12 +52,18 @@ _DIGIKEY_Z = ("11Z", "12Z", "13Z", "20Z")
 # distributor part number, so a split on one can be trusted once it yields a
 # known data identifier. Anything that CAN occur inside a value (- . _ / +) is
 # excluded here for the same reason configured_separator() rejects it.
-_AUTO_SEPARATORS = ("|", "^", "~", "¦", "\x00")
+_AUTO_SEPARATORS = ("|", "^", "~", "¦")
 
+# Reached only after the visible stand-ins above have been tried and found nothing,
+# so the remaining causes are a scanner sending no separator at all (it emits one as
+# a key press, which never reaches an input) or a label carrying only identifiers we
+# don't read. The advice names what is still left to do, not what the parser already
+# did by itself.
 _UNREADABLE = (
-    "No readable fields in this barcode — either your scanner is dropping the field "
-    "separators, or this label isn't one ShelfOS can read. Scan a TME QR or paste a "
-    "shop URL, or use a scanner that keeps the separators."
+    "No readable fields in this barcode — either your scanner is sending no field "
+    "separator at all (not even a printable one), or this label isn't one ShelfOS "
+    "can read. Scan a TME QR or paste a shop URL, or set the scanner to send GS "
+    "(0x1D) or a printable separator such as '|'."
 )
 
 
@@ -160,15 +172,22 @@ def _parse_datamatrix(text: str) -> ScanResult:
         # yield a data identifier we know. A candidate that occurs inside real
         # values is not offered here — splitting "1PESQ-106-33-T-S" on "-"
         # would leave "1PESQ" and look convincingly like a success.
+        best: tuple[str | None, str | None, str | None, bool] | None = None
+        best_score = 0
         for candidate in _AUTO_SEPARATORS:
             if candidate not in text:
                 continue
             found = _read_fields(_split_fields(text, [*separators, candidate]))
-            if found[0] or found[1] or found[2]:
-                mpn, manufacturer, distributor_pn, has_digikey_z = found
-                break
-        else:
+            # Score, not first-past-the-post: a real separator splits the WHOLE
+            # label, so it yields more identifiers than a stray character that
+            # happens to sit in front of one. (A "|" inside a value on a
+            # "^"-separated label would otherwise win and lose the rest.)
+            score = sum(1 for value in found[:3] if value)
+            if score > best_score:
+                best, best_score = found, score
+        if best is None:
             raise ValidationError(_UNREADABLE)
+        mpn, manufacturer, distributor_pn, has_digikey_z = best
 
     # Mouser prints nothing uniquely its own, so it's the default. That is safe
     # rather than a guess: 1P is a MANUFACTURER part number, so looking it up at
