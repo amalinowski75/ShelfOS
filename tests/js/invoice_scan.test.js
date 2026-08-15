@@ -198,6 +198,47 @@ describe("invoice_scan.js — bag scan", () => {
     expect(document.getElementById("putaway-part").textContent).toBe("ABC123");
   });
 
+  it("matches a staged row by the manufacturer part number (a TME bag's MPN)", async () => {
+    // The field report: a TME bag states TME's own symbol as PN: and the
+    // manufacturer's number as MPN:, while the row carries only the latter —
+    // TME's PDF truncates its symbol column where it wraps ("DS1052-" for the
+    // symbol DS1052-082B2NA2060), so the row's supplier_part_number cannot
+    // match and the manufacturer's number is the only way in.
+    const { document } = loadPage(scanFixture(), SCRIPTS, {
+      fetchImpl: parseRouting({
+        mpn: "DS1052-082B2NA2060", // TME's ordering symbol; on no row here
+        manufacturer_pn: "ABC123", // the staged row's mpn
+        distributor_pn: null,
+      }),
+    });
+    syncDialogOpen(document);
+
+    scan(document, "QTY:100 PN:DS1052-082B2NA2060 MPN:ABC123");
+    await tick();
+
+    expect(document.getElementById("putaway-dialog").open).toBe(true);
+    expect(document.getElementById("putaway-part").textContent).toBe("ABC123");
+  });
+
+  it("names every stated number when none of them matches a line", async () => {
+    const { document } = loadPage(scanFixture(), SCRIPTS, {
+      fetchImpl: parseRouting({
+        mpn: "SYMBOL-9",
+        manufacturer_pn: "MFR-9",
+        distributor_pn: null,
+      }),
+    });
+
+    scan(document, "bag");
+    await tick();
+
+    // Both of them, so the report says what was actually looked for — naming
+    // only one reads as "the other number was never tried".
+    const status = document.getElementById("scan-status").textContent;
+    expect(status).toContain("MFR-9");
+    expect(status).toContain("SYMBOL-9");
+  });
+
   it("falls back to the URL's symbols when the code carries no part number", async () => {
     // A URL-only QR: the path's symbol is the only identifier there is.
     const { document } = loadPage(scanFixture(), SCRIPTS, {

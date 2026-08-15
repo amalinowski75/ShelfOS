@@ -4,8 +4,12 @@ TME lays each line out as an item row (``Lp. Article Qty SZT Price/N SZT %VAT Va
 followed by a description line and a ``Producent: … ; Symbol producenta: … ;`` line
 that may wrap across rows. The MPN is read from **Symbol producenta**, not the article
 column: the article wraps mid-token (``GRM022R60J104KE1`` + ``5L``) while the symbol
-field carries the whole part number. Numbers are Polish (comma decimal, space
-thousands) and the unit price is quoted per pack ("2,01/1000 SZT").
+field carries the whole part number. The article is still worth rebuilding — it is
+TME's own ordering symbol, the one a bag's QR prints as ``PN:`` — so when the column
+broke mid-token and left the separator hanging (``DS1052-``), its tail is glued back
+on from the row below (see :func:`_wrapped_article`). Numbers are Polish
+(comma decimal, space thousands) and the unit price is quoted per pack
+("2,01/1000 SZT").
 """
 
 from __future__ import annotations
@@ -35,7 +39,17 @@ _ITEM = re.compile(
 _STOP = re.compile(r"Razem:|Legenda:|Do zapłaty:|z przeniesienia")
 _MANUFACTURER = re.compile(r"Producent:\s*(.+?)\s*;")
 # The article column's observed wrap point: an article this long may be truncated.
+# It is a *suspicion*, not proof — a complete symbol can fill the column exactly
+# (RC1210FR-07100RL does) — so it only ever drops a symbol, never rebuilds one.
 _WRAP_WIDTH = 16
+# The separators TME leaves hanging when it breaks the column mid-token. An article
+# ending on one announces its own truncation, which is the only evidence strong
+# enough to glue the next row on (see :func:`_wrapped_article`).
+_BREAK_CHARS = ("-", "/", ".")
+# What the wrapped tail of the article column can look like on its own row: one
+# bare token of the characters TME symbols are built from. Deliberately excludes
+# whitespace, ";" and ":" — the marks every description row carries.
+_ARTICLE_TAIL = re.compile(r"^[0-9A-Za-z][0-9A-Za-z*./_-]*$")
 _MPN = re.compile(r"Symbol producenta:\s*(.+?)\s*;")
 
 
@@ -96,9 +110,70 @@ class TmeInvoiceParser:
         )
 
 
+def _wrapped_article(article: str, cont_lines: list[str]) -> tuple[str, list[str]]:
+    """Rejoin an article column that wrapped, and hand back the rest of the rows.
+
+    TME breaks the article column by rendered width, and its tail lands ALONE on
+    the row underneath — before the description starts::
+
+        4   DS1052-                         100 SZT   25,80/10 SZT 23   258,00
+            082B2NA2060
+            Kabel wstążkowy ze złączami
+
+    This rebuilds a symbol the older rule had to refuse, so it may only fire on
+    evidence that cannot be explained any other way. Two things have to hold.
+
+    **The article must END ON A BREAK CHARACTER** (``-``, ``/`` or ``.``). TME
+    breaks the column mid-token and leaves the separator hanging, so ``DS1052-``
+    announces its own truncation. Length does NOT qualify: the column is 16
+    characters wide, so a 16-character article is exactly as likely to be a
+    complete symbol that happens to fill it — ``RC1210FR-07100RL`` on the sample
+    invoice is one — and gluing the row below onto it would invent a part number
+    that was never printed. A width-truncated article is left to the MPN-verified
+    repair in :func:`_line` and, failing that, to the drop rule; both observed
+    width wraps (``GRM022R60J104KE1`` + ``5L``, ``GRM31CR60J227ME1`` + ``1L``)
+    are already rebuilt there, because their tail verifies against the MPN.
+
+    **A tail must have description rows after it.** The tail lands ABOVE the
+    description, so it is never the last row before the ``Producent:`` block; a
+    bare token that IS the last one is a one-word description ("Transformator"),
+    not a fragment. Without this the description is eaten too, so the line gains
+    a fabricated symbol and loses its notes in the same step.
+
+    Consecutive tails are consumed together: a symbol long enough to wrap twice
+    would otherwise be glued back into a string that is still truncated — a
+    fabrication, which is the one outcome worth avoiding (it could collide with
+    an unrelated real TME symbol and send enrichment to the wrong product).
+    """
+    if not article.endswith(_BREAK_CHARS):
+        return article, cont_lines
+    index = 0
+    for position, row in enumerate(cont_lines):
+        # "__" is the page-break glyph, stripped here as it is below.
+        candidate = re.sub(r"_{2,}", "", row).strip()
+        if not _ARTICLE_TAIL.match(candidate):
+            break
+        if not _has_description_after(cont_lines[position + 1 :]):
+            break  # this row IS the description, not the column's tail
+        article += candidate
+        index += 1
+    return article, cont_lines[index:]
+
+
+def _has_description_after(rest: list[str]) -> bool:
+    """Whether any row after a candidate tail still belongs to the description."""
+    return any(row.strip() and "Producent:" not in row for row in rest)
+
+
 def _line(header: re.Match[str], cont_lines: list[str]) -> ParsedLine:
     _, article, qty_s, price_s, per_s = header.groups()
     per = int(per_s) if per_s else 1
+    printed = article.strip()
+    article, cont_lines = _wrapped_article(printed, cont_lines)
+    # True only when the article announced its own break (see _wrapped_article), so
+    # the rebuilt symbol rests on unambiguous evidence — which is what lets it skip
+    # both the MPN check below and the drop rule at the end.
+    rejoined = article != printed
     joined = " ".join(line.strip() for line in cont_lines)
     # TME prints "__" glyphs at a page break; they land mid-field ("Symbol
     # producenta: __ GRM31…") so drop underscore runs before reading the fields.
@@ -108,29 +183,27 @@ def _line(header: re.Match[str], cont_lines: list[str]) -> ParsedLine:
     mpn = mpn_m.group(1).strip() if mpn_m else None
     # The article column is TME's OWN symbol — the invoice's supplier index, which
     # enrichment prefers over the MPN (it is TME's canonical key).
-    symbol = article.strip() or None
+    symbol = article or None
     # Everything before "Producent:" is the semicolon-delimited spec line, e.g.
     # "Rezystor:thick film;SMD;0402;1MΩ;…" — kept as the component's notes.
     description = joined.split("Producent:")[0].strip() or None
-    # The wrapped tail of the article column ("GRM022R60J104KE1" + "5L") lands at the
-    # front of the description; when that leading token is a suffix of the real MPN,
-    # it's the wrap fragment — drop it from the notes. Re-glue it onto the symbol
-    # ONLY when article + fragment equals the MPN exactly (both observed wraps do):
-    # a looser rule could fabricate a never-printed string that collides with some
-    # unrelated real TME symbol and poison the API lookup, which is worse than
-    # keeping the truncated article (the MPN candidate still covers the lookup).
-    if description and mpn:
+    # The width wrap: the article filled the column and its tail sits at the front of
+    # the description — either because extraction glued it there, or because a
+    # 16-character article is not evidence enough for _wrapped_article to touch it.
+    # Only a fragment that verifies against the MPN is read that way; without that
+    # check a looser rule could fabricate a never-printed string.
+    if description and mpn and not rejoined:
         head, _, rest = description.partition(" ")
         if rest and head and mpn.endswith(head):
             description = rest
             if (symbol or "") + head == mpn:
                 symbol = mpn
-    # The article column wraps at ~16 characters (both observed wraps break there).
-    # An article that long may be a truncated fragment, and unless it verified as
-    # the MPN above there is no way to tell — a truncated string offered to the API
+    # The article column wraps at ~16 characters. An article that long which did not
+    # verify above may be a truncated fragment, and length alone cannot tell it from
+    # a complete symbol that fills the column — a truncated string offered to the API
     # could collide with an unrelated real symbol. Drop it; the MPN candidate still
     # covers the lookup, and the review row keeps the accurate parsed identity.
-    if symbol and symbol != mpn and len(symbol) >= _WRAP_WIDTH:
+    if symbol and symbol != mpn and not rejoined and len(symbol) >= _WRAP_WIDTH:
         symbol = None
     return ParsedLine(
         quantity=to_int(qty_s),

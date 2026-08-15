@@ -80,6 +80,174 @@ def test_tme_sets_the_supplier_symbol_including_a_rewrapped_one() -> None:
     assert shipping.supplier_part_number is None
 
 
+def test_tme_rejoins_an_article_broken_on_its_hyphen() -> None:
+    # From the field: TME broke "DS1052-082B2NA2060" after the hyphen, so the
+    # article cell read "DS1052-" and its tail stood alone on the row below.
+    # The symbol differs from the MPN here, so nothing could verify it — the
+    # invoice kept "DS1052-" and the tail leaked into the description, and a
+    # bag whose QR prints PN:DS1052-082B2NA2060 matched no line.
+    from app.services.invoice_import.tme import _ITEM, _line
+
+    row = _ITEM.match(
+        "4         DS1052-                 100 SZT           25,80/10 SZT       "
+        "23                             258,00"
+    )
+    assert row is not None
+    parsed = _line(
+        row,
+        [
+            "082B2NA2060",
+            "Kabel wstążkowy ze złączami",
+            "IDC;R.taśmy:1,27mm;0,6m;8x28AWG",
+            "Producent: CONNFLY; Symbol producenta:",
+            "DS1052-082B2NA206001; Zgodność RoHS",
+        ],
+    )
+    assert parsed.mpn == "DS1052-082B2NA206001"  # the manufacturer's
+    assert parsed.supplier_part_number == "DS1052-082B2NA2060"  # TME's own
+    assert parsed.description is not None
+    assert parsed.description.startswith("Kabel wstążkowy")
+    assert "082B2NA2060" not in parsed.description
+
+
+def test_tme_rejoins_an_article_that_wrapped_twice() -> None:
+    # A symbol that wrapped twice must be glued from BOTH tail rows: stopping at
+    # one would rebuild a string that is still truncated — a fabrication, and
+    # worse than the drop rule it would bypass.
+    from app.services.invoice_import.tme import _ITEM, _line
+
+    row = _ITEM.match(
+        "1         HOUSE-                 10 SZT           1,00/SZT   "
+        "        23                             10,00"
+    )
+    assert row is not None
+    parsed = _line(
+        row,
+        [
+            "CONTINUED",
+            "TAIL",
+            "Kondensator:foo;bar",
+            "Producent: ACME; Symbol producenta: OTHER-MPN;",
+        ],
+    )
+    assert parsed.supplier_part_number == "HOUSE-CONTINUEDTAIL"
+    assert parsed.description == "Kondensator:foo;bar"
+
+
+def test_tme_keeps_a_one_word_description_off_an_intact_article() -> None:
+    # An article that shows no break wrapped nowhere, so a one-word description
+    # row underneath is description text.
+    from app.services.invoice_import.tme import _ITEM, _line
+
+    row = _ITEM.match(
+        "1         ZL262-40DG                 10 SZT           1,00/SZT         "
+        "  23                             10,00"
+    )
+    assert row is not None
+    parsed = _line(
+        # A bare ASCII word: indistinguishable from a tail but for the article.
+        row,
+        ["Transformator", "Producent: ACME; Symbol producenta: OTHER-MPN;"],
+    )
+    assert parsed.supplier_part_number == "ZL262-40DG"
+    assert parsed.description == "Transformator"
+
+
+def test_tme_never_rebuilds_an_article_that_merely_fills_the_column() -> None:
+    # The column is 16 chars wide, so a 16-char article is exactly as likely to
+    # be a complete symbol filling it as a truncated one — "RC1210FR-07100RL" is
+    # a real line on the sample invoice. Gluing the row below onto it would
+    # invent a part number that was never printed AND swallow the notes; length
+    # is a reason to DROP a symbol, never to rebuild one.
+    from app.services.invoice_import.tme import _ITEM, _WRAP_WIDTH, _line
+
+    assert len("RC1210FR-07100RL") == _WRAP_WIDTH
+    row = _ITEM.match(
+        "5         RC1210FR-07100RL                 10 SZT           1,00/SZT   "
+        "        23                             10,00"
+    )
+    assert row is not None
+    # The description wraps, so a bare first row DOES have description rows after
+    # it — the positional guard cannot help here, and only the missing break
+    # character stands between this line and an invented symbol.
+    parsed = _line(
+        row,
+        [
+            "Transformator",
+            "do zasilaczy impulsowych",
+            "Producent: ACME; Symbol producenta: OTHER-MPN;",
+        ],
+    )
+    assert parsed.supplier_part_number is None  # unverifiable → dropped, not glued
+    assert parsed.description == "Transformator do zasilaczy impulsowych"
+
+
+def test_tme_keeps_a_one_word_description_off_a_broken_article() -> None:
+    # The break character opens the door, but a tail stands ABOVE the
+    # description — so a bare token that is the LAST row before "Producent:" is
+    # a one-word description, not the column's tail.
+    from app.services.invoice_import.tme import _ITEM, _line
+
+    row = _ITEM.match(
+        "1         DS1052-                 10 SZT           1,00/SZT         "
+        "  23                             10,00"
+    )
+    assert row is not None
+    parsed = _line(
+        row,
+        ["Kondensator", "Producent: ACME; Symbol producenta: OTHER-MPN;"],
+    )
+    assert parsed.supplier_part_number == "DS1052-"  # left as printed
+    assert parsed.description == "Kondensator"
+
+
+def test_tme_rejoins_an_article_broken_on_any_separator() -> None:
+    # TME symbols carry "/" and "." as well as "-", and the column can break after
+    # any of them. The separators are spelled out here rather than read from
+    # _BREAK_CHARS: a test that loops over the constant it is pinning passes for
+    # any value of it, including one with the extras dropped.
+    from app.services.invoice_import.tme import _BREAK_CHARS, _ITEM, _line
+
+    assert set(_BREAK_CHARS) == {"-", "/", "."}  # a new one needs a case below
+    for char in ("-", "/", "."):
+        row = _ITEM.match(
+            f"1         HOUSE{char}                 10 SZT           1,00/SZT   "
+            "        23                             10,00"
+        )
+        assert row is not None, char
+        parsed = _line(
+            row,
+            [
+                "TAIL",
+                "Kondensator:foo;bar",
+                "Producent: ACME; Symbol producenta: OTHER-MPN;",
+            ],
+        )
+        assert parsed.supplier_part_number == f"HOUSE{char}TAIL", char
+
+
+def test_tme_stops_gluing_tails_at_the_description() -> None:
+    # After a genuine tail the loop must still stop at the description: an
+    # unbounded run would eat a one-word description row too and lose the notes.
+    from app.services.invoice_import.tme import _ITEM, _line
+
+    row = _ITEM.match(
+        "1         HOUSE-                 10 SZT           1,00/SZT         "
+        "  23                             10,00"
+    )
+    assert row is not None
+    parsed = _line(
+        row,
+        [
+            "CONTINUED",
+            "Transformator",
+            "Producent: ACME; Symbol producenta: OTHER-MPN;",
+        ],
+    )
+    assert parsed.supplier_part_number == "HOUSE-CONTINUED"
+    assert parsed.description == "Transformator"
+
+
 def test_tme_drops_a_possibly_truncated_long_article() -> None:
     # The article column wraps at ~16 chars. A >=16-char article that does NOT match
     # the MPN can't be verified whole — it may be a truncated fragment of a house
@@ -108,9 +276,7 @@ def test_tme_drops_a_possibly_truncated_long_article() -> None:
         "23                             10,00"
     )
     assert short is not None
-    parsed_short = _line(
-        short, ["Producent: ACME; Symbol producenta: OTHER-MPN;"]
-    )
+    parsed_short = _line(short, ["Producent: ACME; Symbol producenta: OTHER-MPN;"])
     assert parsed_short.supplier_part_number == "SHORTSYM"
 
 
@@ -304,8 +470,7 @@ def test_mouser_unlabelled_form_requires_a_numeric_left_token() -> None:
     )
     invoice = MouserInvoiceParser().parse(text)
     line = next(
-        row for row in invoice.lines
-        if row.supplier_part_number == "771-NX3P1108UKZ"
+        row for row in invoice.lines if row.supplier_part_number == "771-NX3P1108UKZ"
     )
     assert line.mpn is None  # → review, not a fake MPN
     assert line.description == "Vishay"
