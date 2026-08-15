@@ -10,7 +10,19 @@
 // own overlay iframe in front of it — focus leaves the document entirely
 // (document.hasFocus() === false with the ring still painted) and every
 // keystroke vanishes into the extension. No focused input, no overlay, no
-// stolen scans — and where focus happens to rest stops mattering at all.
+// stolen scans.
+//
+// Two rules follow from field testing, and both are about NOT guessing:
+//
+//   * Nothing here reads intent from typing speed. This scanner emits its
+//     payload in packets with 100 ms+ stalls, so a "that gap means a new
+//     series" rule truncated real codes; and after the first character a
+//     human typing quickly is indistinguishable from a payload anyway.
+//   * Who owns the keyboard is read from FOCUS instead: while a page control
+//     (button, select, link) holds focus the collector is silent and the user
+//     keeps type-ahead, Space and Enter; otherwise every key is a scan's. The
+//     armed ring shows which state is in force, and Escape hands the keyboard
+//     back to scanning without touching the mouse.
 (() => {
   const panel = document.getElementById("invoice-scan");
   if (!panel) return; // read-only viewer, finalized invoice, or no lines
@@ -38,37 +50,51 @@
   let busy = false;
   let buffer = ""; // keystrokes collected since the last Enter
   let queued = null; // a bag scan that arrived while the previous one was busy
-  let lastKeyAt = -Infinity;
   let idleTimer = null;
 
   // Give up on a hung request rather than holding `busy` forever — a stuck
   // flag would silently eat every scan that follows.
   const FETCH_TIMEOUT_MS = 10_000;
-  // A wedge scanner types faster than a human, but NOT uniformly: real
-  // payloads show occasional long gaps (HID polling, a layout switch for ":"
-  // or "/"), so this threshold decides one thing only — whether a keypress is
-  // deliberate enough to be left to a focused control (Space activating a
-  // button, a select's type-ahead). It NEVER splits a payload: characters are
-  // appended unconditionally, because a buffer reset mid-scan truncates the
-  // code and was exactly that bug.
-  const BURST_GAP_MS = 250;
-  // An Enter this long after the last character terminates nothing — the
-  // buffer is human leftovers, not a scan.
-  const TERMINATOR_MS = 400;
-  // A buffer nobody terminated is dropped, so stray keystrokes can never
-  // prefix the next scan. Far longer than any gap inside a real payload.
+  // The ONE timing rule left, and it can only ever discard: a buffer nobody
+  // terminated is dropped after this much silence, so an abandoned half-scan
+  // cannot prefix the next one. Deliberately far longer than any gap inside a
+  // payload — this scanner emits characters in packets with 100 ms+ stalls
+  // between them, and every threshold that tried to read intent from key
+  // spacing ended up truncating a real code.
   const IDLE_RESET_MS = 1200;
+
+  const HINT_DISARMED =
+    "Keyboard is with the page — press Escape (or click a blank spot) to scan.";
+  const HINT_WINDOW_BLUR =
+    "This window is not focused — scans are going elsewhere. " +
+    "Click the page (or alt-tab back) to resume.";
 
   const norm = (value) => (value || "").trim().toUpperCase();
 
+  // A control whose own keyboard behaviour belongs to the user: while one of
+  // these holds focus the collector stands down completely, so type-ahead,
+  // Space-activates-button and Enter-submits all work untouched — and nothing
+  // typed there can leak into a scan. Inside the putaway dialog nothing
+  // qualifies: there the keyboard exists to scan (its buttons stay mouse- and
+  // Escape-operated, its select mouse- and arrow-operated), and a payload's
+  // stray Space must never "click" the close button showModal focused.
+  function isPageControl(node) {
+    if (!node || dialog.contains(node)) return false;
+    return ["BUTTON", "SELECT", "A", "SUMMARY"].includes(node.tagName);
+  }
+
+  const armed = () => !isPageControl(document.activeElement);
+
   // The live field displays the buffer; the idle one sits empty. Both are
-  // readonly — they are gauges, not text entry.
+  // readonly — they are gauges, not text entry. The ring marks which field a
+  // scan would land in, and goes out when the collector has stood down, so
+  // "the keyboard isn't mine right now" is never invisible.
   function render() {
     const live = dialog.open ? locationInput : scanInput;
     const idle = dialog.open ? scanInput : locationInput;
     live.value = buffer;
     idle.value = "";
-    live.classList.add("scan-armed");
+    live.classList.toggle("scan-armed", armed());
     idle.classList.remove("scan-armed");
   }
 
@@ -79,6 +105,7 @@
   let statusText = "";
   let statusTone = "";
   let dialogError = "";
+  let windowUnfocused = false;
 
   function paintStatus(message, tone) {
     statusEl.textContent = message;
@@ -86,10 +113,19 @@
     statusEl.hidden = !message;
   }
 
+  // What the panel should say right now: the transient states outrank the
+  // stored one, but only borrow the slot — the stored message comes back
+  // untouched when they clear.
+  function refreshStatus() {
+    if (windowUnfocused) paintStatus(HINT_WINDOW_BLUR, "error");
+    else if (!armed()) paintStatus(HINT_DISARMED, "muted");
+    else paintStatus(statusText, statusTone);
+  }
+
   function setStatus(message, tone) {
     statusText = message;
     statusTone = tone;
-    paintStatus(message, tone);
+    refreshStatus();
   }
 
   function paintDialogError(message) {
@@ -99,7 +135,7 @@
 
   function setDialogError(message) {
     dialogError = message;
-    paintDialogError(message);
+    paintDialogError(windowUnfocused ? HINT_WINDOW_BLUR : message);
   }
 
   // Drop a buffer that never got its terminator (a stray keypress, an aborted
@@ -112,15 +148,6 @@
       buffer = "";
       render();
     }, IDLE_RESET_MS);
-  }
-
-  // A control whose own keyboard behaviour a deliberate keypress should keep.
-  // Inside the putaway dialog nothing qualifies: there the keyboard exists to
-  // scan (its buttons stay mouse- and Escape-operated), and a payload's stray
-  // Space must never "click" the close button that showModal focused.
-  function isPageControl(node) {
-    if (!node || dialog.contains(node)) return false;
-    return ["BUTTON", "SELECT", "A", "SUMMARY"].includes(node.tagName);
   }
 
   function rowLabel(row) {
@@ -314,17 +341,16 @@
 
   // The collector. Capture phase on the document, so it sees every keystroke
   // before any control can swallow it, wherever focus happens to rest — the
-  // whole point of the design (see the header comment). It stands down where
-  // the user is genuinely typing: any OTHER open dialog owns its keys, and so
-  // do free-text areas and inputs that aren't ours.
+  // whole point of the design (see the header comment).
   //
-  // Within that, every key is APPENDED — a scanner's payload is never split,
-  // whatever its internal timing — and only an unterminated buffer expires
-  // (armIdleReset). Speed decides one narrower question: an isolated keypress
-  // on a page control outside this flow's dialog is the user working the UI,
-  // so it is left to that control (Space activates a button, a select's
-  // type-ahead runs); everything else is consumed, so a payload's characters
-  // can never click a button or steer a select.
+  // WHO the keyboard belongs to is read from focus, never guessed from typing
+  // speed. After the first character a human typing quickly at a control and a
+  // scanner payload are indistinguishable, and this scanner's payloads stall
+  // for 100 ms+ between packets, so every speed threshold either truncated a
+  // real code or ate a real keystroke. So: a page control (or another dialog,
+  // a text area, a foreign input) holds focus → the collector is silent and
+  // the user has their keyboard, whole. Otherwise every key is consumed and
+  // appended, and only an unterminated buffer expires (armIdleReset).
   document.addEventListener(
     "keydown",
     (event) => {
@@ -336,21 +362,26 @@
         if (t.isContentEditable || t.tagName === "TEXTAREA") return;
         if (t.tagName === "INPUT" && t !== scanInput && t !== locationInput)
           return;
-      }
-      const now = performance.now();
-      if (event.key === "Enter") {
-        // Only a terminator that follows its own payload closely is this
-        // scan's; anything else (a stale buffer, a scanner's extra CR+LF)
-        // submits nothing. Stray Enters are still swallowed while the dialog
-        // is open, where they would "click" its focused close button and make
-        // the dialog vanish unseen; elsewhere plain Enter reaches forms and
-        // buttons untouched.
-        const terminates = buffer && now - lastKeyAt <= TERMINATOR_MS;
-        if (!terminates) {
-          if (buffer) {
-            buffer = "";
+        if (isPageControl(t)) {
+          // The user is working the UI: type-ahead, Space and Enter all reach
+          // the control untouched, and nothing typed here can join a scan.
+          // One keyboard-only way back to scanning, since nothing else here
+          // moves focus: Escape.
+          if (event.key === "Escape") {
+            t.blur();
             render();
+            refreshStatus();
           }
+          return;
+        }
+      }
+      if (event.key === "Enter") {
+        if (!buffer) {
+          // A scanner's extra terminator (CR+LF, double CR) lands right after
+          // the code's own Enter; with the dialog just opened and its close
+          // button focused, letting it through would "click" that button and
+          // the dialog would vanish unseen. Elsewhere plain Enter still
+          // reaches forms and buttons.
           if (dialog.open) event.preventDefault();
           return;
         }
@@ -365,22 +396,30 @@
       }
       if (event.key === "Backspace" && buffer) {
         event.preventDefault();
-        lastKeyAt = now;
         buffer = buffer.slice(0, -1);
         render();
         armIdleReset();
         return;
       }
       if (event.key.length !== 1) return; // printable characters only
-      const deliberate = now - lastKeyAt > BURST_GAP_MS && isPageControl(t);
-      lastKeyAt = now;
+      event.preventDefault();
       buffer += event.key;
       render();
       armIdleReset();
-      if (!deliberate) event.preventDefault();
     },
     true,
   );
+
+  // Focus moving in or out of a page control flips the collector, so the ring
+  // and the hint track it without any polling.
+  function reflectFocus() {
+    render();
+    refreshStatus();
+  }
+  document.addEventListener("focusin", reflectFocus);
+  // focusout fires BEFORE the next element takes focus, so read the result a
+  // tick later or every blur would look like "nothing is focused".
+  document.addEventListener("focusout", () => setTimeout(reflectFocus, 0));
 
   // A scan can't reach this page while ANOTHER OS window holds focus — which
   // looks exactly like a dead field, because the browser keeps the focus ring
@@ -388,20 +427,16 @@
   // It only BORROWS the message slot: the genuine message is repainted on
   // return, so an alt-tab round trip can't erase an error the user has not
   // acted on yet ("Unknown location code SL777 — reprint the label?").
-  let blurWarned = false;
   window.addEventListener("blur", () => {
-    blurWarned = true;
-    const message =
-      "This window is not focused — scans are going elsewhere. " +
-      "Click the page (or alt-tab back) to resume.";
-    if (dialog.open) paintDialogError(message);
-    else paintStatus(message, "error");
+    windowUnfocused = true;
+    if (dialog.open) paintDialogError(HINT_WINDOW_BLUR);
+    else refreshStatus();
   });
   window.addEventListener("focus", () => {
-    if (!blurWarned) return;
-    blurWarned = false;
+    if (!windowUnfocused) return;
+    windowUnfocused = false;
     paintDialogError(dialogError);
-    paintStatus(statusText, statusTone);
+    refreshStatus();
   });
 
   // Manual fallback for a torn or missing label: pick from the select (by

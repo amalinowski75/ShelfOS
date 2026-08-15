@@ -138,17 +138,18 @@ describe("invoice_scan.js — bag scan", () => {
     expect(field.classList.contains("scan-armed")).toBe(true);
   });
 
-  it("collects keystrokes even when focus is stuck on a page control", async () => {
-    // The field-tested failure: focus parked on a control (or eaten by a
-    // password-manager overlay wrapping one). The collector must not care.
+  it("collects keystrokes wherever focus rests, short of a page control", async () => {
+    // The field-tested failure: focus parked somewhere unreachable (body after
+    // a dialog closes, or eaten by a password-manager overlay). The collector
+    // must not care — only a real page control makes it stand down.
     const { document } = loadPage(scanFixture(), SCRIPTS, {
       fetchImpl: parseRouting({ mpn: "ABC123", distributor_pn: null }),
     });
     syncDialogOpen(document);
-    const rowSelect = document.querySelector(".ril-location");
-    rowSelect.focus();
+    const div = document.createElement("div");
+    document.body.appendChild(div);
 
-    scan(document, "bagcode", { target: rowSelect });
+    scan(document, "bagcode", { target: div });
     await tick();
 
     expect(document.getElementById("putaway-dialog").open).toBe(true);
@@ -391,36 +392,70 @@ describe("invoice_scan.js — bag scan", () => {
     expect(document.getElementById("putaway-dialog").open).toBe(true);
   });
 
-  it("leaves a deliberate keypress to a focused page control", async () => {
-    // Type-ahead on a select and Space on a button keep working: an isolated
-    // press on a control outside the dialog is the user working the UI.
+  it("hands a focused page control its whole keyboard, type-ahead run included", () => {
+    // Type-ahead is typed FAST ("lab" to reach "Lab / …"), so every character
+    // after the first must reach the select too — the case a per-keystroke
+    // speed rule could never get right.
     const { document } = loadPage(scanFixture(), SCRIPTS);
-    const gap = () => new Promise((resolve) => setTimeout(resolve, 300));
-
     const rowSelect = document.querySelector(".ril-location");
     rowSelect.focus();
-    await gap();
-    expect(press(document, "L", rowSelect).defaultPrevented).toBe(false);
-
+    for (const key of "lab") {
+      expect(press(document, key, rowSelect).defaultPrevented).toBe(false);
+    }
+    // Space activates a focused button, and Enter still submits.
     const button = document.createElement("button");
     document.body.appendChild(button);
     button.focus();
-    await gap();
     expect(press(document, " ", button).defaultPrevented).toBe(false);
+    expect(press(document, "Enter", button).defaultPrevented).toBe(false);
+    // None of it was collected, and the panel says the keyboard is elsewhere.
+    expect(document.getElementById("invoice-scan-input").value).toBe("");
+    expect(document.getElementById("invoice-scan-status").textContent).toMatch(
+      /Keyboard is with the page/,
+    );
+    expect(
+      document.getElementById("invoice-scan-input").classList.contains("scan-armed"),
+    ).toBe(false);
+  });
 
-    // Inside the dialog nothing is deliberate: a payload's Space must not
-    // click the close button showModal focused.
-    document.getElementById("putaway-dialog").open = true;
-    const close = document.createElement("button");
-    document.getElementById("putaway-dialog").appendChild(close);
-    close.focus();
-    await gap();
-    expect(press(document, " ", close).defaultPrevented).toBe(true);
+  it("keeps a scan clean when a page keystroke came moments earlier", async () => {
+    // The bench sequence: set a row's location from the keyboard, then scan
+    // the next bag. Nothing typed at the control may prefix the code.
+    const { document, fetchMock } = loadPage(scanFixture(), SCRIPTS, {
+      fetchImpl: parseRouting({ mpn: "ABC123", distributor_pn: null }),
+    });
+    syncDialogOpen(document);
+    const rowSelect = document.querySelector(".ril-location");
+    rowSelect.focus();
+    press(document, "l", rowSelect);
+    rowSelect.blur(); // the user moves on; scanning resumes
+
+    scan(document, "PN:ABC123");
+    await tick();
+    expect(fetchBody(fetchMock)).toEqual({ code: "PN:ABC123" });
+  });
+
+  it("gives the keyboard back on Escape, without the mouse", () => {
+    const { document } = loadPage(scanFixture(), SCRIPTS);
+    const rowSelect = document.querySelector(".ril-location");
+    rowSelect.focus();
+    expect(document.getElementById("invoice-scan-status").textContent).toMatch(
+      /Keyboard is with the page/,
+    );
+
+    press(document, "Escape", rowSelect);
+    expect(document.activeElement).not.toBe(rowSelect);
+    expect(
+      document.getElementById("invoice-scan-input").classList.contains("scan-armed"),
+    ).toBe(true);
+    // …and the next scan is collected again.
+    press(document, "X");
+    expect(document.getElementById("invoice-scan-input").value).toBe("X");
   });
 
   it("drops an unterminated buffer so strays can't prefix the next scan", async () => {
     const { document } = loadPage(scanFixture(), SCRIPTS);
-    press(document, "L");
+    press(document, "L"); // focus is on the body: this IS collected
     const field = document.getElementById("invoice-scan-input");
     expect(field.value).toBe("L");
 
@@ -428,41 +463,39 @@ describe("invoice_scan.js — bag scan", () => {
     expect(field.value).toBe("");
   });
 
-  it("consumes the rest of a burst so a scan can't leak into a control", async () => {
-    // The flip side: once a burst is established, every remaining character is
-    // captured — a bag code containing a space must not "click" a focused
-    // button, and its characters must not reach a select's type-ahead.
-    const { document } = loadPage(scanFixture(), SCRIPTS, {
-      fetchImpl: parseRouting({ mpn: "ABC123", distributor_pn: null }),
-    });
-    syncDialogOpen(document);
-    const button = document.createElement("button");
-    document.body.appendChild(button);
-    button.focus();
+  it("consumes a payload aimed at the dialog's own focused button", async () => {
+    // showModal focuses the dialog's close button, and this is where the
+    // location scan lands. Every character — Space included — must be
+    // consumed there, or the payload would click the button and the dialog
+    // would vanish mid-scan.
+    const { document } = await (async () => {
+      const page = loadPage(scanFixture(), SCRIPTS, {
+        fetchImpl: parseRouting({ mpn: "ABC123", distributor_pn: null }),
+      });
+      syncDialogOpen(page.document);
+      scan(page.document, "bag");
+      await tick();
+      return page;
+    })();
 
-    press(document, "Q", button); // opens the burst (passes through)
-    const space = press(document, " ", button); // inside the burst
-    expect(space.defaultPrevented).toBe(true);
-    for (const key of "PN:ABC123") press(document, key, button);
-    press(document, "Enter", button);
+    const close = document.createElement("button");
+    document.getElementById("putaway-dialog").appendChild(close);
+    close.focus();
+    expect(press(document, " ", close).defaultPrevented).toBe(true);
+    scan(document, "SL5", { target: close });
     await tick();
 
-    expect(document.getElementById("putaway-dialog").open).toBe(true);
+    expect(document.querySelector(".ril-location").value).toBe("5");
   });
 
-  it("does not submit a stale buffer left by human keystrokes", async () => {
-    const { document, fetchMock } = loadPage(scanFixture(), SCRIPTS);
-    press(document, "L"); // a lone keypress, long before any Enter
-    const field = document.getElementById("invoice-scan-input");
-    expect(field.value).toBe("L");
-
-    // vitest fake-free: the terminator window is time-based, so wait it out.
-    await new Promise((resolve) => setTimeout(resolve, 450));
-    const enter = press(document, "Enter");
-
-    expect(fetchMock).not.toHaveBeenCalled(); // nothing was posted
-    expect(field.value).toBe(""); // and the stale buffer is dropped
-    expect(enter.defaultPrevented).toBe(false); // no dialog: Enter stays free
+  it("leaves Enter alone when there is nothing to submit", () => {
+    // With an empty buffer, Enter belongs to the page (forms, buttons) —
+    // except inside the dialog, where a scanner's extra terminator would
+    // click the focused close button.
+    const { document } = loadPage(scanFixture(), SCRIPTS);
+    expect(press(document, "Enter").defaultPrevented).toBe(false);
+    document.getElementById("putaway-dialog").open = true;
+    expect(press(document, "Enter").defaultPrevented).toBe(true);
   });
 
   it("leaves other dialogs' typing alone", async () => {
