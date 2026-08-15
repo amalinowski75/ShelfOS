@@ -38,10 +38,20 @@
   let busy = false;
   let buffer = ""; // keystrokes collected since the last Enter
   let queued = null; // a bag scan that arrived while the previous one was busy
+  let lastKeyAt = -Infinity;
 
   // Give up on a hung request rather than holding `busy` forever — a stuck
   // flag would silently eat every scan that follows.
   const FETCH_TIMEOUT_MS = 10_000;
+  // A wedge scanner types at machine speed; a human does not. Keys further
+  // apart than this open a NEW buffer and are left to whatever has focus, so
+  // stray human keystrokes can neither be stolen from a control (select
+  // type-ahead, Space activating a button) nor accumulate into the next scan.
+  // Everything inside a burst is captured.
+  const BURST_GAP_MS = 60;
+  // An Enter this long after the last character terminates nothing — the
+  // buffer is human leftovers, not a scan.
+  const TERMINATOR_MS = 400;
 
   const norm = (value) => (value || "").trim().toUpperCase();
 
@@ -56,10 +66,34 @@
     idle.classList.remove("scan-armed");
   }
 
-  function setStatus(message, tone) {
+  // Both message slots keep their real content in a variable and repaint from
+  // it. The window-focus warning below borrows the slots transiently, and an
+  // alt-tab round trip must never erase a genuine "unknown location" or save
+  // error the user has not acted on yet.
+  let statusText = "";
+  let statusTone = "";
+  let dialogError = "";
+
+  function paintStatus(message, tone) {
     statusEl.textContent = message;
     statusEl.className = tone === "error" ? "error" : "muted";
     statusEl.hidden = !message;
+  }
+
+  function setStatus(message, tone) {
+    statusText = message;
+    statusTone = tone;
+    paintStatus(message, tone);
+  }
+
+  function paintDialogError(message) {
+    errorEl.textContent = message;
+    errorEl.hidden = !message;
+  }
+
+  function setDialogError(message) {
+    dialogError = message;
+    paintDialogError(message);
   }
 
   function rowLabel(row) {
@@ -105,7 +139,7 @@
       match.kind === "import"
         ? match.row.querySelector(".ril-location")?.value || ""
         : match.row.dataset.locationId || "";
-    errorEl.hidden = true;
+    setDialogError("");
     buffer = "";
     dialog.showModal();
     render(); // no focus() — see the header comment
@@ -154,8 +188,13 @@
         return;
       }
       const parsed = await resp.json();
+      // A QR that is only the product URL still has an identifier: the shop's
+      // own symbol, somewhere in the path. Strictly a FALLBACK — the path also
+      // yields category/manufacturer segments, and letting those compete with
+      // a real part number could file the bag against the wrong line.
+      const identifiers = [parsed.mpn, parsed.distributor_pn].filter(Boolean);
       const keys = new Set(
-        [parsed.mpn, parsed.distributor_pn].filter(Boolean).map(norm),
+        (identifiers.length ? identifiers : parsed.url_symbols || []).map(norm),
       );
       if (!keys.size) {
         scanError("No part number in this code.");
@@ -177,11 +216,16 @@
   }
 
   function handleLocationScan(code) {
+    if (busy) {
+      // Same contract as bag scans: a scan is never dropped in silence. It is
+      // not queued, because by the time the in-flight save lands this dialog
+      // may be gone and the code would apply to the wrong part.
+      setDialogError("Still saving — scan the location label again in a moment.");
+      return;
+    }
     const matched = SL.exec(code);
     if (!matched) {
-      errorEl.textContent =
-        "That is not a location label — scan the SL… code on the shelf.";
-      errorEl.hidden = false;
+      setDialogError("That is not a location label — scan the SL… code on the shelf.");
       return;
     }
     saveLocation(Number(matched[1]));
@@ -202,48 +246,55 @@
 
   async function saveLocation(locationId) {
     if (busy || !target) return;
+    // Pin the row for the whole round trip: the dialog's own close listener
+    // nulls `target`, so a Cancel/Escape landing while the save is in flight
+    // would otherwise turn a successful save into a phantom network error and
+    // leave the row showing no location the server has already recorded.
+    const saving = target;
     const path = LOCATIONS.get(String(locationId));
     if (!path) {
-      errorEl.textContent = `Unknown location code SL${locationId} — reprint the label?`;
-      errorEl.hidden = false;
+      setDialogError(`Unknown location code SL${locationId} — reprint the label?`);
       return;
     }
     busy = true;
     try {
       const url =
-        target.kind === "import"
-          ? `/api/invoices/${invoiceId}/import-lines/${target.row.dataset.importLineId}`
-          : `/api/invoices/${invoiceId}/lines/${target.row.dataset.lineId}/location`;
+        saving.kind === "import"
+          ? `/api/invoices/${invoiceId}/import-lines/${saving.row.dataset.importLineId}`
+          : `/api/invoices/${invoiceId}/lines/${saving.row.dataset.lineId}/location`;
       const resp = await fetch(url, {
-        method: target.kind === "import" ? "PATCH" : "PUT",
+        method: saving.kind === "import" ? "PATCH" : "PUT",
         headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
         body: JSON.stringify({ location_id: locationId }),
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
       if (!resp.ok) {
-        errorEl.textContent = await errorMessage(resp);
-        errorEl.hidden = false;
+        setDialogError(await errorMessage(resp));
         return;
       }
-      applyToRow(target, locationId, path);
-      const label = rowLabel(target.row);
-      target = null;
-      dialog.close();
+      applyToRow(saving, locationId, path);
+      const label = rowLabel(saving.row);
+      if (target === saving) target = null;
+      dialog.close(); // a no-op if the user already closed it
       showToast(`${label} → ${path}`, { tone: "ok" });
     } catch {
-      errorEl.textContent = "Could not reach the server.";
-      errorEl.hidden = false;
+      setDialogError("Could not reach the server.");
     } finally {
       busy = false;
+      drainQueue();
     }
   }
 
   // The collector. Capture phase on the document, so it sees every keystroke
-  // before any control can swallow it, wherever focus happens to rest. It
-  // stands down only where the user is genuinely typing: any OTHER open dialog
-  // owns its keys, and so do free-text areas and inputs that aren't ours.
-  // (The putaway dialog's manual select stays mouse-operated — letting it keep
-  // keyboard behaviour would reopen the focus-dependence this design removes.)
+  // before any control can swallow it, wherever focus happens to rest — the
+  // whole point of the design (see the header comment). It stands down where
+  // the user is genuinely typing: any OTHER open dialog owns its keys, and so
+  // do free-text areas and inputs that aren't ours.
+  //
+  // Within that, SPEED decides. Only keys arriving inside a burst are consumed;
+  // a key that opens a burst is left to whatever has focus, so a select's
+  // type-ahead and Space-activates-a-button keep working, and an isolated
+  // human keypress restarts the buffer instead of prefixing the next scan.
   document.addEventListener(
     "keydown",
     (event) => {
@@ -256,14 +307,20 @@
         if (t.tagName === "INPUT" && t !== scanInput && t !== locationInput)
           return;
       }
+      const now = performance.now();
       if (event.key === "Enter") {
-        if (!buffer) {
-          // A scanner's extra terminator (CR+LF, double CR) arrives right
-          // after the code's own Enter — with the dialog just opened and its
-          // close button holding focus, letting it through "clicks" that
-          // button and the dialog vanishes before the user ever sees it.
-          // Swallow stray Enters while the dialog is up; elsewhere plain
-          // Enter keeps reaching forms and buttons untouched.
+        // Only a terminator that follows its own payload closely is this
+        // scan's; anything else (a stale buffer, a scanner's extra CR+LF)
+        // submits nothing. Stray Enters are still swallowed while the dialog
+        // is open, where they would "click" its focused close button and make
+        // the dialog vanish unseen; elsewhere plain Enter reaches forms and
+        // buttons untouched.
+        const terminates = buffer && now - lastKeyAt <= TERMINATOR_MS;
+        if (!terminates) {
+          if (buffer) {
+            buffer = "";
+            render();
+          }
           if (dialog.open) event.preventDefault();
           return;
         }
@@ -277,14 +334,18 @@
       }
       if (event.key === "Backspace" && buffer) {
         event.preventDefault();
+        lastKeyAt = now;
         buffer = buffer.slice(0, -1);
         render();
         return;
       }
       if (event.key.length !== 1) return; // printable characters only
-      event.preventDefault();
+      const inBurst = now - lastKeyAt <= BURST_GAP_MS;
+      lastKeyAt = now;
+      if (!inBurst) buffer = ""; // a new burst, or a lone human keypress
       buffer += event.key;
       render();
+      if (inBurst) event.preventDefault();
     },
     true,
   );
@@ -292,24 +353,23 @@
   // A scan can't reach this page while ANOTHER OS window holds focus — which
   // looks exactly like a dead field, because the browser keeps the focus ring
   // painted in an unfocused window. Say so loudly instead of staying silent.
+  // It only BORROWS the message slot: the genuine message is repainted on
+  // return, so an alt-tab round trip can't erase an error the user has not
+  // acted on yet ("Unknown location code SL777 — reprint the label?").
   let blurWarned = false;
   window.addEventListener("blur", () => {
     blurWarned = true;
     const message =
       "This window is not focused — scans are going elsewhere. " +
       "Click the page (or alt-tab back) to resume.";
-    if (dialog.open) {
-      errorEl.textContent = message;
-      errorEl.hidden = false;
-    } else {
-      setStatus(message, "error");
-    }
+    if (dialog.open) paintDialogError(message);
+    else paintStatus(message, "error");
   });
   window.addEventListener("focus", () => {
     if (!blurWarned) return;
     blurWarned = false;
-    setStatus("");
-    errorEl.hidden = true;
+    paintDialogError(dialogError);
+    paintStatus(statusText, statusTone);
   });
 
   // Manual fallback for a torn or missing label: pick from the select (by

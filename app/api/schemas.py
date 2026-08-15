@@ -402,6 +402,9 @@ class ScanParseRead(BaseModel):
     distributor_pn: str | None = None
     shop: str | None = None
     url: str | None = None
+    # Symbol candidates read out of ``url`` (TME puts its own symbol in the
+    # path, at no fixed position) — the only identifiers a URL-only QR offers.
+    url_symbols: list[str] = Field(default_factory=list)
 
 
 class ShopParameter(BaseModel):

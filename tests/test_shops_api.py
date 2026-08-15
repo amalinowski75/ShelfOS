@@ -118,6 +118,7 @@ def test_parse_decodes_a_datamatrix_offline(client: TestClient) -> None:
         "distributor_pn": "SAM11086-ND",
         "shop": "digikey",
         "url": None,
+        "url_symbols": [],
     }
 
 
@@ -130,6 +131,34 @@ def test_parse_returns_a_tme_qr_url_and_pn(client: TestClient) -> None:
     data = resp.json()
     assert data["url"] == "https://www.tme.eu/details/MIC334"
     assert data["mpn"] == "MIC334"
+
+
+def test_parse_reads_the_symbol_from_a_url_only_tme_qr(client: TestClient) -> None:
+    """A QR carrying just the product URL is still matchable.
+
+    Without the ``PN:`` token there is no mpn and no distributor_pn, so the
+    path's symbol candidates are all a caller (scan putaway) can match a bag
+    by. The position of the symbol in the path is not fixed, hence a list.
+    """
+    resp = client.post(
+        "/api/shops/parse",
+        json={"code": "https://www.tme.eu/pl/details/zl262-40dg/zlacza/connfly/"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["mpn"] is None and data["distributor_pn"] is None
+    assert "ZL262-40DG" in data["url_symbols"]
+    # Over-long prose segments are not offered as symbols.
+    assert all(len(s) <= 18 for s in data["url_symbols"])
+
+
+def test_parse_reports_no_symbols_for_a_non_tme_url(client: TestClient) -> None:
+    resp = client.post(
+        "/api/shops/parse",
+        json={"code": "https://www.mouser.pl/pl/ProductDetail/Walsin/MR04X1201FTL"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["url_symbols"] == []
 
 
 def test_parse_rejects_an_unreadable_code(client: TestClient) -> None:

@@ -59,27 +59,23 @@ function parseRouting(parsed) {
   };
 }
 
+function press(document, key, target) {
+  const event = new document.defaultView.KeyboardEvent("keydown", {
+    key,
+    bubbles: true,
+    cancelable: true,
+  });
+  (target || document.body).dispatchEvent(event);
+  return event;
+}
+
 // A wedge scanner is a fast keyboard: emit the payload as per-key keydown
 // events on the given target (the body by default — focus must not matter),
-// terminated with Enter. The collector listens on the document, capture phase.
+// terminated with Enter. Dispatched synchronously, so the collector sees them
+// as one burst. The collector listens on the document, capture phase.
 function scan(document, code, { target } = {}) {
-  const el = target || document.body;
-  for (const key of code) {
-    el.dispatchEvent(
-      new document.defaultView.KeyboardEvent("keydown", {
-        key,
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
-  }
-  el.dispatchEvent(
-    new document.defaultView.KeyboardEvent("keydown", {
-      key: "Enter",
-      bubbles: true,
-      cancelable: true,
-    }),
-  );
+  for (const key of code) press(document, key, target);
+  return press(document, "Enter", target);
 }
 
 // jsdom's showModal is a stub, so reflect the state the browser would set.
@@ -193,6 +189,45 @@ describe("invoice_scan.js — bag scan", () => {
 
     expect(document.getElementById("putaway-dialog").open).toBe(true);
     expect(document.getElementById("putaway-part").textContent).toBe("ABC123");
+  });
+
+  it("falls back to the URL's symbols when the code carries no part number", async () => {
+    // A URL-only QR: the path's symbol is the only identifier there is.
+    const { document } = loadPage(scanFixture(), SCRIPTS, {
+      fetchImpl: parseRouting({
+        mpn: null,
+        distributor_pn: null,
+        url: "https://www.tme.eu/pl/details/71-abc123/zlacza/acme/",
+        url_symbols: ["71-ABC123", "ZLACZA", "ACME"],
+      }),
+    });
+    syncDialogOpen(document);
+
+    scan(document, "https://www.tme.eu/pl/details/71-abc123/zlacza/acme/");
+    await tick();
+
+    expect(document.getElementById("putaway-part").textContent).toBe("ABC123");
+  });
+
+  it("ignores URL symbols when the code has a real part number", async () => {
+    // The path's category/manufacturer segments must never compete with an
+    // identifier the label states outright — that could file the wrong bag.
+    const { document } = loadPage(scanFixture(), SCRIPTS, {
+      fetchImpl: parseRouting({
+        mpn: "NOT-ON-THIS-INVOICE",
+        distributor_pn: null,
+        url_symbols: ["71-ABC123"], // would have matched the staged row
+      }),
+    });
+    syncDialogOpen(document);
+
+    scan(document, "bag");
+    await tick();
+
+    expect(document.getElementById("putaway-dialog").open).toBe(false);
+    expect(document.getElementById("invoice-scan-status").textContent).toContain(
+      "NOT-ON-THIS-INVOICE",
+    );
   });
 
   it("matches a regular line by the distributor part number", async () => {
@@ -315,6 +350,84 @@ describe("invoice_scan.js — bag scan", () => {
     expect(status.hidden).toBe(true);
   });
 
+  it("restores a real status message after an alt-tab round trip", async () => {
+    const { window, document } = loadPage(scanFixture(), SCRIPTS, {
+      fetchImpl: parseRouting({ mpn: "UNKNOWN-99", distributor_pn: null }),
+    });
+    scan(document, "bag");
+    await tick();
+    const status = document.getElementById("invoice-scan-status");
+    expect(status.textContent).toContain("UNKNOWN-99");
+
+    window.dispatchEvent(new window.Event("blur"));
+    expect(status.textContent).toMatch(/not focused/);
+    window.dispatchEvent(new window.Event("focus"));
+    // The unacted-on error is back, not silently swallowed by the warning.
+    expect(status.textContent).toContain("UNKNOWN-99");
+    expect(status.hidden).toBe(false);
+  });
+
+  it("leaves a burst-opening key to the focused control and restarts the buffer", async () => {
+    // Type-ahead on a select and Space on a button must keep working: the key
+    // that OPENS a burst is never consumed, and it starts a fresh buffer so
+    // human strays can't prefix the next scan. Human keystrokes are spaced far
+    // wider than the burst gap, so each one opens its own "burst".
+    const { document } = loadPage(scanFixture(), SCRIPTS);
+    const gap = () => new Promise((resolve) => setTimeout(resolve, 80));
+
+    const rowSelect = document.querySelector(".ril-location");
+    rowSelect.focus();
+    await gap();
+    const typed = press(document, "L", rowSelect);
+    expect(typed.defaultPrevented).toBe(false);
+
+    const button = document.createElement("button");
+    document.body.appendChild(button);
+    button.focus();
+    await gap();
+    const space = press(document, " ", button);
+    expect(space.defaultPrevented).toBe(false);
+    // …and the field shows only the latest stray, not "L ".
+    expect(document.getElementById("invoice-scan-input").value).toBe(" ");
+  });
+
+  it("consumes the rest of a burst so a scan can't leak into a control", async () => {
+    // The flip side: once a burst is established, every remaining character is
+    // captured — a bag code containing a space must not "click" a focused
+    // button, and its characters must not reach a select's type-ahead.
+    const { document } = loadPage(scanFixture(), SCRIPTS, {
+      fetchImpl: parseRouting({ mpn: "ABC123", distributor_pn: null }),
+    });
+    syncDialogOpen(document);
+    const button = document.createElement("button");
+    document.body.appendChild(button);
+    button.focus();
+
+    press(document, "Q", button); // opens the burst (passes through)
+    const space = press(document, " ", button); // inside the burst
+    expect(space.defaultPrevented).toBe(true);
+    for (const key of "PN:ABC123") press(document, key, button);
+    press(document, "Enter", button);
+    await tick();
+
+    expect(document.getElementById("putaway-dialog").open).toBe(true);
+  });
+
+  it("does not submit a stale buffer left by human keystrokes", async () => {
+    const { document, fetchMock } = loadPage(scanFixture(), SCRIPTS);
+    press(document, "L"); // a lone keypress, long before any Enter
+    const field = document.getElementById("invoice-scan-input");
+    expect(field.value).toBe("L");
+
+    // vitest fake-free: the terminator window is time-based, so wait it out.
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    const enter = press(document, "Enter");
+
+    expect(fetchMock).not.toHaveBeenCalled(); // nothing was posted
+    expect(field.value).toBe(""); // and the stale buffer is dropped
+    expect(enter.defaultPrevented).toBe(false); // no dialog: Enter stays free
+  });
+
   it("leaves other dialogs' typing alone", async () => {
     const { document, fetchMock } = loadPage(scanFixture(), SCRIPTS);
     document.body.insertAdjacentHTML(
@@ -407,6 +520,70 @@ describe("invoice_scan.js — location scan in the dialog", () => {
     });
     document.body.dispatchEvent(plain);
     expect(plain.defaultPrevented).toBe(false);
+  });
+
+  it("still files the row when the dialog is cancelled mid-save", async () => {
+    // The close listener nulls the shared target; a save resolving afterwards
+    // must still apply the row the server actually recorded, and must not
+    // report a phantom network error.
+    let resolveSave;
+    const { document, fetchMock } = await openOnStagedRow({
+      fetchImpl: (url) =>
+        url === "/api/shops/parse"
+          ? ok({ mpn: "ABC123", distributor_pn: null })
+          : new Promise((resolve) => {
+              resolveSave = () => resolve({ ok: true, json: () => Promise.resolve({}) });
+            }),
+    });
+
+    scan(document, "SL5");
+    await tick();
+    expect(fetchMock).toHaveBeenCalledTimes(2); // save in flight
+    document.getElementById("putaway-dialog").close(); // user hits Escape
+    await tick();
+    resolveSave();
+    await tick();
+
+    expect(document.querySelector(".ril-location").value).toBe("5");
+    expect(document.getElementById("putaway-error").textContent).not.toMatch(
+      /Could not reach/,
+    );
+    expect(document.querySelector(".toast-ok").textContent).toBe(
+      "ABC123 → Lab / Rack A / D1",
+    );
+  });
+
+  it("tells the user when a location scan lands during a save", async () => {
+    const { document, fetchMock } = await openOnStagedRow({
+      fetchImpl: (url) =>
+        url === "/api/shops/parse"
+          ? ok({ mpn: "ABC123", distributor_pn: null })
+          : new Promise(() => {}), // never settles: the save is in flight
+    });
+
+    scan(document, "SL5");
+    await tick();
+    scan(document, "SL9"); // re-scan while the first save hangs
+    await tick();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2); // the second scan didn't fire
+    const error = document.getElementById("putaway-error");
+    expect(error.hidden).toBe(false);
+    expect(error.textContent).toMatch(/Still saving/);
+  });
+
+  it("keeps a genuine dialog error across an alt-tab round trip", async () => {
+    const { window, document } = await openOnStagedRow();
+    scan(document, "SL777"); // unknown location
+    await tick();
+    const error = document.getElementById("putaway-error");
+    expect(error.textContent).toContain("SL777");
+
+    window.dispatchEvent(new window.Event("blur"));
+    expect(error.textContent).toMatch(/not focused/);
+    window.dispatchEvent(new window.Event("focus"));
+    expect(error.textContent).toContain("SL777");
+    expect(error.hidden).toBe(false);
   });
 
   it("refuses a location code that is not on this ShelfOS", async () => {
