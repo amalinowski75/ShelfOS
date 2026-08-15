@@ -601,6 +601,41 @@ describe("invoice_scan.js — location scan in the dialog", () => {
     expect(row.children[3].textContent).toBe("4");
   });
 
+  it("keeps the row honest when the count saves but the location fails", async () => {
+    // Two writes, two chances to fail. If the second one does, the page must
+    // show the count the server actually holds — otherwise a rescan would
+    // compare against a stale number and never resync it — and say plainly
+    // that only half the work landed.
+    const { document, fetchMock } = loadPage(scanFixture(), SCRIPTS, {
+      fetchImpl: (url) => {
+        if (url === "/api/shops/parse")
+          return ok({ mpn: "NOPE-1", distributor_pn: "SPN-9" });
+        if (url.endsWith("/location"))
+          return Promise.resolve({
+            ok: false,
+            status: 409,
+            json: () => Promise.resolve({ detail: "location is full" }),
+          });
+        return ok({ id: 31, quantity: 4 });
+      },
+    });
+    syncDialogOpen(document);
+    scan(document, "bag");
+    await tick();
+
+    document.getElementById("putaway-qty").value = "4";
+    scan(document, "SL9");
+    await tick();
+
+    const row = document.querySelector("#invoice-lines tr");
+    expect(row.dataset.quantity).toBe("4"); // what the server now holds
+    expect(row.children[3].textContent).toBe("4");
+    expect(document.getElementById("putaway-error").textContent).toBe(
+      "Quantity saved as 4, but the location could not be set: location is full",
+    );
+    expect(document.getElementById("putaway-dialog").open).toBe(true);
+  });
+
   it("collects the location scan while the dialog is open, wherever focus is", async () => {
     const { document } = await openOnStagedRow();
 

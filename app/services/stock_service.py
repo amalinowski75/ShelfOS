@@ -113,6 +113,12 @@ def move_stock(
         raise ValidationError(
             f"only {held} in stock at the source location, cannot move {moved}"
         )
+    # The packaging travels with the parts: a reel put in another drawer is still
+    # a reel. Without this the destination slot would be created with the LOOSE
+    # default while the emptied source row keeps the real value, so the two rows
+    # would disagree about the same bag.
+    source_slot = _find_component_location(session, component_id, from_location_id)
+    container_type = source_slot.container_type if source_slot else None
     out = _record_movement(
         session,
         component_id=component_id,
@@ -130,6 +136,7 @@ def move_stock(
         delta=moved,
         reason=StockReason.MOVE,
         user_id=user_id,
+        container_type=container_type,
         note=note,
         commit=False,
     )

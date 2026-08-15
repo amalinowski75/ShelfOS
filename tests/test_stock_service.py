@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import pytest
 from app.models.enums import ContainerType, LocationType, StockReason
+from app.models.location import ComponentLocation
 from app.seed import ensure_system_user
 from app.services import component_service as cs
 from app.services import location_service as ls
 from app.services import stock_service as ss
 from app.services.errors import InsufficientStockError, NotFoundError, ValidationError
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 
 @pytest.fixture
@@ -527,3 +528,41 @@ def test_move_stock_leaves_nothing_behind_when_the_destination_is_unknown(
     session.rollback()
     assert ss.get_quantity(session, component_id, location_id) == 100
     assert ss.quantity_from_movements(session, component_id, location_id) == 100
+
+
+def test_move_stock_carries_the_packaging_to_the_new_slot(
+    fixture_ids, session: Session
+) -> None:
+    """A reel put in another drawer is still a reel.
+
+    Without this the destination slot takes the LOOSE default while the emptied
+    source keeps the real value, so the two rows disagree about one bag.
+    """
+    component_id, location_id, user_id = fixture_ids
+    shelf = ls.create_location(session, type=LocationType.SHELF, name="S1")
+    ss.add_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=100,
+        user_id=user_id,
+        container_type=ContainerType.REEL,
+    )
+
+    ss.move_stock(
+        session,
+        component_id=component_id,
+        from_location_id=location_id,
+        to_location_id=shelf.id,
+        user_id=user_id,
+    )
+
+    slots = {
+        slot.location_id: slot
+        for slot in session.exec(
+            select(ComponentLocation).where(
+                ComponentLocation.component_id == component_id
+            )
+        ).all()
+    }
+    assert slots[shelf.id].container_type is ContainerType.REEL

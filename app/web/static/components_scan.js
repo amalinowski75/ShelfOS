@@ -55,7 +55,17 @@
         maxQuantity: source.quantity,
         quantityHint: `of ${source.quantity} in ${source.path}`,
         async save(locationId, path, quantity) {
-          if (locationId === source.id) return; // already there; nothing to move
+          if (locationId === source.id) {
+            // Nothing to do — but say so instead of showing a green "moved"
+            // toast for a move that never happened. A typed count makes it a
+            // refusal: it states an intent this no-op cannot satisfy.
+            throw new ScanMiss(
+              quantity === source.quantity
+                ? `Already in ${path} — nothing moved.`
+                : `Already in ${path} — the ${quantity} you typed went nowhere. ` +
+                  "Scan the shelf it should move to.",
+            );
+          }
           const moved = await scanFetch("/api/stock/move", "POST", {
             component_id: component.id,
             from_location_id: source.id,

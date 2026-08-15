@@ -153,8 +153,12 @@ window.initScanPutaway = function (adapter) {
   }
 
   function refreshStatus() {
+    // The disarmed hint is skipped while the dialog is up: the panel sits
+    // behind the modal, so it would be advice nobody can read. Inside the
+    // dialog only the quantity box takes the keyboard, and it hands it back on
+    // the first letter of a scan.
     if (windowUnfocused) paintStatus(HINT_WINDOW_BLUR, "error");
-    else if (!armed()) paintStatus(HINT_DISARMED, "muted");
+    else if (!armed() && !dialog.open) paintStatus(HINT_DISARMED, "muted");
     else paintStatus(statusText, statusTone);
   }
 
@@ -323,28 +327,48 @@ window.initScanPutaway = function (adapter) {
       if (event.ctrlKey || event.altKey || event.metaKey) return;
       const t = event.target instanceof HTMLElement ? event.target : null;
       if (t && !ownsKeyboard(t)) {
-        if (t === qtyInput && event.key === "Enter") {
-          // Enter finishes editing the count: it must not submit the form (the
-          // location isn't scanned yet), and the collector needs the keyboard
-          // back so the next scan isn't typed into this box.
-          event.preventDefault();
-          qtyInput.blur();
+        if (t === qtyInput) {
+          // A scan already in progress (buffer non-empty) keeps its keystrokes
+          // even if the box somehow still has focus — otherwise the digits of
+          // "SL9" would go back to the count once the letters had escaped.
+          if (!buffer) {
+            if (event.key === "Enter") {
+              // Enter finishes editing the count: it must not submit the form
+              // (the location isn't scanned yet), and the collector needs the
+              // keyboard back so the next scan isn't typed into this box.
+              event.preventDefault();
+              qtyInput.blur();
+              return;
+            }
+            if (event.key === "Escape") {
+              // "Keep the dialog, give me the scanner back" — the dialog's own
+              // Escape-closes is suppressed; a second Escape closes it.
+              event.preventDefault();
+              qtyInput.blur();
+              reflectFocus();
+              return;
+            }
+            // Digits, Backspace and the arrows are the box's own business.
+            if (event.key.length !== 1 || /[0-9]/.test(event.key)) return;
+            // A LETTER cannot be part of a count, so it can only be a scan
+            // starting while this box still holds focus — the natural sequence
+            // (click the box, type the real count, scan the shelf). Hand the
+            // keyboard back; the fall-through below opens the buffer with it,
+            // instead of the number input silently dropping the "SL" and
+            // appending the digits to the count.
+            qtyInput.blur();
+          }
+        } else {
+          // The user is working the UI (a page control, a foreign input):
+          // type-ahead, Space and Enter all reach it untouched, and nothing
+          // typed there can join a scan. One keyboard-only way back to
+          // scanning, since nothing else here moves focus: Escape.
+          if (event.key === "Escape") {
+            t.blur();
+            reflectFocus();
+          }
           return;
         }
-        // The user is working the UI (a page control, the quantity box, a
-        // foreign input): type-ahead, Space and Enter all reach it untouched,
-        // and nothing typed there can join a scan. One keyboard-only way back
-        // to scanning, since nothing else here moves focus: Escape.
-        if (event.key === "Escape") {
-          // In the quantity box that also means "keep the dialog, give me the
-          // scanner back", so the dialog's own Escape-closes is suppressed;
-          // a second Escape (nothing focused now) closes it as usual.
-          if (t === qtyInput) event.preventDefault();
-          t.blur();
-          render();
-          refreshStatus();
-        }
-        return;
       }
       if (event.key === "Enter") {
         if (!buffer) {

@@ -281,8 +281,10 @@ def _stage(
     parked bare. Nothing is created here — materialisation is at finalize.
     """
     parameters = (
-        [{"parameter_definition_id": pid, "value": value}
-         for pid, value in proposal.parameters]
+        [
+            {"parameter_definition_id": pid, "value": value}
+            for pid, value in proposal.parameters
+        ]
         if proposal
         else []
     )
@@ -305,7 +307,8 @@ def _stage(
             shop_key=shop_key,
             type_id=proposal.type_id if proposal else None,
             mounting_type=(
-                proposal.mounting_type if proposal and proposal.mounting_type
+                proposal.mounting_type
+                if proposal and proposal.mounting_type
                 else MountingType.OTHER
             ),
             parameters=parameters,
@@ -419,10 +422,12 @@ def update_pending(
         staging.description = description
     if parameters is not _UNSET:
         staging.parameters = parameters or []
-    if quantity is not _UNSET:
+    if quantity is not _UNSET and quantity is not None:
         # What actually arrived can differ from what was invoiced (a short
         # delivery, a miscount): the row is still under review, so correcting it
-        # here is the point.
+        # here is the point. Like mounting_type above, there is no "cleared"
+        # state — a line always has a count — so an explicit null leaves the
+        # current value alone rather than crashing on the comparison below.
         if quantity <= 0:
             raise ValidationError("quantity must be positive")
         staging.quantity = quantity

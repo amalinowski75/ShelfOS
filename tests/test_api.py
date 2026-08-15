@@ -815,8 +815,12 @@ def test_matching_proposal_endpoint_fills_a_chosen_types_parameters(
     ctype = client.post("/api/types", json={"name": "resistor"}).json()
     client.post(
         f"/api/types/{ctype['id']}/parameters",
-        json={"name": "resistance", "label": "Resistance",
-              "data_type": "number", "unit": "Ω"},
+        json={
+            "name": "resistance",
+            "label": "Resistance",
+            "data_type": "number",
+            "unit": "Ω",
+        },
     )
     definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
 
@@ -1825,3 +1829,11 @@ def test_import_line_quantity_can_be_corrected_during_review(
         ).status_code
         == 422
     )
+    # An explicit null is not a way to clear a count (a line always has one):
+    # it leaves the value alone rather than crashing the service.
+    cleared = client.patch(
+        f"/api/invoices/{invoice['id']}/import-lines/{line_id}",
+        json={"quantity": None},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["quantity"] == 95

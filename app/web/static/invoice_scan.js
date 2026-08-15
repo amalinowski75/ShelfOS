@@ -43,26 +43,27 @@
     return matches.find((m) => !currentLocation(m)) || matches[0] || null;
   }
 
+  // Reflect what the server has accepted. Either half may be null, so the
+  // count can be applied the moment its own write lands, before the location's.
   function applyToRow(match, locationId, path, quantity) {
+    if (quantity != null) {
+      match.row.dataset.quantity = String(quantity);
+      const qtyCell =
+        match.kind === "import"
+          ? match.row.querySelector("td.num")
+          : match.row.children[3];
+      if (qtyCell) qtyCell.textContent = String(quantity);
+    }
+    if (locationId == null) return;
     if (match.kind === "import") {
       const select = match.row.querySelector(".ril-location");
       if (select) select.value = String(locationId);
       // Same completeness rule invoices.js applies after its own edits.
       match.row.classList.toggle("is-incomplete", !match.row.dataset.typeId);
-      if (quantity != null) {
-        match.row.dataset.quantity = String(quantity);
-        const cell = match.row.querySelector("td.num");
-        if (cell) cell.textContent = String(quantity);
-      }
     } else {
       match.row.dataset.locationId = String(locationId);
       const cell = match.row.children[2]; // the Location column
       if (cell) cell.textContent = path;
-      if (quantity != null) {
-        match.row.dataset.quantity = String(quantity);
-        const qtyCell = match.row.children[3]; // the Qty column
-        if (qtyCell) qtyCell.textContent = String(quantity);
-      }
     }
   }
 
@@ -96,9 +97,10 @@
         quantity: invoiced,
         quantityHint: `as invoiced — change it if the bag holds a different count`,
         async save(locationId, path, quantity) {
+          const recounted = quantity !== invoiced;
           if (match.kind === "import") {
             const body = { location_id: locationId };
-            if (quantity !== invoiced) body.quantity = quantity;
+            if (recounted) body.quantity = quantity;
             const saved = await scanFetch(
               `/api/invoices/${invoiceId}/import-lines/${match.row.dataset.importLineId}`,
               "PATCH",
@@ -106,8 +108,13 @@
             );
             if (!saved.ok) throw new ScanMiss(await errorMessage(saved));
           } else {
+            // Two writes, because a line's quantity and its location have
+            // separate endpoints. The count goes first and is applied to the
+            // row as soon as it lands, so a failure of the second one leaves
+            // the page telling the truth about the first — and a rescan reads
+            // the new count rather than re-sending the old one forever.
             const lineId = match.row.dataset.lineId;
-            if (quantity !== invoiced) {
+            if (recounted) {
               const requantified = await scanFetch(
                 `/api/invoices/${invoiceId}/lines/${lineId}`,
                 "PUT",
@@ -116,15 +123,29 @@
               if (!requantified.ok) {
                 throw new ScanMiss(await errorMessage(requantified));
               }
+              applyToRow(match, null, null, quantity);
             }
             const saved = await scanFetch(
               `/api/invoices/${invoiceId}/lines/${lineId}/location`,
               "PUT",
               { location_id: locationId },
             );
-            if (!saved.ok) throw new ScanMiss(await errorMessage(saved));
+            if (!saved.ok) {
+              const why = await errorMessage(saved);
+              throw new ScanMiss(
+                recounted
+                  ? `Quantity saved as ${quantity}, but the location could not be set: ${why}`
+                  : why,
+              );
+            }
           }
           applyToRow(match, locationId, path, quantity);
+          if (recounted) {
+            // The row's Total and the invoice's Total net are computed
+            // server-side from the quantity, so they are now stale on screen.
+            // Re-render rather than recompute money in the browser.
+            window.location.reload();
+          }
         },
       };
     },

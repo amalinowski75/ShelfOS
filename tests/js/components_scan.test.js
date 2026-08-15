@@ -64,9 +64,9 @@ function press(document, key, target) {
   return event;
 }
 
-function scan(document, code) {
-  for (const key of code) press(document, key);
-  press(document, "Enter");
+function scan(document, code, { target } = {}) {
+  for (const key of code) press(document, key, target);
+  press(document, "Enter", target);
 }
 
 function syncDialogOpen(document) {
@@ -215,17 +215,53 @@ describe("components_scan.js — moving the stock", () => {
     );
   });
 
-  it("does not move anything when the scanned shelf is the current one", async () => {
+  it("says nothing moved when the scanned shelf is the current one", async () => {
     const { document, fetchMock } = await openOn(MATCH);
 
     scan(document, "SL5"); // where it already is
     await tick();
 
     expect(fetchMock).toHaveBeenCalledTimes(1); // the lookup only
-    expect(document.getElementById("putaway-dialog").open).toBe(false);
-    expect(document.querySelector(".toast-ok").textContent).toBe(
-      "T821108A1S100CEU → Lab / Rack A / D1",
+    // No green "moved" toast for a move that never happened.
+    expect(document.querySelector(".toast-ok")).toBe(null);
+    expect(document.getElementById("putaway-error").textContent).toBe(
+      "Already in Lab / Rack A / D1 — nothing moved.",
     );
+    expect(document.getElementById("putaway-dialog").open).toBe(true);
+  });
+
+  it("refuses the current shelf outright when a count was typed", async () => {
+    const { document, fetchMock } = await openOn(MATCH);
+    document.getElementById("putaway-qty").value = "30";
+
+    scan(document, "SL5");
+    await tick();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(document.getElementById("putaway-error").textContent).toMatch(
+      /the 30 you typed went nowhere/,
+    );
+    expect(document.getElementById("putaway-dialog").open).toBe(true);
+  });
+
+  it("hands the scan out of the quantity box on its first letter", async () => {
+    // The natural sequence: click the count, type it, scan the shelf. The
+    // number input would silently drop "SL" and append "9" to the count.
+    const { document, fetchMock } = await openOn(MATCH);
+    const qty = document.getElementById("putaway-qty");
+    qty.focus();
+    qty.value = "30";
+
+    scan(document, "SL9", { target: qty });
+    await tick();
+
+    expect(qty.value).toBe("30"); // untouched by the payload
+    expect(fetchBody(fetchMock, 1)).toEqual({
+      component_id: 42,
+      from_location_id: 5,
+      to_location_id: 9,
+      quantity: 30,
+    });
   });
 
   it("keeps the dialog open and shows why when the move is refused", async () => {
