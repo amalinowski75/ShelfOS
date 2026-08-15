@@ -701,3 +701,15 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, .82); }
   background: var(--warn-soft);
   color: var(--warn);
 }
+.toast-ok {
+  border-color: var(--ok);
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+/* The scan field currently collecting keystrokes (scan putaway): an always-on
+   ring, since it is armed by state, not by focus. */
+.scan-armed {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}

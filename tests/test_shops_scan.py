@@ -94,6 +94,14 @@ def test_digikey_datamatrix_reads_the_manufacturer_part_number() -> None:
     assert scan.shop == "digikey"
 
 
+def test_datamatrix_keeps_the_distributor_part_number() -> None:
+    # 30P is the shop's own SKU — the value an invoice line stores as its
+    # supplier_part_number, so a scanned bag can be matched against a draft
+    # invoice's lines. This real Mouser label happens to carry no 30P at all.
+    assert parse_scan(_label(_DIGIKEY_FIELDS)).distributor_pn == "SAM11086-ND"
+    assert parse_scan(_label(_MOUSER_FIELDS)).distributor_pn is None
+
+
 def test_digikey_is_detected_from_its_own_z_identifiers() -> None:
     """Without a 30P …-ND field the Z data identifiers still give it away."""
     fields = [f for f in _DIGIKEY_FIELDS if not f.startswith("30P")]
@@ -141,7 +149,7 @@ def test_a_label_with_no_identifier_we_read_does_not_blame_the_scanner() -> None
 
 
 def test_an_unsafe_configured_separator_is_ignored(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """"-" occurs inside part numbers; splitting on it would shred a real label."""
+    """ "-" occurs inside part numbers; splitting on it would shred a real label."""
     monkeypatch.setattr(config, "SCAN_SEPARATOR", "-")
     scan = parse_scan(_label(_DIGIKEY_FIELDS))
     assert scan.mpn == "ESQ-106-33-T-S"  # not truncated at the first hyphen

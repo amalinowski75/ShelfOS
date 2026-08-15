@@ -51,9 +51,7 @@ def test_index_page_renders(client: TestClient) -> None:
 
 def test_stock_dialog_uses_location_tree_picker(client: TestClient) -> None:
     """The stock dialog's location field is the expandable tree-picker (§7)."""
-    room = client.post(
-        "/api/locations", json={"type": "room", "name": "Lab"}
-    ).json()
+    room = client.post("/api/locations", json={"type": "room", "name": "Lab"}).json()
     client.post(
         "/api/locations",
         json={"type": "rack", "name": "Rack A", "parent_id": room["id"]},
@@ -124,9 +122,7 @@ def test_require_web_user_heals_missing_csrf_token(session) -> None:  # type: ig
     from app.web.routes import require_web_user
     from starlette.requests import Request
 
-    user = us.create_user(
-        session, username="stale", password="pw", role=UserRole.USER
-    )
+    user = us.create_user(session, username="stale", password="pw", role=UserRole.USER)
     # A session that authenticates (user_id) but predates CSRF (no token).
     sess: dict[str, object] = {"user_id": user.id}
     scope = {
@@ -213,9 +209,7 @@ def test_create_type_accepts_builder_shaped_payload(
             },
         ],
     }
-    resp = anon_client.post(
-        "/api/types", json=payload, headers={"X-CSRF-Token": token}
-    )
+    resp = anon_client.post("/api/types", json=payload, headers={"X-CSRF-Token": token})
     assert resp.status_code == 201
     body = resp.json()
     assert [p["name"] for p in body["parameters"]] == ["capacitance", "dielectric"]
@@ -284,9 +278,7 @@ def test_components_feed_trims_a_long_description(client: TestClient) -> None:
     every time — including by the invoice line dialog, which only wants the MPN.
     """
     ctype = client.post("/api/types", json={"name": "resistor"}).json()
-    client.post(
-        "/api/components", json={"type_id": ctype["id"], "notes": "x" * 5000}
-    )
+    client.post("/api/components", json={"type_id": ctype["id"], "notes": "x" * 5000})
     shipped = client.get("/web/api/components").json()["data"][0]["notes"]
     assert len(shipped) < 250
     assert shipped.endswith("…")
@@ -787,6 +779,33 @@ def test_import_review_panel_renders_with_type_and_location_pickers(
     assert "is-incomplete" in html
 
 
+def test_scan_putaway_panel_renders_on_a_draft_and_not_after_finalize(
+    client: TestClient,
+) -> None:
+    """A draft with lines offers the scan-putaway flow; a finalized one doesn't.
+
+    The panel carries the id→path map the JS shows after a location scan, the
+    row exposes the matching keys (supplier part number and MPN), and the
+    putaway dialog with its scan input + manual fallback select is on the page.
+    """
+    invoice = _invoice_with_line(client)["invoice"]
+    html = client.get(f"/invoices/{invoice['id']}").text  # type: ignore[index]
+    assert 'id="invoice-scan"' in html
+    assert "data-locations=" in html
+    assert '"path": "D1"' in html  # the id→path map, via | tojson
+    assert 'id="putaway-dialog"' in html
+    assert 'id="putaway-scan"' in html
+    assert 'id="putaway-select"' in html
+    assert "invoice_scan.js" in html
+    assert 'data-spn="SPN-9"' in html
+    assert 'data-mpn="R-100"' in html
+
+    client.post(f"/api/invoices/{invoice['id']}/finalize", json={})  # type: ignore[index]
+    html = client.get(f"/invoices/{invoice['id']}").text  # type: ignore[index]
+    assert 'id="invoice-scan"' not in html
+    assert 'id="putaway-dialog"' not in html
+
+
 def test_invoice_detail_shows_attachments_even_when_finalized(
     client: TestClient,
 ) -> None:
@@ -859,9 +878,7 @@ def test_invoice_detail_empty_and_unlocated_line(client: TestClient) -> None:
     ).json()
 
     # No lines yet.
-    assert "This invoice has no lines." in client.get(
-        f"/invoices/{invoice['id']}"
-    ).text
+    assert "This invoice has no lines." in client.get(f"/invoices/{invoice['id']}").text
 
     # A line without a location shows the placeholder rather than crashing.
     client.post(
@@ -930,9 +947,10 @@ def test_authenticated_pages_load_shared_js(client: TestClient) -> None:
     invoice = _invoice_with_line(client)["invoice"]
     assert "/static/shared.js" in client.get("/").text
     assert "/static/shared.js" in client.get("/invoices").text
-    assert "/static/shared.js" in client.get(
-        f"/invoices/{invoice['id']}"  # type: ignore[index]
-    ).text
+    assert (
+        "/static/shared.js"
+        in client.get(f"/invoices/{invoice['id']}").text  # type: ignore[index]
+    )
 
 
 def test_invoice_list_new_button_writer_only(client: TestClient) -> None:
@@ -1042,9 +1060,7 @@ def test_invoice_detail_read_only_account_has_no_controls(
 
 def test_locations_page_renders_tree(client: TestClient) -> None:
     """The Locations page shows the hierarchy and the create dialog (§7)."""
-    room = client.post(
-        "/api/locations", json={"type": "room", "name": "Lab"}
-    ).json()
+    room = client.post("/api/locations", json={"type": "room", "name": "Lab"}).json()
     rack = client.post(
         "/api/locations",
         json={"type": "rack", "name": "Rack A", "parent_id": room["id"]},
@@ -1124,9 +1140,7 @@ def test_locations_page_caps_one_location_s_contents(client: TestClient) -> None
     from app.web.routes import _PARTS_PER_LOCATION
 
     ctype = client.post("/api/types", json={"name": "resistor"}).json()
-    drawer = client.post(
-        "/api/locations", json={"type": "drawer", "name": "D5"}
-    ).json()
+    drawer = client.post("/api/locations", json={"type": "drawer", "name": "D5"}).json()
     over = 3
     for i in range(_PARTS_PER_LOCATION + over):
         part = client.post(
@@ -1385,9 +1399,7 @@ def test_boms_page_has_no_upload_for_read_only(
     client: TestClient, anon_client: TestClient
 ) -> None:
     token = _non_admin_token(client, role="read-only", username="viewer")
-    html = anon_client.get(
-        "/boms", headers={"Authorization": f"Bearer {token}"}
-    ).text
+    html = anon_client.get("/boms", headers={"Authorization": f"Bearer {token}"}).text
     assert "BOMs" in html
     assert 'id="bom-upload-btn"' not in html
     assert 'id="bom-upload-form"' not in html
