@@ -12,6 +12,7 @@ from app.api.schemas import (
     LocationCreate,
     LocationUpdate,
 )
+from app.auth.deps import current_user_id
 from app.models.location import Location
 from app.services import location_service as ls
 
@@ -74,10 +75,14 @@ def update_location(
     location_id: int,
     payload: LocationUpdate,
     session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
 ) -> Location:
     """Rename, retype and/or move a location; omitted fields stay unchanged."""
     return ls.update_location(
-        session, location_id, **payload.model_dump(exclude_unset=True)
+        session,
+        location_id,
+        **payload.model_dump(exclude_unset=True),
+        user_id=user_id,
     )
 
 
@@ -86,6 +91,7 @@ def delete_location(
     location_id: int,
     recursive: bool = False,
     session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
 ) -> None:
     """Delete an empty location; ``recursive`` takes its whole stock-free branch."""
-    ls.delete_location(session, location_id, recursive=recursive)
+    ls.delete_location(session, location_id, recursive=recursive, user_id=user_id)

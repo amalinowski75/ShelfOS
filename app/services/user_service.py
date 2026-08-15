@@ -6,6 +6,7 @@ management. There is no self-registration: accounts are created by an admin.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import cast
 
 import bcrypt
@@ -85,6 +86,21 @@ def authenticate(session: Session, username: str, password: str) -> User | None:
 def list_users(session: Session) -> list[User]:
     """Return all users ordered by username."""
     return list(session.exec(select(User).order_by(col(User.name))).all())
+
+
+def names_by_id(session: Session, user_ids: Iterable[int]) -> dict[int, str]:
+    """Map user ids to their names in one query — for attributing log rows.
+
+    Ids with no user are simply absent from the result, so a caller renders its
+    own placeholder rather than losing the row it was labelling. Accounts are
+    never deleted (only deactivated), so that is a torn-database case, not a
+    routine one.
+    """
+    ids = set(user_ids)
+    if not ids:
+        return {}
+    users = session.exec(select(User).where(col(User.id).in_(ids))).all()
+    return {cast(int, user.id): user.name for user in users}
 
 
 def set_role(session: Session, user_id: int, role: UserRole) -> User:

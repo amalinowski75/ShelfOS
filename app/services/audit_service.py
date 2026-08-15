@@ -5,6 +5,12 @@ entities: quantity, location, invoice and parameter modifications. Entries are
 added to the caller's open transaction (no commit of their own), so an audit row
 persists atomically with the change that produced it -- either both land or
 neither does.
+
+The log answers "who changed this", so it records edits and deletions of rows
+that already existed. Creation is deliberately not audited anywhere: there is no
+prior value to record, and the bulk location generator would otherwise write
+hundreds of rows saying nothing but "this exists now". The consequence worth
+knowing is that no table carries its creator, only its editors.
 """
 
 from __future__ import annotations
@@ -30,6 +36,19 @@ FIELD_MANUFACTURER: Final = "manufacturer"
 FIELD_PACKAGE: Final = "package"
 FIELD_MOUNTING_TYPE: Final = "mounting_type"
 FIELD_NOTES: Final = "notes"
+# A staged import line under review (``invoice_import_line``): what the row will
+# become is still being edited, so its identity fields are audited too — unlike a
+# component's, which are immutable once created.
+FIELD_TYPE_ID: Final = "type_id"
+FIELD_MPN: Final = "mpn"
+FIELD_DESCRIPTION: Final = "description"
+FIELD_QUANTITY: Final = "quantity"
+FIELD_PARAMETERS: Final = "parameters"
+# A location's own fields (``location``). ``type`` is the location's kind (rack,
+# shelf, …), not a component type — hence the distinct name from FIELD_TYPE_ID.
+FIELD_NAME: Final = "name"
+FIELD_PARENT_ID: Final = "parent_id"
+FIELD_TYPE: Final = "type"
 
 _PARAMETER_PREFIX: Final = "parameter:"
 _QUANTITY_PREFIX: Final = "quantity@location:"

@@ -150,12 +150,15 @@
     <div class="table-wrap">
       <table class="data">
         <thead>
-          <tr><th>When</th><th style="text-align:right">Δ</th><th>Reason</th><th>Note</th></tr>
+          <tr><th>When</th><th>Who</th><th style="text-align:right">Δ</th><th>Reason</th><th>Note</th></tr>
         </thead>
         <tbody>
           {% for m in movements %}
           <tr>
             <td class="mono">{{ m.timestamp.strftime("%Y-%m-%d %H:%M") }}</td>
+            {# An id with no user means the account row is gone — show the id
+               rather than an anonymous dash, so the row stays traceable. #}
+            <td>{{ movement_authors.get(m.user_id) or "#%d" | format(m.user_id) }}</td>
             <td class="num">{{ "%+d" | format(m.delta_quantity) }}</td>
             <td><span class="badge b-neutral">{{ m.reason.value }}</span></td>
             <td>{{ m.note or "" }}</td>

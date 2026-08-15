@@ -14,6 +14,7 @@ from sqlmodel import Session, col, select
 from app.models.enums import LocationType
 from app.models.invoice import InvoiceLine
 from app.models.location import ComponentLocation, Location
+from app.services import audit_service
 from app.services._common import require_entity
 from app.services.errors import ValidationError
 
@@ -25,6 +26,9 @@ _MAX_DEPTH = 32
 # from flooding the table — and the Locations page renders the whole tree up
 # front, so an enormous forest would slow every visit, not just this request.
 _MAX_BULK_NODES = 500
+
+# What the audit log calls a location (spec §19).
+_AUDIT_ENTITY = "location"
 
 
 class _Unset:
@@ -296,14 +300,20 @@ def update_location(
     name: str | None | _Unset = _UNSET,
     parent_id: int | None | _Unset = _UNSET,
     type: LocationType | None | _Unset = _UNSET,
+    user_id: int | None = None,
 ) -> Location:
     """Edit a location's name, type and/or parent; omitted fields stay unchanged.
 
     ``parent_id=None`` moves the location to the top level. A move is rejected
     when the new parent lies inside the moved subtree (a cycle) or when the
     subtree's deepest descendant would end up past the depth cap.
+
+    Each field that actually changes is audited (§19) when a ``user_id`` is
+    given. A rename or a move silently rewrites what every printed label and
+    every stock row means, and the location row keeps no history of its own.
     """
     location = require_entity(session, Location, location_id, "location")
+    before = (location.name, location.parent_id, location.type)
     if not isinstance(name, _Unset):
         if name is None or not name.strip():
             raise ValidationError("location name must not be empty")
@@ -325,6 +335,26 @@ def update_location(
                     f"location hierarchy may not be deeper than {_MAX_DEPTH} levels"
                 )
         location.parent_id = parent_id
+    if user_id is not None:
+        changed = (location.name, location.parent_id, location.type)
+        fields = (
+            audit_service.FIELD_NAME,
+            audit_service.FIELD_PARENT_ID,
+            audit_service.FIELD_TYPE,
+        )
+        for field_name, old_value, new_value in zip(
+            fields, before, changed, strict=True
+        ):
+            if old_value != new_value:
+                audit_service.record_change(
+                    session,
+                    entity_type=_AUDIT_ENTITY,
+                    entity_id=location_id,
+                    field=field_name,
+                    old_value=old_value,
+                    new_value=new_value,
+                    user_id=user_id,
+                )
     session.add(location)
     session.commit()
     session.refresh(location)
@@ -351,7 +381,11 @@ def _subtree_ids(session: Session, location_id: int) -> list[int]:
 
 
 def delete_location(
-    session: Session, location_id: int, *, recursive: bool = False
+    session: Session,
+    location_id: int,
+    *,
+    recursive: bool = False,
+    user_id: int | None = None,
 ) -> int:
     """Delete a location — with ``recursive``, its whole branch. Returns how
     many locations went.
@@ -368,6 +402,10 @@ def delete_location(
     survives, its destination reads as unset). ``StockMovement`` rows keep
     their ``location_id`` — the ledger (§17) is immutable and the UI never
     resolves a movement's location name.
+
+    Audited when a ``user_id`` is given (§19): one entry per deleted location,
+    plus one per invoice line whose destination this cleared — that edit is
+    invisible on the invoice itself, which simply starts reading "—".
 
     Note: SQLite may hand a new row the highest deleted rowid back, so a label
     printed for a deleted location could scan to a later one — reprint labels
@@ -396,6 +434,16 @@ def delete_location(
         select(InvoiceLine).where(col(InvoiceLine.location_id).in_(ids))
     ).all()
     for line in lines:
+        if user_id is not None:
+            audit_service.record_change(
+                session,
+                entity_type="invoice_line",
+                entity_id=cast(int, line.id),
+                field=audit_service.FIELD_LOCATION_ID,
+                old_value=line.location_id,
+                new_value=None,
+                user_id=user_id,
+            )
         line.location_id = None
         session.add(line)
     # Children before parents, so a mid-transaction failure can never leave an
@@ -403,6 +451,16 @@ def delete_location(
     for current in reversed(ids):
         location = session.get(Location, current)
         if location is not None:
+            if user_id is not None:
+                audit_service.record_change(
+                    session,
+                    entity_type=_AUDIT_ENTITY,
+                    entity_id=current,
+                    field=audit_service.FIELD_DELETED,
+                    old_value=False,
+                    new_value=True,
+                    user_id=user_id,
+                )
             session.delete(location)
     session.commit()
     return len(ids)

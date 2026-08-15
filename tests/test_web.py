@@ -451,6 +451,32 @@ def test_component_detail_page(client: TestClient) -> None:
     assert "image_gallery.js" in html
 
 
+def test_component_detail_movements_name_who_moved_the_stock(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    """The ledger stores a user id; the page has to resolve it to a name."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    location = client.post(
+        "/api/locations", json={"type": "drawer", "name": "D1"}
+    ).json()
+    body = {
+        "component_id": component["id"],
+        "location_id": location["id"],
+        "quantity": 5,
+    }
+    client.post("/api/stock/add", json=body)  # as "admin"
+    token = _non_admin_token(client, role="user", username="stocker")
+    headers = {"Authorization": f"Bearer {token}"}
+    anon_client.post("/api/stock/add", json=body, headers=headers)
+
+    html = client.get(f"/components/{component['id']}").text
+    assert "<th>Who</th>" in html
+    # Both authors, not just whoever the page happens to be rendered for.
+    assert "stocker" in html
+    assert "admin" in html
+
+
 def test_component_detail_admin_sees_the_edit_dialog(client: TestClient) -> None:
     ctype = client.post("/api/types", json={"name": "resistor"}).json()
     component = client.post(
