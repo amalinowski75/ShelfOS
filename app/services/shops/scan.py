@@ -40,6 +40,14 @@ _TRAILING = ".,;:!?'\"()[]{}<>"
 # The Digi-Key-only Z data identifiers — a strong signal it's a Digi-Key label.
 _DIGIKEY_Z = ("11Z", "12Z", "13Z", "20Z")
 
+# Visible stand-ins a scanner may print in place of the GS/RS control characters,
+# tried automatically when the control characters are absent. Deliberately tiny:
+# every one of these is a character that does not occur inside a manufacturer or
+# distributor part number, so a split on one can be trusted once it yields a
+# known data identifier. Anything that CAN occur inside a value (- . _ / +) is
+# excluded here for the same reason configured_separator() rejects it.
+_AUTO_SEPARATORS = ("|", "^", "~", "¦", "\x00")
+
 _UNREADABLE = (
     "No readable fields in this barcode — either your scanner is dropping the field "
     "separators, or this label isn't one ShelfOS can read. Scan a TME QR or paste a "
@@ -106,14 +114,13 @@ def configured_separator() -> str | None:
     return separator
 
 
-def _parse_datamatrix(text: str) -> ScanResult:
-    separators = ["\x1d", "\x1e"]  # GS, RS
-    configured = configured_separator()
-    if configured:
-        separators.append(configured)
+def _split_fields(text: str, separators: list[str]) -> list[str]:
     pattern = "|".join(re.escape(s) for s in separators)
-    fields = [f for f in re.split(pattern, text) if f]
+    return [f for f in re.split(pattern, text) if f]
 
+
+def _read_fields(fields: list[str]) -> tuple[str | None, str | None, str | None, bool]:
+    """Pull the identifiers we understand out of already-split fields."""
     mpn: str | None = None
     manufacturer: str | None = None
     distributor_pn: str | None = None
@@ -127,6 +134,17 @@ def _parse_datamatrix(text: str) -> ScanResult:
             manufacturer = field[2:].strip()
         elif field[:3] in _DIGIKEY_Z:
             has_digikey_z = True
+    return mpn, manufacturer, distributor_pn, has_digikey_z
+
+
+def _parse_datamatrix(text: str) -> ScanResult:
+    separators = ["\x1d", "\x1e"]  # GS, RS
+    configured = configured_separator()
+    if configured:
+        separators.append(configured)
+    mpn, manufacturer, distributor_pn, has_digikey_z = _read_fields(
+        _split_fields(text, separators)
+    )
 
     # Not "did the split produce more than one field" — GS and RS are separately
     # configurable on most scanners, so one that drops GS but keeps the RS inside
@@ -135,7 +153,22 @@ def _parse_datamatrix(text: str) -> ScanResult:
     # conflate the dropped-separator case with a label carrying only identifiers we
     # don't read, hence the message names both rather than misdiagnosing the scanner.
     if not (mpn or manufacturer or distributor_pn):
-        raise ValidationError(_UNREADABLE)
+        # Many scanners can't emit the ISO control characters at all and are
+        # configured to print a visible stand-in. Rather than make the user
+        # declare it (SHELFOS_SCAN_SEPARATOR), try the few characters that can
+        # play that role, and accept one only on EVIDENCE: the split has to
+        # yield a data identifier we know. A candidate that occurs inside real
+        # values is not offered here — splitting "1PESQ-106-33-T-S" on "-"
+        # would leave "1PESQ" and look convincingly like a success.
+        for candidate in _AUTO_SEPARATORS:
+            if candidate not in text:
+                continue
+            found = _read_fields(_split_fields(text, [*separators, candidate]))
+            if found[0] or found[1] or found[2]:
+                mpn, manufacturer, distributor_pn, has_digikey_z = found
+                break
+        else:
+            raise ValidationError(_UNREADABLE)
 
     # Mouser prints nothing uniquely its own, so it's the default. That is safe
     # rather than a guess: 1P is a MANUFACTURER part number, so looking it up at

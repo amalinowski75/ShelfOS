@@ -130,6 +130,41 @@ def test_a_configured_visible_separator_is_accepted(monkeypatch) -> None:  # typ
     assert parse_scan(_label(_MOUSER_FIELDS, "|")).mpn == "5277"
 
 
+def test_a_visible_separator_is_recognised_without_being_configured() -> None:
+    """The user's scanner prints "|" for GS and cannot be told otherwise.
+
+    Both payloads are the real ones it produced. Nothing is configured here —
+    the split is accepted because it yields data identifiers we know, which a
+    wrong separator would not produce.
+    """
+    mouser = parse_scan(
+        "[)>06|K37887399|14K004|1P5270|Q25|11K088130615|4LCN|1VKeystone"
+    )
+    assert (mouser.mpn, mouser.manufacturer, mouser.shop) == (
+        "5270",
+        "Keystone",
+        "mouser",
+    )
+    digikey = parse_scan(
+        "[)>06|PSAM11086-ND|1PESQ-106-33-T-S|30PSAM11086-ND|K|1K97898569|11ZPICK|20Z"
+    )
+    assert digikey.mpn == "ESQ-106-33-T-S"
+    assert digikey.distributor_pn == "SAM11086-ND"
+    assert digikey.shop == "digikey"
+
+
+def test_auto_detection_never_splits_on_a_character_inside_a_value() -> None:
+    """A hyphen "separator" would shred ESQ-106-33-T-S into convincing rubbish.
+
+    The candidate list holds only characters that cannot occur inside a part
+    number, so a label whose only repeated character is one of those is refused
+    rather than mis-read.
+    """
+    with pytest.raises(ValidationError) as exc:
+        parse_scan("[)>06-1PESQ-106-33-T-S-1VSamtec")
+    assert "separators" in str(exc.value)
+
+
 def test_a_concatenated_datamatrix_is_refused_not_guessed() -> None:
     """No separators → the field boundaries are ambiguous, so we must not guess."""
     with pytest.raises(ValidationError) as exc:
