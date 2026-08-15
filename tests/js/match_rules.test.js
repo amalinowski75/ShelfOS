@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { loadPage, tick, CSRF, matchRulesPageFixture, fetchBody } from "./harness.js";
+import { loadPage, tick, CSRF, matchRulesPageFixture } from "./harness.js";
 
 const SCRIPTS = ["shared.js", "match_rules.js"];
 
@@ -25,6 +25,12 @@ function fire(el, type) {
   el.dispatchEvent(
     new el.ownerDocument.defaultView.Event(type, { cancelable: true, bubbles: true }),
   );
+}
+
+// The first fetch call using the given HTTP method (the page also fetches /api/types
+// at load to ready the inline Target editor, so writes aren't always call 0).
+function writeCall(fetchMock, method) {
+  return fetchMock.mock.calls.find((c) => c[1]?.method === method);
 }
 
 describe("match_rules.js — columns", () => {
@@ -58,10 +64,36 @@ describe("match_rules.js — columns", () => {
       window.ruleColumns().map((c) => [c.field, c]),
     );
     expect(byField.alias.editor).toBe("input");
-    expect(byField.canonical.editor).toBe("input");
+    expect(byField.canonical.editor).toBe("list"); // constrained per domain
     expect(byField.sort_order.editor).toBe("number");
     expect(byField.domain.editor).toBeUndefined();
     expect(byField.parameter.editor).toBeUndefined();
+  });
+
+  it("constrains the inline Target editor to the row's domain vocabulary", async () => {
+    const fetchImpl = (url) => {
+      if (url === "/api/types") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [{ id: 1, name: "resistor" }, { id: 2, name: "diode" }],
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ data: [] }) });
+    };
+    const { window } = loadPage(matchRulesPageFixture(), SCRIPTS, { fetchImpl });
+    await tick(); // let the startup /api/types fetch populate the type list
+    const target = window.ruleColumns().find((c) => c.field === "canonical");
+    const paramsFor = (domain) =>
+      target.editorParams({ getRow: () => ({ getData: () => ({ domain }) }) });
+
+    // Mounting → the fixed enum list, no free text.
+    expect(paramsFor("mounting")).toEqual({
+      values: ["SMT", "THT", "Other", "Panel", "Wire"],
+    });
+    // Type → the existing type names.
+    expect(paramsFor("type")).toEqual({ values: ["resistor", "diode"] });
+    // A parameter rule → free text.
+    expect(paramsFor("enum_value")).toEqual({ values: [], freetext: true });
   });
 });
 
@@ -71,17 +103,19 @@ describe("match_rules.js — inline edit", () => {
     const alias = window.ruleColumns().find((c) => c.field === "alias");
     await alias.cellEdited(editCell("opornik", { id: 42 }));
 
-    expect(fetchMock.mock.calls[0][0]).toBe("/api/admin/match-rules/42");
-    expect(fetchMock.mock.calls[0][1].method).toBe("PATCH");
-    expect(fetchMock.mock.calls[0][1].headers["X-CSRF-Token"]).toBe(CSRF);
-    expect(fetchBody(fetchMock)).toEqual({ alias: "opornik" });
+    const patch = writeCall(fetchMock, "PATCH");
+    expect(patch[0]).toBe("/api/admin/match-rules/42");
+    expect(patch[1].headers["X-CSRF-Token"]).toBe(CSRF);
+    expect(JSON.parse(patch[1].body)).toEqual({ alias: "opornik" });
   });
 
   it("sends the order as a number", async () => {
     const { window, fetchMock } = loadPage(matchRulesPageFixture(), SCRIPTS);
     const order = window.ruleColumns().find((c) => c.field === "sort_order");
     await order.cellEdited(editCell("5", { id: 3 }));
-    expect(fetchBody(fetchMock)).toEqual({ sort_order: 5 });
+    expect(JSON.parse(writeCall(fetchMock, "PATCH")[1].body)).toEqual({
+      sort_order: 5,
+    });
   });
 
   it("reverts the cell and alerts when the server rejects the edit", async () => {
@@ -123,13 +157,14 @@ describe("match_rules.js — loading & delete", () => {
     window.confirm = vi.fn(() => false);
     window.deleteRule({ id: 5, alias: "x", canonical: "ic" });
     await tick();
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Declining the confirm sends no DELETE (the startup /api/types fetch aside).
+    expect(writeCall(fetchMock, "DELETE")).toBeUndefined();
 
     window.confirm = vi.fn(() => true);
     window.deleteRule({ id: 5, alias: "x", canonical: "ic" });
     await tick();
-    expect(fetchMock.mock.calls[0][0]).toBe("/api/admin/match-rules/5");
-    expect(fetchMock.mock.calls[0][1].method).toBe("DELETE");
+    const del = writeCall(fetchMock, "DELETE");
+    expect(del[0]).toBe("/api/admin/match-rules/5");
   });
 });
 

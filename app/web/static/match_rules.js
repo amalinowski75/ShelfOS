@@ -7,6 +7,37 @@
 // The two domains that attach a rule to a single parameter definition.
 const SCOPED_DOMAINS = new Set(["param_name", "enum_value"]);
 
+// Existing type names, cached for the in-place Target editor of a type rule (the
+// list is fetched once at load; the create dialog refreshes it when it opens).
+let cachedTypeNames = [];
+
+// The MountingType values, read from the create dialog's select so the template
+// stays the single source of truth for the enum.
+function mountingValues() {
+  const select = document.querySelector('#rule-new-form [name="canonical_mounting"]');
+  return select ? [...select.options].map((o) => o.value) : [];
+}
+
+async function loadTypeNames() {
+  try {
+    const types = await fetch("/api/types").then((r) => r.json());
+    cachedTypeNames = types.map((t) => t.name);
+  } catch {
+    cachedTypeNames = [];
+  }
+}
+
+// The in-place Target editor's options for a given row: a fixed list for the
+// domains with a vocabulary (mounting enum, existing types), free text otherwise —
+// the same constraint the create dialog applies, so a mistyped mounting can't slip
+// in through inline editing either.
+function targetEditorParams(cell) {
+  const domain = cell.getRow().getData().domain;
+  if (domain === "mounting") return { values: mountingValues() };
+  if (domain === "type") return { values: cachedTypeNames };
+  return { values: [], freetext: true };
+}
+
 async function sendRuleWrite(url, method, payload) {
   return fetch(url, {
     method,
@@ -69,7 +100,10 @@ function ruleColumns() {
     ruleFilter({
       title: "Target",
       field: "canonical",
-      editor: "input",
+      // A list of the domain's valid values (mounting enum / existing types), or
+      // free text for a parameter rule — chosen per row by targetEditorParams.
+      editor: "list",
+      editorParams: targetEditorParams,
       cellEdited: (cell) => saveCellEdit(cell, "canonical"),
       formatter: (cell) => `<span class="cell-mono">${esc(cell.getValue())}</span>`,
     }),
@@ -202,6 +236,7 @@ if (newRuleBtn) {
       targetTypeSelect.innerHTML = types
         .map((t) => `<option value="${esc(t.name)}">${esc(t.name)}</option>`)
         .join("");
+      cachedTypeNames = types.map((t) => t.name); // keep the inline editor in sync
       await loadParams();
     } catch {
       error.textContent = "Could not load types.";
@@ -290,3 +325,4 @@ if (newRuleBtn) {
 }
 
 rulesTable.on("tableBuilt", loadRules);
+loadTypeNames(); // ready the type list for the inline Target editor

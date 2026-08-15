@@ -1515,6 +1515,10 @@ def test_match_rules_page_renders_for_admin(client: TestClient) -> None:
     assert "match_rules.js" in html
     # The nav exposes the admin-only link.
     assert 'href="/match-rules"' in html
+    # The mounting target is a select of the MountingType enum, not free text.
+    assert 'name="canonical_mounting"' in html
+    assert "<option value=\"SMT\">SMT</option>" in html
+    assert "<option value=\"THT\">THT</option>" in html
 
 
 def test_match_rules_feed_labels_a_scoped_rule(client: TestClient) -> None:
