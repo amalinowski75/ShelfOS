@@ -68,6 +68,8 @@ describe("match_rules.js — columns", () => {
     expect(byField.sort_order.editor).toBe("number");
     expect(byField.domain.editor).toBeUndefined();
     expect(byField.parameter.editor).toBeUndefined();
+    // Order's semantics (lower wins on a tie) are non-obvious, so the header says so.
+    expect(byField.sort_order.headerTooltip).toMatch(/lower wins/i);
   });
 
   it("constrains the inline Target editor to the row's domain vocabulary", async () => {

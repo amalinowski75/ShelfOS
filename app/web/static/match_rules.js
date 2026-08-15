@@ -119,6 +119,12 @@ function ruleColumns() {
       hozAlign: "right",
       sorter: "number",
       editor: "number",
+      // Order only matters within a domain (type/mounting), where the engine takes
+      // the first matching alias — lower wins when several could match the same text.
+      headerTooltip:
+        "Lower wins when several aliases in the same domain (type/mounting) " +
+        "could match the same text — e.g. 'led' before 'diode'. Ignored for " +
+        "parameter rules.",
       cellEdited: (cell) => saveCellEdit(cell, "sort_order"),
     }),
     {
