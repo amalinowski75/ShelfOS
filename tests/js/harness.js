@@ -186,6 +186,36 @@ export function usersPageFixture() {
     </form></dialog>`;
 }
 
+export function matchRulesPageFixture() {
+  const domainOptions = `
+    <option value="type" selected>type</option>
+    <option value="mounting">mounting</option>
+    <option value="param_name">param_name</option>
+    <option value="enum_value">enum_value</option>`;
+  return `
+    <div id="rules-table"></div>
+    <button id="rule-new-btn"></button>
+    <dialog id="rule-new-dialog"><form id="rule-new-form">
+      <select name="domain">${domainOptions}</select>
+      <div id="rule-scope-type" hidden><select name="type"></select></div>
+      <div id="rule-scope-param" hidden><select name="parameter"></select></div>
+      <input name="alias" />
+      <select name="canonical_type" hidden></select>
+      <select name="canonical_mounting" hidden>
+        <option value="SMT">SMT</option>
+        <option value="THT">THT</option>
+        <option value="Other" selected>Other</option>
+        <option value="Panel">Panel</option>
+        <option value="Wire">Wire</option>
+      </select>
+      <select name="canonical_enum" hidden></select>
+      <input name="canonical_text" hidden />
+      <input name="sort_order" type="number" value="0" />
+      <p id="rule-new-error" hidden></p>
+      <button type="submit"></button>
+    </form></dialog>`;
+}
+
 // The reusable attachments panel (mirrors _attachments.html). `withForm` renders
 // the writer-only "+ Add" button and its dialog form; omit it for the read-only view.
 export function attachmentsWidgetFixture({ withForm = true } = {}) {

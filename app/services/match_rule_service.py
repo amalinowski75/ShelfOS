@@ -13,25 +13,34 @@ resulting :class:`RuleSet`.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 
 from sqlmodel import Session, select
 
 from app.models.component import ParameterDefinition
-from app.models.enums import MatchDomain
+from app.models.enums import MatchDomain, MountingType
 from app.models.match_rule import MatchRule
 from app.services._common import require_entity
+from app.services.component_service import enum_values_of
 from app.services.errors import ValidationError
 
-# Fold a shop's parameter label / value to a comparable key: lowercase, drop every
-# non-alphanumeric character. So "Rezystancja", "Resistance (Ω)" and "resistance"
-# only match a rule/definition whose own name folds the same way. (Ported verbatim
-# from the old client-side normalizeName in component_dialog.js.)
+# Fold a shop's parameter label / value to a comparable key: lowercase, strip accents
+# to their base letter, then drop every non-alphanumeric character. So "Rezystancja",
+# "Resistance (Ω)" and "resistance" fold the same — and, crucially for Polish, so do
+# "wstążkowy" and "wstazkowy" (an accent must not simply vanish and change the word).
 _NON_ALNUM = re.compile(r"[^a-z0-9]")
+# Letters NFKD does not decompose (they have no combining form), folded by hand.
+_STANDALONE_FOLD = str.maketrans({"ł": "l", "đ": "d", "ø": "o", "ß": "ss", "þ": "th"})
 
 
 def normalize(name: str | None) -> str:
-    return _NON_ALNUM.sub("", str(name or "").lower())
+    text = str(name or "").lower().translate(_STANDALONE_FOLD)
+    # NFKD splits e.g. "ż" into "z" + a combining mark; dropping the marks leaves "z".
+    text = "".join(
+        c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c)
+    )
+    return _NON_ALNUM.sub("", text)
 
 
 @dataclass
@@ -99,6 +108,42 @@ def list_rules(
     )
 
 
+def _canonical_target(
+    session: Session,
+    domain: MatchDomain,
+    canonical: str,
+    parameter_definition_id: int | None,
+) -> str:
+    """Validate/normalise a rule's target for the domains that have a fixed vocabulary.
+
+    A MOUNTING target must name a :class:`MountingType`, and an ENUM_VALUE target must
+    name one of its parameter's allowed enum tokens. Both are folded to the exact
+    stored spelling ("tht" -> "THT"), because the engine matches the target
+    case-sensitively (``canonical in allowed``) and a wrong case would make the rule
+    silently do nothing — the very "looks alive in the table but can never fire"
+    failure this guards against. A TYPE target is resolved case-insensitively by the
+    engine, and a PARAM_NAME target is a free-text definition name, so both are kept
+    verbatim.
+    """
+    if domain is MatchDomain.MOUNTING:
+        for member in MountingType:
+            if member.value.casefold() == canonical.casefold():
+                return member.value
+        allowed = ", ".join(m.value for m in MountingType)
+        raise ValidationError(f"a mounting rule's target must be one of: {allowed}")
+    if domain is MatchDomain.ENUM_VALUE and parameter_definition_id is not None:
+        values = enum_values_of(session, parameter_definition_id)
+        for value in values:
+            if value.casefold() == canonical.casefold():
+                return value
+        allowed = ", ".join(values) or "(the parameter has no enum values)"
+        raise ValidationError(
+            f"an enum_value rule's target must be one of the parameter's "
+            f"values: {allowed}"
+        )
+    return canonical
+
+
 def create_rule(
     session: Session,
     *,
@@ -131,8 +176,15 @@ def create_rule(
             parameter_definition_id,
             "parameter definition",
         )
-    if _find_duplicate(session, domain, alias, parameter_definition_id) is not None:
-        raise ValidationError("an identical rule already exists")
+    # Validate the target after the FK check — an enum_value target is checked against
+    # the parameter's own allowed values, which needs the definition to exist.
+    canonical = _canonical_target(session, domain, canonical, parameter_definition_id)
+    existing = _find_duplicate(session, domain, alias, parameter_definition_id)
+    if existing is not None:
+        raise ValidationError(
+            f"the alias '{existing.alias}' already exists in this domain "
+            f"(it maps to '{existing.canonical}')"
+        )
     rule = MatchRule(
         domain=domain,
         alias=alias,
@@ -140,6 +192,52 @@ def create_rule(
         parameter_definition_id=parameter_definition_id,
         sort_order=sort_order,
     )
+    session.add(rule)
+    session.commit()
+    session.refresh(rule)
+    return rule
+
+
+def update_rule(
+    session: Session,
+    rule_id: int,
+    *,
+    alias: str | None = None,
+    canonical: str | None = None,
+    sort_order: int | None = None,
+) -> MatchRule:
+    """Edit a rule's alias, target or order in place (only the fields given change).
+
+    The rule's domain and scope are fixed — changing them would make it a different
+    rule (delete and re-add instead). The same duplicate guard as :func:`create_rule`
+    applies to a rename: an alias already used in this domain + scope is rejected, so
+    the same text never maps two different ways.
+    """
+    rule = session.get(MatchRule, rule_id)
+    if rule is None:
+        raise ValidationError("matching rule not found")
+    if alias is not None:
+        alias = alias.strip()
+        if not alias:
+            raise ValidationError("a matching rule needs an alias")
+        clash = _find_duplicate(
+            session, rule.domain, alias, rule.parameter_definition_id
+        )
+        if clash is not None and clash.id != rule.id:
+            raise ValidationError(
+                f"the alias '{clash.alias}' already exists in this domain "
+                f"(it maps to '{clash.canonical}')"
+            )
+        rule.alias = alias
+    if canonical is not None:
+        canonical = canonical.strip()
+        if not canonical:
+            raise ValidationError("a matching rule needs a target")
+        rule.canonical = _canonical_target(
+            session, rule.domain, canonical, rule.parameter_definition_id
+        )
+    if sort_order is not None:
+        rule.sort_order = sort_order
     session.add(rule)
     session.commit()
     session.refresh(rule)
@@ -160,14 +258,20 @@ def _find_duplicate(
     alias: str,
     parameter_definition_id: int | None,
 ) -> MatchRule | None:
-    # Same domain + same scope + same alias (case-insensitively) is a duplicate.
+    # Two aliases collide when the ENGINE would key them the same way — otherwise the
+    # loser sits in the admin table looking healthy but never fires. type/mounting are
+    # keyed by .lower(); the scoped domains by normalize() (which folds accents and
+    # punctuation), so there "wstążkowy" and "wstazkowy" are one alias, not two.
+    scoped = domain in (MatchDomain.PARAM_NAME, MatchDomain.ENUM_VALUE)
+    fold = normalize if scoped else str.lower
+    target = fold(alias)
     for rule in session.exec(
         select(MatchRule).where(
             MatchRule.domain == domain,
             MatchRule.parameter_definition_id == parameter_definition_id,
         )
     ).all():
-        if rule.alias.lower() == alias.lower():
+        if fold(rule.alias) == target:
             return rule
     return None
 
