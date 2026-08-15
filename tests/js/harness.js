@@ -200,7 +200,15 @@ export function matchRulesPageFixture() {
       <div id="rule-scope-type" hidden><select name="type"></select></div>
       <div id="rule-scope-param" hidden><select name="parameter"></select></div>
       <input name="alias" />
-      <input name="canonical" />
+      <select name="canonical_type" hidden></select>
+      <select name="canonical_mounting" hidden>
+        <option value="SMT">SMT</option>
+        <option value="THT">THT</option>
+        <option value="Other" selected>Other</option>
+        <option value="Panel">Panel</option>
+        <option value="Wire">Wire</option>
+      </select>
+      <input name="canonical_text" hidden />
       <input name="sort_order" type="number" value="0" />
       <p id="rule-new-error" hidden></p>
       <button type="submit"></button>

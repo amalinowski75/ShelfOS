@@ -47,7 +47,14 @@
       </div>
       <div class="field">
         <label>Target <span class="muted">— how ShelfOS stores it</span></label>
-        <input class="control" name="canonical" required placeholder="e.g. THT" />
+        <!-- The target's shape depends on the domain: an existing type for a type
+             rule, a mounting value for a mounting rule, free text otherwise. Only the
+             one matching the chosen domain is shown (toggled in match_rules.js). -->
+        <select class="control" name="canonical_type" hidden></select>
+        <select class="control" name="canonical_mounting" hidden>
+          {% for mt in mounting_types %}<option value="{{ mt }}">{{ mt }}</option>{% endfor %}
+        </select>
+        <input class="control" name="canonical_text" hidden placeholder="e.g. resistance" />
       </div>
       <div class="field">
         <label>Order <span class="muted">— lower wins when several aliases match</span></label>

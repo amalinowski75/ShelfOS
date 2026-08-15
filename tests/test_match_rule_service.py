@@ -133,6 +133,35 @@ def test_update_rule_can_rename_to_the_same_alias(session: Session) -> None:
     assert updated.canonical == "mosfet"
 
 
+def test_create_rule_folds_a_mounting_target_to_its_enum_case(
+    session: Session,
+) -> None:
+    # A mounting target is matched case-sensitively by the engine, so the store
+    # normalises "tht" to the exact enum spelling instead of silently keeping a
+    # value that would never fire.
+    rule = mrs.create_rule(
+        session, domain=MatchDomain.MOUNTING, alias="wire-through", canonical="tht"
+    )
+    assert rule.canonical == "THT"
+
+
+def test_create_rule_rejects_an_unknown_mounting_target(session: Session) -> None:
+    with pytest.raises(ValidationError, match="mounting rule's target"):
+        mrs.create_rule(
+            session, domain=MatchDomain.MOUNTING, alias="x", canonical="banana"
+        )
+
+
+def test_update_rule_folds_a_mounting_target_to_its_enum_case(
+    session: Session,
+) -> None:
+    rule = mrs.create_rule(
+        session, domain=MatchDomain.MOUNTING, alias="reflow", canonical="SMT"
+    )
+    updated = mrs.update_rule(session, rule.id, canonical="other")
+    assert updated.canonical == "Other"
+
+
 def test_match_rules_survive_reset_db_keep_types() -> None:
     # The rules are taxonomy; --keep-types must not wipe them.
     from scripts import reset_db

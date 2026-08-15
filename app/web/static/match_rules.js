@@ -40,7 +40,11 @@ async function saveCellEdit(cell, field) {
       "PATCH",
       { [field]: value },
     );
-    if (!resp.ok) {
+    if (resp.ok) {
+      // Reload so a server-normalised value (e.g. a mounting target folded to its
+      // exact enum spelling) is what the row shows, not the raw text just typed.
+      await loadRules();
+    } else {
       alert(await errorMessage(resp));
       cell.restoreOldValue();
     }
@@ -160,25 +164,43 @@ if (newRuleBtn) {
   const paramField = document.getElementById("rule-scope-param");
   const typeSelect = form.elements.type;
   const paramSelect = form.elements.parameter;
+  // The three possible "Target" controls; only the one matching the domain shows.
+  const targetTypeSelect = form.elements.canonical_type; // type rule → a type name
+  const targetMountingSelect = form.elements.canonical_mounting; // mounting → enum
+  const targetTextInput = form.elements.canonical_text; // param/enum → free text
 
   function isScoped() {
     return SCOPED_DOMAINS.has(form.elements.domain.value);
   }
 
-  // Show the type/parameter pickers only for a scoped domain, loading the type
-  // list the first time they're needed.
-  async function syncScopeFields() {
+  // Reflect the chosen domain: show its scope pickers (param/enum only) and the one
+  // Target control that fits — an existing-type list, the mounting enum, or free
+  // text — so a bad target (e.g. a mistyped mounting) can't be entered.
+  async function syncFields() {
+    const domain = form.elements.domain.value;
     const scoped = isScoped();
     typeField.hidden = !scoped;
     paramField.hidden = !scoped;
-    if (scoped && typeSelect.options.length === 0) await loadTypes();
+    targetTypeSelect.hidden = domain !== "type";
+    targetMountingSelect.hidden = domain !== "mounting";
+    targetTextInput.hidden = scoped === false && domain !== "type";
+    // The type list feeds both the scope picker and the type-target select, so load
+    // it whenever either needs it.
+    if ((scoped || domain === "type") && typeSelect.options.length === 0) {
+      await loadTypes();
+    }
   }
 
   async function loadTypes() {
     try {
       const types = await fetch("/api/types").then((r) => r.json());
+      // Scope picker keys by id (which parameter's owner); the target select stores
+      // the type NAME, which is what a type rule's canonical is matched against.
       typeSelect.innerHTML = types
         .map((t) => `<option value="${t.id}">${esc(t.name)}</option>`)
+        .join("");
+      targetTypeSelect.innerHTML = types
+        .map((t) => `<option value="${esc(t.name)}">${esc(t.name)}</option>`)
         .join("");
       await loadParams();
     } catch {
@@ -205,13 +227,21 @@ if (newRuleBtn) {
     }
   }
 
-  form.elements.domain.addEventListener("change", syncScopeFields);
+  // The target value comes from whichever control the domain exposes.
+  function currentTarget() {
+    const domain = form.elements.domain.value;
+    if (domain === "type") return targetTypeSelect.value;
+    if (domain === "mounting") return targetMountingSelect.value;
+    return targetTextInput.value.trim();
+  }
+
+  form.elements.domain.addEventListener("change", syncFields);
   typeSelect.addEventListener("change", loadParams);
 
   newRuleBtn.addEventListener("click", async () => {
     form.reset();
     error.hidden = true;
-    await syncScopeFields();
+    await syncFields();
     dialog.showModal();
   });
 
@@ -223,13 +253,18 @@ if (newRuleBtn) {
       const payload = {
         domain: form.elements.domain.value,
         alias: form.elements.alias.value.trim(),
-        canonical: form.elements.canonical.value.trim(),
+        canonical: currentTarget(),
         sort_order: Number(form.elements.sort_order.value) || 0,
         parameter_definition_id:
           scoped && paramSelect.value ? Number(paramSelect.value) : null,
       };
       if (scoped && payload.parameter_definition_id === null) {
         error.textContent = "Pick the parameter this rule applies to.";
+        error.hidden = false;
+        return;
+      }
+      if (!payload.canonical) {
+        error.textContent = "Pick or enter a target.";
         error.hidden = false;
         return;
       }

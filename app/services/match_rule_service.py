@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from sqlmodel import Session, select
 
 from app.models.component import ParameterDefinition
-from app.models.enums import MatchDomain
+from app.models.enums import MatchDomain, MountingType
 from app.models.match_rule import MatchRule
 from app.services._common import require_entity
 from app.services.errors import ValidationError
@@ -99,6 +99,24 @@ def list_rules(
     )
 
 
+def _canonical_target(domain: MatchDomain, canonical: str) -> str:
+    """Validate/normalise a rule's target for the domains that have a fixed vocabulary.
+
+    A MOUNTING target must name a :class:`MountingType`; we fold it to the exact enum
+    spelling (so "tht" is stored as "THT"), because the engine matches the enum value
+    case-sensitively and a wrong case would make the rule silently do nothing. Other
+    domains keep the target verbatim (a type name is resolved case-insensitively; a
+    parameter/enum target is checked against the live vocabulary at match time).
+    """
+    if domain is MatchDomain.MOUNTING:
+        for member in MountingType:
+            if member.value.casefold() == canonical.casefold():
+                return member.value
+        allowed = ", ".join(m.value for m in MountingType)
+        raise ValidationError(f"a mounting rule's target must be one of: {allowed}")
+    return canonical
+
+
 def create_rule(
     session: Session,
     *,
@@ -117,6 +135,7 @@ def create_rule(
     canonical = canonical.strip()
     if not alias or not canonical:
         raise ValidationError("a matching rule needs both an alias and a target")
+    canonical = _canonical_target(domain, canonical)
     scoped = domain in (MatchDomain.PARAM_NAME, MatchDomain.ENUM_VALUE)
     if scoped and parameter_definition_id is None:
         raise ValidationError(f"{domain.value} rules must name a parameter definition")
@@ -178,7 +197,7 @@ def update_rule(
         canonical = canonical.strip()
         if not canonical:
             raise ValidationError("a matching rule needs a target")
-        rule.canonical = canonical
+        rule.canonical = _canonical_target(rule.domain, canonical)
     if sort_order is not None:
         rule.sort_order = sort_order
     session.add(rule)

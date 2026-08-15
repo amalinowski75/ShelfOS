@@ -134,27 +134,78 @@ describe("match_rules.js — loading & delete", () => {
 });
 
 describe("match_rules.js — create", () => {
-  it("creates a global rule with no parameter scope", async () => {
-    const { document, fetchMock } = loadPage(matchRulesPageFixture(), SCRIPTS);
+  // The dialog needs the type list even for its default (type) domain, so every
+  // create test serves /api/types.
+  const withTypes = (types) => (url) => {
+    if (url === "/api/types") {
+      return Promise.resolve({ ok: true, json: async () => types });
+    }
+    if (url.endsWith("/parameters")) {
+      return Promise.resolve({ ok: true, json: async () => [] });
+    }
+    return Promise.resolve({ ok: true, json: async () => ({}) });
+  };
+
+  it("picks a mounting target from the enum select, not free text", async () => {
+    const { document, fetchMock } = loadPage(matchRulesPageFixture(), SCRIPTS, {
+      fetchImpl: withTypes([]),
+    });
     document.getElementById("rule-new-btn").click();
     await tick();
     const form = document.getElementById("rule-new-form");
     form.elements.domain.value = "mounting";
-    form.elements.alias.value = "  przewlekany  ";
-    form.elements.canonical.value = "THT";
-    form.elements.sort_order.value = "2";
+    fire(form.elements.domain, "change");
+    await tick();
+    // The mounting target is the enum select; the type list and free text are hidden.
+    expect(form.elements.canonical_mounting.hidden).toBe(false);
+    expect(form.elements.canonical_type.hidden).toBe(true);
+    expect(form.elements.canonical_text.hidden).toBe(true);
 
+    form.elements.alias.value = "  przewlekany  ";
+    form.elements.canonical_mounting.value = "THT";
+    form.elements.sort_order.value = "2";
     submit(document, "rule-new-form");
     await tick();
 
-    const [url, opts] = fetchMock.mock.calls[0];
-    expect(url).toBe("/api/admin/match-rules");
-    expect(opts.method).toBe("POST");
-    expect(fetchBody(fetchMock)).toEqual({
+    const post = fetchMock.mock.calls.find((c) => c[0] === "/api/admin/match-rules");
+    expect(post[1].method).toBe("POST");
+    expect(JSON.parse(post[1].body)).toEqual({
       domain: "mounting",
       alias: "przewlekany", // trimmed
       canonical: "THT",
       sort_order: 2,
+      parameter_definition_id: null,
+    });
+  });
+
+  it("offers existing types as the target for a type rule", async () => {
+    const { document, fetchMock } = loadPage(matchRulesPageFixture(), SCRIPTS, {
+      fetchImpl: withTypes([
+        { id: 1, name: "resistor" },
+        { id: 2, name: "capacitor" },
+      ]),
+    });
+    document.getElementById("rule-new-btn").click();
+    await tick();
+    await tick();
+    const form = document.getElementById("rule-new-form");
+    // Default domain is "type": the target is a list of the existing type NAMES.
+    expect(form.elements.canonical_type.hidden).toBe(false);
+    expect([...form.elements.canonical_type.options].map((o) => o.value)).toEqual([
+      "resistor",
+      "capacitor",
+    ]);
+
+    form.elements.alias.value = "opornik";
+    form.elements.canonical_type.value = "resistor";
+    submit(document, "rule-new-form");
+    await tick();
+
+    const post = fetchMock.mock.calls.find((c) => c[0] === "/api/admin/match-rules");
+    expect(JSON.parse(post[1].body)).toMatchObject({
+      domain: "type",
+      alias: "opornik",
+      canonical: "resistor", // the type name, from the select
       parameter_definition_id: null,
     });
   });
@@ -189,9 +240,11 @@ describe("match_rules.js — create", () => {
 
     expect(document.getElementById("rule-scope-type").hidden).toBe(false);
     expect(form.elements.parameter.value).toBe("10");
+    // A scoped rule's target is free text (the parameter's name / an enum token).
+    expect(form.elements.canonical_text.hidden).toBe(false);
 
     form.elements.alias.value = "Rezystancja";
-    form.elements.canonical.value = "resistance";
+    form.elements.canonical_text.value = "resistance";
     submit(document, "rule-new-form");
     await tick();
 
@@ -223,7 +276,7 @@ describe("match_rules.js — create", () => {
     fire(form.elements.domain, "change");
     await tick();
     form.elements.alias.value = "czerwony";
-    form.elements.canonical.value = "red";
+    form.elements.canonical_text.value = "red";
 
     submit(document, "rule-new-form");
     await tick();

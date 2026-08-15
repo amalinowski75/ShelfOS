@@ -408,7 +408,11 @@ def match_rules_page(
     return templates.TemplateResponse(
         request,
         "match_rules.html",
-        {"current_user": user, "domains": [d.value for d in MatchDomain]},
+        {
+            "current_user": user,
+            "domains": [d.value for d in MatchDomain],
+            "mounting_types": [m.value for m in MountingType],
+        },
     )
 
 
