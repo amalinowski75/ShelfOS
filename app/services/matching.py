@@ -256,7 +256,8 @@ def _fill_parameters(
             filled[target.id] = gated  # type: ignore[index]
 
     # Loose text: each NUMBER def with a unit picks up its value; the primary value
-    # parameter also takes a bare engineering token as a last resort.
+    # parameter also takes a bare engineering token as a last resort; and an ENUM def
+    # takes a value word that an ENUM_VALUE rule recognises ("wstążkowy" -> Flat).
     if scan_text:
         for definition in definitions:
             if (
@@ -269,8 +270,44 @@ def _fill_parameters(
             if found is not None:
                 filled[definition.id] = found  # type: ignore[index]
         _fill_value_parameter(scan_text, definitions, filled)
+        _fill_enums_from_text(
+            scan_text, definitions, filled, rules.enum_aliases, allowed_enums
+        )
 
     proposal.parameters.extend(filled.items())
+
+
+def _fill_enums_from_text(
+    scan_text: str,
+    definitions: list[ParameterDefinition],
+    filled: dict[int, ParameterValue],
+    enum_aliases: dict[int, dict[str, str]],
+    allowed_enums: dict[int, list[str]],
+) -> None:
+    """Fill an unset ENUM def when a word in the text matches one of its aliases.
+
+    Structured shop attributes and "label: value" fragments are handled earlier; this
+    is the free-text case an invoice usually is — a bare "wstążkowy" in the middle of
+    a description. Only an admin-added ENUM_VALUE **alias** counts here (not the raw
+    allowed tokens), so an incidental word can't be mistaken for a value; the first
+    alias present wins (rules are ordered by sort_order). Matching is accent- and
+    case-insensitive via ``normalize`` (so Polish spelling variants unify).
+    """
+    words = {normalize(w) for w in re.findall(r"\w+", scan_text.lower())}
+    words.discard("")
+    for definition in definitions:
+        did = definition.id
+        if (
+            definition.data_type is not ParameterDataType.ENUM
+            or did is None
+            or did in filled
+        ):
+            continue
+        allowed = allowed_enums.get(did, [])
+        for alias, canonical in enum_aliases.get(did, {}).items():
+            if alias in words and canonical in allowed:
+                filled[did] = canonical
+                break
 
 
 def _fill_value_parameter(

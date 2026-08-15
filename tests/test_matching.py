@@ -128,6 +128,63 @@ def test_enum_alias_resolves_and_a_non_member_is_dropped(session: Session) -> No
     assert ("Dielectric", "Z9U") in proposal.unmatched
 
 
+def _cable_with_type_enum(session: Session) -> tuple[int, int]:
+    """A cable type with a "Type" enum (Flat/Round) — for free-text enum matching."""
+    ctype = cs.create_type(session, "cable")
+    type_def = cs.add_parameter_definition(
+        session, ctype.id, name="ctype", label="Type",
+        data_type=DT.ENUM, enum_values=["Flat", "Round"], sort_order=0,
+    )
+    mrs.seed_default_rules(session)
+    return ctype.id, type_def.id
+
+
+def test_enum_value_matched_from_free_text_by_a_polish_alias(session: Session) -> None:
+    _, def_id = _cable_with_type_enum(session)
+    mrs.create_rule(
+        session, domain=MatchDomain.ENUM_VALUE, alias="wstążkowy",
+        canonical="Flat", parameter_definition_id=def_id,
+    )
+    # A bare adjective in the description (no "label: value" structure) — the
+    # invoice case that used to leave the enum unset.
+    product = ProductData(category="cable", description="Przewód wstążkowy 40 żył")
+    assert _by_id(build_proposal(session, product))[def_id] == "Flat"
+
+
+def test_enum_free_text_match_ignores_polish_accents(session: Session) -> None:
+    _, def_id = _cable_with_type_enum(session)
+    mrs.create_rule(
+        session, domain=MatchDomain.ENUM_VALUE, alias="wstążkowy",
+        canonical="Flat", parameter_definition_id=def_id,
+    )
+    # The shop wrote it without diacritics — must still hit the accented alias.
+    product = ProductData(category="cable", description="kabel wstazkowy plaski")
+    assert _by_id(build_proposal(session, product))[def_id] == "Flat"
+
+
+def test_enum_free_text_does_not_match_an_unrelated_description(
+    session: Session,
+) -> None:
+    _, def_id = _cable_with_type_enum(session)
+    mrs.create_rule(
+        session, domain=MatchDomain.ENUM_VALUE, alias="wstążkowy",
+        canonical="Flat", parameter_definition_id=def_id,
+    )
+    product = ProductData(category="cable", description="Przewód okrągły ekranowany")
+    assert def_id not in _by_id(build_proposal(session, product))
+
+
+def test_enum_free_text_alias_to_a_non_member_is_dropped(session: Session) -> None:
+    _, def_id = _cable_with_type_enum(session)
+    # The alias points at a token that isn't one of the def's allowed values.
+    mrs.create_rule(
+        session, domain=MatchDomain.ENUM_VALUE, alias="wstążkowy",
+        canonical="Ribbon", parameter_definition_id=def_id,
+    )
+    product = ProductData(category="cable", description="Przewód wstążkowy")
+    assert def_id not in _by_id(build_proposal(session, product))
+
+
 def test_param_name_synonym_matches_cross_language(session: Session) -> None:
     ids = _resistor(session)
     mrs.create_rule(

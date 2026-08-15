@@ -167,6 +167,15 @@ def test_update_rule_folds_a_mounting_target_to_its_enum_case(
     assert updated.canonical == "Other"
 
 
+def test_normalize_folds_polish_accents() -> None:
+    # An accent must fold to its base letter, not vanish — otherwise "wstążkowy" and
+    # the un-accented "wstazkowy" a shop often writes would key differently.
+    assert mrs.normalize("wstążkowy") == mrs.normalize("wstazkowy") == "wstazkowy"
+    assert mrs.normalize("Pojemność") == "pojemnosc"
+    assert mrs.normalize("dławik") == "dlawik"  # ł has no NFKD form; folded by hand
+    assert mrs.normalize("ŁÓDŹ") == "lodz"
+
+
 def test_match_rules_survive_reset_db_keep_types() -> None:
     # The rules are taxonomy; --keep-types must not wipe them.
     from scripts import reset_db

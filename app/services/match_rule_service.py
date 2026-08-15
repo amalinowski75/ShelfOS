@@ -13,6 +13,7 @@ resulting :class:`RuleSet`.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 
 from sqlmodel import Session, select
@@ -23,15 +24,22 @@ from app.models.match_rule import MatchRule
 from app.services._common import require_entity
 from app.services.errors import ValidationError
 
-# Fold a shop's parameter label / value to a comparable key: lowercase, drop every
-# non-alphanumeric character. So "Rezystancja", "Resistance (Ω)" and "resistance"
-# only match a rule/definition whose own name folds the same way. (Ported verbatim
-# from the old client-side normalizeName in component_dialog.js.)
+# Fold a shop's parameter label / value to a comparable key: lowercase, strip accents
+# to their base letter, then drop every non-alphanumeric character. So "Rezystancja",
+# "Resistance (Ω)" and "resistance" fold the same — and, crucially for Polish, so do
+# "wstążkowy" and "wstazkowy" (an accent must not simply vanish and change the word).
 _NON_ALNUM = re.compile(r"[^a-z0-9]")
+# Letters NFKD does not decompose (they have no combining form), folded by hand.
+_STANDALONE_FOLD = str.maketrans({"ł": "l", "đ": "d", "ø": "o", "ß": "ss", "þ": "th"})
 
 
 def normalize(name: str | None) -> str:
-    return _NON_ALNUM.sub("", str(name or "").lower())
+    text = str(name or "").lower().translate(_STANDALONE_FOLD)
+    # NFKD splits e.g. "ż" into "z" + a combining mark; dropping the marks leaves "z".
+    text = "".join(
+        c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c)
+    )
+    return _NON_ALNUM.sub("", text)
 
 
 @dataclass
