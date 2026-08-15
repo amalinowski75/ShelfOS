@@ -531,6 +531,96 @@ describe("component_dialog.js — shop import", () => {
     ).toBe("8k");
   });
 
+  it("keeps a manually-corrected mounting when the type changes", async () => {
+    const impl = (url, opts) => {
+      if (url === "/api/shops/lookup") {
+        return Promise.resolve({ ok: true, json: async () => PRODUCT });
+      }
+      if (url === "/api/matching/proposal") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            type_id: 2,
+            mounting_type: "SMT", // the engine still guesses SMT for the new type
+            package: null,
+            parameters: [],
+          }),
+        });
+      }
+      return fetchImpl(url, opts);
+    };
+    const { document } = loadPage(
+      componentPageFixture([
+        { id: 1, name: "resistor" },
+        { id: 2, name: "capacitor" },
+      ]),
+      SCRIPTS,
+      { fetchImpl: impl },
+    );
+    await openAndImport(document);
+    const mounting = document.querySelector(
+      '#component-form [name="mounting_type"]',
+    );
+    expect(mounting.value).toBe("SMT"); // applied from the initial proposal
+    mounting.value = "THT"; // the user corrects it by hand
+
+    const select = document.getElementById("component-type");
+    select.value = "2";
+    fire(select, "change");
+    await tick();
+    await tick();
+    // Mounting is type-independent; the re-fetch must not clobber the correction.
+    expect(mounting.value).toBe("THT");
+  });
+
+  it("discards a stale proposal for a superseded type", async () => {
+    const impl = (url, opts) => {
+      if (url === "/api/shops/lookup") {
+        return Promise.resolve({ ok: true, json: async () => PRODUCT });
+      }
+      if (url === "/api/matching/proposal") {
+        const body = JSON.parse(opts.body);
+        const value = body.type_id === 1 ? "99k" : "8k";
+        const delay = body.type_id === 1 ? 30 : 0; // the superseded one is slow
+        return new Promise((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                ok: true,
+                json: async () => ({
+                  type_id: body.type_id,
+                  mounting_type: null,
+                  package: null,
+                  parameters: [{ parameter_definition_id: 10, value }],
+                }),
+              }),
+            delay,
+          ),
+        );
+      }
+      return fetchImpl(url, opts);
+    };
+    const { document } = loadPage(
+      componentPageFixture([
+        { id: 1, name: "resistor" },
+        { id: 2, name: "capacitor" },
+      ]),
+      SCRIPTS,
+      { fetchImpl: impl },
+    );
+    await openAndImport(document);
+    const select = document.getElementById("component-type");
+    select.value = "1";
+    fire(select, "change"); // slow proposal (99k) — superseded
+    select.value = "2";
+    fire(select, "change"); // fast proposal (8k) — the live one
+    await new Promise((resolve) => setTimeout(resolve, 60)); // let both settle
+    // The stale type-1 response resolves last but must not overwrite the type-2 value.
+    expect(
+      document.querySelector('#component-params [data-definition-id="10"]').value,
+    ).toBe("8k");
+  });
+
   it("attaches the imported datasheet after the component is created", async () => {
     const { document, fetchMock } = loadPage(componentPageFixture(), SCRIPTS, {
       fetchImpl: withLookup(PRODUCT),

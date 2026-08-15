@@ -161,6 +161,17 @@ def test_ic_alias_does_not_match_inside_logic(session: Session) -> None:
     assert build_proposal(session, product).type_id is None
 
 
+def test_ic_alias_does_not_match_inside_a_word_ending_in_ic_colon(
+    session: Session,
+) -> None:
+    # "ic:" is a substring of "electronic:" — the left word-boundary anchor must keep
+    # the IC-type rule from firing on it.
+    cs.create_type(session, "ic")
+    mrs.seed_default_rules(session)
+    product = ProductData(shop_category="Electronic: modules", description="a module")
+    assert build_proposal(session, product).type_id is None
+
+
 def test_no_type_means_no_parameters(session: Session) -> None:
     mrs.seed_default_rules(session)
     product = ProductData(description="Some Widget with 10 kOhms in it")

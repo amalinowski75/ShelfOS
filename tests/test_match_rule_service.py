@@ -50,6 +50,18 @@ def test_global_rule_rejects_a_definition(session: Session) -> None:
         )
 
 
+def test_scoped_rule_rejects_an_unknown_definition(session: Session) -> None:
+    from app.services.errors import NotFoundError
+
+    # SQLite doesn't enforce the FK, so the service must reject a dangling scope
+    # itself — otherwise a permanently-unusable orphan rule is created.
+    with pytest.raises(NotFoundError, match="parameter definition"):
+        mrs.create_rule(
+            session, domain=MatchDomain.ENUM_VALUE, alias="czerwony",
+            canonical="red", parameter_definition_id=9999,
+        )
+
+
 def test_duplicate_alias_is_rejected(session: Session) -> None:
     mrs.create_rule(
         session, domain=MatchDomain.MOUNTING, alias="SMD", canonical="SMT"

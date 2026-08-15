@@ -411,7 +411,10 @@ def update_pending(
         staging.mpn = mpn
     if package is not _UNSET:
         staging.package = package
-    if mounting_type is not _UNSET:
+    if mounting_type is not _UNSET and mounting_type is not None:
+        # Mounting has no "cleared" state (NOT-NULL, defaults to OTHER); a stray null
+        # from the API would break the model invariant and later template rendering,
+        # so an explicit null leaves the current value untouched.
         staging.mounting_type = mounting_type
     if description is not _UNSET:
         staging.description = description

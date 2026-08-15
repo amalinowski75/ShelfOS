@@ -192,10 +192,14 @@ def _resolve_type(
             return exact
     lowered = blob.lower()
     for alias, canonical in rules.types:
-        # Substring match (like the old keyword list): Polish inflection means
-        # "rezystor" must still catch "Rezystory", and the "ic:" colon guard keeps
-        # "ic" from matching inside "logic".
-        if alias in lowered:
+        if not alias:
+            continue
+        # Left-anchored substring: the alias must start at a word boundary, but the
+        # right side stays open so Polish inflection still works ("rezystor" catches
+        # "Rezystory", "złącz" catches "złączami"). The left anchor stops mid-word
+        # false hits — "ic:" no longer fires inside "electronic:", nor "led" inside
+        # "coupled".
+        if re.search(rf"(?<![a-z0-9]){re.escape(alias)}", lowered):
             type_id = names.get(canonical.casefold())
             if type_id is not None:
                 return type_id

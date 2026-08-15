@@ -17,8 +17,10 @@ from dataclasses import dataclass, field
 
 from sqlmodel import Session, select
 
+from app.models.component import ParameterDefinition
 from app.models.enums import MatchDomain
 from app.models.match_rule import MatchRule
+from app.services._common import require_entity
 from app.services.errors import ValidationError
 
 # Fold a shop's parameter label / value to a comparable key: lowercase, drop every
@@ -120,6 +122,15 @@ def create_rule(
         raise ValidationError(f"{domain.value} rules must name a parameter definition")
     if not scoped and parameter_definition_id is not None:
         raise ValidationError(f"{domain.value} rules are global, not per-parameter")
+    if parameter_definition_id is not None:
+        # SQLite FKs aren't enforced, so guard here — an orphaned scoped rule would
+        # be silently unusable (the engine only loads aliases for live definitions).
+        require_entity(
+            session,
+            ParameterDefinition,
+            parameter_definition_id,
+            "parameter definition",
+        )
     if _find_duplicate(session, domain, alias, parameter_definition_id) is not None:
         raise ValidationError("an identical rule already exists")
     rule = MatchRule(

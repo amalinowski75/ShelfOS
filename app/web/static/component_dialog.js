@@ -423,7 +423,9 @@
   }
 
   // Apply the engine's proposal to the form: package, mounting, and parameter values
-  // (by definition id). Never overwrites a package the user/shop already gave.
+  // (by definition id). Never overwrites a package or mounting the user already set —
+  // switching type re-runs the engine, and mounting is type-independent, so a manual
+  // correction must survive the re-fetch. "Other" is the default/untouched sentinel.
   function applyProposal(proposal) {
     if (proposal.package) {
       const pkg = form.querySelector('[name="package"]');
@@ -433,6 +435,7 @@
       const mounting = form.querySelector('[name="mounting_type"]');
       const ok =
         mounting &&
+        mounting.value === "Other" &&
         [...mounting.options].some((o) => o.value === proposal.mounting_type);
       if (ok) mounting.value = proposal.mounting_type;
     }
