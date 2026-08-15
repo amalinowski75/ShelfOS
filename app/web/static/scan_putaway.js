@@ -58,6 +58,8 @@ window.initScanPutaway = function (adapter) {
   const descEl = document.getElementById("putaway-desc");
   const locationInput = document.getElementById("putaway-scan");
   const locationSelect = document.getElementById("putaway-select");
+  const qtyInput = document.getElementById("putaway-qty");
+  const qtyHint = document.getElementById("putaway-qty-hint");
   const errorEl = document.getElementById("putaway-error");
 
   // id → human path, for showing where the part just went. The server
@@ -100,7 +102,22 @@ window.initScanPutaway = function (adapter) {
     return ["BUTTON", "SELECT", "A", "SUMMARY"].includes(node.tagName);
   }
 
-  const armed = () => !isPageControl(document.activeElement);
+  // Everything the collector must keep its hands off: page controls, text
+  // entry anywhere (including the dialog's own quantity box), and another
+  // dialog's contents. One predicate for both the keydown guard and the armed
+  // ring, so the ring can never claim a scan would be collected when it
+  // wouldn't.
+  function ownsKeyboard(node) {
+    if (!node) return true;
+    if (isPageControl(node)) return false;
+    if (node.isContentEditable || node.tagName === "TEXTAREA") return false;
+    if (node.tagName === "INPUT" && node !== scanInput && node !== locationInput)
+      return false;
+    const openDialog = node.closest?.("dialog[open]");
+    return !(openDialog && openDialog !== dialog);
+  }
+
+  const armed = () => ownsKeyboard(document.activeElement);
 
   // The live field displays the buffer; the idle one sits empty. Both are
   // readonly — they are gauges, not text entry. The ring marks which field a
@@ -208,6 +225,9 @@ window.initScanPutaway = function (adapter) {
       descEl.hidden = !descEl.textContent;
       locationSelect.value =
         resolved.locationId == null ? "" : String(resolved.locationId);
+      qtyInput.value = resolved.quantity == null ? "" : String(resolved.quantity);
+      qtyInput.max = resolved.maxQuantity == null ? "" : String(resolved.maxQuantity);
+      qtyHint.textContent = resolved.quantityHint || "";
       setDialogError("");
       buffer = "";
       dialog.showModal();
@@ -238,6 +258,23 @@ window.initScanPutaway = function (adapter) {
     saveLocation(Number(matched[1]));
   }
 
+  // The quantity to file, or null after explaining what's wrong with the box.
+  // An adapter that doesn't use quantities (no prefill) gets undefined back and
+  // never sees the field.
+  function readQuantity(saving) {
+    if (saving.quantity == null) return undefined;
+    const value = Number(qtyInput.value);
+    if (!Number.isInteger(value) || value < 1) {
+      setDialogError("Quantity must be a whole number, 1 or more.");
+      return null;
+    }
+    if (saving.maxQuantity != null && value > saving.maxQuantity) {
+      setDialogError(`Only ${saving.maxQuantity} available — cannot file ${value}.`);
+      return null;
+    }
+    return value;
+  }
+
   async function saveLocation(locationId) {
     if (busy || !target) return;
     // Pin the target for the whole round trip: the dialog's own close listener
@@ -250,9 +287,11 @@ window.initScanPutaway = function (adapter) {
       setDialogError(`Unknown location code SL${locationId} — reprint the label?`);
       return;
     }
+    const quantity = readQuantity(saving);
+    if (quantity === null) return; // readQuantity explained why
     busy = true;
     try {
-      await saving.save(locationId, path);
+      await saving.save(locationId, path, quantity);
       if (target === saving) target = null;
       dialog.close(); // a no-op if the user already closed it
       showToast(`${saving.label} → ${path}`, { tone: "ok" });
@@ -283,23 +322,29 @@ window.initScanPutaway = function (adapter) {
     (event) => {
       if (event.ctrlKey || event.altKey || event.metaKey) return;
       const t = event.target instanceof HTMLElement ? event.target : null;
-      if (t) {
-        const openDialog = t.closest("dialog[open]");
-        if (openDialog && openDialog !== dialog) return;
-        if (t.isContentEditable || t.tagName === "TEXTAREA") return;
-        if (t.tagName === "INPUT" && t !== scanInput && t !== locationInput) return;
-        if (isPageControl(t)) {
-          // The user is working the UI: type-ahead, Space and Enter all reach
-          // the control untouched, and nothing typed here can join a scan.
-          // One keyboard-only way back to scanning, since nothing else here
-          // moves focus: Escape.
-          if (event.key === "Escape") {
-            t.blur();
-            render();
-            refreshStatus();
-          }
+      if (t && !ownsKeyboard(t)) {
+        if (t === qtyInput && event.key === "Enter") {
+          // Enter finishes editing the count: it must not submit the form (the
+          // location isn't scanned yet), and the collector needs the keyboard
+          // back so the next scan isn't typed into this box.
+          event.preventDefault();
+          qtyInput.blur();
           return;
         }
+        // The user is working the UI (a page control, the quantity box, a
+        // foreign input): type-ahead, Space and Enter all reach it untouched,
+        // and nothing typed there can join a scan. One keyboard-only way back
+        // to scanning, since nothing else here moves focus: Escape.
+        if (event.key === "Escape") {
+          // In the quantity box that also means "keep the dialog, give me the
+          // scanner back", so the dialog's own Escape-closes is suppressed;
+          // a second Escape (nothing focused now) closes it as usual.
+          if (t === qtyInput) event.preventDefault();
+          t.blur();
+          render();
+          refreshStatus();
+        }
+        return;
       }
       if (event.key === "Enter") {
         if (!buffer) {

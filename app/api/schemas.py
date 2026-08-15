@@ -337,6 +337,8 @@ class InvoiceImportLineUpdate(BaseModel):
     mounting_type: MountingType | None = None
     description: str | None = None
     parameters: list[ParameterValueSet] | None = None
+    # What the bag actually holds, when that differs from the invoice.
+    quantity: int | None = Field(default=None, gt=0)
 
 
 class AttachmentRead(BaseModel):

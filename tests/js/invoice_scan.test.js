@@ -16,8 +16,10 @@ function scanFixture({ pendingLocation = "" } = {}) {
     </div>
     <table id="invoice-review"><tbody>
       <tr data-import-line-id="21" class="is-incomplete" data-type-id="3"
-          data-mpn="ABC123" data-spn="71-ABC123" data-description="A widget">
+          data-mpn="ABC123" data-spn="71-ABC123" data-description="A widget"
+          data-quantity="7">
         <td><span class="mono">ABC123</span></td>
+        <td class="num">7</td>
         <td>
           <select class="ril-location">
             <option value=""></option>
@@ -28,16 +30,20 @@ function scanFixture({ pendingLocation = "" } = {}) {
       </tr>
     </tbody></table>
     <table id="invoice-lines"><tbody>
-      <tr data-line-id="31" data-spn="SPN-9" data-mpn="R-100" data-location-id="">
+      <tr data-line-id="31" data-spn="SPN-9" data-mpn="R-100" data-location-id=""
+          data-quantity="5">
         <td><a>R-100</a></td>
         <td class="mono">SPN-9</td>
         <td>—</td>
+        <td class="num">5</td>
       </tr>
     </tbody></table>
     <dialog id="putaway-dialog">
       <form id="putaway-form">
         <p id="putaway-part"></p>
         <p id="putaway-desc"></p>
+        <input id="putaway-qty" type="number" />
+        <p id="putaway-qty-hint"></p>
         <input id="putaway-scan" readonly />
         <select id="putaway-select">
           <option value=""></option>
@@ -548,6 +554,51 @@ describe("invoice_scan.js — location scan in the dialog", () => {
         .getElementById("scan-input")
         .classList.contains("scan-armed"),
     ).toBe(true);
+  });
+
+  it("prefills the invoiced count and leaves the line alone when unchanged", async () => {
+    const { document, fetchMock } = await openOnStagedRow();
+    expect(document.getElementById("putaway-qty").value).toBe("7"); // as invoiced
+
+    scan(document, "SL5");
+    await tick();
+
+    // Only the location was sent: an unchanged count must not rewrite the line.
+    expect(fetchBody(fetchMock, 1)).toEqual({ location_id: 5 });
+  });
+
+  it("corrects the staged line's count when the bag holds fewer", async () => {
+    const { document, fetchMock } = await openOnStagedRow();
+    document.getElementById("putaway-qty").value = "5";
+
+    scan(document, "SL5");
+    await tick();
+
+    expect(fetchBody(fetchMock, 1)).toEqual({ location_id: 5, quantity: 5 });
+    const row = document.querySelector("#invoice-review tr");
+    expect(row.dataset.quantity).toBe("5");
+    expect(row.querySelector("td.num").textContent).toBe("5");
+  });
+
+  it("corrects a real line's count with its own request, then files it", async () => {
+    const { document, fetchMock } = loadPage(scanFixture(), SCRIPTS, {
+      fetchImpl: parseRouting({ mpn: "NOPE-1", distributor_pn: "SPN-9" }),
+    });
+    syncDialogOpen(document);
+    scan(document, "bag");
+    await tick();
+    expect(document.getElementById("putaway-qty").value).toBe("5");
+
+    document.getElementById("putaway-qty").value = "4";
+    scan(document, "SL9");
+    await tick();
+
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/invoices/7/lines/31");
+    expect(fetchBody(fetchMock, 1)).toEqual({ quantity: 4 });
+    expect(fetchMock.mock.calls[2][0]).toBe("/api/invoices/7/lines/31/location");
+    expect(fetchBody(fetchMock, 2)).toEqual({ location_id: 9 });
+    const row = document.querySelector("#invoice-lines tr");
+    expect(row.children[3].textContent).toBe("4");
   });
 
   it("collects the location scan while the dialog is open, wherever focus is", async () => {

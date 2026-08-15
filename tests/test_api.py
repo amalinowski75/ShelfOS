@@ -1768,3 +1768,60 @@ def test_stock_move_rejects_an_empty_source(client: TestClient) -> None:
     )
     assert resp.status_code == 422
     assert "no stock to move" in resp.text
+
+
+def test_import_line_quantity_can_be_corrected_during_review(
+    client: TestClient, session
+) -> None:  # type: ignore[no-untyped-def]
+    """A bag can hold fewer than the invoice says; review is where that's fixed."""
+    from decimal import Decimal
+
+    from app.models.invoice import InvoiceImportLine
+    from sqlmodel import select
+
+    invoice = client.post(
+        "/api/invoices",
+        json={
+            "supplier": "TME",
+            "invoice_number": "INV-Q",
+            "invoice_date": "2026-08-15",
+            "currency": "PLN",
+        },
+    ).json()
+    session.add(
+        InvoiceImportLine(
+            invoice_id=invoice["id"],
+            line_no=1,
+            mpn="R-1",
+            quantity=100,
+            unit_price=Decimal("1"),
+            shop_key="tme",
+            reason="",
+        )
+    )
+    session.commit()
+    line_id = (
+        session.exec(
+            select(InvoiceImportLine).where(
+                InvoiceImportLine.invoice_id == invoice["id"]
+            )
+        )
+        .one()
+        .id
+    )
+
+    fixed = client.patch(
+        f"/api/invoices/{invoice['id']}/import-lines/{line_id}",
+        json={"quantity": 95},
+    )
+    assert fixed.status_code == 200
+    assert fixed.json()["quantity"] == 95
+
+    # Zero or negative is refused by the schema.
+    assert (
+        client.patch(
+            f"/api/invoices/{invoice['id']}/import-lines/{line_id}",
+            json={"quantity": 0},
+        ).status_code
+        == 422
+    )

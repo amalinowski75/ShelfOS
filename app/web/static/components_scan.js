@@ -49,12 +49,18 @@
         label: component.mpn || `Component #${component.id}`,
         description: describe(component),
         locationId: source.id,
-        async save(locationId) {
+        // The whole slot, because a bag usually moves whole — but editable for
+        // the times only part of it does.
+        quantity: source.quantity,
+        maxQuantity: source.quantity,
+        quantityHint: `of ${source.quantity} in ${source.path}`,
+        async save(locationId, path, quantity) {
           if (locationId === source.id) return; // already there; nothing to move
           const moved = await scanFetch("/api/stock/move", "POST", {
             component_id: component.id,
             from_location_id: source.id,
             to_location_id: locationId,
+            quantity,
           });
           if (!moved.ok) throw new ScanMiss(await errorMessage(moved));
           // The table shows totals, not places, so a move leaves it accurate —

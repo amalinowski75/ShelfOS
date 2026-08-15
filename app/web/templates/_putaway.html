@@ -35,6 +35,15 @@
     <form id="putaway-form">
       <p class="mono" id="putaway-part"></p>
       <p class="muted small" id="putaway-desc"></p>
+      {# Prefilled with the usual answer (the whole bag / the invoiced count) so
+         the scan-only flow needs no typing, but editable for the times it isn't.
+         Enter leaves the field — it must not submit, and the collector has to
+         get the keyboard back for the location scan. #}
+      <div class="field">
+        <label for="putaway-qty">Quantity</label>
+        <input class="control mono" id="putaway-qty" type="number" min="1" step="1" />
+        <p class="muted small" id="putaway-qty-hint"></p>
+      </div>
       <div class="field">
         <label>Scan a location label</label>
         <input class="control mono" id="putaway-scan" readonly tabindex="-1"

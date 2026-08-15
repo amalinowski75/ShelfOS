@@ -188,9 +188,7 @@ def _resolve_line(
 
     # 3. Re-match with the (possibly newly known) manufacturer before creating.
     if manufacturer and mpn:
-        hit = cs.find_duplicate_component(
-            session, mpn=mpn, manufacturer=manufacturer
-        )
+        hit = cs.find_duplicate_component(session, mpn=mpn, manufacturer=manufacturer)
         if hit is not None:
             return add(cast(int, hit.id))
 
@@ -215,15 +213,19 @@ def _resolve_line(
         "" if proposal.type_id else (_REASON_NO_MPN if not mpn else _REASON_NO_TYPE)
     )
     _stage(
-        session, invoice_id, shop_key, line, line_no, reason,
-        product=product, proposal=proposal,
+        session,
+        invoice_id,
+        shop_key,
+        line,
+        line_no,
+        reason,
+        product=product,
+        proposal=proposal,
     )
     return False
 
 
-def _enrich(
-    shop_key: str, line: ParsedLine, enrich_disabled: set[str]
-) -> ProductData:
+def _enrich(shop_key: str, line: ParsedLine, enrich_disabled: set[str]) -> ProductData:
     """Best product data for a missing component: the shop API, else the parsed text.
 
     Keyed by the shop's OWN catalogue index first (Mouser SKU, Digi-Key "…-ND"
@@ -239,9 +241,7 @@ def _enrich(
     """
     provider = shops._BY_INDEX.get(shop_key)
     candidates = [
-        key
-        for key in dict.fromkeys((line.supplier_part_number, line.mpn))
-        if key
+        key for key in dict.fromkeys((line.supplier_part_number, line.mpn)) if key
     ]
     if provider is not None and candidates and shop_key not in enrich_disabled:
         try:
@@ -343,9 +343,7 @@ def get_pending(
     session: Session, invoice_id: int, import_line_id: int
 ) -> InvoiceImportLine:
     """A single pending line, verified to belong to ``invoice_id`` (IDOR guard)."""
-    staging = require_entity(
-        session, InvoiceImportLine, import_line_id, "import line"
-    )
+    staging = require_entity(session, InvoiceImportLine, import_line_id, "import line")
     if staging.invoice_id != invoice_id:
         raise NotFoundError("import line not found")
     return staging
@@ -384,6 +382,7 @@ def update_pending(
     mounting_type: MountingType = _UNSET,
     description: str | None = _UNSET,
     parameters: list[dict[str, Any]] | None = _UNSET,
+    quantity: int = _UNSET,
 ) -> InvoiceImportLine:
     """Edit a staged line during review (only the fields provided are changed).
 
@@ -420,15 +419,20 @@ def update_pending(
         staging.description = description
     if parameters is not _UNSET:
         staging.parameters = parameters or []
+    if quantity is not _UNSET:
+        # What actually arrived can differ from what was invoiced (a short
+        # delivery, a miscount): the row is still under review, so correcting it
+        # here is the point.
+        if quantity <= 0:
+            raise ValidationError("quantity must be positive")
+        staging.quantity = quantity
     session.add(staging)
     session.commit()
     session.refresh(staging)
     return staging
 
 
-def materialize_ready_lines(
-    session: Session, invoice_id: int, user_id: int
-) -> None:
+def materialize_ready_lines(session: Session, invoice_id: int, user_id: int) -> None:
     """Turn every ready staged row into a real component + invoice line (at finalize).
 
     A "ready" row has a ``type_id`` and a ``location_id`` (both validated by

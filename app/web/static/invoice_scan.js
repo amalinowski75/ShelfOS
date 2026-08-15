@@ -43,16 +43,26 @@
     return matches.find((m) => !currentLocation(m)) || matches[0] || null;
   }
 
-  function applyToRow(match, locationId, path) {
+  function applyToRow(match, locationId, path, quantity) {
     if (match.kind === "import") {
       const select = match.row.querySelector(".ril-location");
       if (select) select.value = String(locationId);
       // Same completeness rule invoices.js applies after its own edits.
       match.row.classList.toggle("is-incomplete", !match.row.dataset.typeId);
+      if (quantity != null) {
+        match.row.dataset.quantity = String(quantity);
+        const cell = match.row.querySelector("td.num");
+        if (cell) cell.textContent = String(quantity);
+      }
     } else {
       match.row.dataset.locationId = String(locationId);
       const cell = match.row.children[2]; // the Location column
       if (cell) cell.textContent = path;
+      if (quantity != null) {
+        match.row.dataset.quantity = String(quantity);
+        const qtyCell = match.row.children[3]; // the Qty column
+        if (qtyCell) qtyCell.textContent = String(quantity);
+      }
     }
   }
 
@@ -76,22 +86,45 @@
           `No line on this invoice matches ${[...keys].join(" / ")}.`,
         );
       }
+      const invoiced = Number(match.row.dataset.quantity) || 1;
       return {
         label: rowLabel(match.row),
         description: match.row.dataset.description || "",
         locationId: currentLocation(match) || null,
-        async save(locationId, path) {
-          const url =
-            match.kind === "import"
-              ? `/api/invoices/${invoiceId}/import-lines/${match.row.dataset.importLineId}`
-              : `/api/invoices/${invoiceId}/lines/${match.row.dataset.lineId}/location`;
-          const saved = await scanFetch(
-            url,
-            match.kind === "import" ? "PATCH" : "PUT",
-            { location_id: locationId },
-          );
-          if (!saved.ok) throw new ScanMiss(await errorMessage(saved));
-          applyToRow(match, locationId, path);
+        // What the invoice says arrived. A line holds ONE quantity, so editing
+        // this corrects the line itself — for the bag that came up short.
+        quantity: invoiced,
+        quantityHint: `as invoiced — change it if the bag holds a different count`,
+        async save(locationId, path, quantity) {
+          if (match.kind === "import") {
+            const body = { location_id: locationId };
+            if (quantity !== invoiced) body.quantity = quantity;
+            const saved = await scanFetch(
+              `/api/invoices/${invoiceId}/import-lines/${match.row.dataset.importLineId}`,
+              "PATCH",
+              body,
+            );
+            if (!saved.ok) throw new ScanMiss(await errorMessage(saved));
+          } else {
+            const lineId = match.row.dataset.lineId;
+            if (quantity !== invoiced) {
+              const requantified = await scanFetch(
+                `/api/invoices/${invoiceId}/lines/${lineId}`,
+                "PUT",
+                { quantity },
+              );
+              if (!requantified.ok) {
+                throw new ScanMiss(await errorMessage(requantified));
+              }
+            }
+            const saved = await scanFetch(
+              `/api/invoices/${invoiceId}/lines/${lineId}/location`,
+              "PUT",
+              { location_id: locationId },
+            );
+            if (!saved.ok) throw new ScanMiss(await errorMessage(saved));
+          }
+          applyToRow(match, locationId, path, quantity);
         },
       };
     },

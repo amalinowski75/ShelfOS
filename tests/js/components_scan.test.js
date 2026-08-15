@@ -17,6 +17,8 @@ function componentsFixture() {
       <form id="putaway-form">
         <p id="putaway-part"></p>
         <p id="putaway-desc"></p>
+        <input id="putaway-qty" type="number" />
+        <p id="putaway-qty-hint"></p>
         <input id="putaway-scan" readonly />
         <select id="putaway-select">
           <option value=""></option>
@@ -200,11 +202,12 @@ describe("components_scan.js — moving the stock", () => {
     const [url, opts] = fetchMock.mock.calls[1];
     expect(url).toBe("/api/stock/move");
     expect(opts.method).toBe("POST");
-    // No quantity: the whole slot moves, which is what a bag changing drawer is.
+    // The whole slot by default — a bag changing drawer usually moves whole.
     expect(fetchBody(fetchMock, 1)).toEqual({
       component_id: 42,
       from_location_id: 5,
       to_location_id: 9,
+      quantity: 100,
     });
     expect(document.getElementById("putaway-dialog").open).toBe(false);
     expect(document.querySelector(".toast-ok").textContent).toBe(
@@ -269,6 +272,66 @@ describe("components_scan.js — moving the stock", () => {
       component_id: 42,
       from_location_id: 5,
       to_location_id: 9,
+      quantity: 100,
     });
+  });
+
+  it("prefills the whole slot but moves only what the user typed", async () => {
+    const { document, fetchMock } = await openOn(MATCH);
+    const qty = document.getElementById("putaway-qty");
+    expect(qty.value).toBe("100"); // the usual answer, ready for a scan-only flow
+    expect(document.getElementById("putaway-qty-hint").textContent).toBe(
+      "of 100 in Lab / Rack A / D1",
+    );
+
+    qty.value = "30";
+    scan(document, "SL9");
+    await tick();
+
+    expect(fetchBody(fetchMock, 1).quantity).toBe(30);
+  });
+
+  it("refuses a quantity beyond what the source holds, before asking the server", async () => {
+    const { document, fetchMock } = await openOn(MATCH);
+    document.getElementById("putaway-qty").value = "101";
+
+    scan(document, "SL9");
+    await tick();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1); // nothing was moved
+    expect(document.getElementById("putaway-error").textContent).toBe(
+      "Only 100 available — cannot file 101.",
+    );
+    expect(document.getElementById("putaway-dialog").open).toBe(true);
+  });
+
+  it("refuses a blank or zero quantity", async () => {
+    const { document, fetchMock } = await openOn(MATCH);
+    for (const value of ["", "0", "2.5", "-3"]) {
+      document.getElementById("putaway-qty").value = value;
+      scan(document, "SL9");
+      await tick();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(document.getElementById("putaway-error").textContent).toMatch(
+        /whole number, 1 or more/,
+      );
+    }
+  });
+
+  it("hands the keyboard to the quantity box and takes it back on Enter", () => {
+    const { document } = loadPage(componentsFixture(), SCRIPTS);
+    const qty = document.getElementById("putaway-qty");
+    qty.focus();
+    // Typing a count is NOT collected as a scan…
+    expect(press(document, "3", qty).defaultPrevented).toBe(false);
+    expect(document.getElementById("scan-input").value).toBe("");
+    expect(
+      document.getElementById("scan-input").classList.contains("scan-armed"),
+    ).toBe(false);
+
+    // …and Enter leaves the field (without submitting) so the next scan lands.
+    const enter = press(document, "Enter", qty);
+    expect(enter.defaultPrevented).toBe(true);
+    expect(document.activeElement).not.toBe(qty);
   });
 });
