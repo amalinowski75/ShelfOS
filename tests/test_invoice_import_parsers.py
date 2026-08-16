@@ -201,6 +201,34 @@ def test_tme_keeps_a_one_word_description_off_a_broken_article() -> None:
     assert parsed.description == "Kondensator"
 
 
+def test_tme_reads_a_wrapped_manufacturer_block_as_no_description() -> None:
+    # The "a tail has description rows after it" test has to stop at the
+    # manufacturer block, because that block wraps too — USBLC6-2SC6 on the
+    # sample invoice prints as "Producent: STMicroelectronics; Symbol
+    # producenta:" + "USBLC6-2SC6; Zgodność RoHS". Its second row is non-empty
+    # and carries no "Producent:", so a row-by-row scan that reads past the
+    # block sees description text that is not there — and eats the one-word
+    # description the candidate tail was sitting on.
+    from app.services.invoice_import.tme import _ITEM, _line
+
+    row = _ITEM.match(
+        "1         DS1052-                 10 SZT           1,00/SZT         "
+        "  23                             10,00"
+    )
+    assert row is not None
+    parsed = _line(
+        row,
+        [
+            "Kondensator",
+            "Producent: ACME; Symbol producenta:",
+            "OTHER-MPN; Zgodność RoHS",
+        ],
+    )
+    assert parsed.supplier_part_number == "DS1052-"  # not "DS1052-Kondensator"
+    assert parsed.description == "Kondensator"
+    assert parsed.mpn == "OTHER-MPN"  # the block still reads normally
+
+
 def test_tme_rejoins_an_article_broken_on_any_separator() -> None:
     # TME symbols carry "/" and "." as well as "-", and the column can break after
     # any of them. The separators are spelled out here rather than read from
