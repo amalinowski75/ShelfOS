@@ -161,8 +161,25 @@ def _wrapped_article(article: str, cont_lines: list[str]) -> tuple[str, list[str
 
 
 def _has_description_after(rest: list[str]) -> bool:
-    """Whether any row after a candidate tail still belongs to the description."""
-    return any(row.strip() and "Producent:" not in row for row in rest)
+    """Whether any row after a candidate tail still belongs to the description.
+
+    The search STOPS at the manufacturer block instead of reading past it. That
+    block wraps as readily as the article does::
+
+        Producent: STMicroelectronics; Symbol producenta:
+        USBLC6-2SC6; Zgodność RoHS
+
+    and its second row is a non-empty line with no ``Producent:`` in it — from a
+    row-by-row test, indistinguishable from description text. Reading it as such
+    would report a description that isn't there, and the one-word description a
+    candidate tail sits on would be eaten as a fragment.
+    """
+    for row in rest:
+        if "Producent:" in row:
+            return False
+        if row.strip():
+            return True
+    return False
 
 
 def _line(header: re.Match[str], cont_lines: list[str]) -> ParsedLine:
