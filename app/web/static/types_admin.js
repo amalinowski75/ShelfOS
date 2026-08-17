@@ -147,21 +147,35 @@ document.getElementById("type-rename-form")?.addEventListener("submit", (event) 
   });
 });
 
+// Name why a type/parameter can't be deleted, from the row's own counts. `deletable`
+// is an advisory snapshot, so it decides whether to PRE-EXPLAIN — never whether an
+// irreversible delete is sent: a stale flag must cost a stale explanation, not an
+// unprompted delete. When the only blocker is a staged invoice line (no live
+// components/children) the counts are zero, so it's named by elimination.
+function blockedTypeReason(row) {
+  const parts = [];
+  if (row.component_count) parts.push(`${row.component_count} components`);
+  if (row.child_count) parts.push(`${row.child_count} child types`);
+  const by = parts.length ? parts.join(" and ") : "staged invoice lines";
+  return `Can't delete "${row.name}" — ${by} use it.`;
+}
+
 // --- delete a type ---
 const guardDeleteType = makeGuard();
 function deleteType(row) {
-  // A type in use can't be deleted — go straight to the server and show WHY (it
-  // names the count: "12 components use this type"), rather than confirming a
-  // deletion that won't happen. A deletable one confirms first: it's destructive.
-  if (row.deletable && !confirm(`Delete type "${row.name}"? This cannot be undone.`)) {
+  // In use per the feed: explain (a toast), send nothing. The flag is advisory, so
+  // NOT sending is what keeps a stale "false" from deleting without a prompt.
+  if (!row.deletable) {
+    showToast(blockedTypeReason(row));
     return;
   }
+  if (!confirm(`Delete type "${row.name}"? This cannot be undone.`)) return;
   guardDeleteType(async () => {
     try {
       const resp = await sendWrite(`/api/admin/types/${row.id}`, "DELETE");
       if (resp.ok) await loadTypes();
-      // A transient bottom-of-page notice (showToast, from shared.js), not a modal
-      // alert — it names why: "12 components use this type".
+      // Refused after all (the flag was stale the other way) — show the server's
+      // reason as a transient notice rather than a modal alert.
       else showToast(await errorMessage(resp));
     } catch {
       showToast("Could not reach the server.");
@@ -294,14 +308,22 @@ document.getElementById("param-edit-form")?.addEventListener("submit", (event) =
 // --- delete a parameter ---
 const guardParamDelete = makeGuard();
 function deleteParam(param) {
-  // Same as deleteType: a parameter in use shows the server's reason on click
-  // instead of confirming a deletion that will be refused.
-  if (param.deletable && !confirm(`Delete parameter "${param.label}"?`)) return;
+  // Same shape as deleteType: in use → explain (toast), send nothing; otherwise
+  // confirm, then delete. A parameter's only counted blocker is component values;
+  // when that's zero but it's still not deletable, a staged line holds it.
+  if (!param.deletable) {
+    const by = param.in_use_count
+      ? `${param.in_use_count} components`
+      : "staged invoice lines";
+    showToast(`Can't delete "${param.label}" — ${by} use it.`);
+    return;
+  }
+  if (!confirm(`Delete parameter "${param.label}"?`)) return;
   guardParamDelete(async () => {
     try {
       const resp = await sendWrite(`/api/admin/parameters/${param.id}`, "DELETE");
       if (resp.ok) await loadTypes();
-      else showToast(await errorMessage(resp)); // e.g. "5 components have a value…"
+      else showToast(await errorMessage(resp)); // stale flag the other way
     } catch {
       showToast("Could not reach the server.");
     }
@@ -367,7 +389,10 @@ if (paramAddForm) {
 // The builder itself lives in type_dialog.js (shared with the invoice/component
 // flows); on create we just reload the table so the new type shows up.
 document.getElementById("new-type-btn")?.addEventListener("click", () => {
-  window.openTypeDialog?.(() => loadTypes());
+  // type_dialog.js is loaded unconditionally in types.html, so this is defined —
+  // but if the two ever drift apart, say so loudly instead of doing nothing.
+  if (window.openTypeDialog) window.openTypeDialog(() => loadTypes());
+  else showToast("The type builder didn't load — refresh the page.");
 });
 
 typesTable.on("tableBuilt", loadTypes);

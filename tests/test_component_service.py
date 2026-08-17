@@ -1534,3 +1534,23 @@ def test_delete_parameter_definition_is_audited(session: Session) -> None:
     assert [(e.field, e.new_value) for e in entries] == [
         (audit_service.FIELD_DELETED, "true")
     ]
+
+
+def test_staged_definition_ids_and_type_counts(session: Session) -> None:
+    # The batched helpers the /types feed uses, sharing the staged-line scan with the
+    # per-definition guards so the page's flag and the DELETE endpoint can't drift.
+    from decimal import Decimal
+
+    from app.models.invoice import InvoiceImportLine
+
+    ctype, definition = _cable_enum(session)
+    session.add(
+        InvoiceImportLine(
+            invoice_id=1, line_no=1, quantity=1, unit_price=Decimal("1"),
+            shop_key="tme", reason="", type_id=ctype.id,
+            parameters=[{"parameter_definition_id": definition.id, "value": "Flat"}],
+        )
+    )
+    session.commit()
+    assert cs.staged_definition_ids(session) == {definition.id}
+    assert cs.staged_type_counts(session) == {ctype.id: 1}

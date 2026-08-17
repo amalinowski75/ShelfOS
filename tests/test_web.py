@@ -1729,6 +1729,32 @@ def test_types_feed_deletable_reflects_staged_invoice_lines(
     assert row["parameters"][0]["deletable"] is False
 
 
+def test_types_feed_parameter_in_use_count_reflects_stored_values(
+    client: TestClient,
+) -> None:
+    # in_use_count is the number the page shows ("N in use") and acts on, so pin its
+    # value against real stored data, not just the zero case.
+    ctype = client.post("/api/types", json={"name": "cable"}).json()
+    client.post(
+        f"/api/types/{ctype['id']}/parameters",
+        json={"name": "ctype", "label": "Type", "data_type": "enum",
+              "enum_values": ["Flat", "Round"]},
+    )
+    definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
+    client.post(
+        "/api/components",
+        json={"type_id": ctype["id"],
+              "parameters": [{"parameter_definition_id": definition["id"],
+                              "value": "Flat"}]},
+    )
+
+    param = {r["name"]: r for r in client.get("/web/api/types").json()["data"]}[
+        "cable"
+    ]["parameters"][0]
+    assert param["in_use_count"] == 1
+    assert param["deletable"] is False  # a component holds a value for it
+
+
 def test_types_pages_forbidden_for_non_admin(client: TestClient) -> None:
     for role in ("user", "read-only"):
         token = _non_admin_token(client, role=role, username=f"types_{role}")

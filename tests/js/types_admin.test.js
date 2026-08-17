@@ -120,22 +120,19 @@ describe("types_admin.js — type writes", () => {
     expect(calls).toBe(1);
   });
 
-  it("shows the reason as a toast (no confirm) when a type in use can't be deleted", async () => {
-    // RESISTOR.deletable is false — clicking Delete must surface the server's
-    // refusal as a transient bottom-of-page notice, not a modal alert, and not ask
-    // to confirm a deletion that won't happen.
-    const { window, document } = loadPage(typesAdminPageFixture(), SCRIPTS, {
-      fetchImpl: () => fail("2 components use this type"),
-    });
+  it("explains an in-use type as a toast — no confirm, and NO delete is sent", async () => {
+    // RESISTOR.deletable is false (2 components). The reason is shown from the row's
+    // own counts and NOTHING is sent — a stale advisory flag must never turn into an
+    // unprompted irreversible delete.
+    const { window, document, fetchMock } = loadPage(typesAdminPageFixture(), SCRIPTS);
     window.confirm = vi.fn(() => true);
 
     window.deleteType(RESISTOR);
     await tick();
 
-    expect(window.confirm).not.toHaveBeenCalled(); // no "are you sure" for a no-op
-    const toast = document.querySelector(".toast");
-    expect(toast).toBeTruthy();
-    expect(toast.textContent).toBe("2 components use this type");
+    expect(window.confirm).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([, o]) => o?.method === "DELETE")).toBe(false);
+    expect(document.querySelector(".toast").textContent).toContain("2 components");
   });
 
   it("confirms before deleting a type that can be deleted", async () => {
@@ -267,6 +264,66 @@ describe("types_admin.js — parameter writes", () => {
     openTypeDialog.mock.calls[0][0]();
     await tick();
     expect(page.fetchMock.mock.calls.some(([u]) => u === "/web/api/types")).toBe(true);
+  });
+
+  it("creates a type via the REAL builder and offers it as a parent next time", async () => {
+    // The one place type_dialog.js and types_admin.js run together (as on /types):
+    // button → builder → POST → the created type becomes a selectable parent, then
+    // the table reloads. The parent-select upsert is the core taxonomy-building flow.
+    const page = loadPage(
+      typesAdminPageFixture(),
+      ["shared.js", "type_dialog.js", "types_admin.js"],
+      {
+        fetchImpl: (url, opts) =>
+          url === "/api/types" && opts?.method === "POST"
+            ? ok({ id: 8, name: JSON.parse(opts.body).name })
+            : ok({ data: [] }),
+      },
+    );
+    const { document, fetchMock } = page;
+
+    document.getElementById("new-type-btn").click();
+    document.querySelector('#type-form [name="type-name"]').value = "cable";
+    submit(document, "type-form");
+    await tick();
+
+    const post = fetchMock.mock.calls.find(
+      ([u, o]) => u === "/api/types" && o.method === "POST",
+    );
+    expect(JSON.parse(post[1].body).name).toBe("cable");
+    // The new type is now a valid parent for the next one built this session…
+    const parent = document.querySelector('#type-form [name="parent-id"]');
+    expect([...parent.options].some((o) => o.value === "8")).toBe(true);
+    // …and the /types table reloaded.
+    expect(fetchMock.mock.calls.some(([u]) => u === "/web/api/types")).toBe(true);
+  });
+
+  it("uses independent guards: an in-flight rename doesn't block a param delete", async () => {
+    // types_admin.js calls makeGuard() once per action on purpose; collapsing them to
+    // one shared lock would let a hung rename freeze every other write.
+    const page = loadPage(typesAdminPageFixture(), SCRIPTS, {
+      fetchImpl: (url) =>
+        url.startsWith("/api/admin/types/")
+          ? new Promise(() => {}) // the rename hangs, holding its own guard
+          : ok({ data: [] }),
+    });
+    const { window, document, fetchMock } = page;
+    window.confirm = vi.fn(() => true);
+
+    window.openRenameDialog({ id: 3, name: "resistor" });
+    document.getElementById("type-rename-form").elements.name.value = "res";
+    submit(document, "type-rename-form");
+    await tick();
+
+    window.deleteParam({ id: 9, label: "dielectric", deletable: true });
+    await tick();
+
+    // The param delete went through despite the stuck rename — separate guards.
+    expect(
+      fetchMock.mock.calls.some(
+        ([u, o]) => u === "/api/admin/parameters/9" && o?.method === "DELETE",
+      ),
+    ).toBe(true);
   });
 
   it("re-renders an open parameters list after a reload", async () => {

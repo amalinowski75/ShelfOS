@@ -231,7 +231,8 @@ export function typesAdminPageFixture() {
       ${paramFields}
       <p id="param-add-error" hidden></p>
       <button type="submit"></button>
-    </form></dialog>`;
+    </form></dialog>
+    ${_typeBuilderMarkup("")}`;
 }
 
 export function matchRulesPageFixture() {

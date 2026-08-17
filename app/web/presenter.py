@@ -20,7 +20,6 @@ from app.models.component import (
     ParameterDefinition,
 )
 from app.models.enums import ParameterDataType
-from app.models.invoice import InvoiceImportLine
 from app.services import component_service as cs
 from app.services import invoice_service as inv
 from app.services import stock_service as ss
@@ -277,9 +276,10 @@ def build_types_table(session: Session) -> list[dict[str, Any]]:
     parameter definitions (with enum tokens and a per-parameter in-use count). All
     counts are batched to avoid an N+1. The ``deletable`` flags mirror what the DELETE
     endpoints block on — components, child types AND staged invoice lines for a type;
-    stored values AND staged lines for a parameter — so the page can disable a Delete
-    the server would refuse. They stay advisory: the endpoints re-check and are the
-    source of truth.
+    stored values AND staged lines for a parameter — so the page can EXPLAIN a Delete
+    the server would refuse (and skip the confirm) without a round trip. They stay
+    advisory: the endpoints re-check and are the source of truth, so the page never
+    deletes on the strength of the flag alone.
     """
     types = cs.list_types(session)
     name_by_id = {t.id: t.name for t in types}
@@ -321,24 +321,10 @@ def build_types_table(session: Session) -> list[dict[str, Any]]:
         ).all()
     )
     # Staged invoice-import lines also block a delete (added in #79 for types, #80 for
-    # parameters). type_id is a real FK (batched here); the definition ids live in the
-    # parameters JSON, so that side is a small Python scan of the review panel.
-    staged_type_counts: dict[int, int] = {
-        type_id: n
-        for type_id, n in session.exec(
-            select(InvoiceImportLine.type_id, func.count()).group_by(
-                col(InvoiceImportLine.type_id)
-            )
-        ).all()
-        if type_id is not None
-    }
-    staged_def_ids: set[int] = set()
-    for line in session.exec(select(InvoiceImportLine)).all():
-        for entry in line.parameters or []:
-            if isinstance(entry, dict) and isinstance(
-                entry.get("parameter_definition_id"), int
-            ):
-                staged_def_ids.add(entry["parameter_definition_id"])
+    # parameters). Both blockers come from the service, so the page's flags and the
+    # DELETE endpoints read the SAME rule (no re-implementing the JSON scan here).
+    staged_type_counts = cs.staged_type_counts(session)
+    staged_def_ids = cs.staged_definition_ids(session)
 
     rows: list[dict[str, Any]] = []
     for ctype in types:
