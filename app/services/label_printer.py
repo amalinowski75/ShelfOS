@@ -31,7 +31,7 @@ from typing import Any, Final
 import segno
 from brother_ql.conversion import convert
 from brother_ql.exceptions import BrotherQLError
-from brother_ql.labels import ALL_LABELS, FormFactor
+from brother_ql.labels import ALL_LABELS, Color, FormFactor
 from brother_ql.raster import BrotherQLRaster
 from PIL import Image, ImageDraw, ImageFont
 
@@ -110,6 +110,12 @@ class TapeGeometry:
     width_px: int
     length_px: int
     endless: bool
+    # Black/red tape (DK-22251 and friends). Not a feature — a requirement: a
+    # QL-800 with two-colour tape loaded REFUSES a one-colour job, reporting an
+    # error with no error bits set, which reads like a broken printer rather
+    # than a mismatched job. The red layer may well be empty; what matters is
+    # that the job is shaped for the tape that is in the machine.
+    two_color: bool
 
 
 def _label_spec(tape: str) -> Any:
@@ -138,9 +144,14 @@ def tape_geometry(
             "QR beside its path, which needs a rectangular label"
         )
     width_px, die_length_px = spec.dots_printable
+    two_color = spec.color == Color.BLACK_RED_WHITE
     if spec.form_factor == FormFactor.DIE_CUT:
         return TapeGeometry(
-            tape=tape, width_px=width_px, length_px=die_length_px, endless=False
+            tape=tape,
+            width_px=width_px,
+            length_px=die_length_px,
+            endless=False,
+            two_color=two_color,
         )
     length_mm = config.LABEL_LENGTH_MM if length_mm is None else length_mm
     if not _MIN_LENGTH_MM <= length_mm <= _MAX_LENGTH_MM:
@@ -153,6 +164,7 @@ def tape_geometry(
         width_px=width_px,
         length_px=round(length_mm * _PX_PER_MM),
         endless=True,
+        two_color=two_color,
     )
 
 
@@ -396,8 +408,16 @@ def _print_job(labels: Sequence[LabelData], geometry: TapeGeometry) -> bytes:
     # Say something rather than emitting a job the printer will quietly discard.
     raster.exception_on_warning = True
     images = [render_label(label, geometry) for label in labels]
+    if geometry.two_color:
+        # Two-colour tape wants two raster planes, which the encoder splits out
+        # of an RGB image by hue. Ours is black-on-white, so the red plane comes
+        # out empty — that is fine, and the printer will not take the job in any
+        # other shape.
+        images = [image.convert("RGB") for image in images]
     try:
-        data = convert(raster, images, geometry.tape, rotate=0, cut=True)
+        data = convert(
+            raster, images, geometry.tape, rotate=0, cut=True, red=geometry.two_color
+        )
     except (ValueError, LookupError, BrotherQLError) as error:
         raise ValidationError(f"could not build the print job: {error}") from None
     return bytes(data)
@@ -424,6 +444,15 @@ def _write_to_device(data: bytes, device: str) -> None:
             raise PrinterError(
                 f"{device} is held by another program — CUPS usually is the one; "
                 "remove the printer from CUPS, or print through it instead"
+            ) from None
+        if error.errno == errno.ENODEV:
+            # CUPS's usb backend detaches the kernel driver while it talks to the
+            # printer, so a queue for this printer makes the node disappear from
+            # under a job in flight. Seen in dmesg as "usblp4: removed".
+            raise PrinterError(
+                f"{device} disappeared mid-job — another program (usually CUPS, "
+                "which detaches the kernel driver) is using the printer; remove "
+                "its queue with 'lpadmin -x'"
             ) from None
         _logger.warning("label print to %s failed: %s", device, error)
         raise PrinterError("the label printer did not accept the job") from None

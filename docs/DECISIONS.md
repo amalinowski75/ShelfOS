@@ -160,9 +160,16 @@ What it costs, and is accepted:
 - **No status readback.** The write succeeds whether or not tape comes out: out
   of tape, cover open and jams are invisible to a one-way write. Every message
   therefore says a job was *sent* to the printer, never that it printed.
-- **CUPS must not own the printer too.** If the QL is installed as a CUPS
-  printer, CUPS holds the device and writes fail with `EBUSY` — reported as
-  exactly that, since it is the likeliest real-world failure.
+- **CUPS must not own the printer too**, and the conflict is not a tidy `EBUSY`.
+  CUPS's `usb` backend detaches the kernel `usblp` driver whenever it touches the
+  device, so the node vanishes and returns while a job is in flight — observed on
+  first contact with real hardware, as repeating `usblp4: removed` / re-added
+  pairs in `dmesg`. Ubuntu also creates the queue by itself when the printer is
+  plugged in, so this is the default state, not an unusual one.
+- **The tape's colour capability is part of the job format.** A QL-800 with
+  black/red tape (DK-22251) refuses a one-colour job outright, reporting an error
+  with *no error bits set*. So the tape identifier drives whether the job carries
+  one raster plane or two; it is not a rendering preference.
 - **One process.** Jobs are serialised on a process-wide lock, so more than one
   worker process would fall back on the printer's own `EBUSY`.
 

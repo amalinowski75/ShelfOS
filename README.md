@@ -195,10 +195,22 @@ interface, so no `/dev/usb/lp*` at all. Hold the Editor Lite button on the print
 for about a second until its LED goes out; it re-enumerates as a printer
 (`04f9:209b`, "QL-800 Label Printer") and the node appears.
 
-And **CUPS must not own the same printer**: if the QL is installed as a CUPS
-printer, CUPS holds the device and ShelfOS's writes fail with "in use by another
-program". Either remove it from CUPS and print through ShelfOS, or leave it in
-CUPS and print through the browser page instead.
+And **CUPS must not own the same printer**. Ubuntu creates a queue automatically
+the moment a USB printer appears, and CUPS's `usb` backend *detaches the kernel's
+`usblp` driver* whenever it touches the device. So the conflict does not show up
+as a clean "device busy": the node disappears and comes back (`usblp4: removed`
+in `dmesg`, then re-added a second later) and a job in flight dies mid-stream.
+Remove the queue with `sudo lpadmin -x QL-800` and print through ShelfOS, or keep
+the queue and print through the browser page instead — but not both.
+
+**Two-colour tape is not optional to get right.** With DK-22251 (62 mm black/red)
+loaded, a QL-800 *refuses* a one-colour job: it reports an error with no error
+bits set, which looks exactly like a broken printer. Name the tape and the job is
+built with two raster planes (the red one empty, unless a label uses red):
+
+```bash
+export SHELFOS_LABEL_TAPE="62red"    # DK-22251; "62" is the plain white roll
+```
 
 One thing this cannot tell you: whether tape actually came out. A one-way write to
 the device succeeds even when the printer is out of tape or its cover is open — so

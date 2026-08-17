@@ -313,3 +313,37 @@ def test_a_device_check_is_reported_at_startup(tmp_path, monkeypatch, caplog) ->
     with caplog.at_level("WARNING", logger="shelfos"):
         _check_label_settings()
     assert "not writable" in caplog.text
+
+
+def test_two_colour_tape_is_recognised_from_the_tape_table() -> None:
+    assert not lp.tape_geometry(tape="62").two_color
+    assert lp.tape_geometry(tape="62red").two_color
+
+
+def test_a_two_colour_tape_gets_a_two_colour_job(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """DK-22251 is not an option to support later; it is the tape in the box.
+
+    A QL-800 with black/red tape loaded REFUSES a one-colour job and reports an
+    error with no error bits set — which reads like a broken printer rather than
+    a mismatched job, and cost an evening to work out on real hardware. The job
+    for such a tape has to carry two raster planes and say so in expanded mode.
+    """
+    monkeypatch.setattr(config, "LABEL_TAPE", "62red")
+    device = tmp_path / "lp0"
+    assert lp.print_labels(_labels(1), device=str(device)) == 1
+    job = device.read_bytes()
+
+    # Expanded mode bit 0 = two-colour printing.
+    at = job.find(b"\x1b\x69\x4b")
+    assert job[at + 3] & 0x01
+
+    # Raster lines carry a plane selector (black 0x01, red 0x02) instead of the
+    # one-colour transfer command.
+    assert b"\x77\x01" in job and b"\x77\x02" in job
+    assert b"\x67\x00\x5a" not in job
+
+    monkeypatch.setattr(config, "LABEL_TAPE", "62")
+    mono = tmp_path / "lp1"
+    lp.print_labels(_labels(1), device=str(mono))
+    # Two planes for the same label: about twice the data.
+    assert len(job) > 1.8 * len(mono.read_bytes())
