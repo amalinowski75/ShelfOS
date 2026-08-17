@@ -305,30 +305,6 @@ describe("app.js — new component", () => {
     expect(colour("w")).not.toBe(colour("p"));
   });
 
-  it("a type created from the list after opening + New type uses the list flow", async () => {
-    // Regression for the callback-overwrite safety: opening + New type arms the
-    // dialog's "select the type" callback; creating instead from the list's New
-    // Type button must run the LIST flow (filter + reload), not the dialog's.
-    const impl = (url, opts) =>
-      url === "/api/types" && opts?.method === "POST"
-        ? Promise.resolve({ ok: true, json: async () => ({ id: 8, name: "inductor" }) })
-        : fetchImpl(url, opts);
-    const { document } = loadPage(componentPageFixture(), SCRIPTS, { fetchImpl: impl });
-
-    document.getElementById("new-component-btn").click();
-    document.getElementById("component-new-type").click(); // arms the dialog callback
-    document.getElementById("new-type-btn").click(); // …but create from the list
-    document.getElementById("type-form").querySelector('[name="type-name"]').value =
-      "inductor";
-    fire(document.getElementById("type-form"), "submit");
-    await tick();
-
-    // The list's callback ran (new type is the active filter)…
-    expect(document.getElementById("type-filter").value).toBe("8");
-    // …and the dialog's did not (its type select wasn't switched to the new type).
-    expect(document.getElementById("component-type").value).not.toBe("8");
-  });
-
   it("loads cleanly when the create controls are absent (read-only)", () => {
     // A page without #component-dialog / #new-component-btn must not throw at
     // load; the harness fails the test on any unhandled script error.

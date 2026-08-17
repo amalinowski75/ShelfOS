@@ -433,6 +433,34 @@ def count_import_lines_using_enum_value(
     )
 
 
+def staged_definition_ids(session: Session) -> set[int]:
+    """Every parameter-definition id any staged invoice line references.
+
+    The batched counterpart of :func:`count_import_lines_using_definition`, for the
+    /types page which needs the whole set at once — so the page's "deletable" flag
+    and the DELETE endpoint read one description of what a staged line points at,
+    rather than each re-walking the JSON and drifting apart."""
+    return {
+        pid
+        for _, entry in _staged_line_parameters(session)
+        if isinstance(pid := entry.get("parameter_definition_id"), int)
+    }
+
+
+def staged_type_counts(session: Session) -> dict[int, int]:
+    """``{type_id: staged-line count}`` — the batched form of
+    :func:`count_import_lines_of_type`, for the /types feed."""
+    return {
+        type_id: n
+        for type_id, n in session.exec(
+            select(InvoiceImportLine.type_id, func.count()).group_by(
+                col(InvoiceImportLine.type_id)
+            )
+        ).all()
+        if type_id is not None
+    }
+
+
 def count_components_using_enum_value(
     session: Session, definition_id: int, token: str
 ) -> int:

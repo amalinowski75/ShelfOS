@@ -316,9 +316,11 @@ describe("app.js — row actions", () => {
   });
 });
 
-describe("app.js — New Type dialog", () => {
+// The New Type builder (type_dialog.js) — opened directly via openTypeDialog now
+// that its standalone button lives on the /types page, not the components page.
+describe("New Type builder — parameters & submit", () => {
   const openBuilder = (handles) =>
-    handles.document.getElementById("new-type-btn").click();
+    handles.document.defaultView.openTypeDialog(() => {});
 
   it("adds and removes parameter rows, toggling the empty hint", () => {
     const h = loadPage(typePageFixture(), SCRIPTS);
@@ -436,59 +438,6 @@ describe("app.js — New Type dialog", () => {
     });
   });
 
-  it("on success adds the type to the selects, closes and reloads the table", async () => {
-    const fetchImpl = (url, opts) => {
-      if (url === "/api/types" && opts?.method === "POST")
-        return Promise.resolve({ ok: true, json: async () => ({ id: 9, name: "cap" }) });
-      return Promise.resolve({ ok: true, json: async () => ({ columns: [], data: [] }) });
-    };
-    const { document, fetchMock } = loadPage(typePageFixture(), SCRIPTS, { fetchImpl });
-    openBuilder({ document });
-    document.querySelector('[name="type-name"]').value = "cap";
-    fire(document.getElementById("type-form"), "submit");
-    await tick();
-
-    const filter = document.getElementById("type-filter");
-    expect([...filter.options].some((o) => o.value === "9")).toBe(true);
-    expect(filter.value).toBe("9"); // the new type becomes the active filter
-    const parent = document.querySelector('[name="parent-id"]');
-    expect([...parent.options].some((o) => o.value === "9")).toBe(true);
-    // The table reloads after a successful create.
-    expect(
-      fetchMock.mock.calls.some(([u]) => u.startsWith("/web/api/components")),
-    ).toBe(true);
-  });
-
-  it("keeps per-form guards: an in-flight stock POST does not block a type submit", async () => {
-    let resolveStock;
-    const pendingStock = new Promise((resolve) => {
-      resolveStock = resolve;
-    });
-    const fetchImpl = (url) => {
-      if (url === "/api/stock/add") return pendingStock;
-      if (url === "/api/types")
-        return Promise.resolve({ ok: true, json: async () => ({ id: 9, name: "cap" }) });
-      return Promise.resolve({ ok: true, json: async () => ({ columns: [], data: [] }) });
-    };
-    const { window, document, fetchMock } = loadPage(typePageFixture(), SCRIPTS, {
-      fetchImpl,
-    });
-    // Leave a stock POST in flight (set the picker's hidden input directly since
-    // this fixture's stock picker has no selectable node).
-    window.openStockDialog("add", 7);
-    document.querySelector("#stock-form [name='location_id']").value = "5";
-    fire(document.getElementById("stock-form"), "submit");
-
-    // A New Type submit must still go through — it has its own guard.
-    document.getElementById("new-type-btn").click();
-    document.querySelector('[name="type-name"]').value = "cap";
-    fire(document.getElementById("type-form"), "submit");
-    expect(fetchMock.mock.calls.some(([u]) => u === "/api/types")).toBe(true);
-
-    resolveStock({ ok: true, json: async () => ({}) });
-    await tick();
-  });
-
   it("ignores a second submit while the type create is in flight", async () => {
     let resolveFetch;
     const pending = new Promise((resolve) => {
@@ -525,7 +474,7 @@ describe("app.js — New Type dialog", () => {
   });
 });
 
-describe("app.js — inherited-parameters preview", () => {
+describe("New Type builder — inherited-parameters preview", () => {
   const parentParams = (params) => (url) =>
     url === "/api/types/1/parameters"
       ? Promise.resolve({ ok: true, json: async () => params })
@@ -539,7 +488,7 @@ describe("app.js — inherited-parameters preview", () => {
 
   it("prompts for a parent by default", () => {
     const { document } = loadPage(typePageFixture(), SCRIPTS);
-    document.getElementById("new-type-btn").click(); // resetTypeForm -> prompt
+    document.defaultView.openTypeDialog(() => {}); // resetTypeForm -> prompt
     const hint = document.getElementById("inherited-hint");
     expect(hint.hidden).toBe(false);
     expect(hint.textContent).toMatch(/Select a parent type/);
@@ -553,7 +502,7 @@ describe("app.js — inherited-parameters preview", () => {
     const { document } = loadPage(typePageFixture(), SCRIPTS, {
       fetchImpl: parentParams(params),
     });
-    document.getElementById("new-type-btn").click();
+    document.defaultView.openTypeDialog(() => {});
     pickParent(document, "1");
     await tick();
 
@@ -567,7 +516,7 @@ describe("app.js — inherited-parameters preview", () => {
     const { document } = loadPage(typePageFixture(), SCRIPTS, {
       fetchImpl: parentParams([]),
     });
-    document.getElementById("new-type-btn").click();
+    document.defaultView.openTypeDialog(() => {});
     pickParent(document, "1");
     await tick();
     const hint = document.getElementById("inherited-hint");
@@ -581,7 +530,7 @@ describe("app.js — inherited-parameters preview", () => {
         ? Promise.resolve({ ok: false, json: async () => ({}) })
         : Promise.resolve({ ok: true, json: async () => ({}) });
     const { document } = loadPage(typePageFixture(), SCRIPTS, { fetchImpl });
-    document.getElementById("new-type-btn").click();
+    document.defaultView.openTypeDialog(() => {});
     pickParent(document, "1");
     await tick();
     expect(document.getElementById("inherited-hint").textContent).toMatch(
@@ -606,7 +555,7 @@ describe("app.js — inherited-parameters preview", () => {
       SCRIPTS,
       { fetchImpl },
     );
-    document.getElementById("new-type-btn").click();
+    document.defaultView.openTypeDialog(() => {});
     pickParent(document, "1"); // slow request
     pickParent(document, "2"); // supersedes it
     await tick();

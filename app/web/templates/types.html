@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% from "_type_dialog.html" import type_dialog %}
+{% block title %}Types — ShelfOS{% endblock %}
+
+{% macro data_type_options() -%}
+  {% for dt in data_types %}<option value="{{ dt }}">{{ dt }}</option>{% endfor %}
+{%- endmacro %}
+
+{% block content %}
+<div class="head">
+  <div>
+    <h1>Types</h1>
+    <p>Rename a component type, edit or remove its parameters, or delete a type nothing uses.</p>
+  </div>
+  <div class="head-actions">
+    <button type="button" class="btn btn-primary" id="new-type-btn">New Type</button>
+  </div>
+</div>
+
+<div id="types-table"></div>
+
+{# Rename a type #}
+<dialog id="type-rename-dialog">
+  <article>
+    <header>
+      <strong>Rename type</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <form id="type-rename-form">
+      <input type="hidden" name="type_id" />
+      <div class="field">
+        <label>Name</label>
+        <input class="control" name="name" required />
+      </div>
+      <p id="type-rename-error" class="error" hidden></p>
+      <footer>
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+
+{# A type's parameters: list, each editable/removable, plus "Add parameter" #}
+<dialog id="type-params-dialog">
+  <article>
+    <header>
+      <strong>Parameters — <span id="type-params-name"></span></strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <ul id="type-params-list" class="param-list"></ul>
+    <p id="type-params-empty" class="muted" hidden>This type has no own parameters.</p>
+    <footer>
+      <button type="button" class="btn btn-secondary" id="type-params-add">Add parameter</button>
+      <span class="footer-spacer"></span>
+      <button type="button" class="btn btn-ghost" data-close>Close</button>
+    </footer>
+  </article>
+</dialog>
+
+{# Edit one parameter definition (data_type is fixed) #}
+<dialog id="param-edit-dialog">
+  <article>
+    <header>
+      <strong>Edit parameter</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <form id="param-edit-form">
+      <input type="hidden" name="definition_id" />
+      <div class="field">
+        <label>Name (technical key)</label>
+        <input class="control" name="name" required />
+      </div>
+      <div class="field">
+        <label>Label</label>
+        <input class="control" name="label" required />
+      </div>
+      <div class="field">
+        <label>Type</label>
+        <input class="control" name="data_type" disabled />
+      </div>
+      <div class="field">
+        <label>Unit</label>
+        <input class="control" name="unit" placeholder="optional" />
+      </div>
+      <div class="field param-enum" hidden>
+        <label>Allowed values (one per line)</label>
+        <textarea class="control" name="enum_values" rows="4"></textarea>
+      </div>
+      <div class="field">
+        <label>Order</label>
+        <input class="control" type="number" name="sort_order" value="0" />
+      </div>
+      <div class="param-flags">
+        <label><input type="checkbox" name="is_table_column" /> Table column</label>
+        <label><input type="checkbox" name="is_filterable" /> Filterable</label>
+      </div>
+      <p id="param-edit-error" class="error" hidden></p>
+      <footer>
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+
+{# Add a parameter to an existing type (data_type is chosen here, then fixed) #}
+<dialog id="param-add-dialog">
+  <article>
+    <header>
+      <strong>Add parameter</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <form id="param-add-form">
+      <input type="hidden" name="type_id" />
+      <div class="field">
+        <label>Name (technical key)</label>
+        <input class="control" name="name" required />
+      </div>
+      <div class="field">
+        <label>Label</label>
+        <input class="control" name="label" required />
+      </div>
+      <div class="field">
+        <label>Type</label>
+        <select class="control" name="data_type">{{ data_type_options() }}</select>
+      </div>
+      <div class="field">
+        <label>Unit</label>
+        <input class="control" name="unit" placeholder="optional" />
+      </div>
+      <div class="field param-enum" hidden>
+        <label>Allowed values (one per line)</label>
+        <textarea class="control" name="enum_values" rows="4"></textarea>
+      </div>
+      <div class="field">
+        <label>Order</label>
+        <input class="control" type="number" name="sort_order" value="0" />
+      </div>
+      <div class="param-flags">
+        <label><input type="checkbox" name="is_table_column" /> Table column</label>
+        <label><input type="checkbox" name="is_filterable" /> Filterable</label>
+      </div>
+      <p id="param-add-error" class="error" hidden></p>
+      <footer>
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" class="btn btn-primary">Add</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+{# The New Type builder (shared with the components + invoice flows). #}
+{{ type_dialog(types, data_types) }}
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/type_dialog.js?v={{ static_version() }}"></script>
+<script src="/static/types_admin.js?v={{ static_version() }}"></script>
+{% endblock %}

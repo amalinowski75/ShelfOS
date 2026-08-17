@@ -66,13 +66,19 @@ def test_stock_dialog_uses_location_tree_picker(client: TestClient) -> None:
     assert 'id="location-dialog"' in html
 
 
-def test_index_shows_new_type_control_for_writer(client: TestClient) -> None:
-    """An account that can write sees the §13 create-type dialog and builder."""
+def test_index_keeps_the_type_builder_but_not_the_standalone_button(
+    client: TestClient,
+) -> None:
+    """The standalone "New Type" button moved to /types; the builder dialog stays.
+
+    It's still on the components page because the New Component dialog's "+ New type"
+    opens it — but a writer no longer starts a type from the components page itself.
+    """
     html = client.get("/").text
     # The role meta drives client-side write gating (admin here → writer).
     assert 'name="user-role" content="admin"' in html
-    assert 'id="new-type-btn"' in html
-    assert 'id="type-dialog"' in html
+    assert 'id="new-type-btn"' not in html  # moved to /types
+    assert 'id="type-dialog"' in html  # …but the builder stays for "+ New type"
     assert 'id="param-row-template"' in html
     # The parameter builder offers every data type, enum included.
     assert 'value="enum"' in html
@@ -1643,3 +1649,124 @@ def test_match_rules_forbidden_for_non_admin_web(
         "/web/api/match-rules", headers=headers, follow_redirects=False
     )
     assert feed.status_code == 303
+
+
+# --- /types admin page (§13 edit) ----------------------------------------------
+
+
+def test_types_page_renders_for_admin(client: TestClient) -> None:
+    html = client.get("/types").text
+    assert 'id="types-table"' in html
+    assert "types_admin.js" in html
+    assert "<h1>Types</h1>" in html  # the page heading (not just the nav link)
+    # The standalone "New Type" builder now lives here (moved off the components page).
+    assert 'id="new-type-btn"' in html
+    assert 'id="type-dialog"' in html
+    assert 'id="param-row-template"' in html
+    assert "/static/type_dialog.js" in html
+
+
+def test_types_feed_lists_types_with_counts_and_params(client: TestClient) -> None:
+    parent = client.post("/api/types", json={"name": "passive"}).json()
+    resistor = client.post(
+        "/api/types", json={"name": "resistor", "parent_id": parent["id"]}
+    ).json()
+    client.post(
+        f"/api/types/{resistor['id']}/parameters",
+        json={"name": "resistance", "label": "Resistance", "data_type": "number",
+              "unit": "Ω", "sort_order": 2, "is_table_column": True,
+              "is_filterable": True},
+    )
+    client.post("/api/components", json={"type_id": resistor["id"], "mpn": "R-1"})
+
+    resp = client.get("/web/api/types")
+    assert resp.headers["cache-control"] == "no-store"
+    rows = {r["name"]: r for r in resp.json()["data"]}
+    assert rows["resistor"]["parent_name"] == "passive"
+    assert rows["resistor"]["component_count"] == 1
+    assert rows["resistor"]["deletable"] is False  # a component uses the type
+    assert rows["passive"]["child_count"] == 1
+    assert rows["passive"]["deletable"] is False  # has a child type
+    param = rows["resistor"]["parameters"][0]
+    # The dialog needs every editable field back, or a PATCH would drop it.
+    assert param["name"] == "resistance"
+    assert param["unit"] == "Ω"
+    assert param["sort_order"] == 2
+    assert param["is_table_column"] is True
+    assert param["is_filterable"] is True
+    assert param["in_use_count"] == 0
+    assert param["deletable"] is True  # no component holds a value for it
+
+
+def test_types_feed_deletable_reflects_staged_invoice_lines(
+    client: TestClient, session
+) -> None:  # type: ignore[no-untyped-def]
+    # A type/parameter a draft invoice holds under review can't be deleted, so the
+    # flag must say so — otherwise the page offers a Delete the server will refuse.
+    from decimal import Decimal
+
+    from app.models.invoice import InvoiceImportLine
+
+    ctype = client.post("/api/types", json={"name": "cable"}).json()
+    client.post(
+        f"/api/types/{ctype['id']}/parameters",
+        json={"name": "ctype", "label": "Type", "data_type": "enum",
+              "enum_values": ["Flat", "Round"]},
+    )
+    definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
+    session.add(
+        InvoiceImportLine(
+            invoice_id=1, line_no=1, quantity=1, unit_price=Decimal("1"),
+            shop_key="tme", reason="", type_id=ctype["id"],
+            parameters=[{"parameter_definition_id": definition["id"], "value": "Flat"}],
+        )
+    )
+    session.commit()
+
+    row = {r["name"]: r for r in client.get("/web/api/types").json()["data"]}["cable"]
+    assert row["component_count"] == 0  # nothing live uses it…
+    assert row["deletable"] is False  # …but a staged line does
+    assert row["parameters"][0]["deletable"] is False
+
+
+def test_types_feed_parameter_in_use_count_reflects_stored_values(
+    client: TestClient,
+) -> None:
+    # in_use_count is the number the page shows ("N in use") and acts on, so pin its
+    # value against real stored data, not just the zero case.
+    ctype = client.post("/api/types", json={"name": "cable"}).json()
+    client.post(
+        f"/api/types/{ctype['id']}/parameters",
+        json={"name": "ctype", "label": "Type", "data_type": "enum",
+              "enum_values": ["Flat", "Round"]},
+    )
+    definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
+    client.post(
+        "/api/components",
+        json={"type_id": ctype["id"],
+              "parameters": [{"parameter_definition_id": definition["id"],
+                              "value": "Flat"}]},
+    )
+
+    param = {r["name"]: r for r in client.get("/web/api/types").json()["data"]}[
+        "cable"
+    ]["parameters"][0]
+    assert param["in_use_count"] == 1
+    assert param["deletable"] is False  # a component holds a value for it
+
+
+def test_types_pages_forbidden_for_non_admin(client: TestClient) -> None:
+    for role in ("user", "read-only"):
+        token = _non_admin_token(client, role=role, username=f"types_{role}")
+        headers = {"Authorization": f"Bearer {token}"}
+        for path in ("/types", "/web/api/types"):
+            resp = client.get(path, headers=headers, follow_redirects=False)
+            assert resp.status_code == 303
+            assert resp.headers["location"] == "/"
+
+
+def test_types_pages_require_login(anon_client: TestClient) -> None:
+    for path in ("/types", "/web/api/types"):
+        resp = anon_client.get(path, follow_redirects=False)
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/login"

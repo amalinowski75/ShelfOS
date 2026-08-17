@@ -22,7 +22,6 @@
       </select>
     </div>
     {% if can_write %}
-    <button type="button" class="btn btn-secondary" id="new-type-btn">New Type</button>
     <button type="button" class="btn btn-primary" id="new-component-btn">New Component</button>
     {% endif %}
   </div>
@@ -44,9 +43,9 @@
 {{ stock_dialog(location_tree) }}
 {% endif %}
 
-{# The New Type builder (extracted to _type_dialog.html). Gated on the same role
-   as its trigger, so the dialog, its "New Type" button, and the "+ New type"
-   button in the component dialog are present-or-absent together. #}
+{# The New Type builder (extracted to _type_dialog.html). Standalone creation now
+   lives on the /types page; here the dialog is present only so the "+ New type"
+   button inside the New Component dialog can open it. Gated on the same role. #}
 {% if can_write %}
 {{ type_dialog(types, data_types) }}
 {% endif %}

@@ -221,32 +221,6 @@ table.on("columnResized", (column) =>
   rememberColumnWidth(column.getField(), column.getWidth()),
 );
 
-// ---- New Type trigger (spec §13) ------------------------------------------
-// The dialog itself lives in type_dialog.js (shared with the invoice line flow),
-// which exposes openTypeDialog. Here we only wire the list page's "New Type" button
-// and, on success, reveal the new type in the filter + table.
-function upsertTypeFilterOption(type) {
-  const select = document.getElementById("type-filter");
-  if (!select) return;
-  if (![...select.options].some((o) => o.value === String(type.id))) {
-    const option = document.createElement("option");
-    option.value = type.id;
-    option.textContent = type.name;
-    select.appendChild(option);
-  }
-  select.value = String(type.id);
-}
-
-const newTypeBtn = document.getElementById("new-type-btn");
-if (newTypeBtn) {
-  newTypeBtn.addEventListener("click", () =>
-    window.openTypeDialog?.((created) => {
-      upsertTypeFilterOption(created);
-      return loadTable();
-    }),
-  );
-}
-
 // ---- New Component trigger (spec §16.5) -----------------------------------
 // The dialog lives in component_dialog.js (shared with the invoice line flow);
 // here we open it and, on success, go straight to the new component's detail page

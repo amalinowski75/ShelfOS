@@ -10,9 +10,15 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, cast
 
+from sqlalchemy import func
 from sqlmodel import Session, col, select
 
-from app.models.component import ComponentParameter, ComponentType, ParameterDefinition
+from app.models.component import (
+    Component,
+    ComponentParameter,
+    ComponentType,
+    ParameterDefinition,
+)
 from app.models.enums import ParameterDataType
 from app.services import component_service as cs
 from app.services import invoice_service as inv
@@ -261,3 +267,100 @@ def build_location_stock(session: Session) -> dict[int, list[dict[str, Any]]]:
         rows.sort(key=lambda row: str(row["mpn"]).casefold())
         contents[location_id] = rows
     return contents
+
+
+def build_types_table(session: Session) -> list[dict[str, Any]]:
+    """Rows for the admin ``/types`` management page (§13 edit).
+
+    Each type with its parent name, live-component and child counts, and its own
+    parameter definitions (with enum tokens and a per-parameter in-use count). All
+    counts are batched to avoid an N+1. The ``deletable`` flags mirror what the DELETE
+    endpoints block on — components, child types AND staged invoice lines for a type;
+    stored values AND staged lines for a parameter — so the page can EXPLAIN a Delete
+    the server would refuse (and skip the confirm) without a round trip. They stay
+    advisory: the endpoints re-check and are the source of truth, so the page never
+    deletes on the strength of the flag alone.
+    """
+    types = cs.list_types(session)
+    name_by_id = {t.id: t.name for t in types}
+
+    component_counts: dict[int, int] = dict(
+        session.exec(
+            select(Component.type_id, func.count())
+            .where(col(Component.deleted_at).is_(None))
+            .group_by(col(Component.type_id))
+        ).all()
+    )
+    child_counts: dict[int, int] = {
+        parent_id: n
+        for parent_id, n in session.exec(
+            select(ComponentType.parent_id, func.count()).group_by(
+                col(ComponentType.parent_id)
+            )
+        ).all()
+        if parent_id is not None
+    }
+    defs_by_type: dict[int, list[ParameterDefinition]] = {}
+    all_defs = session.exec(
+        select(ParameterDefinition).order_by(
+            col(ParameterDefinition.type_id),
+            col(ParameterDefinition.sort_order),
+            col(ParameterDefinition.id),
+        )
+    ).all()
+    for definition in all_defs:
+        defs_by_type.setdefault(definition.type_id, []).append(definition)
+    enum_values = cs.enum_values_by_definition(
+        session, [cast(int, d.id) for d in all_defs]
+    )
+    usage: dict[int, int] = dict(
+        session.exec(
+            select(ComponentParameter.parameter_definition_id, func.count()).group_by(
+                col(ComponentParameter.parameter_definition_id)
+            )
+        ).all()
+    )
+    # Staged invoice-import lines also block a delete (added in #79 for types, #80 for
+    # parameters). Both blockers come from the service, so the page's flags and the
+    # DELETE endpoints read the SAME rule (no re-implementing the JSON scan here).
+    staged_type_counts = cs.staged_type_counts(session)
+    staged_def_ids = cs.staged_definition_ids(session)
+
+    rows: list[dict[str, Any]] = []
+    for ctype in types:
+        components = component_counts.get(cast(int, ctype.id), 0)
+        children = child_counts.get(cast(int, ctype.id), 0)
+        staged = staged_type_counts.get(cast(int, ctype.id), 0)
+        parameters = [
+            {
+                "id": d.id,
+                "name": d.name,
+                "label": d.label,
+                "data_type": d.data_type.value,
+                "unit": d.unit,
+                "sort_order": d.sort_order,
+                "is_table_column": d.is_table_column,
+                "is_filterable": d.is_filterable,
+                "enum_values": enum_values.get(cast(int, d.id), []),
+                "in_use_count": usage.get(cast(int, d.id), 0),
+                "deletable": (
+                    usage.get(cast(int, d.id), 0) == 0
+                    and cast(int, d.id) not in staged_def_ids
+                ),
+            }
+            for d in defs_by_type.get(cast(int, ctype.id), [])
+        ]
+        rows.append(
+            {
+                "id": ctype.id,
+                "name": ctype.name,
+                "parent_name": (
+                    name_by_id.get(ctype.parent_id) if ctype.parent_id else None
+                ),
+                "component_count": components,
+                "child_count": children,
+                "deletable": components == 0 and children == 0 and staged == 0,
+                "parameters": parameters,
+            }
+        )
+    return rows

@@ -46,6 +46,7 @@ from app.web.presenter import (
     build_component_table,
     build_invoice_table,
     build_location_stock,
+    build_types_table,
     format_money,
     format_parameter_value,
 )
@@ -432,6 +433,39 @@ def match_rules_page(
             "current_user": user,
             "domains": [d.value for d in MatchDomain],
             "mounting_types": [m.value for m in MountingType],
+        },
+    )
+
+
+@router.get("/web/api/types")
+def types_feed(
+    response: Response,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_web_admin),
+) -> dict[str, Any]:
+    """JSON feed for the admin type/parameter management table (admin, §13 edit)."""
+    response.headers["Cache-Control"] = "no-store"
+    return {"data": build_types_table(session)}
+
+
+@router.get("/types", response_class=HTMLResponse)
+def types_page(
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_web_admin),
+) -> HTMLResponse:
+    """Type & parameter management shell; rows load from /web/api/types (admin).
+
+    ``types`` feeds the "New Type" builder's parent select (the standalone create
+    flow moved here from the components page).
+    """
+    return templates.TemplateResponse(
+        request,
+        "types.html",
+        {
+            "current_user": user,
+            "types": cs.list_types(session),
+            "data_types": [dt.value for dt in ParameterDataType],
         },
     )
 
