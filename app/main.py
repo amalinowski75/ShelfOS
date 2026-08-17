@@ -120,6 +120,19 @@ def _check_label_settings() -> None:
         label_printer.font_paths()
     except ValidationError as error:
         _logger.warning("Labels cannot be rendered: %s", error)
+    for name, value in (
+        ("SHELFOS_LABEL_PRINT_TIMEOUT", config.LABEL_PRINT_TIMEOUT),
+        ("SHELFOS_LABEL_STATUS_TIMEOUT", config.LABEL_STATUS_TIMEOUT),
+    ):
+        if value <= 0:
+            # A negative wait is not a shorter wait: it is an endless one, on a
+            # thread that is meant to be handed back.
+            _logger.warning(
+                "%s=%r is not a positive number of seconds; it is treated as no "
+                "wait at all.",
+                name,
+                value,
+            )
     if not config.label_printing_configured():
         return  # no printer is a normal setup, not a misconfiguration
     device = Path(config.LABEL_DEVICE)
@@ -211,9 +224,7 @@ def create_app(*, create_tables: bool = True) -> FastAPI:
         # Refuse framing (clickjacking): X-Frame-Options for old browsers,
         # CSP frame-ancestors for modern ones.
         response.headers.setdefault("X-Frame-Options", "DENY")
-        response.headers.setdefault(
-            "Content-Security-Policy", "frame-ancestors 'none'"
-        )
+        response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault(
             "Referrer-Policy", "strict-origin-when-cross-origin"

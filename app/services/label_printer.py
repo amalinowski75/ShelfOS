@@ -335,13 +335,28 @@ def fit_lines(
     return [_ellipsise(segments[-1], font, box_w)], min_px
 
 
+def _qr_code(payload: str) -> segno.QRCode:
+    """The code itself, before it is drawn at any size.
+
+    ``error="m"`` is a FLOOR, not the level used: segno's ``boost_error`` raises
+    it to the highest that still fits the chosen version, and an ``SL<id>``
+    payload leaves a version-1 symbol with room for H. That is the level we
+    want on thermal tape that gets thumbed and scuffed, so the boost is kept —
+    named here because the argument alone reads as if M were the outcome.
+
+    ``micro=False``: segno would happily emit a Micro QR for a payload this
+    short, and phone cameras are unreliable with those.
+    """
+    return segno.make(payload, error="m", micro=False)
+
+
 def _qr_image(payload: str, box_px: int, tape: str) -> Image.Image:
     """The QR at the largest whole-module size that fits ``box_px``.
 
     Whole modules only: a fractional scale resamples the code into grey edges
     that a thermal head then thresholds unpredictably.
     """
-    qr = segno.make(payload, error="m", micro=False)
+    qr = _qr_code(payload)
     modules = int(qr.symbol_size(scale=1, border=_QR_BORDER)[0])
     scale = box_px // modules
     if scale < _MIN_QR_MODULE_PX:
@@ -371,37 +386,58 @@ def _layout(box_w: int, box_h: int) -> tuple[bool, int]:
     return False, min(box_w, round(box_h * _QR_HEIGHT_SHARE), ceiling)
 
 
-def _text_block(label: LabelData, box_w: int) -> tuple[list[tuple[str, str, int]], int]:
+def _text_block(
+    label: LabelData, box_w: int, box_h: int
+) -> tuple[list[tuple[str, str, int]], int]:
     """The lines to draw as (text, font path, size), and how tall they stack.
 
-    Measured before anything is placed, so a layout can centre the code and the
-    text together rather than centring each in its own half — which on a long
-    label leaves them at opposite ends with a hole in between.
+    Fitted to BOTH dimensions. Shrinking to the width alone was enough for a
+    30 mm label and wrong for a short one: a five-segment path wrapped to three
+    lines and the last of them printed past the end of the tape, guillotined by
+    the cutter — the one way this module could quietly produce a bad label,
+    while refusing round tapes, thin QR modules and absurd lengths outright.
+
+    So the name is capped by the height it is given, and the path gets the lines
+    that are left over. Measuring it here rather than while drawing also lets a
+    layout centre the code and the text together, instead of centring each in
+    its own half and leaving a hole between them on a long label.
     """
     regular, bold = font_paths()
+    # Leading of 1.25 reads better than the fonts' own, which is set for prose.
     name_lines, name_px = fit_lines(
         label.name,
         font_path=bold,
         box_w=box_w,
-        max_px=_NAME_MAX_PX,
+        max_px=min(_NAME_MAX_PX, max(_NAME_MIN_PX, int(box_h / 1.25))),
         min_px=_NAME_MIN_PX,
         max_lines=1,
     )
-    path_lines, path_px = fit_lines(
-        label.path,
-        font_path=regular,
-        box_w=box_w,
-        max_px=_PATH_MAX_PX,
-        min_px=_PATH_MIN_PX,
-        max_lines=_PATH_MAX_LINES,
-        separator=_PATH_SEPARATOR,
-    )
-    # Leading of 1.25 reads better than the fonts' own, which is set for prose.
     name_h = round(name_px * 1.25)
-    path_h = round(path_px * 1.25)
     lines = [(line, bold, name_px) for line in name_lines]
+    height = name_h * len(name_lines)
+
+    room = box_h - height
+    path_lines: list[str] = []
+    path_px = _PATH_MIN_PX
+    # Fit, then check what the fitted size really costs: shrinking may leave
+    # room for a line the first estimate ruled out, and growing never happens.
+    allowed = min(_PATH_MAX_LINES, int(room // round(_PATH_MIN_PX * 1.25)))
+    while allowed > 0:
+        path_lines, path_px = fit_lines(
+            label.path,
+            font_path=regular,
+            box_w=box_w,
+            max_px=_PATH_MAX_PX,
+            min_px=_PATH_MIN_PX,
+            max_lines=allowed,
+            separator=_PATH_SEPARATOR,
+        )
+        if len(path_lines) * round(path_px * 1.25) <= room:
+            break
+        allowed -= 1
+        path_lines = []
     lines += [(line, regular, path_px) for line in path_lines]
-    return lines, name_h * len(name_lines) + path_h * len(path_lines)
+    return lines, height + len(path_lines) * round(path_px * 1.25)
 
 
 def render_label(label: LabelData, geometry: TapeGeometry | None = None) -> Image.Image:
@@ -426,7 +462,8 @@ def render_label(label: LabelData, geometry: TapeGeometry | None = None) -> Imag
         raise ValidationError(
             f"tape {geometry.tape!r} leaves no room for text beside the QR"
         )
-    lines, text_h = _text_block(label, text_w)
+    text_room = box_h if beside else box_h - qr.height - gap
+    lines, text_h = _text_block(label, text_w, text_room)
 
     if beside:
         canvas.paste(qr, (margin, margin + (box_h - qr.height) // 2))
@@ -813,7 +850,10 @@ def print_labels(
             f"{total}); print a smaller branch"
         )
 
-    if not _PRINT_LOCK.acquire(timeout=config.LABEL_PRINT_TIMEOUT):
+    # Clamped: Lock.acquire treats a negative timeout as "wait for ever" (and
+    # raises below -1), so a typo in the setting would hold a worker thread
+    # exactly as long as the setting's own comment says it must not.
+    if not _PRINT_LOCK.acquire(timeout=max(0.0, config.LABEL_PRINT_TIMEOUT)):
         raise PrinterError("the label printer is busy — try again in a moment")
     try:
         fd = _open_device(device)

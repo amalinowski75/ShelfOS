@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import os
+import threading
 
 import pytest
 import segno
@@ -100,11 +101,31 @@ def test_qr_is_placed_whole_and_unscaled() -> None:
     assert printed.tobytes() == expected.tobytes()
 
 
-def test_a_tape_too_narrow_for_a_readable_qr_is_refused() -> None:
-    # 12 mm of tape leaves 106 dots across, so the code would print at under
-    # 0.25 mm per module — a decorative square, not something a phone reads.
+@pytest.mark.parametrize("tape", ["12", "23x23"])
+def test_a_tape_too_narrow_for_a_readable_qr_is_refused(tape: str) -> None:
+    """The two tapes that land inside the readability rule, and only there.
+
+    12 mm leaves 58 dots for the code and 23x23 leaves 85, against a 29-module
+    symbol — two dots per module, 0.17 mm, a decorative square rather than
+    something a phone reads. Both print happily if the threshold is lowered,
+    which is what makes them the cases that pin it.
+    """
     with pytest.raises(ValidationError, match="too small to scan"):
-        lp.render_label(_label(), lp.tape_geometry(tape="12"))
+        lp.render_label(_label(), lp.tape_geometry(tape=tape))
+
+
+def test_the_qr_is_built_at_the_strongest_correction_that_fits() -> None:
+    """What segno actually produces, not what the argument reads like.
+
+    ``error="m"`` is a floor; boost_error raises it to H for a payload this
+    short. Asserted here rather than inferred from the call, because the test
+    that compares rendered pixels builds its expectation the same way and would
+    move with the source.
+    """
+    code = lp._qr_code(location_qr_payload(123))
+    assert code.error == "H"
+    assert code.version == 1
+    assert code.mode == "alphanumeric"
 
 
 def test_path_wraps_on_separators_only() -> None:
@@ -481,3 +502,76 @@ def test_a_device_that_cannot_be_asked_still_prints_unconfirmed(tmp_path) -> Non
     device.touch()
     outcome = lp.print_labels(_labels(1), device=str(device))
     assert (outcome.sent, outcome.confirmed) == (1, False)
+
+
+def test_text_never_runs_off_the_end_of_the_tape() -> None:
+    """The one bad label this module could still print quietly.
+
+    Type was shrunk to the box's width and never its height, so on a short
+    label a long path wrapped to three lines and the last one printed past the
+    cut. Every other impossible case here is refused outright; this one went
+    through. The paths are the ones the bulk generator makes easy to produce.
+    """
+    label = LabelData(
+        id=123,
+        name="Drawer 03",
+        path="Workshop / Wall unit B / Rack A / Shelf 02 / Drawer 03",
+        qr_svg="",
+    )
+    margin = round(config.LABEL_MARGIN_MM * 300 / 25.4)
+    for length in (12, 15, 20, 30, 60):
+        geometry = lp.tape_geometry(length_mm=length)
+        box = _ink_box(lp.render_label(label, geometry))
+        assert box is not None
+        assert box[3] <= geometry.length_px - margin, f"{length} mm overflows"
+        assert box[1] >= margin, f"{length} mm overflows the top"
+
+
+def test_a_short_label_keeps_the_name_and_the_useful_end_of_the_path() -> None:
+    """Fitting to the height drops lines, and drops them from the front."""
+    label = LabelData(
+        id=123,
+        name="Drawer 03",
+        path="Workshop / Wall unit B / Rack A / Shelf 02 / Drawer 03",
+        qr_svg="",
+    )
+    lines, height = lp._text_block(label, box_w=318, box_h=94)  # a 12 mm label
+    assert height <= 94
+    assert [text for text, _, _ in lines][0] == "Drawer 03"
+    assert [text for text, _, _ in lines][-1].endswith("Drawer 03")
+    # A 30 mm label has room for the whole thing, so nothing is dropped there.
+    tall, _ = lp._text_block(label, box_w=318, box_h=306)
+    assert len(tall) > len(lines)
+
+
+def test_a_negative_print_timeout_is_reported_and_not_obeyed(  # type: ignore[no-untyped-def]
+    monkeypatch, caplog
+) -> None:
+    """Lock.acquire reads a negative timeout as "wait for ever" — the one thing
+    the setting exists to prevent, and a plausible typo while tuning it."""
+    from app.main import _check_label_settings
+
+    monkeypatch.setattr(config, "LABEL_PRINT_TIMEOUT", -1.0)
+    with caplog.at_level("WARNING", logger="shelfos"):
+        _check_label_settings()
+    assert "SHELFOS_LABEL_PRINT_TIMEOUT" in caplog.text
+
+    # And it does not wait: the clamp turns it into no wait at all. Run in a
+    # thread so a regression here fails the test instead of hanging the suite.
+    outcome: list[str] = []
+
+    def attempt() -> None:
+        try:
+            lp.print_labels(_labels(1), device="/nonexistent/lp0")
+        except Exception as error:  # noqa: BLE001 - the type is the assertion
+            outcome.append(type(error).__name__)
+
+    lp._PRINT_LOCK.acquire()
+    try:
+        worker = threading.Thread(target=attempt, daemon=True)
+        worker.start()
+        worker.join(timeout=5)
+        assert not worker.is_alive(), "a negative timeout waited for the lock"
+    finally:
+        lp._PRINT_LOCK.release()
+    assert outcome == ["PrinterError"]
