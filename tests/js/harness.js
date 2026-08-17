@@ -186,6 +186,53 @@ export function usersPageFixture() {
     </form></dialog>`;
 }
 
+// The admin /types management page (mirrors types.html): the Tabulator mount and
+// the rename / parameters / param-edit / param-add dialogs. Rows come from the
+// /web/api/types feed.
+export function typesAdminPageFixture() {
+  const dataTypeOptions = `
+    <option value="number">number</option>
+    <option value="text">text</option>
+    <option value="bool">bool</option>
+    <option value="enum">enum</option>`;
+  const paramFields = `
+    <input name="name" />
+    <input name="label" />
+    <input name="unit" />
+    <div class="field param-enum" hidden><input name="enum_values" /></div>
+    <input type="number" name="sort_order" value="0" />
+    <label><input type="checkbox" name="is_table_column" /></label>
+    <label><input type="checkbox" name="is_filterable" /></label>`;
+  return `
+    <div id="types-table"></div>
+    <dialog id="type-rename-dialog"><form id="type-rename-form">
+      <input type="hidden" name="type_id" />
+      <input name="name" />
+      <p id="type-rename-error" hidden></p>
+      <button type="submit"></button>
+    </form></dialog>
+    <dialog id="type-params-dialog">
+      <span id="type-params-name"></span>
+      <ul id="type-params-list"></ul>
+      <p id="type-params-empty" hidden></p>
+      <button type="button" id="type-params-add"></button>
+    </dialog>
+    <dialog id="param-edit-dialog"><form id="param-edit-form">
+      <input type="hidden" name="definition_id" />
+      <input name="data_type" disabled />
+      ${paramFields}
+      <p id="param-edit-error" hidden></p>
+      <button type="submit"></button>
+    </form></dialog>
+    <dialog id="param-add-dialog"><form id="param-add-form">
+      <input type="hidden" name="type_id" />
+      <select name="data_type">${dataTypeOptions}</select>
+      ${paramFields}
+      <p id="param-add-error" hidden></p>
+      <button type="submit"></button>
+    </form></dialog>`;
+}
+
 export function matchRulesPageFixture() {
   const domainOptions = `
     <option value="type" selected>type</option>

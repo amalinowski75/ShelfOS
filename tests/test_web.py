@@ -1643,3 +1643,57 @@ def test_match_rules_forbidden_for_non_admin_web(
         "/web/api/match-rules", headers=headers, follow_redirects=False
     )
     assert feed.status_code == 303
+
+
+# --- /types admin page (§13 edit) ----------------------------------------------
+
+
+def test_types_page_renders_for_admin(client: TestClient) -> None:
+    html = client.get("/types").text
+    assert 'id="types-table"' in html
+    assert "types_admin.js" in html
+    assert ">Types<" in html  # heading / nav link
+
+
+def test_types_feed_lists_types_with_counts_and_params(client: TestClient) -> None:
+    parent = client.post("/api/types", json={"name": "passive"}).json()
+    resistor = client.post(
+        "/api/types", json={"name": "resistor", "parent_id": parent["id"]}
+    ).json()
+    client.post(
+        f"/api/types/{resistor['id']}/parameters",
+        json={"name": "dielectric", "label": "Dielectric", "data_type": "enum",
+              "enum_values": ["C0G", "X7R"]},
+    )
+    client.post("/api/components", json={"type_id": resistor["id"], "mpn": "R-1"})
+
+    resp = client.get("/web/api/types")
+    assert resp.headers["cache-control"] == "no-store"
+    rows = {r["name"]: r for r in resp.json()["data"]}
+    assert rows["resistor"]["parent_name"] == "passive"
+    assert rows["resistor"]["component_count"] == 1
+    assert rows["resistor"]["deletable"] is False  # a component uses the type
+    assert rows["passive"]["child_count"] == 1
+    assert rows["passive"]["deletable"] is False  # has a child type
+    param = rows["resistor"]["parameters"][0]
+    assert param["name"] == "dielectric"
+    assert param["data_type"] == "enum"
+    assert param["enum_values"] == ["C0G", "X7R"]
+    assert param["deletable"] is True  # no component holds a value for it
+
+
+def test_types_pages_forbidden_for_non_admin(client: TestClient) -> None:
+    for role in ("user", "read-only"):
+        token = _non_admin_token(client, role=role, username=f"types_{role}")
+        headers = {"Authorization": f"Bearer {token}"}
+        for path in ("/types", "/web/api/types"):
+            resp = client.get(path, headers=headers, follow_redirects=False)
+            assert resp.status_code == 303
+            assert resp.headers["location"] == "/"
+
+
+def test_types_pages_require_login(anon_client: TestClient) -> None:
+    for path in ("/types", "/web/api/types"):
+        resp = anon_client.get(path, follow_redirects=False)
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/login"

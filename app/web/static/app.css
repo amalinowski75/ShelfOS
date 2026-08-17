@@ -489,6 +489,11 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 .param-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .param-flags { display: flex; align-items: center; gap: 16px; }
 .param-flags .param-remove { margin-left: auto; }
+/* The parameters list inside the type-management dialog (§13 edit). */
+.param-list { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.param-list-row { display: flex; align-items: center; gap: 10px; }
+.param-list-meta { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.param-list-actions { display: inline-flex; gap: 4px; flex: none; }
 .check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
 .check input { accent-color: var(--accent); }
 
