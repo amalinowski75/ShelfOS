@@ -27,6 +27,11 @@ function typeColumns() {
     {
       title: "Name",
       field: "name",
+      // Live substring filter on the type name (case-insensitive "like", as on the
+      // components table), so a long taxonomy is quick to search.
+      headerFilter: "input",
+      headerFilterPlaceholder: "Filter name…",
+      headerFilterParams: { elementAttributes: { "aria-label": "Filter name" } },
       formatter: (cell) => `<span class="cell-mono">${esc(cell.getValue())}</span>`,
     },
     {
@@ -49,21 +54,12 @@ function typeColumns() {
       headerSort: false,
       width: 300,
       hozAlign: "right",
-      // Delete is disabled when the server would refuse it (in use by components,
-      // child types or staged invoice lines) — the flag mirrors the DELETE guard,
-      // so the affordance matches reality instead of springing a refusal.
-      formatter: (cell) => {
-        const row = cell.getRow().getData();
-        const del = row.deletable
-          ? `<button class="btn btn-ghost btn-sm" data-act="delete">Delete</button>`
-          : `<button class="btn btn-ghost btn-sm" data-act="delete" disabled
-                     title="In use by components, child types or staged invoice lines">Delete</button>`;
-        return `<div class="row-actions">
+      formatter: () =>
+        `<div class="row-actions">
            <button class="btn btn-secondary btn-sm" data-act="params">Parameters</button>
            <button class="btn btn-secondary btn-sm" data-act="rename">Rename</button>
-           ${del}
-         </div>`;
-      },
+           <button class="btn btn-ghost btn-sm" data-act="delete">Delete</button>
+         </div>`,
       cellClick: (event, cell) => {
         const act = event.target.dataset.act;
         if (!act) return;
@@ -154,7 +150,12 @@ document.getElementById("type-rename-form")?.addEventListener("submit", (event) 
 // --- delete a type ---
 const guardDeleteType = makeGuard();
 function deleteType(row) {
-  if (!confirm(`Delete type "${row.name}"? This cannot be undone.`)) return;
+  // A type in use can't be deleted — go straight to the server and show WHY (it
+  // names the count: "12 components use this type"), rather than confirming a
+  // deletion that won't happen. A deletable one confirms first: it's destructive.
+  if (row.deletable && !confirm(`Delete type "${row.name}"? This cannot be undone.`)) {
+    return;
+  }
   guardDeleteType(async () => {
     try {
       const resp = await sendWrite(`/api/admin/types/${row.id}`, "DELETE");
@@ -225,11 +226,6 @@ function renderParams(row) {
     const del = document.createElement("button");
     del.className = "btn btn-ghost btn-sm";
     del.textContent = "Delete";
-    // Disabled when the server would refuse it (a component or staged line holds it).
-    del.disabled = !param.deletable;
-    if (!param.deletable) {
-      del.title = "In use by components or staged invoice lines";
-    }
     del.addEventListener("click", () => deleteParam(param));
     actions.append(edit, del);
     li.append(meta, actions);
@@ -296,7 +292,9 @@ document.getElementById("param-edit-form")?.addEventListener("submit", (event) =
 // --- delete a parameter ---
 const guardParamDelete = makeGuard();
 function deleteParam(param) {
-  if (!confirm(`Delete parameter "${param.label}"?`)) return;
+  // Same as deleteType: a parameter in use shows the server's reason on click
+  // instead of confirming a deletion that will be refused.
+  if (param.deletable && !confirm(`Delete parameter "${param.label}"?`)) return;
   guardParamDelete(async () => {
     try {
       const resp = await sendWrite(`/api/admin/parameters/${param.id}`, "DELETE");

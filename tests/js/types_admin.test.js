@@ -61,13 +61,9 @@ describe("types_admin.js — columns", () => {
     expect(columns[4].formatter(cell([{}, {}]))).toBe("2"); // count, not the list
   });
 
-  it("disables the type Delete button when the server would refuse it", () => {
+  it("offers a live filter on the type name", () => {
     const { window } = loadPage(typesAdminPageFixture(), SCRIPTS);
-    const actions = window.typeColumns()[5];
-    expect(actions.formatter(cell(null, { deletable: false }))).toContain("disabled");
-    expect(actions.formatter(cell(null, { deletable: true }))).not.toContain(
-      "disabled",
-    );
+    expect(window.typeColumns()[0].headerFilter).toBe("input");
   });
 
   it("routes row-action clicks to rename / params / delete", () => {
@@ -124,16 +120,32 @@ describe("types_admin.js — type writes", () => {
     expect(calls).toBe(1);
   });
 
-  it("surfaces the in-use refusal when a delete is blocked", async () => {
+  it("shows the reason (no confirm) when a type in use can't be deleted", async () => {
+    // RESISTOR.deletable is false — clicking Delete must go straight to the server
+    // and surface its refusal, not silently do nothing and not ask to confirm.
     const { window } = loadPage(typesAdminPageFixture(), SCRIPTS, {
       fetchImpl: () => fail("2 components use this type"),
     });
     window.alert = vi.fn();
+    window.confirm = vi.fn(() => true);
 
     window.deleteType(RESISTOR);
     await tick();
 
+    expect(window.confirm).not.toHaveBeenCalled(); // no "are you sure" for a no-op
     expect(window.alert).toHaveBeenCalledWith("2 components use this type");
+  });
+
+  it("confirms before deleting a type that can be deleted", async () => {
+    const { window, fetchMock } = loadPage(typesAdminPageFixture(), SCRIPTS);
+    window.confirm = vi.fn(() => true);
+
+    window.deleteType({ id: 7, name: "throwaway", deletable: true });
+    await tick();
+
+    expect(window.confirm).toHaveBeenCalled();
+    const call = fetchMock.mock.calls.find(([u]) => u === "/api/admin/types/7");
+    expect(call[1].method).toBe("DELETE");
   });
 });
 
@@ -192,15 +204,13 @@ describe("types_admin.js — parameter writes", () => {
     expect(JSON.parse(call[1].body).enum_values).toBeUndefined();
   });
 
-  it("disables a parameter's Delete when a component holds it, showing the count", () => {
+  it("shows a parameter's in-use count in its detail line", () => {
     const { window, document } = loadPage(typesAdminPageFixture(), SCRIPTS);
     window.openParamsDialog({
       ...RESISTOR,
       parameters: [{ ...DIELECTRIC, deletable: false, in_use_count: 3 }],
     });
-    const buttons = document.querySelectorAll("#type-params-list li button");
-    expect(buttons[1].disabled).toBe(true); // Delete
-    expect(document.querySelector(".param-list-meta").textContent).toContain(
+    expect(document.querySelector(".param-list-detail").textContent).toContain(
       "3 in use",
     );
   });
