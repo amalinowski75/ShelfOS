@@ -62,6 +62,14 @@ FIELD_PARAMETERS: Final = "parameters"
 FIELD_NAME: Final = "name"
 FIELD_PARENT_ID: Final = "parent_id"
 FIELD_TYPE: Final = "type"
+# A parameter definition's editable fields (``parameter_definition``, §13 edit).
+# ``name`` is shared with the block above; ``data_type`` is immutable (no field).
+FIELD_LABEL: Final = "label"
+FIELD_UNIT: Final = "unit"
+FIELD_SORT_ORDER: Final = "sort_order"
+FIELD_IS_TABLE_COLUMN: Final = "is_table_column"
+FIELD_IS_FILTERABLE: Final = "is_filterable"
+FIELD_ENUM_VALUES: Final = "enum_values"
 
 _PARAMETER_PREFIX: Final = "parameter:"
 _QUANTITY_PREFIX: Final = "quantity@location:"

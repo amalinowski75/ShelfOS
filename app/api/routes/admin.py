@@ -7,12 +7,14 @@ mounted with an admin guard, so every route here requires an admin.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import cast
 
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, ConfigDict
 from sqlmodel import Session
 
 from app.api.deps import get_session
+from app.api.schemas import ParameterDefinitionRead
 from app.auth.deps import current_user_id
 from app.models.component import ComponentType
 from app.models.enums import MatchDomain, UserRole
@@ -74,6 +76,21 @@ class TypeUpdate(BaseModel):
     name: str
 
 
+class ParameterDefinitionUpdate(BaseModel):
+    """Edit a parameter definition; ``data_type`` is immutable so it is absent.
+
+    ``enum_values`` is honoured only for enum parameters (ignored/rejected otherwise).
+    """
+
+    name: str
+    label: str
+    unit: str | None = None
+    sort_order: int = 0
+    is_table_column: bool = False
+    is_filterable: bool = False
+    enum_values: list[str] | None = None
+
+
 class MatchRuleRead(BaseModel):
     """One matching rule, as the admin table shows it."""
 
@@ -132,6 +149,43 @@ def delete_type(
 ) -> None:
     """Delete a component type that nothing depends on (admin, §13 edit)."""
     cs.delete_type(session, type_id, user_id=user_id)
+
+
+@router.patch("/parameters/{definition_id}", response_model=ParameterDefinitionRead)
+def update_parameter_definition(
+    definition_id: int,
+    payload: ParameterDefinitionUpdate,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> ParameterDefinitionRead:
+    """Edit a parameter definition, incl. its enum tokens (admin, §13 edit)."""
+    definition = cs.update_parameter_definition(
+        session,
+        definition_id,
+        name=payload.name,
+        label=payload.label,
+        unit=payload.unit,
+        sort_order=payload.sort_order,
+        is_table_column=payload.is_table_column,
+        is_filterable=payload.is_filterable,
+        enum_values=payload.enum_values,
+        user_id=user_id,
+    )
+    read = ParameterDefinitionRead.model_validate(definition)
+    read.enum_values = cs.enum_values_of(session, cast(int, definition.id))
+    return read
+
+
+@router.delete(
+    "/parameters/{definition_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+def delete_parameter_definition(
+    definition_id: int,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> None:
+    """Delete a parameter definition no component uses (admin, §13 edit)."""
+    cs.delete_parameter_definition(session, definition_id, user_id=user_id)
 
 
 @router.get("/users", response_model=list[UserRead])

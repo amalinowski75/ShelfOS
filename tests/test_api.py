@@ -2034,3 +2034,98 @@ def test_type_edit_forbidden_for_non_admin(
         ).status_code
         == 403
     )
+
+
+# --- parameter-definition edit & delete via the admin API (§13 edit) -----------
+
+
+def _enum_param(client: TestClient, values: list[str]) -> dict:
+    ctype = client.post("/api/types", json={"name": "cable"}).json()
+    client.post(
+        f"/api/types/{ctype['id']}/parameters",
+        json={"name": "ctype", "label": "Type", "data_type": "enum",
+              "enum_values": values},
+    )
+    definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
+    return {"type": ctype, "definition": definition}
+
+
+def test_update_parameter_definition_via_admin_api(client: TestClient) -> None:
+    d = _enum_param(client, ["Flat", "Round"])["definition"]
+    resp = client.patch(
+        f"/api/admin/parameters/{d['id']}",
+        json={"name": "ctype", "label": "Cable type",
+              "enum_values": ["Flat", "Round", "Coax"]},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["label"] == "Cable type"
+    assert body["enum_values"] == ["Flat", "Round", "Coax"]
+
+
+def test_update_parameter_enum_remove_in_use_is_422(client: TestClient) -> None:
+    ctx = _enum_param(client, ["Flat", "Round"])
+    d = ctx["definition"]
+    client.post(
+        "/api/components",
+        json={"type_id": ctx["type"]["id"],
+              "parameters": [{"parameter_definition_id": d["id"], "value": "Flat"}]},
+    )
+    resp = client.patch(
+        f"/api/admin/parameters/{d['id']}",
+        json={"name": "ctype", "label": "Type", "enum_values": ["Round"]},
+    )
+    assert resp.status_code == 422
+    assert "use value" in resp.text
+
+
+def test_delete_parameter_definition_via_admin_api(client: TestClient) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    client.post(
+        f"/api/types/{ctype['id']}/parameters",
+        json={"name": "resistance", "label": "R", "data_type": "number",
+              "unit": "ohm"},
+    )
+    d = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
+    assert client.delete(f"/api/admin/parameters/{d['id']}").status_code == 204
+    assert client.get(f"/api/types/{ctype['id']}/parameters").json() == []
+
+
+def test_delete_parameter_definition_in_use_is_422(client: TestClient) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    client.post(
+        f"/api/types/{ctype['id']}/parameters",
+        json={"name": "resistance", "label": "R", "data_type": "number"},
+    )
+    d = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
+    client.post(
+        "/api/components",
+        json={"type_id": ctype["id"],
+              "parameters": [{"parameter_definition_id": d["id"], "value": "4k7"}]},
+    )
+    assert client.delete(f"/api/admin/parameters/{d['id']}").status_code == 422
+
+
+def test_parameter_edit_forbidden_for_non_admin(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    client.post(
+        f"/api/types/{ctype['id']}/parameters",
+        json={"name": "resistance", "label": "R", "data_type": "number"},
+    )
+    d = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
+    headers = _account_headers(client, anon_client)  # a writer, not an admin
+    assert (
+        anon_client.patch(
+            f"/api/admin/parameters/{d['id']}",
+            json={"name": "resistance", "label": "R"}, headers=headers,
+        ).status_code
+        == 403
+    )
+    assert (
+        anon_client.delete(
+            f"/api/admin/parameters/{d['id']}", headers=headers
+        ).status_code
+        == 403
+    )

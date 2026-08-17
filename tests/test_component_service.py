@@ -1264,3 +1264,134 @@ def test_delete_type_is_audited(session: Session) -> None:
     assert [(e.field, e.new_value) for e in entries] == [
         (audit_service.FIELD_DELETED, "true")
     ]
+
+
+# --- parameter-definition edit & delete (§13 edit) -----------------------------
+
+
+def _cable_enum(session: Session, values: list[str] | None = None):  # type: ignore[no-untyped-def]
+    ctype = cs.create_type(session, "cable")
+    definition = cs.add_parameter_definition(
+        session, ctype.id, name="ctype", label="Type",
+        data_type=ParameterDataType.ENUM,
+        enum_values=values if values is not None else ["Flat", "Round"],
+    )
+    return ctype, definition
+
+
+def test_update_parameter_definition_edits_scalars(session: Session) -> None:
+    ctype = cs.create_type(session, "resistor")
+    d = cs.add_parameter_definition(
+        session, ctype.id, name="resistance", label="R",
+        data_type=ParameterDataType.NUMBER, unit="ohm",
+    )
+    updated = cs.update_parameter_definition(
+        session, d.id, name="resistance", label="Resistance", unit="Ω",
+        sort_order=5, is_table_column=True, is_filterable=True,
+    )
+    assert updated.label == "Resistance"
+    assert updated.unit == "Ω"
+    assert updated.sort_order == 5
+    assert updated.is_table_column and updated.is_filterable
+
+
+def test_update_parameter_definition_rename_propagates_param_name_rules(
+    session: Session,
+) -> None:
+    ctype = cs.create_type(session, "resistor")
+    d = cs.add_parameter_definition(
+        session, ctype.id, name="resistance", label="R",
+        data_type=ParameterDataType.NUMBER,
+    )
+    mrs.create_rule(
+        session, domain=MatchDomain.PARAM_NAME, alias="rezystancja",
+        canonical="resistance", parameter_definition_id=d.id,
+    )
+    cs.update_parameter_definition(session, d.id, name="res", label="R")
+    assert session.get(ParameterDefinition, d.id).name == "res"
+    assert mrs.list_rules(session, domain=MatchDomain.PARAM_NAME)[0].canonical == "res"
+
+
+def test_update_parameter_definition_rejects_duplicate_name(session: Session) -> None:
+    ctype = cs.create_type(session, "resistor")
+    cs.add_parameter_definition(
+        session, ctype.id, name="resistance", label="R",
+        data_type=ParameterDataType.NUMBER,
+    )
+    other = cs.add_parameter_definition(
+        session, ctype.id, name="power", label="P",
+        data_type=ParameterDataType.NUMBER,
+    )
+    with pytest.raises(ValidationError):
+        cs.update_parameter_definition(session, other.id, name="resistance", label="P")
+    assert session.get(ParameterDefinition, other.id).name == "power"
+
+
+def test_update_parameter_definition_adds_enum_token(session: Session) -> None:
+    _, d = _cable_enum(session)
+    cs.update_parameter_definition(
+        session, d.id, name="ctype", label="Type",
+        enum_values=["Flat", "Round", "Coax"],
+    )
+    assert cs.enum_values_of(session, d.id) == ["Flat", "Round", "Coax"]
+
+
+def test_update_parameter_definition_enum_remove_blocked_when_in_use(
+    session: Session,
+) -> None:
+    ctype, d = _cable_enum(session)
+    cs.create_component_with_values(session, ctype.id, values=[(d.id, "Flat")])
+    with pytest.raises(ValidationError, match="use value"):
+        cs.update_parameter_definition(
+            session, d.id, name="ctype", label="Type", enum_values=["Round"]
+        )
+    # An UNUSED token drops fine.
+    cs.update_parameter_definition(
+        session, d.id, name="ctype", label="Type", enum_values=["Flat"]
+    )
+    assert cs.enum_values_of(session, d.id) == ["Flat"]
+
+
+def test_update_parameter_definition_rejects_enum_values_on_non_enum(
+    session: Session,
+) -> None:
+    ctype = cs.create_type(session, "resistor")
+    d = cs.add_parameter_definition(
+        session, ctype.id, name="resistance", label="R",
+        data_type=ParameterDataType.NUMBER,
+    )
+    with pytest.raises(ValidationError, match="enum_values only apply"):
+        cs.update_parameter_definition(
+            session, d.id, name="resistance", label="R", enum_values=["x"]
+        )
+
+
+def test_delete_parameter_definition_blocked_when_in_use(session: Session) -> None:
+    ctype = cs.create_type(session, "resistor")
+    d = cs.add_parameter_definition(
+        session, ctype.id, name="resistance", label="R",
+        data_type=ParameterDataType.NUMBER,
+    )
+    cs.create_component_with_values(session, ctype.id, values=[(d.id, "4k7")])
+    with pytest.raises(ValidationError, match="have a value"):
+        cs.delete_parameter_definition(session, d.id)
+    assert session.get(ParameterDefinition, d.id) is not None
+
+
+def test_delete_parameter_definition_removes_enum_values_and_scoped_rules(
+    session: Session,
+) -> None:
+    _, d = _cable_enum(session)
+    mrs.create_rule(
+        session, domain=MatchDomain.ENUM_VALUE, alias="wstazkowy",
+        canonical="Flat", parameter_definition_id=d.id,
+    )
+    cs.delete_parameter_definition(session, d.id)
+    assert session.get(ParameterDefinition, d.id) is None
+    assert cs.enum_values_of(session, d.id) == []
+    assert mrs.list_rules(session) == []
+
+
+def test_delete_parameter_definition_unknown_id(session: Session) -> None:
+    with pytest.raises(NotFoundError):
+        cs.delete_parameter_definition(session, 999)

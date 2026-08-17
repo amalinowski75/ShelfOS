@@ -383,6 +383,254 @@ def delete_type(
         raise
 
 
+def count_components_using_definition(session: Session, definition_id: int) -> int:
+    """How many stored component values reference this parameter (blocks delete)."""
+    return session.exec(
+        select(func.count())
+        .select_from(ComponentParameter)
+        .where(ComponentParameter.parameter_definition_id == definition_id)
+    ).one()
+
+
+def count_components_using_enum_value(
+    session: Session, definition_id: int, token: str
+) -> int:
+    """How many components hold ``token`` for this enum parameter (an enum token is
+    stored in ``value_text``). Blocks removing that token."""
+    return session.exec(
+        select(func.count())
+        .select_from(ComponentParameter)
+        .where(
+            ComponentParameter.parameter_definition_id == definition_id,
+            ComponentParameter.value_text == token,
+        )
+    ).one()
+
+
+def _audit_definition(
+    session: Session,
+    definition_id: int,
+    field: str,
+    old_value: object,
+    new_value: object,
+    user_id: int | None,
+) -> None:
+    """Record one parameter-definition change, when a user id is given (§19)."""
+    if user_id is not None:
+        audit_service.record_change(
+            session,
+            entity_type="parameter_definition",
+            entity_id=definition_id,
+            field=field,
+            old_value=old_value,
+            new_value=new_value,
+            user_id=user_id,
+        )
+
+
+def _set_definition_scalar(
+    session: Session,
+    definition: ParameterDefinition,
+    attr: str,
+    new_value: object,
+    field: str,
+    user_id: int | None,
+) -> None:
+    """Set one scalar field of a definition, auditing the change (no-ops skipped)."""
+    old_value = getattr(definition, attr)
+    if old_value == new_value:
+        return
+    setattr(definition, attr, new_value)
+    _audit_definition(
+        session, cast(int, definition.id), field, old_value, new_value, user_id
+    )
+
+
+def _sync_enum_values(
+    session: Session,
+    definition: ParameterDefinition,
+    new_values: list[str],
+    user_id: int | None = None,
+) -> None:
+    """Reconcile an enum parameter's allowed tokens to ``new_values`` (no commit).
+
+    Order matters (it is the display order), so this also renumbers ``sort_order``.
+    A token that some component still holds cannot be removed (``ValidationError``
+    with the count); a removed token's own ``ENUM_VALUE`` match rules go with it.
+    """
+    cleaned = [value.strip() for value in new_values]
+    if any(not value for value in cleaned):
+        raise ValidationError("enum values must not be blank")
+    if len(set(cleaned)) != len(cleaned):
+        raise ValidationError("enum values must be unique")
+    if not cleaned:
+        raise ValidationError("enum parameters require at least one allowed value")
+    existing = session.exec(
+        select(ParameterEnumValue)
+        .where(ParameterEnumValue.parameter_definition_id == definition.id)
+        .order_by(ParameterEnumValue.sort_order, ParameterEnumValue.id)  # type: ignore[arg-type]
+    ).all()
+    old_values = [row.value for row in existing]
+    if cleaned == old_values:
+        return  # nothing changed, order included
+    kept = {row.value: row for row in existing}
+    keep = set(cleaned)
+    for row in existing:
+        if row.value in keep:
+            continue
+        used = count_components_using_enum_value(
+            session, cast(int, definition.id), row.value
+        )
+        if used:
+            raise ValidationError(
+                f"{used} components use value {row.value!r}; cannot remove it"
+            )
+        for rule in session.exec(
+            select(MatchRule).where(
+                MatchRule.domain == MatchDomain.ENUM_VALUE,
+                MatchRule.parameter_definition_id == definition.id,
+                MatchRule.canonical == row.value,
+            )
+        ).all():
+            session.delete(rule)
+        session.delete(row)
+    for order, value in enumerate(cleaned):
+        existing_row = kept.get(value)
+        if existing_row is None:
+            session.add(
+                ParameterEnumValue(
+                    parameter_definition_id=definition.id, value=value, sort_order=order
+                )
+            )
+        else:
+            existing_row.sort_order = order
+            session.add(existing_row)
+    _audit_definition(
+        session,
+        cast(int, definition.id),
+        audit_service.FIELD_ENUM_VALUES,
+        ", ".join(old_values),
+        ", ".join(cleaned),
+        user_id,
+    )
+
+
+def update_parameter_definition(
+    session: Session,
+    definition_id: int,
+    *,
+    name: str,
+    label: str,
+    unit: str | None = None,
+    sort_order: int = 0,
+    is_table_column: bool = False,
+    is_filterable: bool = False,
+    enum_values: list[str] | None = None,
+    user_id: int | None = None,
+) -> ParameterDefinition:
+    """Edit a parameter definition in one transaction (§13 edit).
+
+    ``data_type`` is immutable and not accepted here — changing it would invalidate
+    values already stored under the old type. Everything else is editable: the
+    technical ``name`` (a rename repoints the ``PARAM_NAME`` match rules scoped to
+    this definition, for consistency — the engine keys them by the stable id), the
+    ``label``/``unit``/``sort_order``/flags, and the enum tokens (add freely; a token
+    a component still holds cannot be removed). Any failure rolls the whole edit back.
+    """
+    definition = require_entity(
+        session, ParameterDefinition, definition_id, "parameter definition"
+    )
+    new_name = name.strip()
+    if not new_name:
+        raise ValidationError("parameter name must not be empty")
+    new_label = label.strip()
+    if not new_label:
+        raise ValidationError("parameter label must not be empty")
+    is_enum = definition.data_type is ParameterDataType.ENUM
+    if enum_values is not None and not is_enum:
+        raise ValidationError("enum_values only apply to enum parameters")
+    try:
+        if new_name != definition.name:
+            _require_unique_parameter_name(session, definition.type_id, new_name)
+            old_name = definition.name
+            for rule in session.exec(
+                select(MatchRule).where(
+                    MatchRule.domain == MatchDomain.PARAM_NAME,
+                    MatchRule.parameter_definition_id == definition_id,
+                )
+            ).all():
+                rule.canonical = new_name
+                session.add(rule)
+            _audit_definition(
+                session, definition_id, audit_service.FIELD_NAME, old_name, new_name,
+                user_id,
+            )
+            definition.name = new_name
+        _set_definition_scalar(
+            session, definition, "label", new_label,
+            audit_service.FIELD_LABEL, user_id,
+        )
+        _set_definition_scalar(
+            session, definition, "unit", _blank_to_none(unit),
+            audit_service.FIELD_UNIT, user_id,
+        )
+        _set_definition_scalar(
+            session, definition, "sort_order", sort_order,
+            audit_service.FIELD_SORT_ORDER, user_id,
+        )
+        _set_definition_scalar(
+            session, definition, "is_table_column", is_table_column,
+            audit_service.FIELD_IS_TABLE_COLUMN, user_id,
+        )
+        _set_definition_scalar(
+            session, definition, "is_filterable", is_filterable,
+            audit_service.FIELD_IS_FILTERABLE, user_id,
+        )
+        session.add(definition)
+        if is_enum and enum_values is not None:
+            _sync_enum_values(session, definition, enum_values, user_id)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    session.refresh(definition)
+    return definition
+
+
+def delete_parameter_definition(
+    session: Session, definition_id: int, *, user_id: int | None = None
+) -> None:
+    """Delete a parameter definition, only when no component uses it (§13 edit).
+
+    Refused (``ValidationError``) with a count if any component holds a value for it;
+    otherwise its enum values and scoped match rules go with it. Transactional.
+    """
+    definition = require_entity(
+        session, ParameterDefinition, definition_id, "parameter definition"
+    )
+    used = count_components_using_definition(session, definition_id)
+    if used:
+        raise ValidationError(
+            f"{used} components have a value for this parameter; clear them first"
+        )
+    try:
+        if user_id is not None:
+            audit_service.record_change(
+                session,
+                entity_type="parameter_definition",
+                entity_id=definition_id,
+                field=audit_service.FIELD_DELETED,
+                old_value=False,
+                new_value=True,
+                user_id=user_id,
+            )
+        _delete_definition_and_dependents(session, definition)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+
+
 def _require_unique_type_name(
     session: Session, name: str, parent_id: int | None
 ) -> None:
