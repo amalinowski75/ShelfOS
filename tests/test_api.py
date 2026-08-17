@@ -1967,3 +1967,70 @@ def test_match_rules_forbidden_for_non_admin(
         ).status_code
         == 403
     )
+
+
+# --- type rename & delete via the admin API (§13 edit) -------------------------
+
+
+def test_rename_type_via_admin_api(client: TestClient) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    resp = client.patch(f"/api/admin/types/{ctype['id']}", json={"name": "res"})
+    assert resp.status_code == 200
+    assert resp.json()["name"] == "res"
+    assert [t["name"] for t in client.get("/api/types").json()] == ["res"]
+
+
+def test_rename_type_rejects_blank_and_duplicate(client: TestClient) -> None:
+    a = client.post("/api/types", json={"name": "resistor"}).json()
+    client.post("/api/types", json={"name": "capacitor"})
+    assert (
+        client.patch(f"/api/admin/types/{a['id']}", json={"name": "  "}).status_code
+        == 422
+    )
+    assert (
+        client.patch(
+            f"/api/admin/types/{a['id']}", json={"name": "capacitor"}
+        ).status_code
+        == 422
+    )
+
+
+def test_rename_unknown_type_is_404(client: TestClient) -> None:
+    assert client.patch("/api/admin/types/999", json={"name": "x"}).status_code == 404
+
+
+def test_delete_type_via_admin_api(client: TestClient) -> None:
+    ctype = client.post("/api/types", json={"name": "throwaway"}).json()
+    assert client.delete(f"/api/admin/types/{ctype['id']}").status_code == 204
+    assert client.get("/api/types").json() == []
+
+
+def test_delete_type_in_use_is_422(client: TestClient) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    client.post("/api/components", json={"type_id": ctype["id"], "mpn": "R-1"})
+    resp = client.delete(f"/api/admin/types/{ctype['id']}")
+    assert resp.status_code == 422
+    assert "components use this type" in resp.text
+
+
+def test_delete_unknown_type_is_404(client: TestClient) -> None:
+    assert client.delete("/api/admin/types/999").status_code == 404
+
+
+def test_type_edit_forbidden_for_non_admin(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    headers = _account_headers(client, anon_client)  # a writer, not an admin
+    assert (
+        anon_client.patch(
+            f"/api/admin/types/{ctype['id']}", json={"name": "x"}, headers=headers
+        ).status_code
+        == 403
+    )
+    assert (
+        anon_client.delete(
+            f"/api/admin/types/{ctype['id']}", headers=headers
+        ).status_code
+        == 403
+    )

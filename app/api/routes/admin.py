@@ -14,6 +14,7 @@ from sqlmodel import Session
 
 from app.api.deps import get_session
 from app.auth.deps import current_user_id
+from app.models.component import ComponentType
 from app.models.enums import MatchDomain, UserRole
 from app.services import audit_service
 from app.services import component_service as cs
@@ -67,6 +68,12 @@ class AuditEntryRead(BaseModel):
     timestamp: datetime
 
 
+class TypeUpdate(BaseModel):
+    """Rename a component type (its parent and parameters are edited elsewhere)."""
+
+    name: str
+
+
 class MatchRuleRead(BaseModel):
     """One matching rule, as the admin table shows it."""
 
@@ -104,6 +111,27 @@ def delete_component(
 ) -> None:
     """Permanently delete a component (spec §20)."""
     cs.hard_delete_component(session, component_id, user_id=user_id)
+
+
+@router.patch("/types/{type_id}", response_model=ComponentType)
+def rename_type(
+    type_id: int,
+    payload: TypeUpdate,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> ComponentType:
+    """Rename a component type (admin, §13 edit)."""
+    return cs.rename_type(session, type_id, name=payload.name, user_id=user_id)
+
+
+@router.delete("/types/{type_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_type(
+    type_id: int,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> None:
+    """Delete a component type that nothing depends on (admin, §13 edit)."""
+    cs.delete_type(session, type_id, user_id=user_id)
 
 
 @router.get("/users", response_model=list[UserRead])

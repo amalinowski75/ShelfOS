@@ -26,8 +26,10 @@ from app.models.component import (
     ParameterDefinition,
     ParameterEnumValue,
 )
-from app.models.enums import MountingType, ParameterDataType
+from app.models.enums import MatchDomain, MountingType, ParameterDataType
+from app.models.invoice import InvoiceImportLine
 from app.models.location import ComponentLocation
+from app.models.match_rule import MatchRule
 from app.services import attachment_service, audit_service, link_service
 from app.services._common import require_entity
 from app.services.errors import DuplicateComponentError, ValidationError
@@ -185,6 +187,200 @@ def add_parameter_definition(
     session.commit()
     session.refresh(definition)
     return definition
+
+
+def count_components_of_type(session: Session, type_id: int) -> int:
+    """How many live (non-deleted) components have this exact type (§13 edit)."""
+    return session.exec(
+        select(func.count())
+        .select_from(Component)
+        .where(Component.type_id == type_id, col(Component.deleted_at).is_(None))
+    ).one()
+
+
+def count_child_types(session: Session, type_id: int) -> int:
+    """How many types name this one as their parent (blocks a delete)."""
+    return session.exec(
+        select(func.count())
+        .select_from(ComponentType)
+        .where(ComponentType.parent_id == type_id)
+    ).one()
+
+
+def count_import_lines_of_type(session: Session, type_id: int) -> int:
+    """How many staged invoice-import lines reference this type (blocks a delete).
+
+    ``InvoiceImportLine.type_id`` is a real FK, and a draft under review holds it
+    long before any component exists. Deleting the type out from under it would
+    leave a dangling reference that finalize rejects with a bare "component type N
+    not found" — so a delete is blocked while such rows exist (mirrors how
+    ``delete_location`` treats staged lines)."""
+    return session.exec(
+        select(func.count())
+        .select_from(InvoiceImportLine)
+        .where(InvoiceImportLine.type_id == type_id)
+    ).one()
+
+
+def _other_type_shares_name(session: Session, name: str, exclude_id: int) -> bool:
+    """Does another type carry ``name`` (case-insensitively, as the engine folds it)?
+
+    Type names are unique per parent, not globally, so ``name`` may belong to more
+    than one type. The matching engine resolves a ``TYPE`` rule's target to a type by
+    ``name.casefold()``, so whether renaming/deleting THIS type should touch the rules
+    that name it depends on whether any OTHER type still answers to the same name.
+    """
+    folded = name.casefold()
+    return any(
+        t.id != exclude_id and t.name.casefold() == folded
+        for t in session.exec(select(ComponentType)).all()
+    )
+
+
+def _type_rules_named(session: Session, name: str) -> list[MatchRule]:
+    """The ``TYPE`` match rules whose target resolves to ``name``.
+
+    Matched by ``casefold`` to mirror the engine (``matching._resolve_type`` does
+    ``names.get(canonical.casefold())``); a rule stored as ``"Resistor"`` targets a
+    type named ``"resistor"`` and must be found here too."""
+    folded = name.casefold()
+    return [
+        rule
+        for rule in session.exec(
+            select(MatchRule).where(MatchRule.domain == MatchDomain.TYPE)
+        ).all()
+        if rule.canonical.casefold() == folded
+    ]
+
+
+def rename_type(
+    session: Session, type_id: int, *, name: str, user_id: int | None = None
+) -> ComponentType:
+    """Rename a component type, keeping import matching consistent (§13 edit).
+
+    Inventory references a type by id, so a rename is transparent there. The one
+    place the NAME matters is the matching engine: ``TYPE`` match rules resolve to a
+    type by its name (``MatchRule.canonical``, case-insensitively), so a rule pointing
+    at the old name is repointed at the new one in the same transaction — otherwise a
+    scanned/invoiced category would stop resolving to this type. But only when the old
+    name was unique: if ANOTHER type still answers to it, those rules keep resolving to
+    that other type and are left alone. Root-level uniqueness is guarded in the service
+    (the DB constraint can't, since NULL != NULL); the DB constraint is the concurrency
+    backstop.
+    """
+    ctype = require_entity(session, ComponentType, type_id, "component type")
+    new = name.strip()
+    if not new:
+        raise ValidationError("component type name must not be empty")
+    if new == ctype.name:
+        return ctype  # no-op; don't trip the duplicate guard on the type itself
+    _require_unique_type_name(session, new, ctype.parent_id)
+    old = ctype.name
+    try:
+        # Repoint the TYPE rules that named this type — but only if it was the sole
+        # bearer of the old name; otherwise the rules still resolve to the other type.
+        if not _other_type_shares_name(session, old, type_id):
+            for rule in _type_rules_named(session, old):
+                rule.canonical = new
+                session.add(rule)
+        ctype.name = new
+        session.add(ctype)
+        if user_id is not None:
+            audit_service.record_change(
+                session,
+                entity_type="component_type",
+                entity_id=type_id,
+                field=audit_service.FIELD_NAME,
+                old_value=old,
+                new_value=new,
+                user_id=user_id,
+            )
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    session.refresh(ctype)
+    return ctype
+
+
+def _delete_definition_and_dependents(
+    session: Session, definition: ParameterDefinition
+) -> None:
+    """Delete a parameter definition with its enum values and scoped match rules.
+
+    No commit, and no guarding of stored values — the caller owns that. Extracted for
+    :func:`delete_type`, whose block on children AND live components is what makes it
+    safe there (no component can hold a value for this type's own definitions). A later
+    single-definition caller must instead check that no component holds a value for the
+    definition itself before calling this.
+    """
+    for enum_value in session.exec(
+        select(ParameterEnumValue).where(
+            ParameterEnumValue.parameter_definition_id == definition.id
+        )
+    ).all():
+        session.delete(enum_value)
+    for rule in session.exec(
+        select(MatchRule).where(MatchRule.parameter_definition_id == definition.id)
+    ).all():
+        session.delete(rule)
+    session.delete(definition)
+
+
+def delete_type(
+    session: Session, type_id: int, *, user_id: int | None = None
+) -> None:
+    """Permanently delete a type, only when nothing depends on it (§13 edit).
+
+    Refused (``ValidationError``) if the type has child types, any live component, or
+    a staged invoice-import line, naming the count so the admin knows what to clear
+    first. When unused it is safe to hard-delete: with no children and no direct
+    components, no ``ComponentParameter`` can reference this type's own definitions
+    (that would need a descendant type with a component), so its definitions, their
+    enum values and scoped match rules go with it, plus the ``TYPE`` match rules that
+    named it — but only the rules now left dead, i.e. when no other type still answers
+    to the name. One transaction, rolled back on any failure.
+    """
+    ctype = require_entity(session, ComponentType, type_id, "component type")
+    children = count_child_types(session, type_id)
+    if children:
+        raise ValidationError(
+            f"{children} child types depend on this type; delete or move them first"
+        )
+    components = count_components_of_type(session, type_id)
+    if components:
+        raise ValidationError(
+            f"{components} components use this type; reassign or delete them first"
+        )
+    import_lines = count_import_lines_of_type(session, type_id)
+    if import_lines:
+        raise ValidationError(
+            f"{import_lines} staged invoice lines use this type; "
+            "review or dismiss them first"
+        )
+    try:
+        for definition in list_own_parameter_definitions(session, type_id):
+            _delete_definition_and_dependents(session, definition)
+        # Drop the TYPE rules that named this type only if it was the last to answer
+        # to the name; otherwise they still resolve to the remaining same-named type.
+        if not _other_type_shares_name(session, ctype.name, type_id):
+            for rule in _type_rules_named(session, ctype.name):
+                session.delete(rule)
+        if user_id is not None:
+            audit_service.record_change(
+                session,
+                entity_type="component_type",
+                entity_id=type_id,
+                field=audit_service.FIELD_DELETED,
+                old_value=False,
+                new_value=True,
+                user_id=user_id,
+            )
+        session.delete(ctype)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
 
 
 def _require_unique_type_name(
