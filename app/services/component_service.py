@@ -14,7 +14,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import cast
+from typing import Any, cast
 
 from sqlalchemy import func
 from sqlmodel import Session, col, select
@@ -392,6 +392,47 @@ def count_components_using_definition(session: Session, definition_id: int) -> i
     ).one()
 
 
+def _staged_line_parameters(
+    session: Session,
+) -> Iterable[tuple[InvoiceImportLine, dict[str, Any]]]:
+    """Every ``(line, entry)`` in every staged invoice line's ``parameters`` JSON.
+
+    ``InvoiceImportLine.parameters`` is a JSON list of
+    ``{"parameter_definition_id": int, "value": ...}`` — NOT a real FK — that a draft
+    under review holds before any component exists. Scanned in Python (the review
+    panel is small) so a definition/token a draft still references can block its
+    deletion, the way ``count_import_lines_of_type`` guards the type itself."""
+    for line in session.exec(select(InvoiceImportLine)).all():
+        for entry in line.parameters or []:
+            if isinstance(entry, dict):
+                yield line, entry
+
+
+def count_import_lines_using_definition(session: Session, definition_id: int) -> int:
+    """Distinct staged invoice lines whose parameters JSON names this definition."""
+    return len(
+        {
+            line.id
+            for line, entry in _staged_line_parameters(session)
+            if entry.get("parameter_definition_id") == definition_id
+        }
+    )
+
+
+def count_import_lines_using_enum_value(
+    session: Session, definition_id: int, token: str
+) -> int:
+    """Distinct staged invoice lines holding ``token`` for this enum parameter."""
+    return len(
+        {
+            line.id
+            for line, entry in _staged_line_parameters(session)
+            if entry.get("parameter_definition_id") == definition_id
+            and entry.get("value") == token
+        }
+    )
+
+
 def count_components_using_enum_value(
     session: Session, definition_id: int, token: str
 ) -> int:
@@ -455,16 +496,11 @@ def _sync_enum_values(
     """Reconcile an enum parameter's allowed tokens to ``new_values`` (no commit).
 
     Order matters (it is the display order), so this also renumbers ``sort_order``.
-    A token that some component still holds cannot be removed (``ValidationError``
-    with the count); a removed token's own ``ENUM_VALUE`` match rules go with it.
+    A token that some component still holds — or that a staged invoice line still
+    references — cannot be removed (``ValidationError`` with the count); a removed
+    token's own ``ENUM_VALUE`` match rules go with it.
     """
-    cleaned = [value.strip() for value in new_values]
-    if any(not value for value in cleaned):
-        raise ValidationError("enum values must not be blank")
-    if len(set(cleaned)) != len(cleaned):
-        raise ValidationError("enum values must be unique")
-    if not cleaned:
-        raise ValidationError("enum parameters require at least one allowed value")
+    cleaned = _clean_enum_values(new_values)
     existing = session.exec(
         select(ParameterEnumValue)
         .where(ParameterEnumValue.parameter_definition_id == definition.id)
@@ -484,6 +520,14 @@ def _sync_enum_values(
         if used:
             raise ValidationError(
                 f"{used} components use value {row.value!r}; cannot remove it"
+            )
+        staged = count_import_lines_using_enum_value(
+            session, cast(int, definition.id), row.value
+        )
+        if staged:
+            raise ValidationError(
+                f"{staged} staged invoice lines use value {row.value!r}; "
+                "review or dismiss them first"
             )
         for rule in session.exec(
             select(MatchRule).where(
@@ -519,75 +563,83 @@ def update_parameter_definition(
     session: Session,
     definition_id: int,
     *,
-    name: str,
-    label: str,
+    name: str | None = None,
+    label: str | None = None,
     unit: str | None = None,
-    sort_order: int = 0,
-    is_table_column: bool = False,
-    is_filterable: bool = False,
+    sort_order: int | None = None,
+    is_table_column: bool | None = None,
+    is_filterable: bool | None = None,
     enum_values: list[str] | None = None,
     user_id: int | None = None,
 ) -> ParameterDefinition:
     """Edit a parameter definition in one transaction (§13 edit).
 
-    ``data_type`` is immutable and not accepted here — changing it would invalidate
-    values already stored under the old type. Everything else is editable: the
-    technical ``name`` (a rename repoints the ``PARAM_NAME`` match rules scoped to
-    this definition, for consistency — the engine keys them by the stable id), the
-    ``label``/``unit``/``sort_order``/flags, and the enum tokens (add freely; a token
-    a component still holds cannot be removed). Any failure rolls the whole edit back.
+    A partial PATCH: every field is optional and ``None`` means "leave unchanged",
+    so a caller can send just the one field it edits without wiping the others. (To
+    clear the ``unit``, send an empty string, not null.) ``data_type`` is immutable
+    and not accepted here — changing it would invalidate values already stored under
+    the old type. A ``name`` rename repoints the ``PARAM_NAME`` match rules scoped to
+    this definition (consistency — the engine keys them by the stable id); the enum
+    tokens are reconciled (a token a component or a staged invoice line still holds
+    cannot be removed). Any failure rolls the whole edit back.
     """
     definition = require_entity(
         session, ParameterDefinition, definition_id, "parameter definition"
     )
-    new_name = name.strip()
-    if not new_name:
-        raise ValidationError("parameter name must not be empty")
-    new_label = label.strip()
-    if not new_label:
-        raise ValidationError("parameter label must not be empty")
     is_enum = definition.data_type is ParameterDataType.ENUM
     if enum_values is not None and not is_enum:
         raise ValidationError("enum_values only apply to enum parameters")
     try:
-        if new_name != definition.name:
-            _require_unique_parameter_name(session, definition.type_id, new_name)
-            old_name = definition.name
-            for rule in session.exec(
-                select(MatchRule).where(
-                    MatchRule.domain == MatchDomain.PARAM_NAME,
-                    MatchRule.parameter_definition_id == definition_id,
+        if name is not None:
+            new_name = name.strip()
+            if not new_name:
+                raise ValidationError("parameter name must not be empty")
+            if new_name != definition.name:
+                _require_unique_parameter_name(session, definition.type_id, new_name)
+                old_name = definition.name
+                for rule in session.exec(
+                    select(MatchRule).where(
+                        MatchRule.domain == MatchDomain.PARAM_NAME,
+                        MatchRule.parameter_definition_id == definition_id,
+                    )
+                ).all():
+                    rule.canonical = new_name
+                    session.add(rule)
+                _audit_definition(
+                    session, definition_id, audit_service.FIELD_NAME, old_name,
+                    new_name, user_id,
                 )
-            ).all():
-                rule.canonical = new_name
-                session.add(rule)
-            _audit_definition(
-                session, definition_id, audit_service.FIELD_NAME, old_name, new_name,
-                user_id,
+                definition.name = new_name
+        if label is not None:
+            new_label = label.strip()
+            if not new_label:
+                raise ValidationError("parameter label must not be empty")
+            _set_definition_scalar(
+                session, definition, "label", new_label,
+                audit_service.FIELD_LABEL, user_id,
             )
-            definition.name = new_name
-        _set_definition_scalar(
-            session, definition, "label", new_label,
-            audit_service.FIELD_LABEL, user_id,
-        )
-        _set_definition_scalar(
-            session, definition, "unit", _blank_to_none(unit),
-            audit_service.FIELD_UNIT, user_id,
-        )
-        _set_definition_scalar(
-            session, definition, "sort_order", sort_order,
-            audit_service.FIELD_SORT_ORDER, user_id,
-        )
-        _set_definition_scalar(
-            session, definition, "is_table_column", is_table_column,
-            audit_service.FIELD_IS_TABLE_COLUMN, user_id,
-        )
-        _set_definition_scalar(
-            session, definition, "is_filterable", is_filterable,
-            audit_service.FIELD_IS_FILTERABLE, user_id,
-        )
+        if unit is not None:
+            _set_definition_scalar(
+                session, definition, "unit", _blank_to_none(unit),
+                audit_service.FIELD_UNIT, user_id,
+            )
+        if sort_order is not None:
+            _set_definition_scalar(
+                session, definition, "sort_order", sort_order,
+                audit_service.FIELD_SORT_ORDER, user_id,
+            )
+        if is_table_column is not None:
+            _set_definition_scalar(
+                session, definition, "is_table_column", is_table_column,
+                audit_service.FIELD_IS_TABLE_COLUMN, user_id,
+            )
+        if is_filterable is not None:
+            _set_definition_scalar(
+                session, definition, "is_filterable", is_filterable,
+                audit_service.FIELD_IS_FILTERABLE, user_id,
+            )
         session.add(definition)
-        if is_enum and enum_values is not None:
+        if enum_values is not None:
             _sync_enum_values(session, definition, enum_values, user_id)
         session.commit()
     except Exception:
@@ -600,10 +652,12 @@ def update_parameter_definition(
 def delete_parameter_definition(
     session: Session, definition_id: int, *, user_id: int | None = None
 ) -> None:
-    """Delete a parameter definition, only when no component uses it (§13 edit).
+    """Delete a parameter definition, only when nothing holds a value for it (§13 edit).
 
-    Refused (``ValidationError``) with a count if any component holds a value for it;
-    otherwise its enum values and scoped match rules go with it. Transactional.
+    Refused (``ValidationError``) with a count if any component holds a value for it,
+    or a staged invoice line still references it (its ``parameters`` JSON is not a
+    real FK, but finalize would reject the dangling id); otherwise its enum values and
+    scoped match rules go with it. Transactional.
     """
     definition = require_entity(
         session, ParameterDefinition, definition_id, "parameter definition"
@@ -612,6 +666,12 @@ def delete_parameter_definition(
     if used:
         raise ValidationError(
             f"{used} components have a value for this parameter; clear them first"
+        )
+    staged = count_import_lines_using_definition(session, definition_id)
+    if staged:
+        raise ValidationError(
+            f"{staged} staged invoice lines use this parameter; "
+            "review or dismiss them first"
         )
     try:
         if user_id is not None:
@@ -665,6 +725,26 @@ def _require_unique_parameter_name(
         )
 
 
+def _clean_enum_values(values: list[str] | None) -> list[str]:
+    """Validate and normalise enum tokens: stripped, non-blank, at least one, and
+    unique IGNORING CASE.
+
+    One normaliser for both create and edit so they can't drift — a token stored
+    unstripped by one and stripped by the other reads as a remove+add and can lock
+    an in-use definition. Case-folded uniqueness matches how the vocabulary is
+    consumed (``_canonical_target`` resolves an ``ENUM_VALUE`` rule by ``casefold``
+    and returns the first match), so ``"Flat"``/``"flat"`` would leave the second
+    untargetable. The stripped list is returned for the caller to store."""
+    cleaned = [value.strip() for value in (values or [])]
+    if not cleaned:
+        raise ValidationError("enum parameters require at least one allowed value")
+    if any(not value for value in cleaned):
+        raise ValidationError("enum values must not be blank")
+    if len({value.casefold() for value in cleaned}) != len(cleaned):
+        raise ValidationError("enum values must be unique (case-insensitive)")
+    return cleaned
+
+
 def _validate_parameter_spec(spec: ParameterSpec) -> None:
     """Check a parameter spec against the EAV/enum rules (decision D6)."""
     if not spec.name.strip():
@@ -672,14 +752,7 @@ def _validate_parameter_spec(spec: ParameterSpec) -> None:
     if spec.data_type is not ParameterDataType.ENUM and spec.enum_values:
         raise ValidationError("enum_values only apply to enum parameters")
     if spec.data_type is ParameterDataType.ENUM:
-        if not spec.enum_values:
-            raise ValidationError("enum parameters require at least one allowed value")
-        # These values are surfaced to clients as selectable tokens, so reject
-        # blanks and duplicates rather than presenting an unusable picker.
-        if any(not value.strip() for value in spec.enum_values):
-            raise ValidationError("enum values must not be blank")
-        if len(set(spec.enum_values)) != len(spec.enum_values):
-            raise ValidationError("enum values must be unique")
+        _clean_enum_values(spec.enum_values)  # raises on blank/dup/empty
 
 
 def _create_parameter_definition(
@@ -702,7 +775,14 @@ def _create_parameter_definition(
     )
     session.add(definition)
     session.flush()
-    for order, value in enumerate(spec.enum_values or []):
+    # Store the STRIPPED tokens so create and edit agree on what a token is (see
+    # _clean_enum_values); the spec was validated, so this won't raise.
+    tokens = (
+        _clean_enum_values(spec.enum_values)
+        if spec.data_type is ParameterDataType.ENUM
+        else []
+    )
+    for order, value in enumerate(tokens):
         session.add(
             ParameterEnumValue(
                 parameter_definition_id=definition.id,

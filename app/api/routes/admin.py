@@ -79,15 +79,18 @@ class TypeUpdate(BaseModel):
 class ParameterDefinitionUpdate(BaseModel):
     """Edit a parameter definition; ``data_type`` is immutable so it is absent.
 
-    ``enum_values`` is honoured only for enum parameters (ignored/rejected otherwise).
+    A partial PATCH: every field is ``None`` by default and means "leave unchanged",
+    so sending one field can't silently reset the others (mirrors ``MatchRuleUpdate``).
+    To clear the unit send ``""``, not null. ``enum_values`` is honoured only for enum
+    parameters (rejected otherwise).
     """
 
-    name: str
-    label: str
+    name: str | None = None
+    label: str | None = None
     unit: str | None = None
-    sort_order: int = 0
-    is_table_column: bool = False
-    is_filterable: bool = False
+    sort_order: int | None = None
+    is_table_column: bool | None = None
+    is_filterable: bool | None = None
     enum_values: list[str] | None = None
 
 

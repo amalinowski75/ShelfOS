@@ -2129,3 +2129,26 @@ def test_parameter_edit_forbidden_for_non_admin(
         ).status_code
         == 403
     )
+
+
+def test_update_parameter_definition_patch_leaves_unsent_fields(
+    client: TestClient,
+) -> None:
+    # A PATCH that sends only what it edits must not reset the other fields (#80).
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    client.post(
+        f"/api/types/{ctype['id']}/parameters",
+        json={"name": "resistance", "label": "R", "data_type": "number",
+              "unit": "ohm", "sort_order": 5, "is_table_column": True},
+    )
+    d = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
+
+    resp = client.patch(
+        f"/api/admin/parameters/{d['id']}", json={"label": "Resistance"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["label"] == "Resistance"
+    assert body["unit"] == "ohm"  # untouched
+    assert body["sort_order"] == 5
+    assert body["is_table_column"] is True

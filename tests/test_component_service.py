@@ -1395,3 +1395,142 @@ def test_delete_parameter_definition_removes_enum_values_and_scoped_rules(
 def test_delete_parameter_definition_unknown_id(session: Session) -> None:
     with pytest.raises(NotFoundError):
         cs.delete_parameter_definition(session, 999)
+
+
+# --- parameter edit/delete: review fixes (#80) ---------------------------------
+
+
+def _staged_line(session: Session, definition_id: int, value: str) -> None:
+    from decimal import Decimal
+
+    from app.models.invoice import InvoiceImportLine
+
+    session.add(
+        InvoiceImportLine(
+            invoice_id=1, line_no=1, quantity=1, unit_price=Decimal("1"),
+            shop_key="tme", reason="",
+            parameters=[{"parameter_definition_id": definition_id, "value": value}],
+        )
+    )
+    session.commit()
+
+
+def test_delete_parameter_definition_blocked_by_a_staged_invoice_line(
+    session: Session,
+) -> None:
+    ctype = cs.create_type(session, "resistor")
+    d = cs.add_parameter_definition(
+        session, ctype.id, name="resistance", label="R",
+        data_type=ParameterDataType.NUMBER,
+    )
+    _staged_line(session, d.id, "4k7")
+    with pytest.raises(ValidationError, match="staged invoice lines use"):
+        cs.delete_parameter_definition(session, d.id)
+    assert session.get(ParameterDefinition, d.id) is not None
+
+
+def test_update_parameter_definition_enum_remove_blocked_by_staged_line(
+    session: Session,
+) -> None:
+    ctype, d = _cable_enum(session)  # ["Flat", "Round"]
+    _staged_line(session, d.id, "Flat")
+    with pytest.raises(ValidationError, match="staged invoice lines use value"):
+        cs.update_parameter_definition(session, d.id, enum_values=["Round"])
+
+
+def test_update_parameter_definition_is_a_partial_patch(session: Session) -> None:
+    # Editing one field must not reset the others (no falsy-default footgun).
+    ctype = cs.create_type(session, "resistor")
+    d = cs.add_parameter_definition(
+        session, ctype.id, name="resistance", label="R",
+        data_type=ParameterDataType.NUMBER, unit="Ω", sort_order=5,
+        is_table_column=True, is_filterable=True,
+    )
+    cs.update_parameter_definition(session, d.id, label="Resistance")
+    got = session.get(ParameterDefinition, d.id)
+    assert got.label == "Resistance"
+    assert (got.name, got.unit, got.sort_order) == ("resistance", "Ω", 5)
+    assert got.is_table_column is True and got.is_filterable is True
+
+
+def test_update_parameter_definition_reorders_enum_tokens(session: Session) -> None:
+    _, d = _cable_enum(session)  # ["Flat", "Round"]
+    cs.update_parameter_definition(session, d.id, enum_values=["Round", "Flat"])
+    assert cs.enum_values_of(session, d.id) == ["Round", "Flat"]  # display order
+
+
+def test_update_parameter_definition_rejects_case_variant_tokens(
+    session: Session,
+) -> None:
+    _, d = _cable_enum(session)
+    with pytest.raises(ValidationError, match="case-insensitive"):
+        cs.update_parameter_definition(session, d.id, enum_values=["Flat", "flat"])
+
+
+def test_update_parameter_definition_removed_token_drops_its_enum_rules(
+    session: Session,
+) -> None:
+    _, d = _cable_enum(session)  # ["Flat", "Round"]
+    mrs.create_rule(
+        session, domain=MatchDomain.ENUM_VALUE, alias="wstazkowy",
+        canonical="Flat", parameter_definition_id=d.id,
+    )
+    cs.update_parameter_definition(session, d.id, enum_values=["Round"])  # drop Flat
+    assert cs.enum_values_of(session, d.id) == ["Round"]
+    assert mrs.list_rules(session) == []  # the ENUM_VALUE rule went with the token
+
+
+def test_enum_tokens_are_stored_stripped(session: Session) -> None:
+    # Create and edit must agree on what a token is, or echoing the served tokens
+    # back reads as remove+add and can lock an in-use definition.
+    ctype = cs.create_type(session, "cable")
+    d = cs.add_parameter_definition(
+        session, ctype.id, name="ctype", label="Type",
+        data_type=ParameterDataType.ENUM, enum_values=["Flat ", " Round"],
+    )
+    assert cs.enum_values_of(session, d.id) == ["Flat", "Round"]  # stored stripped
+    cs.create_component_with_values(session, ctype.id, values=[(d.id, "Flat")])
+    # Echo the served tokens back while editing the label — must NOT trip the guard.
+    cs.update_parameter_definition(
+        session, d.id, label="Cable type", enum_values=["Flat", "Round"]
+    )
+    assert session.get(ParameterDefinition, d.id).label == "Cable type"
+
+
+def test_update_parameter_definition_is_audited(session: Session) -> None:
+    from app.services import audit_service
+
+    _, d = _cable_enum(session)  # enum Flat/Round, label "Type"
+    cs.update_parameter_definition(
+        session, d.id, name="kind", label="Kind",
+        enum_values=["Flat", "Round", "Coax"], user_id=1,
+    )
+    entries = {
+        e.field: (e.old_value, e.new_value)
+        for e in audit_service.list_entries(
+            session, entity_type="parameter_definition", entity_id=d.id
+        )
+    }
+    assert entries[audit_service.FIELD_NAME] == ("ctype", "kind")
+    assert entries[audit_service.FIELD_LABEL] == ("Type", "Kind")
+    assert entries[audit_service.FIELD_ENUM_VALUES] == (
+        "Flat, Round", "Flat, Round, Coax"
+    )
+
+
+def test_delete_parameter_definition_is_audited(session: Session) -> None:
+    from app.services import audit_service
+
+    ctype = cs.create_type(session, "resistor")
+    d = cs.add_parameter_definition(
+        session, ctype.id, name="resistance", label="R",
+        data_type=ParameterDataType.NUMBER,
+    )
+    definition_id = d.id
+    cs.delete_parameter_definition(session, definition_id, user_id=1)
+    entries = audit_service.list_entries(
+        session, entity_type="parameter_definition", entity_id=definition_id
+    )
+    assert [(e.field, e.new_value) for e in entries] == [
+        (audit_service.FIELD_DELETED, "true")
+    ]
