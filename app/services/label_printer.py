@@ -21,7 +21,11 @@ from __future__ import annotations
 import errno
 import io
 import logging
+import os
+import select
+import stat
 import threading
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
@@ -45,6 +49,19 @@ _logger = logging.getLogger("shelfos")
 # process would need the printer's own EBUSY as the backstop, which is why
 # ShelfOS is documented as a single-process deployment.
 _PRINT_LOCK = threading.Lock()
+
+# How often to look at the device while waiting on it, and how much to hand the
+# kernel at a time.
+_POLL_SECONDS: Final = 0.2
+_CHUNK_BYTES: Final = 4096
+# How long one label may take to come out before the wait for confirmation is
+# given up on (the job is still printing; only the confirmation is abandoned).
+_CONFIRM_SECONDS_PER_LABEL: Final = 3.0
+
+_NOT_CONFIGURED: Final = (
+    "label printing is not configured; set SHELFOS_LABEL_DEVICE to the "
+    "printer's device (usually /dev/usb/lp0)"
+)
 
 # Every QL model prints at 300 dpi across the tape.
 _PX_PER_MM: Final = 300 / 25.4
@@ -108,6 +125,9 @@ class TapeGeometry:
 
     tape: str
     width_px: int
+    # The tape's physical width, which is what the printer reports about itself
+    # — 62 mm of tape is 696 PRINTABLE dots, so the two numbers never match.
+    width_mm: int
     length_px: int
     endless: bool
     # Black/red tape (DK-22251 and friends). Not a feature — a requirement: a
@@ -144,11 +164,13 @@ def tape_geometry(
             "QR beside its path, which needs a rectangular label"
         )
     width_px, die_length_px = spec.dots_printable
+    width_mm = int(spec.tape_size[0])
     two_color = spec.color == Color.BLACK_RED_WHITE
     if spec.form_factor == FormFactor.DIE_CUT:
         return TapeGeometry(
             tape=tape,
             width_px=width_px,
+            width_mm=width_mm,
             length_px=die_length_px,
             endless=False,
             two_color=two_color,
@@ -162,6 +184,7 @@ def tape_geometry(
     return TapeGeometry(
         tape=tape,
         width_px=width_px,
+        width_mm=width_mm,
         length_px=round(length_mm * _PX_PER_MM),
         endless=True,
         two_color=two_color,
@@ -387,7 +410,7 @@ def render_png(label: LabelData, geometry: TapeGeometry | None = None) -> bytes:
     return buffer.getvalue()
 
 
-# --- Sending a job to the printer -------------------------------------------
+# --- Talking to the printer --------------------------------------------------
 #
 # The raster bytes go straight to a device path (``/dev/usb/lp0``) rather than
 # through brother_ql's USB backend or CUPS. It needs no libusb, it fails with an
@@ -395,11 +418,231 @@ def render_png(label: LabelData, geometry: TapeGeometry | None = None) -> bytes:
 # the device at a temporary file, so the whole path, real encoder included, runs
 # in CI with no printer and no mocks.
 #
-# What this cannot do is notice that the printer is out of tape, jammed, or has
-# its cover open: the write succeeds, the printer buffers the job and blinks its
-# own LED at nobody. Reading status back needs a bidirectional backend, which a
-# one-way write does not give. Hence the wording everywhere: a job is *sent* to
-# the printer, never reported as *printed*.
+# That device is BIDIRECTIONAL: ask a QL for its status and it answers with 32
+# bytes naming the tape it holds, the phase it is in, and what went wrong. This
+# was written off as impossible at first, on the theory that a one-way write
+# cannot know anything; the first evening with real hardware disproved that, and
+# spent an hour on a diagnosis the printer would have handed over in one frame.
+# So a job is checked before it is sent and confirmed after.
+#
+# Everything about the readback is best-effort. A device that answers nothing —
+# a plain file in the tests, a printer whose firmware stays quiet — leaves the
+# behaviour exactly as it was: send, and report the job as sent rather than
+# printed. Nothing here may turn silence into a failure.
+
+_STATUS_REQUEST: Final = b"\x1b\x69\x53"
+_STATUS_LEN: Final = 32
+_STATUS_MARK: Final = b"\x80\x20"  # every frame starts with these two bytes
+
+# Error information 1 and 2, bit by bit, in the printer's own terms.
+_ERRORS_1: Final = (
+    "no tape in the printer",
+    "the tape has run out",
+    "the cutter is jammed",
+    "",
+    "the printer is busy",
+    "the printer is off",
+    "power adapter fault",
+    "fan fault",
+)
+_ERRORS_2: Final = (
+    "the wrong tape is loaded",
+    "the printer's buffer is full",
+    "a communication error",
+    "the printer's buffer is full",
+    "the cover is open",
+    "the job was cancelled",
+    "the tape cannot be fed",
+    "a printer system error",
+)
+
+_STATUS_REPLY: Final = 0x00
+_STATUS_COMPLETED: Final = 0x01
+_STATUS_ERROR: Final = 0x02
+
+
+@dataclass(frozen=True)
+class PrinterStatus:
+    """What the printer says about itself, decoded from one status frame."""
+
+    media_width_mm: int
+    media_type: int
+    errors: tuple[str, ...]
+    status_type: int
+    phase: int
+
+    @property
+    def has_tape(self) -> bool:
+        return self.media_type != 0x00
+
+
+def _decode_status(frame: bytes) -> PrinterStatus | None:
+    """Decode a 32-byte status frame, or ``None`` if it is not one."""
+    if len(frame) < _STATUS_LEN or not frame.startswith(_STATUS_MARK):
+        return None
+    errors = tuple(
+        phrase
+        for byte, phrases in ((frame[8], _ERRORS_1), (frame[9], _ERRORS_2))
+        for bit, phrase in enumerate(phrases)
+        if phrase and byte & (1 << bit)
+    )
+    return PrinterStatus(
+        media_width_mm=frame[10],
+        media_type=frame[11],
+        errors=errors,
+        status_type=frame[18],
+        phase=frame[19],
+    )
+
+
+def _open_device(device: str) -> int:
+    """Open the printer, translating errno into something actionable."""
+    try:
+        return os.open(device, os.O_RDWR | os.O_NONBLOCK)
+    except FileNotFoundError:
+        raise PrinterError(
+            f"the label printer is not there ({device} does not exist) — "
+            "check that it is plugged in and switched on"
+        ) from None
+    except PermissionError:
+        raise PrinterError(
+            f"no permission to use {device} — add the ShelfOS user to the 'lp' "
+            "group, or install a udev rule for the printer"
+        ) from None
+    except OSError as error:
+        raise PrinterError(f"could not open {device}: {error.strerror}") from None
+
+
+def _write_all(fd: int, data: bytes, device: str, budget: float) -> None:
+    """Write the whole job, or give up — never block a worker thread forever.
+
+    A blocking write to a printer that has stopped draining its endpoint hangs
+    with no timeout of any kind; that happened on the first evening with real
+    hardware and wedged the process until it was killed.
+    """
+    sent = 0
+    deadline = time.monotonic() + budget
+    while sent < len(data):
+        if time.monotonic() >= deadline:
+            raise PrinterError(
+                "the printer stopped accepting the job — it is usually waiting "
+                "for an error to be cleared with the button on the front"
+            )
+        if not select.select([], [fd], [], _POLL_SECONDS)[1]:
+            continue
+        try:
+            sent += os.write(fd, data[sent : sent + _CHUNK_BYTES])
+        except BlockingIOError:
+            time.sleep(_POLL_SECONDS)
+        except OSError as error:
+            if error.errno == errno.EBUSY:
+                raise PrinterError(
+                    f"{device} is held by another program — CUPS usually is the "
+                    "one; remove its queue with 'lpadmin -x'"
+                ) from None
+            if error.errno == errno.ENODEV:
+                # CUPS's usb backend detaches the kernel driver while it talks to
+                # the printer, so a queue for this printer makes the node vanish
+                # from under a job. Seen in dmesg as "usblp4: removed".
+                raise PrinterError(
+                    f"{device} disappeared mid-job — another program (usually "
+                    "CUPS, which detaches the kernel driver) is using the "
+                    "printer; remove its queue with 'lpadmin -x'"
+                ) from None
+            _logger.warning("label print to %s failed: %s", device, error)
+            raise PrinterError("the label printer did not accept the job") from None
+
+
+def _answers_questions(fd: int) -> bool:
+    """Whether this device can be asked anything.
+
+    Only a character device is a printer. A regular file — the tests' stand-in,
+    or a misconfigured path — reports itself readable and then returns nothing
+    for ever, so asking it would burn the whole timeout on every print.
+    """
+    return stat.S_ISCHR(os.fstat(fd).st_mode)
+
+
+def _read_status(fd: int, budget: float) -> PrinterStatus | None:
+    """Wait for one status frame, or ``None`` if the device stays quiet."""
+    buffer = b""
+    deadline = time.monotonic() + budget
+    while time.monotonic() < deadline:
+        if not select.select([fd], [], [], _POLL_SECONDS)[0]:
+            continue
+        try:
+            chunk = os.read(fd, 64)
+        except (BlockingIOError, OSError):
+            return None
+        if not chunk:
+            time.sleep(_POLL_SECONDS)
+            continue
+        buffer += chunk
+        while len(buffer) >= _STATUS_LEN:
+            status = _decode_status(buffer[:_STATUS_LEN])
+            buffer = buffer[_STATUS_LEN:]
+            if status is not None:
+                return status
+    return None
+
+
+def read_printer_status(device: str | None = None) -> PrinterStatus | None:
+    """Ask the printer how it is, or ``None`` if it does not answer."""
+    device = config.LABEL_DEVICE if device is None else device
+    if not device:
+        raise ValidationError(_NOT_CONFIGURED)
+    fd = _open_device(device)
+    try:
+        if not _answers_questions(fd):
+            return None
+        _write_all(fd, _STATUS_REQUEST, device, budget=config.LABEL_STATUS_TIMEOUT)
+        return _read_status(fd, budget=config.LABEL_STATUS_TIMEOUT)
+    finally:
+        os.close(fd)
+
+
+def _refuse_if_not_ready(status: PrinterStatus, geometry: TapeGeometry) -> None:
+    """Stop before printing when the printer already knows it cannot."""
+    if status.errors:
+        raise PrinterError("the printer reports: " + "; ".join(status.errors))
+    if not status.has_tape:
+        raise PrinterError("there is no tape in the printer")
+    if status.media_width_mm != geometry.width_mm:
+        raise ValidationError(
+            f"the printer has {status.media_width_mm} mm tape loaded, but "
+            f"SHELFOS_LABEL_TAPE is {geometry.tape!r} ({geometry.width_mm} mm)"
+        )
+
+
+def _await_completion(fd: int, budget: float) -> bool:
+    """Whether the printer confirmed the job; raise if it reported failure."""
+    deadline = time.monotonic() + budget
+    while time.monotonic() < deadline:
+        status = _read_status(fd, budget=max(0.0, deadline - time.monotonic()))
+        if status is None:
+            return False
+        if status.status_type == _STATUS_COMPLETED:
+            return True
+        if status.status_type == _STATUS_ERROR:
+            if status.errors:
+                raise PrinterError("the printer stopped: " + "; ".join(status.errors))
+            # An error with no reason given. Seen exactly once, and it cost an
+            # evening: a QL-800 refuses a one-colour job when black/red tape is
+            # loaded, and says nothing more than this about it.
+            raise PrinterError(
+                "the printer refused the job without saying why — the usual "
+                "cause is a tape it cannot print that job on: black/red tape "
+                "(DK-22251) needs SHELFOS_LABEL_TAPE=62red, plain tape needs 62"
+            )
+    return False
+
+
+@dataclass(frozen=True)
+class PrintOutcome:
+    """How many labels went, and whether the printer said it printed them."""
+
+    sent: int
+    confirmed: bool
 
 
 def _print_job(labels: Sequence[LabelData], geometry: TapeGeometry) -> bytes:
@@ -423,48 +666,13 @@ def _print_job(labels: Sequence[LabelData], geometry: TapeGeometry) -> bytes:
     return bytes(data)
 
 
-def _write_to_device(data: bytes, device: str) -> None:
-    """Hand the job to the printer, translating errno into something actionable."""
-    try:
-        # Buffered, so a short write to a character device is retried for us.
-        with open(device, "wb") as printer:
-            printer.write(data)
-    except FileNotFoundError:
-        raise PrinterError(
-            f"the label printer is not there ({device} does not exist) — "
-            "check that it is plugged in and switched on"
-        ) from None
-    except PermissionError:
-        raise PrinterError(
-            f"no permission to use {device} — add the ShelfOS user to the 'lp' "
-            "group, or install a udev rule for the printer"
-        ) from None
-    except OSError as error:
-        if error.errno == errno.EBUSY:
-            raise PrinterError(
-                f"{device} is held by another program — CUPS usually is the one; "
-                "remove the printer from CUPS, or print through it instead"
-            ) from None
-        if error.errno == errno.ENODEV:
-            # CUPS's usb backend detaches the kernel driver while it talks to the
-            # printer, so a queue for this printer makes the node disappear from
-            # under a job in flight. Seen in dmesg as "usblp4: removed".
-            raise PrinterError(
-                f"{device} disappeared mid-job — another program (usually CUPS, "
-                "which detaches the kernel driver) is using the printer; remove "
-                "its queue with 'lpadmin -x'"
-            ) from None
-        _logger.warning("label print to %s failed: %s", device, error)
-        raise PrinterError("the label printer did not accept the job") from None
-
-
 def print_labels(
     labels: Sequence[LabelData],
     *,
     copies: int = 1,
     device: str | None = None,
-) -> int:
-    """Send labels to the printer and return how many were sent.
+) -> PrintOutcome:
+    """Print labels, and say whether the printer confirmed doing so.
 
     ``device`` overrides the configured path — the injection point tests use,
     pointing it at a temporary file so the encoder and the write both really
@@ -473,10 +681,7 @@ def print_labels(
     """
     device = config.LABEL_DEVICE if device is None else device
     if not device:
-        raise ValidationError(
-            "label printing is not configured; set SHELFOS_LABEL_DEVICE to the "
-            "printer's device (usually /dev/usb/lp0)"
-        )
+        raise ValidationError(_NOT_CONFIGURED)
     if copies < 1:
         raise ValidationError("copies must be at least 1")
     if not labels:
@@ -493,8 +698,29 @@ def print_labels(
     if not _PRINT_LOCK.acquire(timeout=config.LABEL_PRINT_TIMEOUT):
         raise PrinterError("the label printer is busy — try again in a moment")
     try:
-        _write_to_device(data, device)
+        fd = _open_device(device)
+        try:
+            asks = _answers_questions(fd)
+            if asks:
+                _write_all(fd, _STATUS_REQUEST, device, config.LABEL_STATUS_TIMEOUT)
+                before = _read_status(fd, budget=config.LABEL_STATUS_TIMEOUT)
+                if before is not None:
+                    _refuse_if_not_ready(before, geometry)
+            _write_all(fd, data, device, budget=config.LABEL_PRINT_TIMEOUT)
+            # A silent printer must not hold the request open for the whole
+            # print timeout, so the wait is scaled to the job and capped by it.
+            confirmed = asks and _await_completion(
+                fd,
+                budget=min(
+                    config.LABEL_PRINT_TIMEOUT,
+                    config.LABEL_STATUS_TIMEOUT + _CONFIRM_SECONDS_PER_LABEL * total,
+                ),
+            )
+        finally:
+            os.close(fd)
     finally:
         _PRINT_LOCK.release()
-    _logger.info("sent %d label(s) to %s", total, device)
-    return total
+    _logger.info(
+        "%s %d label(s) to %s", "printed" if confirmed else "sent", total, device
+    )
+    return PrintOutcome(sent=total, confirmed=confirmed)

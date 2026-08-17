@@ -212,10 +212,12 @@ built with two raster planes (the red one empty, unless a label uses red):
 export SHELFOS_LABEL_TAPE="62red"    # DK-22251; "62" is the plain white roll
 ```
 
-One thing this cannot tell you: whether tape actually came out. A one-way write to
-the device succeeds even when the printer is out of tape or its cover is open — so
-ShelfOS says a job was *sent* to the printer, and the printer's own LED is what
-tells you the rest.
+ShelfOS talks to the printer both ways: before a job it asks what tape is loaded
+and refuses when that is not the configured one ("the printer has 62 mm tape
+loaded, but SHELFOS_LABEL_TAPE is '29'"), or when the printer reports an open
+cover, a jam or an empty roll. After the job it waits for the printer to confirm
+the print. A printer that stays silent is not treated as a failure — the job is
+then reported as *sent* rather than printed.
 
 - **Web UI:** sign in at `/login` (session cookie).
 - **API:** `POST /api/auth/token` with `{"username", "password"}` returns a JWT;

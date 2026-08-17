@@ -228,8 +228,9 @@ def _labels(count: int = 3) -> list[LabelData]:
 def test_printing_writes_a_real_raster_job_to_the_device(tmp_path) -> None:  # type: ignore[no-untyped-def]
     """The device is a file here, so the encoder and the write both really run."""
     device = tmp_path / "lp0"
+    device.touch()  # a device node exists before anything writes to it
 
-    assert lp.print_labels(_labels(3), device=str(device)) == 3
+    assert lp.print_labels(_labels(3), device=str(device)).sent == 3
     job = device.read_bytes()
     # A Brother QL job opens by switching to raster mode and ends with
     # print-and-eject; anything else would be a job the printer discards.
@@ -237,6 +238,7 @@ def test_printing_writes_a_real_raster_job_to_the_device(tmp_path) -> None:  # t
     assert job.endswith(b"\x1a")
 
     one = tmp_path / "lp1"
+    one.touch()
     lp.print_labels(_labels(1), device=str(one))
     assert len(one.read_bytes()) < len(job)  # three labels really are three
 
@@ -244,8 +246,10 @@ def test_printing_writes_a_real_raster_job_to_the_device(tmp_path) -> None:  # t
 def test_copies_multiply_the_job(tmp_path) -> None:  # type: ignore[no-untyped-def]
     single = tmp_path / "single"
     double = tmp_path / "double"
+    single.touch()
+    double.touch()
     lp.print_labels(_labels(1), device=str(single))
-    assert lp.print_labels(_labels(1), copies=2, device=str(double)) == 2
+    assert lp.print_labels(_labels(1), copies=2, device=str(double)).sent == 2
     assert len(double.read_bytes()) > len(single.read_bytes())
 
 
@@ -256,6 +260,7 @@ def test_printing_needs_a_configured_device(monkeypatch) -> None:  # type: ignor
 
 
 def test_an_empty_or_oversized_job_is_refused(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    (tmp_path / "lp0").touch()
     device = str(tmp_path / "lp0")
     with pytest.raises(ValidationError, match="nothing to print"):
         lp.print_labels([], device=device)
@@ -288,6 +293,7 @@ def test_a_busy_printer_is_reported_rather_than_waited_on(
     tmp_path, monkeypatch  # type: ignore[no-untyped-def]
 ) -> None:
     monkeypatch.setattr(config, "LABEL_PRINT_TIMEOUT", 0.05)
+    (tmp_path / "lp0").touch()
     lp._PRINT_LOCK.acquire()
     try:
         with pytest.raises(PrinterError, match="busy"):
@@ -295,7 +301,7 @@ def test_a_busy_printer_is_reported_rather_than_waited_on(
     finally:
         lp._PRINT_LOCK.release()
     # The lock is released again for the next job, not leaked by the failure.
-    assert lp.print_labels(_labels(1), device=str(tmp_path / "lp0")) == 1
+    assert lp.print_labels(_labels(1), device=str(tmp_path / "lp0")).sent == 1
 
 
 def test_a_device_check_is_reported_at_startup(tmp_path, monkeypatch, caplog) -> None:  # type: ignore[no-untyped-def]
@@ -330,7 +336,8 @@ def test_a_two_colour_tape_gets_a_two_colour_job(tmp_path, monkeypatch) -> None:
     """
     monkeypatch.setattr(config, "LABEL_TAPE", "62red")
     device = tmp_path / "lp0"
-    assert lp.print_labels(_labels(1), device=str(device)) == 1
+    device.touch()
+    assert lp.print_labels(_labels(1), device=str(device)).sent == 1
     job = device.read_bytes()
 
     # Expanded mode bit 0 = two-colour printing.
@@ -344,6 +351,97 @@ def test_a_two_colour_tape_gets_a_two_colour_job(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setattr(config, "LABEL_TAPE", "62")
     mono = tmp_path / "lp1"
+    mono.touch()
     lp.print_labels(_labels(1), device=str(mono))
     # Two planes for the same label: about twice the data.
     assert len(job) > 1.8 * len(mono.read_bytes())
+
+
+# A real frame, captured from the QL-800 on the bench: 62 mm continuous tape,
+# no errors, answering a status question. Keeping the actual bytes means the
+# decoder is tested against the printer rather than against my reading of the
+# specification.
+_IDLE_FRAME = bytes.fromhex(
+    "80 20 42 34 38 30 00 00 00 00 3e 0a 00 00 23 00"
+    "00 00 00 01 00 00 00 00 00 81 00 00 00 00 00 00".replace(" ", "")
+)
+
+
+def test_status_decodes_a_real_frame() -> None:
+    status = lp._decode_status(_IDLE_FRAME)
+    assert status is not None
+    assert status.media_width_mm == 62
+    assert status.media_type == 0x0A  # continuous
+    assert status.has_tape
+    assert status.errors == ()
+    assert status.status_type == lp._STATUS_REPLY
+
+
+def test_status_ignores_anything_that_is_not_a_frame() -> None:
+    assert lp._decode_status(b"") is None
+    assert lp._decode_status(b"\x00" * 32) is None  # no 0x80 0x20 mark
+    assert lp._decode_status(_IDLE_FRAME[:20]) is None  # truncated
+
+
+def test_status_names_the_printer_s_own_error_bits() -> None:
+    frame = bytearray(_IDLE_FRAME)
+    frame[8] = 0x02  # end of media
+    frame[9] = 0x10  # cover open
+    status = lp._decode_status(bytes(frame))
+    assert status is not None
+    assert status.errors == ("the tape has run out", "the cover is open")
+
+
+def test_a_printer_that_reports_trouble_is_not_printed_to() -> None:
+    """Better to say what the printer said than to feed a job into a jam."""
+    geometry = lp.tape_geometry(tape="62")
+    frame = bytearray(_IDLE_FRAME)
+    frame[9] = 0x10
+    status = lp._decode_status(bytes(frame))
+    assert status is not None
+    with pytest.raises(PrinterError, match="cover is open"):
+        lp._refuse_if_not_ready(status, geometry)
+
+    frame = bytearray(_IDLE_FRAME)
+    frame[11] = 0x00  # no media type = nothing loaded
+    empty = lp._decode_status(bytes(frame))
+    assert empty is not None
+    with pytest.raises(PrinterError, match="no tape"):
+        lp._refuse_if_not_ready(empty, geometry)
+
+
+def test_a_tape_the_printer_does_not_have_is_caught_before_printing() -> None:
+    """The check that would have saved an evening: the tape is 62 mm, and the
+    configuration says 29 mm, so nothing is printed and both numbers are named."""
+    frame = bytearray(_IDLE_FRAME)
+    status = lp._decode_status(bytes(frame))
+    assert status is not None
+    with pytest.raises(ValidationError, match="62 mm tape loaded"):
+        lp._refuse_if_not_ready(status, lp.tape_geometry(tape="29"))
+
+    # And the matching case goes through quietly.
+    lp._refuse_if_not_ready(status, lp.tape_geometry(tape="62"))
+    lp._refuse_if_not_ready(status, lp.tape_geometry(tape="62red"))
+
+
+def test_a_refusal_with_no_reason_given_names_the_likely_tape_mismatch(
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    """A QL-800 with black/red tape refuses a one-colour job and says nothing
+    else about it. Guessing what it meant cost an evening; the message guesses
+    now, naming the tape setting that is almost always the cause."""
+    frame = bytearray(_IDLE_FRAME)
+    frame[18] = lp._STATUS_ERROR
+    refusal = lp._decode_status(bytes(frame))
+    monkeypatch.setattr(lp, "_read_status", lambda fd, budget: refusal)
+
+    with pytest.raises(PrinterError, match="62red"):
+        lp._await_completion(0, budget=1.0)
+
+
+def test_a_device_that_cannot_be_asked_still_prints_unconfirmed(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A plain file is not a printer: print, and say the job was only sent."""
+    device = tmp_path / "lp0"
+    device.touch()
+    outcome = lp.print_labels(_labels(1), device=str(device))
+    assert (outcome.sent, outcome.confirmed) == (1, False)

@@ -166,6 +166,11 @@ LABEL_MAX_JOB = int(os.environ.get("SHELFOS_LABEL_MAX_JOB", "50"))
 # wait its turn, not be refused, but not hold a worker thread indefinitely.
 LABEL_PRINT_TIMEOUT = float(os.environ.get("SHELFOS_LABEL_PRINT_TIMEOUT", "30"))
 
+# How long to wait for the printer to answer a status question. A QL answers in
+# milliseconds; this is only the ceiling for a device that says nothing at all,
+# after which ShelfOS prints unchecked rather than refusing to print.
+LABEL_STATUS_TIMEOUT = float(os.environ.get("SHELFOS_LABEL_STATUS_TIMEOUT", "2"))
+
 
 def label_printing_configured() -> bool:
     """True when a printer device is set, so the print buttons are worth showing."""

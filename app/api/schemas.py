@@ -168,14 +168,16 @@ class LabelPrintRequest(BaseModel):
 
 
 class LabelPrintResult(BaseModel):
-    """How many labels went to the printer.
+    """How many labels went to the printer, and whether it confirmed printing.
 
-    "Sent", not "printed": the write succeeds even when the printer is out of
-    tape or its cover is open — a one-way device write cannot know (see
-    ``label_printer``).
+    A QL answers questions, so a job usually comes back confirmed. ``confirmed``
+    is false when the printer stayed silent — an unusual firmware, or a device
+    that is not really a printer — and the caller should then say a job was
+    *sent* rather than printed.
     """
 
     sent: int
+    confirmed: bool
 
 
 class LocationBulkResult(BaseModel):

@@ -157,9 +157,14 @@ with no printer and no mocks.
 What it costs, and is accepted:
 
 - **Linux only.** ShelfOS is a self-hosted Linux app; this is not a real cost.
-- **No status readback.** The write succeeds whether or not tape comes out: out
-  of tape, cover open and jams are invisible to a one-way write. Every message
-  therefore says a job was *sent* to the printer, never that it printed.
+- **Status readback, after all.** This decision first said the opposite — that a
+  one-way write cannot know anything — and that was wrong. `/dev/usb/lp*` is
+  bidirectional: ask a QL for its status and it answers with 32 bytes naming the
+  tape it holds, its phase, and its error bits. So ShelfOS asks before printing
+  (refusing when the printer reports trouble, or holds tape the configured one
+  does not match) and again afterwards, and reports whether the printer
+  confirmed. It is best-effort: a device that stays silent leaves the old
+  behaviour, a job reported as *sent* rather than printed.
 - **CUPS must not own the printer too**, and the conflict is not a tidy `EBUSY`.
   CUPS's `usb` backend detaches the kernel `usblp` driver whenever it touches the
   device, so the node vanishes and returns while a job is in flight — observed on

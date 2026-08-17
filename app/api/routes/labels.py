@@ -53,8 +53,10 @@ def print_location_labels(
 
     The selection is ``label_service.build_labels`` — the same one the printable
     page uses — so a branch prints exactly what its preview showed. The reply
-    says how many were *sent*: a one-way write to the printer cannot tell
-    whether tape came out the other side.
+    says how many labels went and whether the printer confirmed printing them;
+    it refuses up front when the printer reports a problem, or holds tape the
+    configured one does not match.
     """
     labels = lbl.build_labels(session, ids=payload.ids, root=payload.root)
-    return LabelPrintResult(sent=lp.print_labels(labels, copies=payload.copies))
+    outcome = lp.print_labels(labels, copies=payload.copies)
+    return LabelPrintResult(sent=outcome.sent, confirmed=outcome.confirmed)

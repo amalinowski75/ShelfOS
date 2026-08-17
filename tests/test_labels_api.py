@@ -80,6 +80,7 @@ def test_printing_a_branch_sends_it_to_the_device(  # type: ignore[no-untyped-de
     from app import config
 
     device = tmp_path / "lp0"
+    device.touch()
     monkeypatch.setattr(config, "LABEL_DEVICE", str(device))
     rack = client.post("/api/locations", json={"type": "rack", "name": "Rack A"}).json()
     client.post(
@@ -90,8 +91,9 @@ def test_printing_a_branch_sends_it_to_the_device(  # type: ignore[no-untyped-de
     response = client.post("/api/labels/locations/print", json={"root": rack["id"]})
 
     assert response.status_code == 200
-    # "sent", not "printed" — a one-way write cannot know tape came out.
-    assert response.json() == {"sent": 2}
+    # A file is not a printer, so nothing confirms the job: the caller has to
+    # say "sent" rather than "printed", which is what `confirmed` is for.
+    assert response.json() == {"sent": 2, "confirmed": False}
     assert device.read_bytes().startswith(b"\x1bia\x01")
 
 
@@ -120,6 +122,7 @@ def test_printing_rejects_unknown_and_absurd_ids(  # type: ignore[no-untyped-def
 ) -> None:
     from app import config
 
+    (tmp_path / "lp0").touch()
     monkeypatch.setattr(config, "LABEL_DEVICE", str(tmp_path / "lp0"))
     assert (
         client.post("/api/labels/locations/print", json={"ids": [999]}).status_code
@@ -137,6 +140,7 @@ def test_printing_is_a_write_so_read_only_accounts_cannot(
 ) -> None:
     from app import config
 
+    (tmp_path / "lp0").touch()
     monkeypatch.setattr(config, "LABEL_DEVICE", str(tmp_path / "lp0"))
     location_id = _location(client)
     client.post(
