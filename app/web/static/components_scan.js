@@ -23,7 +23,24 @@
       if (!resp.ok) throw new ScanMiss(await errorMessage(resp));
       const { identifiers, matches } = await resp.json();
       const seen = identifiers.join(" / ") || "this code";
-      if (!matches.length) throw new ScanMiss(`No component matches ${seen}.`);
+      if (!matches.length) {
+        // Nothing in the inventory holds this code yet. Instead of a dead-end
+        // miss, open the New Component dialog and hand it the scanned code: its
+        // import field looks the part up and pre-fills the form, so a brand-new
+        // bag goes straight from scan to create without rescanning. Returning
+        // nothing tells scan_putaway the scan was taken care of here.
+        if (window.openComponentDialog) {
+          window.openComponentDialog(
+            (created) => {
+              window.location = `/components/${created.id}`;
+            },
+            null,
+            { importCode: code },
+          );
+          return null;
+        }
+        throw new ScanMiss(`No component matches ${seen}.`);
+      }
       if (matches.length > 1) {
         throw new ScanMiss(
           `${matches.length} components share ${seen} — move it from its own page.`,

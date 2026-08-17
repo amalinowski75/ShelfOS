@@ -34,6 +34,10 @@
   let lastImport = null;
   // Bumped on every open so a slow shop-lookup can't prefill a reopened dialog.
   let openToken = 0;
+  // The shop-import runner, exposed here so openComponentDialog can fire it for a
+  // code handed in at open time (a scan that matched no existing component). Stays
+  // null on pages whose dialog has no import field (the BOM report reuses it).
+  let triggerImport = null;
 
   // Build a value input for one effective parameter definition, keyed by its id
   // and data type so the payload can be assembled without another lookup.
@@ -577,6 +581,7 @@
         importing = false;
       }
     };
+    triggerImport = runImport; // so openComponentDialog can run it for a scanned code
     importBtn.addEventListener("click", runImport);
     // A keyboard-wedge scanner ends its payload with Enter, so a scan imports by
     // itself. preventDefault so that Enter doesn't submit the half-empty form.
@@ -591,6 +596,9 @@
   // mode, save). `prefill` seeds the fields (BOM line, shop import, or a staged import
   // line by {typeId, paramValues}). `opts.stage = {invoiceId, importLineId}` switches
   // to stage mode (PATCH the import line instead of creating a component).
+  // `opts.importCode` pre-fills the import field and looks it up straight away — the
+  // components-page scan hands over a code that matched no existing component, so the
+  // part is imported without the user rescanning it.
   window.openComponentDialog = function (callback, prefill, opts) {
     onCreated = callback || null;
     stageTarget = (opts && opts.stage) || null;
@@ -602,5 +610,10 @@
     // Focus the import field so a scanner's payload lands there without a click.
     if (importUrl) importUrl.focus();
     applyPrefill(prefill);
+    const importCode = opts && opts.importCode;
+    if (importCode && importUrl && triggerImport) {
+      importUrl.value = importCode;
+      triggerImport();
+    }
   };
 })();
