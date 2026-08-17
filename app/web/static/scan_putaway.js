@@ -223,6 +223,11 @@ window.initScanPutaway = function (adapter) {
     try {
       const resolved = await adapter.resolve(code);
       setStatus("");
+      // A falsy result means the adapter took the scan somewhere else itself
+      // (e.g. the components page opens the New Component dialog for a code that
+      // matches nothing yet) — so there is nothing to file here, and no miss to
+      // report. resolve() otherwise returns a target or throws ScanMiss.
+      if (!resolved) return;
       target = resolved;
       partEl.textContent = resolved.label;
       descEl.textContent = resolved.description || "";

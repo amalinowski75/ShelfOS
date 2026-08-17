@@ -2,10 +2,19 @@ import { describe, it, expect } from "vitest";
 import { loadPage, tick, CSRF, fetchBody } from "./harness.js";
 
 const SCRIPTS = ["shared.js", "scan_putaway.js", "components_scan.js"];
+// With the New Component dialog too, for the "code matches nothing → create it"
+// path, which reaches into openComponentDialog (component_dialog.js).
+const SCRIPTS_WITH_DIALOG = [
+  "shared.js",
+  "component_dialog.js",
+  "scan_putaway.js",
+  "components_scan.js",
+];
 
 // The components page's scan surface: the shared panel and dialog (markup from
-// templates/_putaway.html), with no invoice tables in sight.
-function componentsFixture() {
+// templates/_putaway.html), with no invoice tables in sight. `withCreate` adds
+// the New Component dialog (its import field is what a no-match scan drives).
+function componentsFixture({ withCreate = false } = {}) {
   return `
     <div id="components-table"></div>
     <div id="scan-panel"
@@ -28,7 +37,32 @@ function componentsFixture() {
         <p id="putaway-error" hidden></p>
         <button type="submit">Save</button>
       </form>
-    </dialog>`;
+    </dialog>
+    ${withCreate ? createDialogMarkup() : ""}`;
+}
+
+// The New Component dialog, trimmed to what this flow touches: the import field
+// and button (component_dialog.js wires them and exposes openComponentDialog).
+function createDialogMarkup() {
+  return `
+    <dialog id="component-dialog"><form id="component-form">
+      <input id="shop-import-url" type="text" />
+      <button type="button" id="shop-import-btn"></button>
+      <p id="shop-import-status" hidden></p>
+      <select name="type_id" id="component-type">
+        <option value="">Select a type…</option>
+      </select>
+      <button type="button" id="component-new-type" hidden></button>
+      <input name="manufacturer" />
+      <input name="mpn" />
+      <input name="package" />
+      <select name="mounting_type"><option value="Other" selected>Other</option></select>
+      <input name="notes" />
+      <p id="component-params-hint"></p>
+      <div id="component-params"></div>
+      <p id="component-error" hidden></p>
+      <button type="submit"></button>
+    </form></dialog>`;
 }
 
 const ok = (data) => Promise.resolve({ ok: true, json: () => Promise.resolve(data) });
@@ -109,7 +143,45 @@ describe("components_scan.js — resolving a bag", () => {
     expect(document.getElementById("putaway-select").value).toBe("5");
   });
 
-  it("reports a code that matches nothing, naming what it read", async () => {
+  it("opens the New Component dialog for a code that matches nothing, importing it", async () => {
+    // A brand-new bag: nothing in inventory holds the code, so instead of a
+    // dead-end miss the create dialog opens and looks the code up itself, so it
+    // needn't be rescanned.
+    const page = loadPage(componentsFixture({ withCreate: true }), SCRIPTS_WITH_DIALOG, {
+      fetchImpl: (url) => {
+        if (url === "/api/components/scan")
+          return ok({ identifiers: ["NOPE-1"], matches: [] });
+        if (url === "/api/shops/lookup")
+          return ok({ category: "widget", mpn: "NOPE-1", description: "" });
+        return ok({});
+      },
+    });
+    // No syncDialogOpen: nothing should open the putaway dialog here, and its
+    // showModal shares a prototype-level mock with the create dialog's.
+    scan(page.document, "NOPE-1");
+    await tick();
+
+    // The putaway dialog never opened, and no miss was shown — the create path
+    // returns cleanly, so there is neither an error status nor a warning toast
+    // (a stray dereference of the "no target" result would fire the latter).
+    expect(page.document.getElementById("putaway-dialog").open).toBe(false);
+    expect(page.document.getElementById("scan-status").className).not.toContain(
+      "error",
+    );
+    expect(page.document.querySelector(".toast-warn")).toBe(null);
+    // …instead the create dialog ran the shop lookup with the scanned code, and
+    // the import field carries it for the user to review.
+    const lookup = page.fetchMock.mock.calls.find(
+      ([url]) => url === "/api/shops/lookup",
+    );
+    expect(lookup).toBeTruthy();
+    expect(JSON.parse(lookup[1].body).code).toBe("NOPE-1");
+    expect(page.document.getElementById("shop-import-url").value).toBe("NOPE-1");
+  });
+
+  it("falls back to a plain miss when the create dialog isn't on the page", async () => {
+    // Without openComponentDialog (a page state that omits the create dialog),
+    // a no-match code still reports rather than crashing.
     const { document } = await openOn({ identifiers: ["NOPE-1"], matches: [] });
     const status = document.getElementById("scan-status");
     expect(status.className).toContain("error");
