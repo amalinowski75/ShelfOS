@@ -1,4 +1,4 @@
-"""Label endpoints: what a location's printed label will look like (spec §7)."""
+"""Label endpoints: what a location's label looks like, and printing it (spec §7)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlmodel import Session
 
 from app.api.deps import get_session
+from app.api.schemas import LabelPrintRequest, LabelPrintResult
 from app.services import label_printer as lp
 from app.services import label_service as lbl
 
@@ -42,3 +43,18 @@ def preview_location_label(
         else None
     )
     return Response(content=lp.render_png(label, geometry), media_type="image/png")
+
+
+@router.post("/locations/print", response_model=LabelPrintResult)
+def print_location_labels(
+    payload: LabelPrintRequest, session: Session = Depends(get_session)
+) -> LabelPrintResult:
+    """Send location labels to the label printer (writers).
+
+    The selection is ``label_service.build_labels`` — the same one the printable
+    page uses — so a branch prints exactly what its preview showed. The reply
+    says how many were *sent*: a one-way write to the printer cannot tell
+    whether tape came out the other side.
+    """
+    labels = lbl.build_labels(session, ids=payload.ids, root=payload.root)
+    return LabelPrintResult(sent=lp.print_labels(labels, copies=payload.copies))

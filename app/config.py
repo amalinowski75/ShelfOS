@@ -143,3 +143,30 @@ LABEL_MARGIN_MM = float(os.environ.get("SHELFOS_LABEL_MARGIN_MM", "2"))
 # host has none of those, or to print a font of your own choosing.
 LABEL_FONT = os.environ.get("SHELFOS_LABEL_FONT", "").strip()
 LABEL_FONT_BOLD = os.environ.get("SHELFOS_LABEL_FONT_BOLD", "").strip()
+
+# Where the label printer is, as a device the host can write to — a Brother QL
+# on USB is /dev/usb/lp0. Empty (the default) means no printer: labels can still
+# be previewed and printed through the browser, and the print buttons stay
+# hidden. The raster bytes go to this path directly; ShelfOS does not go through
+# CUPS, and CUPS holding the same device will make writes fail.
+LABEL_DEVICE = os.environ.get("SHELFOS_LABEL_DEVICE", "").strip()
+
+# Which Brother QL is on the other end. The 800 series has its own raster
+# header, so a wrong model here produces a printer that takes the job and does
+# nothing with it.
+LABEL_PRINTER_MODEL = os.environ.get("SHELFOS_LABEL_PRINTER_MODEL", "QL-800").strip()
+
+# Ceiling on one print job. Deliberately far below the 500-label cap on building
+# labels: that many is half a roll fed out by one mis-click, and unlike a
+# mis-typed query it cannot be undone by reloading the page.
+LABEL_MAX_JOB = int(os.environ.get("SHELFOS_LABEL_MAX_JOB", "50"))
+
+# How long a print may wait for the printer to be free. There is exactly one
+# printer, so jobs are serialised; a second click during a six-label job should
+# wait its turn, not be refused, but not hold a worker thread indefinitely.
+LABEL_PRINT_TIMEOUT = float(os.environ.get("SHELFOS_LABEL_PRINT_TIMEOUT", "30"))
+
+
+def label_printing_configured() -> bool:
+    """True when a printer device is set, so the print buttons are worth showing."""
+    return bool(LABEL_DEVICE)

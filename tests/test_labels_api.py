@@ -72,3 +72,84 @@ def test_preview_needs_a_login_but_not_a_writer(
         headers={"Authorization": f"Bearer {token}"},
     )
     assert allowed.status_code == 200
+
+
+def test_printing_a_branch_sends_it_to_the_device(  # type: ignore[no-untyped-def]
+    client: TestClient, tmp_path, monkeypatch
+) -> None:
+    from app import config
+
+    device = tmp_path / "lp0"
+    monkeypatch.setattr(config, "LABEL_DEVICE", str(device))
+    rack = client.post("/api/locations", json={"type": "rack", "name": "Rack A"}).json()
+    client.post(
+        "/api/locations",
+        json={"type": "drawer", "name": "D1", "parent_id": rack["id"]},
+    )
+
+    response = client.post("/api/labels/locations/print", json={"root": rack["id"]})
+
+    assert response.status_code == 200
+    # "sent", not "printed" — a one-way write cannot know tape came out.
+    assert response.json() == {"sent": 2}
+    assert device.read_bytes().startswith(b"\x1bia\x01")
+
+
+def test_printing_without_a_printer_says_what_to_set(client: TestClient) -> None:
+    location_id = _location(client)
+    response = client.post("/api/labels/locations/print", json={"ids": [location_id]})
+    assert response.status_code == 422
+    assert "SHELFOS_LABEL_DEVICE" in response.json()["detail"]
+
+
+def test_an_unreachable_printer_is_a_503(  # type: ignore[no-untyped-def]
+    client: TestClient, tmp_path, monkeypatch
+) -> None:
+    """Nothing is wrong with the request, so it is not a 4xx: retrying may work."""
+    from app import config
+
+    monkeypatch.setattr(config, "LABEL_DEVICE", str(tmp_path / "unplugged" / "lp0"))
+    location_id = _location(client)
+    response = client.post("/api/labels/locations/print", json={"ids": [location_id]})
+    assert response.status_code == 503
+    assert "not there" in response.json()["detail"]
+
+
+def test_printing_rejects_unknown_and_absurd_ids(  # type: ignore[no-untyped-def]
+    client: TestClient, tmp_path, monkeypatch
+) -> None:
+    from app import config
+
+    monkeypatch.setattr(config, "LABEL_DEVICE", str(tmp_path / "lp0"))
+    assert (
+        client.post("/api/labels/locations/print", json={"ids": [999]}).status_code
+        == 404
+    )
+    huge = int("9" * 26)
+    assert (
+        client.post("/api/labels/locations/print", json={"ids": [huge]}).status_code
+        == 422
+    )
+
+
+def test_printing_is_a_write_so_read_only_accounts_cannot(
+    client: TestClient, anon_client: TestClient, tmp_path, monkeypatch  # type: ignore[no-untyped-def]
+) -> None:
+    from app import config
+
+    monkeypatch.setattr(config, "LABEL_DEVICE", str(tmp_path / "lp0"))
+    location_id = _location(client)
+    client.post(
+        "/api/admin/users",
+        json={"username": "viewer", "password": "password123", "role": "read-only"},
+    )
+    token = client.post(
+        "/api/auth/token", json={"username": "viewer", "password": "password123"}
+    ).json()["access_token"]
+
+    refused = anon_client.post(
+        "/api/labels/locations/print",
+        json={"ids": [location_id]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert refused.status_code == 403

@@ -142,3 +142,34 @@ These are now prioritized in `ROADMAP.md` ("Post-v1.0 backlog"). Order set by th
 user on 2026-07-08: users/auth first, then type/parameter creation, then invoice
 workflow; CSV and Alembic/PostgreSQL are low priority (migration may never
 happen).
+
+## D12. Label printing goes straight at the device  [2026-08-17]
+
+ShelfOS renders a location label itself and writes the Brother QL raster bytes to
+a device path (`SHELFOS_LABEL_DEVICE`, normally `/dev/usb/lp0`). It does not go
+through CUPS, and it does not use `brother_ql`'s USB backend.
+
+Why: a device path needs no libusb, fails with an errno that turns into a
+sentence worth reading, and — the decisive part — a test can point it at a
+temporary file, so the whole path including the real raster encoder runs in CI
+with no printer and no mocks.
+
+What it costs, and is accepted:
+
+- **Linux only.** ShelfOS is a self-hosted Linux app; this is not a real cost.
+- **No status readback.** The write succeeds whether or not tape comes out: out
+  of tape, cover open and jams are invisible to a one-way write. Every message
+  therefore says a job was *sent* to the printer, never that it printed.
+- **CUPS must not own the printer too.** If the QL is installed as a CUPS
+  printer, CUPS holds the device and writes fail with `EBUSY` — reported as
+  exactly that, since it is the likeliest real-world failure.
+- **One process.** Jobs are serialised on a process-wide lock, so more than one
+  worker process would fall back on the printer's own `EBUSY`.
+
+The browser-printable page (`/labels/locations`) stays regardless: it works with
+any printer that has a driver, including this one through CUPS.
+
+`brother_ql_next` is a plain dependency rather than an optional extra because its
+label table is the source of truth for a tape's printable width (62 mm of tape is
+732 dots, of which 696 print). A copy of that table here could drift from the
+library that encodes the job, and the failure mode is noise printed on real tape.

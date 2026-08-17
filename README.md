@@ -161,6 +161,32 @@ would receive, and takes `?tape=` / `?length=` to try a roll without touching th
 environment — so the layout can be settled by looking, rather than by feeding tape
 through a printer. A setting that would fail is named in a startup warning.
 
+To print for real, point ShelfOS at the printer's device:
+
+```bash
+export SHELFOS_LABEL_DEVICE="/dev/usb/lp0"   # empty (default) = no printer
+export SHELFOS_LABEL_PRINTER_MODEL="QL-800"
+export SHELFOS_LABEL_MAX_JOB="50"            # labels per job
+```
+
+The raster bytes go straight to that device, so two things about the host matter.
+The ShelfOS user needs write access — join the `lp` group, or install a udev rule:
+
+```
+# /etc/udev/rules.d/99-brother-ql.rules
+SUBSYSTEM=="usbmisc", ATTRS{idVendor}=="04f9", MODE="0660", GROUP="plugdev"
+```
+
+And **CUPS must not own the same printer**: if the QL is installed as a CUPS
+printer, CUPS holds the device and ShelfOS's writes fail with "in use by another
+program". Either remove it from CUPS and print through ShelfOS, or leave it in
+CUPS and print through the browser page instead.
+
+One thing this cannot tell you: whether tape actually came out. A one-way write to
+the device succeeds even when the printer is out of tape or its cover is open — so
+ShelfOS says a job was *sent* to the printer, and the printer's own LED is what
+tells you the rest.
+
 - **Web UI:** sign in at `/login` (session cookie).
 - **API:** `POST /api/auth/token` with `{"username", "password"}` returns a JWT;
   send it as `Authorization: Bearer <token>`.

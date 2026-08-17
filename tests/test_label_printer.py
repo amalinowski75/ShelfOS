@@ -10,12 +10,13 @@ the layout says at the scale the layout chose.
 from __future__ import annotations
 
 import io
+import os
 
 import pytest
 import segno
 from app import config
 from app.services import label_printer as lp
-from app.services.errors import ValidationError
+from app.services.errors import PrinterError, ValidationError
 from app.services.label_service import LabelData, location_qr_payload
 from PIL import Image, ImageChops
 
@@ -215,3 +216,100 @@ def test_unusable_label_settings_are_reported_at_startup(monkeypatch, caplog) ->
     with caplog.at_level("WARNING", logger="shelfos"):
         _check_label_settings()
     assert caplog.text == ""  # a working setup says nothing
+
+
+def _labels(count: int = 3) -> list[LabelData]:
+    return [
+        LabelData(id=n, name=f"D{n}", path=f"Lab / D{n}", qr_svg="")
+        for n in range(1, count + 1)
+    ]
+
+
+def test_printing_writes_a_real_raster_job_to_the_device(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The device is a file here, so the encoder and the write both really run."""
+    device = tmp_path / "lp0"
+
+    assert lp.print_labels(_labels(3), device=str(device)) == 3
+    job = device.read_bytes()
+    # A Brother QL job opens by switching to raster mode and ends with
+    # print-and-eject; anything else would be a job the printer discards.
+    assert job.startswith(b"\x1bia\x01")
+    assert job.endswith(b"\x1a")
+
+    one = tmp_path / "lp1"
+    lp.print_labels(_labels(1), device=str(one))
+    assert len(one.read_bytes()) < len(job)  # three labels really are three
+
+
+def test_copies_multiply_the_job(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    single = tmp_path / "single"
+    double = tmp_path / "double"
+    lp.print_labels(_labels(1), device=str(single))
+    assert lp.print_labels(_labels(1), copies=2, device=str(double)) == 2
+    assert len(double.read_bytes()) > len(single.read_bytes())
+
+
+def test_printing_needs_a_configured_device(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(config, "LABEL_DEVICE", "")
+    with pytest.raises(ValidationError, match="SHELFOS_LABEL_DEVICE"):
+        lp.print_labels(_labels(1))
+
+
+def test_an_empty_or_oversized_job_is_refused(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    device = str(tmp_path / "lp0")
+    with pytest.raises(ValidationError, match="nothing to print"):
+        lp.print_labels([], device=device)
+
+    # Far below the 500-label cap on *building* labels: half a roll fed out by
+    # one mis-click cannot be undone by reloading the page.
+    monkeypatch.setattr(config, "LABEL_MAX_JOB", 2)
+    with pytest.raises(ValidationError, match="at most 2 labels"):
+        lp.print_labels(_labels(3), device=device)
+    with pytest.raises(ValidationError, match="at most 2 labels"):
+        lp.print_labels(_labels(2), copies=2, device=device)
+
+
+def test_a_missing_device_is_a_printer_error(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Not a ValidationError: the request was fine, the printer was not there."""
+    with pytest.raises(PrinterError, match="not there"):
+        lp.print_labels(_labels(1), device=str(tmp_path / "gone" / "lp0"))
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes to any file regardless")
+def test_an_unwritable_device_names_the_permission_fix(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    unwritable = tmp_path / "lp0"
+    unwritable.write_bytes(b"")
+    unwritable.chmod(0o400)
+    with pytest.raises(PrinterError, match="'lp' group"):
+        lp.print_labels(_labels(1), device=str(unwritable))
+
+
+def test_a_busy_printer_is_reported_rather_than_waited_on(
+    tmp_path, monkeypatch  # type: ignore[no-untyped-def]
+) -> None:
+    monkeypatch.setattr(config, "LABEL_PRINT_TIMEOUT", 0.05)
+    lp._PRINT_LOCK.acquire()
+    try:
+        with pytest.raises(PrinterError, match="busy"):
+            lp.print_labels(_labels(1), device=str(tmp_path / "lp0"))
+    finally:
+        lp._PRINT_LOCK.release()
+    # The lock is released again for the next job, not leaked by the failure.
+    assert lp.print_labels(_labels(1), device=str(tmp_path / "lp0")) == 1
+
+
+def test_a_device_check_is_reported_at_startup(tmp_path, monkeypatch, caplog) -> None:  # type: ignore[no-untyped-def]
+    from app.main import _check_label_settings
+
+    monkeypatch.setattr(config, "LABEL_DEVICE", str(tmp_path / "lp0"))
+    with caplog.at_level("WARNING", logger="shelfos"):
+        _check_label_settings()
+    assert "does not exist" in caplog.text
+
+    caplog.clear()
+    device = tmp_path / "lp0"
+    device.write_bytes(b"")
+    device.chmod(0o400)
+    with caplog.at_level("WARNING", logger="shelfos"):
+        _check_label_settings()
+    assert "not writable" in caplog.text

@@ -18,19 +18,33 @@ a centimetre of tape per attempt.
 
 from __future__ import annotations
 
+import errno
 import io
+import logging
+import threading
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Final
 
 import segno
+from brother_ql.conversion import convert
+from brother_ql.exceptions import BrotherQLError
 from brother_ql.labels import ALL_LABELS, FormFactor
+from brother_ql.raster import BrotherQLRaster
 from PIL import Image, ImageDraw, ImageFont
 
 from app import config
-from app.services.errors import ValidationError
+from app.services.errors import PrinterError, ValidationError
 from app.services.label_service import LabelData, location_qr_payload
+
+_logger = logging.getLogger("shelfos")
+
+# One printer, so one job at a time. Process-wide: running more than one worker
+# process would need the printer's own EBUSY as the backstop, which is why
+# ShelfOS is documented as a single-process deployment.
+_PRINT_LOCK = threading.Lock()
 
 # Every QL model prints at 300 dpi across the tape.
 _PX_PER_MM: Final = 300 / 25.4
@@ -359,3 +373,99 @@ def render_png(label: LabelData, geometry: TapeGeometry | None = None) -> bytes:
     buffer = io.BytesIO()
     render_label(label, geometry).save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+# --- Sending a job to the printer -------------------------------------------
+#
+# The raster bytes go straight to a device path (``/dev/usb/lp0``) rather than
+# through brother_ql's USB backend or CUPS. It needs no libusb, it fails with an
+# errno that can be turned into a sentence worth reading — and a test can point
+# the device at a temporary file, so the whole path, real encoder included, runs
+# in CI with no printer and no mocks.
+#
+# What this cannot do is notice that the printer is out of tape, jammed, or has
+# its cover open: the write succeeds, the printer buffers the job and blinks its
+# own LED at nobody. Reading status back needs a bidirectional backend, which a
+# one-way write does not give. Hence the wording everywhere: a job is *sent* to
+# the printer, never reported as *printed*.
+
+
+def _print_job(labels: Sequence[LabelData], geometry: TapeGeometry) -> bytes:
+    """Encode labels as one Brother QL raster job."""
+    raster = BrotherQLRaster(config.LABEL_PRINTER_MODEL)
+    # Say something rather than emitting a job the printer will quietly discard.
+    raster.exception_on_warning = True
+    images = [render_label(label, geometry) for label in labels]
+    try:
+        data = convert(raster, images, geometry.tape, rotate=0, cut=True)
+    except (ValueError, LookupError, BrotherQLError) as error:
+        raise ValidationError(f"could not build the print job: {error}") from None
+    return bytes(data)
+
+
+def _write_to_device(data: bytes, device: str) -> None:
+    """Hand the job to the printer, translating errno into something actionable."""
+    try:
+        # Buffered, so a short write to a character device is retried for us.
+        with open(device, "wb") as printer:
+            printer.write(data)
+    except FileNotFoundError:
+        raise PrinterError(
+            f"the label printer is not there ({device} does not exist) — "
+            "check that it is plugged in and switched on"
+        ) from None
+    except PermissionError:
+        raise PrinterError(
+            f"no permission to use {device} — add the ShelfOS user to the 'lp' "
+            "group, or install a udev rule for the printer"
+        ) from None
+    except OSError as error:
+        if error.errno == errno.EBUSY:
+            raise PrinterError(
+                f"{device} is held by another program — CUPS usually is the one; "
+                "remove the printer from CUPS, or print through it instead"
+            ) from None
+        _logger.warning("label print to %s failed: %s", device, error)
+        raise PrinterError("the label printer did not accept the job") from None
+
+
+def print_labels(
+    labels: Sequence[LabelData],
+    *,
+    copies: int = 1,
+    device: str | None = None,
+) -> int:
+    """Send labels to the printer and return how many were sent.
+
+    ``device`` overrides the configured path — the injection point tests use,
+    pointing it at a temporary file so the encoder and the write both really
+    run. Jobs are serialised on a process-wide lock: there is one printer, and
+    two interleaved raster streams would print one ruined label.
+    """
+    device = config.LABEL_DEVICE if device is None else device
+    if not device:
+        raise ValidationError(
+            "label printing is not configured; set SHELFOS_LABEL_DEVICE to the "
+            "printer's device (usually /dev/usb/lp0)"
+        )
+    if copies < 1:
+        raise ValidationError("copies must be at least 1")
+    if not labels:
+        raise ValidationError("nothing to print")
+    total = len(labels) * copies
+    if total > config.LABEL_MAX_JOB:
+        raise ValidationError(
+            f"at most {config.LABEL_MAX_JOB} labels per print job (asked for "
+            f"{total}); print a smaller branch"
+        )
+
+    geometry = tape_geometry()
+    data = _print_job([label for label in labels for _ in range(copies)], geometry)
+    if not _PRINT_LOCK.acquire(timeout=config.LABEL_PRINT_TIMEOUT):
+        raise PrinterError("the label printer is busy — try again in a moment")
+    try:
+        _write_to_device(data, device)
+    finally:
+        _PRINT_LOCK.release()
+    _logger.info("sent %d label(s) to %s", total, device)
+    return total

@@ -15,6 +15,7 @@ from app.services.errors import (
     InsufficientStockError,
     InvoiceFinalizedError,
     NotFoundError,
+    PrinterError,
     ShelfOSError,
     ValidationError,
 )
@@ -24,6 +25,8 @@ _STATUS_BY_ERROR: list[tuple[type[ShelfOSError], int]] = [
     (ValidationError, status.HTTP_422_UNPROCESSABLE_CONTENT),
     (InsufficientStockError, status.HTTP_409_CONFLICT),
     (InvoiceFinalizedError, status.HTTP_409_CONFLICT),
+    # Not a client error: the request was fine and the printer was not there.
+    (PrinterError, status.HTTP_503_SERVICE_UNAVAILABLE),
 ]
 
 

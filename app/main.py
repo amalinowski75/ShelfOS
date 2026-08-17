@@ -120,6 +120,21 @@ def _check_label_settings() -> None:
         label_printer.font_paths()
     except ValidationError as error:
         _logger.warning("Labels cannot be rendered: %s", error)
+    if not config.label_printing_configured():
+        return  # no printer is a normal setup, not a misconfiguration
+    device = Path(config.LABEL_DEVICE)
+    if not device.exists():
+        _logger.warning(
+            "SHELFOS_LABEL_DEVICE=%r does not exist; printing will fail until the "
+            "printer is plugged in (a Brother QL on USB is usually /dev/usb/lp0).",
+            config.LABEL_DEVICE,
+        )
+    elif not os.access(device, os.W_OK):
+        _logger.warning(
+            "SHELFOS_LABEL_DEVICE=%r is not writable; add the ShelfOS user to the "
+            "'lp' group, or install a udev rule for the printer.",
+            config.LABEL_DEVICE,
+        )
 
 
 def _check_insecure_defaults() -> None:
