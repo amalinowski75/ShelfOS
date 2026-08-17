@@ -204,6 +204,7 @@ export function typesAdminPageFixture() {
     <label><input type="checkbox" name="is_table_column" /></label>
     <label><input type="checkbox" name="is_filterable" /></label>`;
   return `
+    <button id="new-type-btn"></button>
     <div id="types-table"></div>
     <dialog id="type-rename-dialog"><form id="type-rename-form">
       <input type="hidden" name="type_id" />
@@ -539,7 +540,6 @@ export function componentPageFixture(types = [{ id: 1, name: "resistor" }]) {
 // the components page (index.html). Shared by the component and type fixtures.
 function _typeBuilderMarkup(options) {
   return `
-    <button id="new-type-btn"></button>
     <dialog id="type-dialog">
       <form id="type-form">
         <input name="type-name" />
@@ -605,7 +605,6 @@ export function typePageFixture(types = [{ id: 1, name: "resistor" }]) {
     .join("");
   return `
     <select id="type-filter" class="control"><option value="">All types</option>${options}</select>
-    <button id="new-type-btn"></button>
     <button id="new-component-btn"></button>
     <div id="components-table"></div>
     <dialog id="stock-dialog">

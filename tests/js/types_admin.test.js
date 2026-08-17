@@ -253,6 +253,22 @@ describe("types_admin.js — parameter writes", () => {
     expect(body.enum_values).toBeUndefined(); // not an enum, so no tokens sent
   });
 
+  it("opens the shared New Type builder and reloads the table on create", async () => {
+    const page = loadPage(typesAdminPageFixture(), SCRIPTS, {
+      fetchImpl: () => ok({ data: [] }),
+    });
+    const openTypeDialog = vi.fn();
+    page.window.openTypeDialog = openTypeDialog; // provided by type_dialog.js on the page
+
+    page.document.getElementById("new-type-btn").click();
+    expect(openTypeDialog).toHaveBeenCalled();
+
+    // Its onCreated callback reloads the types feed so the new type shows up.
+    openTypeDialog.mock.calls[0][0]();
+    await tick();
+    expect(page.fetchMock.mock.calls.some(([u]) => u === "/web/api/types")).toBe(true);
+  });
+
   it("re-renders an open parameters list after a reload", async () => {
     const updated = {
       ...RESISTOR,

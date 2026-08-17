@@ -66,13 +66,19 @@ def test_stock_dialog_uses_location_tree_picker(client: TestClient) -> None:
     assert 'id="location-dialog"' in html
 
 
-def test_index_shows_new_type_control_for_writer(client: TestClient) -> None:
-    """An account that can write sees the §13 create-type dialog and builder."""
+def test_index_keeps_the_type_builder_but_not_the_standalone_button(
+    client: TestClient,
+) -> None:
+    """The standalone "New Type" button moved to /types; the builder dialog stays.
+
+    It's still on the components page because the New Component dialog's "+ New type"
+    opens it — but a writer no longer starts a type from the components page itself.
+    """
     html = client.get("/").text
     # The role meta drives client-side write gating (admin here → writer).
     assert 'name="user-role" content="admin"' in html
-    assert 'id="new-type-btn"' in html
-    assert 'id="type-dialog"' in html
+    assert 'id="new-type-btn"' not in html  # moved to /types
+    assert 'id="type-dialog"' in html  # …but the builder stays for "+ New type"
     assert 'id="param-row-template"' in html
     # The parameter builder offers every data type, enum included.
     assert 'value="enum"' in html
@@ -1653,6 +1659,11 @@ def test_types_page_renders_for_admin(client: TestClient) -> None:
     assert 'id="types-table"' in html
     assert "types_admin.js" in html
     assert "<h1>Types</h1>" in html  # the page heading (not just the nav link)
+    # The standalone "New Type" builder now lives here (moved off the components page).
+    assert 'id="new-type-btn"' in html
+    assert 'id="type-dialog"' in html
+    assert 'id="param-row-template"' in html
+    assert "/static/type_dialog.js" in html
 
 
 def test_types_feed_lists_types_with_counts_and_params(client: TestClient) -> None:

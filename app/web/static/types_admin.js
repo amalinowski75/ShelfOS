@@ -363,4 +363,11 @@ if (paramAddForm) {
   });
 }
 
+// --- New Type: the standalone create flow, moved here from the components page.
+// The builder itself lives in type_dialog.js (shared with the invoice/component
+// flows); on create we just reload the table so the new type shows up.
+document.getElementById("new-type-btn")?.addEventListener("click", () => {
+  window.openTypeDialog?.(() => loadTypes());
+});
+
 typesTable.on("tableBuilt", loadTypes);

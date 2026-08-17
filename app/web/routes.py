@@ -451,14 +451,20 @@ def types_feed(
 @router.get("/types", response_class=HTMLResponse)
 def types_page(
     request: Request,
+    session: Session = Depends(get_session),
     user: User = Depends(require_web_admin),
 ) -> HTMLResponse:
-    """Type & parameter management shell; rows load from /web/api/types (admin)."""
+    """Type & parameter management shell; rows load from /web/api/types (admin).
+
+    ``types`` feeds the "New Type" builder's parent select (the standalone create
+    flow moved here from the components page).
+    """
     return templates.TemplateResponse(
         request,
         "types.html",
         {
             "current_user": user,
+            "types": cs.list_types(session),
             "data_types": [dt.value for dt in ParameterDataType],
         },
     )
