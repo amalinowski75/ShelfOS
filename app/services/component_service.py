@@ -26,8 +26,9 @@ from app.models.component import (
     ParameterDefinition,
     ParameterEnumValue,
 )
-from app.models.enums import MountingType, ParameterDataType
+from app.models.enums import MatchDomain, MountingType, ParameterDataType
 from app.models.location import ComponentLocation
+from app.models.match_rule import MatchRule
 from app.services import attachment_service, audit_service, link_service
 from app.services._common import require_entity
 from app.services.errors import DuplicateComponentError, ValidationError
@@ -185,6 +186,146 @@ def add_parameter_definition(
     session.commit()
     session.refresh(definition)
     return definition
+
+
+def count_components_of_type(session: Session, type_id: int) -> int:
+    """How many live (non-deleted) components have this exact type (§13 edit)."""
+    return session.exec(
+        select(func.count())
+        .select_from(Component)
+        .where(Component.type_id == type_id, col(Component.deleted_at).is_(None))
+    ).one()
+
+
+def count_child_types(session: Session, type_id: int) -> int:
+    """How many types name this one as their parent (blocks a delete)."""
+    return session.exec(
+        select(func.count())
+        .select_from(ComponentType)
+        .where(ComponentType.parent_id == type_id)
+    ).one()
+
+
+def rename_type(
+    session: Session, type_id: int, *, name: str, user_id: int | None = None
+) -> ComponentType:
+    """Rename a component type, keeping import matching consistent (§13 edit).
+
+    Inventory references a type by id, so a rename is transparent there. The one
+    place the NAME matters is the matching engine: ``TYPE`` match rules resolve to a
+    type by its name (``MatchRule.canonical``), so any rule pointing at the old name
+    is repointed at the new one in the same transaction — otherwise a scanned/invoiced
+    category would stop resolving to this type. Root-level uniqueness is guarded in
+    the service (the DB constraint can't, since NULL != NULL); the DB constraint is
+    the concurrency backstop.
+    """
+    ctype = require_entity(session, ComponentType, type_id, "component type")
+    new = name.strip()
+    if not new:
+        raise ValidationError("component type name must not be empty")
+    if new == ctype.name:
+        return ctype  # no-op; don't trip the duplicate guard on the type itself
+    _require_unique_type_name(session, new, ctype.parent_id)
+    old = ctype.name
+    try:
+        for rule in session.exec(
+            select(MatchRule).where(
+                MatchRule.domain == MatchDomain.TYPE, MatchRule.canonical == old
+            )
+        ).all():
+            rule.canonical = new
+            session.add(rule)
+        ctype.name = new
+        session.add(ctype)
+        if user_id is not None:
+            audit_service.record_change(
+                session,
+                entity_type="component_type",
+                entity_id=type_id,
+                field=audit_service.FIELD_NAME,
+                old_value=old,
+                new_value=new,
+                user_id=user_id,
+            )
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    session.refresh(ctype)
+    return ctype
+
+
+def _delete_definition_and_dependents(
+    session: Session, definition: ParameterDefinition
+) -> None:
+    """Delete a parameter definition with its enum values and scoped match rules.
+
+    No commit. The caller must have confirmed no ``ComponentParameter`` references
+    it — nothing here guards stored values (that is the caller's blocking check).
+    Shared by :func:`delete_type` and :func:`delete_parameter_definition`.
+    """
+    for enum_value in session.exec(
+        select(ParameterEnumValue).where(
+            ParameterEnumValue.parameter_definition_id == definition.id
+        )
+    ).all():
+        session.delete(enum_value)
+    for rule in session.exec(
+        select(MatchRule).where(MatchRule.parameter_definition_id == definition.id)
+    ).all():
+        session.delete(rule)
+    session.delete(definition)
+
+
+def delete_type(
+    session: Session, type_id: int, *, user_id: int | None = None
+) -> None:
+    """Permanently delete a type, only when nothing depends on it (§13 edit).
+
+    Refused (``ValidationError``) if the type has child types or any live component,
+    naming the count so the admin knows what to clear first. When unused it is safe
+    to hard-delete: with no children and no direct components, no ``ComponentParameter``
+    can reference this type's own definitions (that would need a descendant type with
+    a component), so its definitions, their enum values and scoped match rules go with
+    it, plus the ``TYPE`` match rules that named it. One transaction, rolled back on
+    any failure.
+    """
+    ctype = require_entity(session, ComponentType, type_id, "component type")
+    children = count_child_types(session, type_id)
+    if children:
+        raise ValidationError(
+            f"{children} child types depend on this type; delete or move them first"
+        )
+    components = count_components_of_type(session, type_id)
+    if components:
+        raise ValidationError(
+            f"{components} components use this type; reassign or delete them first"
+        )
+    try:
+        for definition in list_own_parameter_definitions(session, type_id):
+            _delete_definition_and_dependents(session, definition)
+        for rule in session.exec(
+            select(MatchRule).where(
+                MatchRule.domain == MatchDomain.TYPE,
+                MatchRule.canonical == ctype.name,
+            )
+        ).all():
+            session.delete(rule)
+        if user_id is not None:
+            audit_service.record_change(
+                session,
+                entity_type="component_type",
+                entity_id=type_id,
+                field=audit_service.FIELD_DELETED,
+                old_value=False,
+                new_value=True,
+                user_id=user_id,
+            )
+        session.delete(ctype)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
 
 
 def _require_unique_type_name(
