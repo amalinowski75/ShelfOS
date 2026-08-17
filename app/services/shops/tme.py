@@ -347,13 +347,10 @@ class TmeProvider:
         labels = host.split(".")
         return len(labels) > 1 and "tme" in labels[:-1]
 
-    def product_url(self, part_number: str) -> str | None:
+    def product_url(self, part_number: str) -> str:
         # The invoice's supplier-part-number for TME IS the TME symbol, so it maps
         # straight to the storefront's product page (case-insensitive there).
-        part = part_number.strip()
-        if not part:
-            return None
-        return f"https://www.tme.eu/en/details/{quote(part, safe='')}/"
+        return f"https://www.tme.eu/en/details/{quote(part_number, safe='')}/"
 
     def fetch(
         self, url: str, *, transport: httpx.BaseTransport | None = None

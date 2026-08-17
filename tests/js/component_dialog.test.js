@@ -34,6 +34,21 @@ function open(page, ...args) {
   page.window.openComponentDialog(...args);
 }
 
+// Give the dialog a real open/close state — the harness stubs showModal with a
+// bare vi.fn() that never sets `.open`, so without this a second open() is a fresh
+// open, never the reopen path (dialog.open stays false).
+function syncOpen(page) {
+  const el = page.document.getElementById("component-dialog");
+  el.showModal = () => {
+    el.open = true;
+  };
+  el.close = () => {
+    el.open = false;
+    el.dispatchEvent(new page.window.Event("close"));
+  };
+  return el;
+}
+
 describe("component_dialog.js — Open in shop button", () => {
   it("stays disabled for a plain manual create (no shop behind it)", () => {
     const page = loadPage(dialogFixture(), SCRIPTS);
@@ -83,7 +98,7 @@ describe("component_dialog.js — Open in shop button", () => {
     );
   });
 
-  it("resets to disabled when reopened without a shop source", () => {
+  it("resets to disabled on a fresh manual open after an import", () => {
     const page = loadPage(dialogFixture(), SCRIPTS);
     const btn = page.document.getElementById("component-open-shop");
 
@@ -93,5 +108,54 @@ describe("component_dialog.js — Open in shop button", () => {
     // A later manual open (dialog closed in between) must not keep the old link.
     open(page, () => {});
     expect(btn.disabled).toBe(true);
+  });
+
+  it("on a reopen, drops the previous bag's URL and fields (no stale inheritance)", async () => {
+    // A bag scanned into the still-open dialog (the queue #76/#77 built drains it
+    // there) must fully replace the one under review — the button and the identity
+    // fields, not just the code. Bag B is a label-only import (no API key / failed
+    // lookup, the ordinary case), so it fills almost nothing and would otherwise
+    // inherit bag A's answers.
+    let lookupCall = 0;
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: (url) => {
+        if (url !== "/api/shops/lookup") return ok({});
+        lookupCall += 1;
+        return lookupCall === 1
+          ? ok({
+              mpn: "BAG-A",
+              manufacturer: "Acme",
+              package: "SOT23",
+              description: "widget A",
+              source_url: "https://www.tme.eu/en/details/BAG-A/",
+            })
+          : ok({ mpn: "BAG-B", from_label_only: true }); // nothing but the number
+      },
+    });
+    syncOpen(page);
+    const btn = page.document.getElementById("component-open-shop");
+    const form = page.document.getElementById("component-form");
+    const field = (name) => form.querySelector(`[name="${name}"]`).value;
+
+    // Bag A: a full import — button enabled, identity fields filled.
+    open(page, () => {}, null, { importCode: "BAG-A" });
+    await tick();
+    expect(btn.disabled).toBe(false);
+    expect(field("manufacturer")).toBe("Acme");
+
+    // Bag B scanned while bag A's dialog is still open → the reopen path.
+    open(page, () => {}, null, { importCode: "BAG-B" });
+    // SYNCHRONOUSLY, before the new lookup even resolves, the button must already
+    // have dropped bag A's URL — otherwise a click in that window opens bag A's
+    // page under bag B's number.
+    expect(btn.disabled).toBe(true);
+    await tick();
+
+    expect(page.document.getElementById("shop-import-url").value).toBe("BAG-B");
+    expect(btn.disabled).toBe(true); // bag B has no shop page — not bag A's
+    // Bag A's identity must not survive under bag B's number.
+    expect(field("manufacturer")).toBe("");
+    expect(field("package")).toBe("");
+    expect(field("notes")).toBe("");
   });
 });

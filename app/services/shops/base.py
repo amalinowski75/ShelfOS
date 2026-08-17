@@ -59,14 +59,16 @@ class ShopProvider(Protocol):
 
     def fetch(self, url: str) -> ProductData: ...
 
-    def product_url(self, part_number: str) -> str | None:
-        """This shop's public product page for ``part_number``, or None.
+    def product_url(self, part_number: str) -> str:
+        """This shop's public product page for ``part_number`` (already non-blank).
 
         Built purely from the part number (the distributor's own number, i.e. the
         invoice's supplier-part-number) — no API call — so a component created from
-        an invoice line can still link back to where it came from. Returns None when
-        the number is blank; the browser opens the result, so hosts are fixed
-        constants and there is no server-side fetch (no SSRF surface).
+        an invoice line can still link back to where it came from. The registry's
+        ``product_url`` strips and rejects a blank number before calling this, so
+        implementations take a clean value and always return a URL. The browser
+        opens the result, so hosts are fixed constants (no server-side fetch, no
+        SSRF surface).
         """
         ...
 

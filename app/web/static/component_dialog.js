@@ -653,9 +653,17 @@
       applyPrefill(prefill);
     }
     if (importCode && importUrl && triggerImport) {
-      // Drop any prior bag's shop URL until this code's lookup resolves, so the
-      // button can't open the previous part (matters on a reopen, which skips the
-      // applyPrefill that would otherwise have cleared it).
+      // On a reopen the reset block above is skipped, so the previous bag's fields
+      // are still in the form — and the new lookup's applyPrefill only OVERWRITES
+      // truthy values, so a label-only import (the ordinary no-API-key case) would
+      // inherit bag A's manufacturer/package/description under bag B's number. Clear
+      // them, and the type's parameter inputs, so only what the new lookup fills
+      // survives. (setShopUrl(null) likewise drops the prior bag's shop link until
+      // this code resolves.)
+      if (reopening) {
+        form.reset();
+        loadParams(""); // clear the previous type's parameter fields too
+      }
       setShopUrl(null);
       importUrl.value = importCode;
       triggerImport();
