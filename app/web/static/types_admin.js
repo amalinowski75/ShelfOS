@@ -199,18 +199,23 @@ function renderParams(row) {
   for (const param of params) {
     const li = document.createElement("li");
     li.className = "param-list-row";
+    // Two weights: the label reads first, the technical detail is muted beneath.
     const unit = param.unit ? ` (${param.unit})` : "";
     const enums =
       param.data_type === "enum" && param.enum_values.length
-        ? `: ${param.enum_values.join(", ")}`
+        ? ` · ${param.enum_values.join(", ")}`
         : "";
     // "· N in use" so the admin can see why a Delete is disabled before hovering.
     const inUse = param.in_use_count ? ` · ${param.in_use_count} in use` : "";
-    const meta = document.createElement("span");
+    const meta = document.createElement("div");
     meta.className = "param-list-meta";
-    // textContent (not innerHTML) — names/labels/tokens are user text.
-    meta.textContent =
-      `${param.label} — ${param.name} · ${param.data_type}${unit}${enums}${inUse}`;
+    const label = document.createElement("div");
+    label.className = "param-list-label";
+    label.textContent = param.label; // textContent — user text, never innerHTML
+    const detail = document.createElement("div");
+    detail.className = "param-list-detail";
+    detail.textContent = `${param.name} · ${param.data_type}${unit}${enums}${inUse}`;
+    meta.append(label, detail);
     const actions = document.createElement("span");
     actions.className = "param-list-actions";
     const edit = document.createElement("button");
