@@ -419,7 +419,14 @@ def test_a_tape_the_printer_does_not_have_is_caught_before_printing() -> None:
     with pytest.raises(ValidationError, match="62 mm tape loaded"):
         lp._refuse_if_not_ready(status, lp.tape_geometry(tape="29"))
 
-    # And the matching case goes through quietly.
+    # Die-cut against continuous is the other half of what the printer knows:
+    # the tape is 62 mm either way, so only the media type gives this away.
+    with pytest.raises(ValidationError, match="continuous tape loaded"):
+        lp._refuse_if_not_ready(status, lp.tape_geometry(tape="62x29"))
+
+    # And the matching cases go through quietly. Note 62red passes: a black/red
+    # roll is indistinguishable from a plain one in the status frame, so the
+    # colour is the one thing this check cannot make sure of.
     lp._refuse_if_not_ready(status, lp.tape_geometry(tape="62"))
     lp._refuse_if_not_ready(status, lp.tape_geometry(tape="62red"))
 

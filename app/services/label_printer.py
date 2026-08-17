@@ -456,6 +456,14 @@ _ERRORS_2: Final = (
     "a printer system error",
 )
 
+# Media types the printer distinguishes. Note what is NOT here: the roll's
+# colour capability. A black/red DK-22251 reports itself exactly like a plain
+# white roll (media type 0x0A, "number of colors" 0, tape colour 0), which is
+# why a one-colour job on two-colour tape can only be diagnosed after it is
+# refused — see _await_completion.
+_MEDIA_CONTINUOUS: Final = 0x0A
+_MEDIA_DIE_CUT: Final = 0x0B
+
 _STATUS_REPLY: Final = 0x00
 _STATUS_COMPLETED: Final = 0x01
 _STATUS_ERROR: Final = 0x02
@@ -611,6 +619,19 @@ def _refuse_if_not_ready(status: PrinterStatus, geometry: TapeGeometry) -> None:
         raise ValidationError(
             f"the printer has {status.media_width_mm} mm tape loaded, but "
             f"SHELFOS_LABEL_TAPE is {geometry.tape!r} ({geometry.width_mm} mm)"
+        )
+    loaded_endless = status.media_type == _MEDIA_CONTINUOUS
+    if status.media_type in (_MEDIA_CONTINUOUS, _MEDIA_DIE_CUT) and (
+        loaded_endless != geometry.endless
+    ):
+        # The other half of what the printer can actually tell us. A die-cut job
+        # on a continuous roll prints across the gaps; the reverse is refused by
+        # the encoder with a raw pixel count, which explains nothing.
+        loaded = "continuous" if loaded_endless else "die-cut"
+        wanted = "continuous" if geometry.endless else "die-cut"
+        raise ValidationError(
+            f"the printer has {loaded} tape loaded, but SHELFOS_LABEL_TAPE is "
+            f"{geometry.tape!r}, which is {wanted}"
         )
 
 
