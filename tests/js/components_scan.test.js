@@ -1,5 +1,17 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { loadPage, tick, CSRF, fetchBody } from "./harness.js";
+
+// The harness stubs showModal/close at the prototype with bare vi.fn()s that
+// never touch `.open`, so the two dialogs are indistinguishable by state. Give a
+// dialog an OWN-property showModal that both records the call and flips `.open`,
+// so a test can tell which dialog opened and how many times.
+function trackOpen(dialog) {
+  const spy = vi.fn(() => {
+    dialog.open = true;
+  });
+  dialog.showModal = spy;
+  return spy;
+}
 
 const SCRIPTS = ["shared.js", "scan_putaway.js", "components_scan.js"];
 // With the New Component dialog too, for the "code matches nothing → create it"
@@ -156,27 +168,113 @@ describe("components_scan.js — resolving a bag", () => {
         return ok({});
       },
     });
-    // No syncDialogOpen: nothing should open the putaway dialog here, and its
-    // showModal shares a prototype-level mock with the create dialog's.
+    // Own-property spies tell the two dialogs apart (the shared prototype mock
+    // cannot): the create dialog opens, the putaway one is never touched.
+    const createOpened = trackOpen(page.document.getElementById("component-dialog"));
+    const putawayOpened = trackOpen(page.document.getElementById("putaway-dialog"));
+
     scan(page.document, "NOPE-1");
     await tick();
 
-    // The putaway dialog never opened, and no miss was shown — the create path
-    // returns cleanly, so there is neither an error status nor a warning toast
-    // (a stray dereference of the "no target" result would fire the latter).
-    expect(page.document.getElementById("putaway-dialog").open).toBe(false);
+    expect(putawayOpened).not.toHaveBeenCalled();
+    expect(createOpened).toHaveBeenCalledTimes(1);
+    // A neutral toast keeps the diagnostic the old miss carried (naming what was
+    // read), but it is not an error/warning — the flow succeeded.
+    const toast = page.document.querySelector(".toast");
+    expect(toast).toBeTruthy();
+    expect(toast.textContent).toContain("NOPE-1");
+    expect(page.document.querySelector(".toast-warn")).toBe(null);
     expect(page.document.getElementById("scan-status").className).not.toContain(
       "error",
     );
-    expect(page.document.querySelector(".toast-warn")).toBe(null);
-    // …instead the create dialog ran the shop lookup with the scanned code, and
-    // the import field carries it for the user to review.
+    // The create dialog ran the shop lookup with the scanned code, and the import
+    // field carries it for the user to review.
     const lookup = page.fetchMock.mock.calls.find(
       ([url]) => url === "/api/shops/lookup",
     );
     expect(lookup).toBeTruthy();
     expect(JSON.parse(lookup[1].body).code).toBe("NOPE-1");
     expect(page.document.getElementById("shop-import-url").value).toBe("NOPE-1");
+  });
+
+  it("re-runs the lookup instead of reopening when a scan is queued behind the first", async () => {
+    // A bag scanned while the first lookup is in flight is queued and drained
+    // once the create dialog is already up. Reopening then would call showModal()
+    // on an open dialog (an InvalidStateError in a real browser, surfacing as a
+    // bogus network error) — so the second code must swap into the open dialog
+    // and look up, not reopen it.
+    let releaseFirst;
+    const firstScanHeld = new Promise((r) => (releaseFirst = r));
+    let scanCall = 0;
+    const page = loadPage(componentsFixture({ withCreate: true }), SCRIPTS_WITH_DIALOG, {
+      fetchImpl: (url) => {
+        if (url === "/api/components/scan") {
+          scanCall += 1;
+          const answer = ok({ identifiers: [`C${scanCall}`], matches: [] });
+          // Hold the FIRST lookup so the second scan is queued while the dialog
+          // from the first is already open.
+          return scanCall === 1 ? firstScanHeld.then(() => answer) : answer;
+        }
+        if (url === "/api/shops/lookup")
+          return ok({ category: "widget", mpn: "X", description: "" });
+        return ok({});
+      },
+    });
+    const createOpened = trackOpen(page.document.getElementById("component-dialog"));
+
+    scan(page.document, "AAA"); // busy — its components/scan is held
+    await tick();
+    scan(page.document, "BBB"); // queued behind it
+    await tick();
+    releaseFirst(); // first resolves → dialog opens → queue drains BBB
+    await tick();
+    await tick();
+
+    // The dialog opened once (for AAA) and was NOT reopened for BBB…
+    expect(createOpened).toHaveBeenCalledTimes(1);
+    expect(page.document.querySelector(".toast-warn")).toBe(null); // no bogus error
+    // …and BBB replaced AAA in the field and was itself looked up.
+    expect(page.document.getElementById("shop-import-url").value).toBe("BBB");
+    const lookups = page.fetchMock.mock.calls.filter(
+      ([url]) => url === "/api/shops/lookup",
+    );
+    expect(lookups.map((c) => JSON.parse(c[1].body).code)).toEqual(["AAA", "BBB"]);
+  });
+
+  it("releases the in-flight import lock when a new code supersedes it", async () => {
+    // A lookup abandoned by reopening must not wedge the next code out of ever
+    // being looked up (the re-entrancy lock is module-scoped, not per session).
+    let releaseLookup;
+    const lookupHeld = new Promise((r) => (releaseLookup = r));
+    let lookupCall = 0;
+    const page = loadPage(componentsFixture({ withCreate: true }), SCRIPTS_WITH_DIALOG, {
+      fetchImpl: (url) => {
+        if (url === "/api/shops/lookup") {
+          lookupCall += 1;
+          const answer = ok({ category: "widget", mpn: "X", description: "" });
+          return lookupCall === 1 ? lookupHeld.then(() => answer) : answer;
+        }
+        return ok({});
+      },
+    });
+    trackOpen(page.document.getElementById("component-dialog"));
+
+    // First open: its lookup hangs, so the lock would stay held without a reset.
+    page.window.openComponentDialog(() => {}, null, { importCode: "AAA" });
+    await tick();
+    // Reopen with a new code while the first lookup is still in flight.
+    page.window.openComponentDialog(() => {}, null, { importCode: "BBB" });
+    await tick();
+
+    const status = page.document.getElementById("shop-import-status");
+    expect(status.textContent).not.toContain("Still looking"); // not refused
+    expect(page.document.getElementById("shop-import-url").value).toBe("BBB");
+    const lookups = page.fetchMock.mock.calls.filter(
+      ([url]) => url === "/api/shops/lookup",
+    );
+    expect(lookups.map((c) => JSON.parse(c[1].body).code)).toEqual(["AAA", "BBB"]);
+    releaseLookup();
+    await tick();
   });
 
   it("falls back to a plain miss when the create dialog isn't on the page", async () => {

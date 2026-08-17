@@ -38,6 +38,11 @@
   // code handed in at open time (a scan that matched no existing component). Stays
   // null on pages whose dialog has no import field (the BOM report reuses it).
   let triggerImport = null;
+  // A lookup in flight. Module-scoped (not per shop-import session) so a fresh open
+  // can RELEASE it — a lookup abandoned by closing the dialog must not wedge the
+  // next scanned code out of ever being looked up. Its stale response is discarded
+  // by the openToken check, so releasing the lock loses nothing.
+  let importing = false;
 
   // Build a value input for one effective parameter definition, keyed by its id
   // and data type so the payload can be assembled without another lookup.
@@ -515,7 +520,6 @@
   const importBtn = document.getElementById("shop-import-btn");
   const importStatus = document.getElementById("shop-import-status");
   if (importBtn) {
-    let importing = false;
     const runImport = async () => {
       const code = importUrl.value.trim();
       if (!code) return;
@@ -600,17 +604,32 @@
   // components-page scan hands over a code that matched no existing component, so the
   // part is imported without the user rescanning it.
   window.openComponentDialog = function (callback, prefill, opts) {
-    onCreated = callback || null;
-    stageTarget = (opts && opts.stage) || null;
-    openToken += 1; // invalidate any in-flight shop lookup from a prior open
-    form.reset();
-    errorEl.hidden = true;
-    if (importStatus) importStatus.hidden = true;
-    dialog.showModal(); // open synchronously; fields fill in a tick later
-    // Focus the import field so a scanner's payload lands there without a click.
-    if (importUrl) importUrl.focus();
-    applyPrefill(prefill);
     const importCode = opts && opts.importCode;
+    // A scan can arrive while the dialog from a PREVIOUS scan is still up (the
+    // components page queues a bag scanned mid-lookup, and drains it once this
+    // dialog is open). Reopening then would call showModal() on an already-open
+    // dialog — an InvalidStateError — after form.reset() had wiped the first
+    // import, surfacing as a bogus "Could not reach the server." So when already
+    // open, don't reopen: just swap in the new code and look it up, replacing the
+    // bag under review. (Only the import path can reopen; every other caller
+    // fires from a closed dialog.)
+    const reopening = dialog.open;
+    onCreated = callback || null;
+    openToken += 1; // invalidate any in-flight shop lookup from a prior open
+    importing = false; // …and release its lock so the new code is looked up
+    errorEl.hidden = true;
+    if (!reopening) {
+      stageTarget = (opts && opts.stage) || null;
+      form.reset();
+      if (importStatus) importStatus.hidden = true;
+      dialog.showModal(); // open synchronously; fields fill in a tick later
+      // Focus the import field so a scanner's payload lands there without a click.
+      if (importUrl) importUrl.focus();
+      // applyPrefill(null) returns synchronously (loadParams("") early-returns
+      // before its first await), so this unawaited call cannot race the import's
+      // own applyPrefill below and clobber the fields the lookup fills in.
+      applyPrefill(prefill);
+    }
     if (importCode && importUrl && triggerImport) {
       importUrl.value = importCode;
       triggerImport();
