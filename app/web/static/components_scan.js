@@ -30,6 +30,12 @@
         // bag goes straight from scan to create without rescanning. Returning
         // nothing tells scan_putaway the scan was taken care of here.
         if (window.openComponentDialog) {
+          // Keep the diagnostic the miss used to carry: name what was scanned, so
+          // if the user cancels (or the shop lookup can't resolve it either) the
+          // scan isn't left with no trace on the now-blank panel.
+          showToast(`${seen} isn't in the inventory yet — creating it.`, {
+            tone: "ok",
+          });
           window.openComponentDialog(
             (created) => {
               window.location = `/components/${created.id}`;
