@@ -160,9 +160,11 @@ function deleteType(row) {
     try {
       const resp = await sendWrite(`/api/admin/types/${row.id}`, "DELETE");
       if (resp.ok) await loadTypes();
-      else alert(await errorMessage(resp)); // e.g. "12 components use this type"
+      // A transient bottom-of-page notice (showToast, from shared.js), not a modal
+      // alert — it names why: "12 components use this type".
+      else showToast(await errorMessage(resp));
     } catch {
-      alert("Could not reach the server.");
+      showToast("Could not reach the server.");
     }
   });
 }
@@ -299,9 +301,9 @@ function deleteParam(param) {
     try {
       const resp = await sendWrite(`/api/admin/parameters/${param.id}`, "DELETE");
       if (resp.ok) await loadTypes();
-      else alert(await errorMessage(resp)); // e.g. "5 components have a value…"
+      else showToast(await errorMessage(resp)); // e.g. "5 components have a value…"
     } catch {
-      alert("Could not reach the server.");
+      showToast("Could not reach the server.");
     }
   });
 }

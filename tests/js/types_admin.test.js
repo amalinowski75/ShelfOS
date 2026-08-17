@@ -120,20 +120,22 @@ describe("types_admin.js — type writes", () => {
     expect(calls).toBe(1);
   });
 
-  it("shows the reason (no confirm) when a type in use can't be deleted", async () => {
-    // RESISTOR.deletable is false — clicking Delete must go straight to the server
-    // and surface its refusal, not silently do nothing and not ask to confirm.
-    const { window } = loadPage(typesAdminPageFixture(), SCRIPTS, {
+  it("shows the reason as a toast (no confirm) when a type in use can't be deleted", async () => {
+    // RESISTOR.deletable is false — clicking Delete must surface the server's
+    // refusal as a transient bottom-of-page notice, not a modal alert, and not ask
+    // to confirm a deletion that won't happen.
+    const { window, document } = loadPage(typesAdminPageFixture(), SCRIPTS, {
       fetchImpl: () => fail("2 components use this type"),
     });
-    window.alert = vi.fn();
     window.confirm = vi.fn(() => true);
 
     window.deleteType(RESISTOR);
     await tick();
 
     expect(window.confirm).not.toHaveBeenCalled(); // no "are you sure" for a no-op
-    expect(window.alert).toHaveBeenCalledWith("2 components use this type");
+    const toast = document.querySelector(".toast");
+    expect(toast).toBeTruthy();
+    expect(toast.textContent).toBe("2 components use this type");
   });
 
   it("confirms before deleting a type that can be deleted", async () => {
