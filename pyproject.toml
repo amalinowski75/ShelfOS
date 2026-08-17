@@ -16,6 +16,14 @@ dependencies = [
     "itsdangerous>=2.2",
     "pdfplumber>=0.11",
     "segno>=1.6",
+    # Brother QL raster protocol, for printing location labels on a label
+    # printer (spec §7). A maintained fork of the abandoned "brother-ql"; it
+    # imports as ``brother_ql``. Required rather than optional because its label
+    # table is the source of truth for a tape's printable width — a copy of that
+    # table here could drift, and a wrong width prints noise onto real tape.
+    # Only its pure-python raster half is used (labels/raster/conversion); the
+    # USB backends, and so pyusb/libusb, are never imported.
+    "brother_ql_next>=0.11,<0.12",
 ]
 
 [project.optional-dependencies]
@@ -74,3 +82,8 @@ disallow_untyped_defs = true
 [[tool.mypy.overrides]]
 module = "tests.*"
 disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+# brother_ql_next ships no type information and no stubs exist for it.
+module = "brother_ql.*"
+ignore_missing_imports = true

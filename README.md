@@ -137,6 +137,30 @@ If a shop's API can't enrich the scan (its key isn't set, or the lookup fails), 
 dialog is still pre-filled with the part number and manufacturer read off the label,
 and says that's all it managed.
 
+### Location labels
+
+Every location can be printed as a label — a QR holding `SL<id>`, which scanning
+puts straight into the "Set location" flow — in two ways. `/labels/locations` is a
+print-ready page for an ordinary browser print dialog (`?root=<id>` for one branch,
+`?sheet=1` to flow onto A4). Alongside it, ShelfOS renders the same label onto a
+Brother QL's own 300 dpi grid:
+
+```bash
+# the tape in the printer, as a brother_ql identifier
+export SHELFOS_LABEL_TAPE="62"          # 62 mm continuous (the roll a QL-800 ships with)
+# how long each label is, on a CONTINUOUS tape (a die-cut label's length is its die's)
+export SHELFOS_LABEL_LENGTH_MM="30"
+export SHELFOS_LABEL_MARGIN_MM="2"
+# only if the host has no DejaVu, Liberation or Noto
+export SHELFOS_LABEL_FONT="/path/to/Sans.ttf"
+export SHELFOS_LABEL_FONT_BOLD="/path/to/Sans-Bold.ttf"
+```
+
+`GET /api/labels/locations/<id>/preview.png` returns exactly the bitmap the printer
+would receive, and takes `?tape=` / `?length=` to try a roll without touching the
+environment — so the layout can be settled by looking, rather than by feeding tape
+through a printer. A setting that would fail is named in a startup warning.
+
 - **Web UI:** sign in at `/login` (session cookie).
 - **API:** `POST /api/auth/token` with `{"username", "password"}` returns a JWT;
   send it as `Authorization: Bearer <token>`.

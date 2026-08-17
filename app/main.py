@@ -8,6 +8,7 @@ Run locally with::
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -26,6 +27,7 @@ from app.api.routes import (
     boms,
     components,
     invoices,
+    labels,
     links,
     locations,
     matching,
@@ -36,8 +38,9 @@ from app.api.routes import (
 from app.auth.deps import require_access, require_admin, require_csrf
 from app.db import engine, init_db
 from app.seed import ensure_system_user
-from app.services import match_rule_service
+from app.services import label_printer, match_rule_service
 from app.services import user_service as us
+from app.services.errors import ValidationError
 from app.services.shops import scan
 from app.web import routes as web_routes
 
@@ -56,6 +59,7 @@ _PROTECTED_ROUTERS = (
     shops,
     matching,
     links,
+    labels,
 )
 
 
@@ -63,6 +67,7 @@ def _bootstrap() -> None:
     """Create the schema and seed the system user and bootstrap admin (D11)."""
     _check_insecure_defaults()
     _check_scan_separator()
+    _check_label_settings()
     init_db()
     with Session(engine) as session:
         ensure_system_user(session)
@@ -88,6 +93,33 @@ def _check_scan_separator() -> None:
             "Scans will still be split on the standard GS/RS separators.",
             config.SCAN_SEPARATOR,
         )
+
+
+def _check_label_settings() -> None:
+    """Say when the label settings would fail the first time someone prints.
+
+    Never fatal: labels are optional, and a bad setting costs a 422 on one
+    request, not a broken deployment. But the failure would otherwise surface
+    at the printer, in front of a user holding a roll of tape, so name the cause
+    at startup instead — the same reasoning as the scan separator above.
+    """
+    try:
+        geometry = label_printer.tape_geometry()
+    except ValidationError as error:
+        _logger.warning("SHELFOS_LABEL_TAPE/LENGTH is unusable: %s", error)
+        return
+    if not geometry.endless and "SHELFOS_LABEL_LENGTH_MM" in os.environ:
+        _logger.warning(
+            "Ignoring SHELFOS_LABEL_LENGTH_MM=%r: tape %r is die-cut, so its "
+            "length is fixed by the die (%d dots).",
+            config.LABEL_LENGTH_MM,
+            geometry.tape,
+            geometry.length_px,
+        )
+    try:
+        label_printer.font_paths()
+    except ValidationError as error:
+        _logger.warning("Labels cannot be rendered: %s", error)
 
 
 def _check_insecure_defaults() -> None:

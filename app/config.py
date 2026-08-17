@@ -120,3 +120,26 @@ TME_LANGUAGE = os.environ.get("SHELFOS_TME_LANGUAGE", "en")
 # group separator (GS, 0x1D). The scan parser always accepts GS/RS; set this if your
 # scanner is configured to send a printable one (e.g. "|") instead.
 SCAN_SEPARATOR = os.environ.get("SHELFOS_SCAN_SEPARATOR", "").strip()
+
+# --- Label printer (spec §7) -------------------------------------------------
+# The tape in the printer, as a brother_ql identifier ("62" = 62 mm continuous,
+# "62x29" = die-cut, "29", "29x90", "12", …). The default is the continuous
+# 62 mm roll a QL-800 ships with: no die to align to, and the label's length is
+# ours to choose. A tape is a fact about the deployment, not about a request, so
+# it is configured once here rather than passed per print.
+LABEL_TAPE = os.environ.get("SHELFOS_LABEL_TAPE", "62").strip()
+
+# How long each label is, in mm, on a CONTINUOUS tape (a die-cut label's length
+# is fixed by the die, and this is ignored for one). 30 mm fits a QR that a
+# phone reads at arm's length plus three lines of path.
+LABEL_LENGTH_MM = float(os.environ.get("SHELFOS_LABEL_LENGTH_MM", "30"))
+
+# White border kept clear on every side. Thermal tape is never fed perfectly
+# straight, and ink at the very edge of a QR is what makes it unreadable.
+LABEL_MARGIN_MM = float(os.environ.get("SHELFOS_LABEL_MARGIN_MM", "2"))
+
+# TrueType files for the label text. Empty means "find one" — the renderer walks
+# a list of paths common on Linux (DejaVu, Liberation, Noto). Set these when the
+# host has none of those, or to print a font of your own choosing.
+LABEL_FONT = os.environ.get("SHELFOS_LABEL_FONT", "").strip()
+LABEL_FONT_BOLD = os.environ.get("SHELFOS_LABEL_FONT_BOLD", "").strip()
