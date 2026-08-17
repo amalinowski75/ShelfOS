@@ -9,7 +9,7 @@ names.
 from __future__ import annotations
 
 import logging
-from typing import Protocol
+from typing import Protocol, cast
 
 from app.services.errors import ValidationError
 from app.services.shops.base import ProductData, ShopProvider
@@ -57,6 +57,26 @@ _BY_INDEX: dict[str, IndexProvider] = {
     "digikey": _digikey,
     "tme": _tme,
 }
+
+
+def product_url(shop_key: str | None, part_number: str | None) -> str | None:
+    """The shop's public product page for a supplier part number, or None.
+
+    Used to link a component created from an invoice line back to its distributor:
+    the line carries the shop and its own part number, which each provider turns
+    into a URL without any API call. Returns None for an unknown shop or a blank
+    number (the caller then leaves the "open in shop" button disabled).
+
+    Keyed off the same ``_BY_INDEX`` map the invoice import already dispatches on,
+    so the shop set can't silently drift between the two — a shop missing here would
+    otherwise be an unexplained permanently-greyed button. The blank check lives
+    here, so providers receive a clean, non-empty number.
+    """
+    part = (part_number or "").strip()
+    provider = _BY_INDEX.get((shop_key or "").lower())
+    if provider is None or not part:
+        return None
+    return cast(ShopProvider, provider).product_url(part)
 
 
 def resolve(url: str) -> ShopProvider | None:
@@ -132,4 +152,4 @@ def import_code(code: str) -> ProductData:
         return _fallback(scan, exc)
 
 
-__all__ = ["ProductData", "ShopProvider", "import_code", "resolve"]
+__all__ = ["ProductData", "ShopProvider", "import_code", "product_url", "resolve"]

@@ -247,3 +247,58 @@ def test_fetch_by_mpn_rejects_a_partial_match(monkeypatch) -> None:  # type: ign
         MouserProvider().fetch_by_mpn(
             "CRCW04021", transport=_transport(_MOUSER_OK)
         )
+
+
+def test_product_url_builds_a_distributor_link_per_shop() -> None:
+    # An invoice line carries the shop and its own part number; product_url turns
+    # them into the public product page the "open in shop" button opens — no API
+    # call, so it works for invoice-created components that were never looked up.
+    # Pin the WHOLE URL, not just the host: the search path + query is the entire
+    # payload of the feature for Mouser/Digi-Key.
+    assert (
+        shops.product_url("tme", "CRG0805F4K7")
+        == "https://www.tme.eu/en/details/CRG0805F4K7/"
+    )
+    assert (
+        shops.product_url("digikey", "311-4.7KCRCT-ND")
+        == "https://www.digikey.com/en/products/result?keywords=311-4.7KCRCT-ND"
+    )
+    assert (
+        shops.product_url("mouser", "71-CRCW04024K70")
+        == "https://www.mouser.com/c/?q=71-CRCW04024K70"
+    )
+
+
+def test_product_url_percent_encodes_the_part_number() -> None:
+    # A part number with URL-significant characters must not break the path/query.
+    # The two encodings differ ON PURPOSE: TME puts the symbol in a PATH segment
+    # (safe=''), so a slash must be escaped; the search shops put it in a QUERY
+    # value (default safe='/'), where a slash is fine but a space still isn't.
+    assert shops.product_url("tme", "A/B C") == "https://www.tme.eu/en/details/A%2FB%20C/"
+    assert (
+        shops.product_url("digikey", "A/B C")
+        == "https://www.digikey.com/en/products/result?keywords=A/B%20C"
+    )
+    assert shops.product_url("mouser", "A/B C") == "https://www.mouser.com/c/?q=A/B%20C"
+
+
+def test_product_url_is_none_for_an_unknown_shop_or_blank_number() -> None:
+    assert shops.product_url("farnell", "X") is None  # no provider for this shop
+    assert shops.product_url("tme", "") is None
+    assert shops.product_url("tme", "   ") is None
+    assert shops.product_url(None, "X") is None
+
+
+def test_product_url_strips_surrounding_whitespace() -> None:
+    # The registry is the single place that trims, so a padded number still yields a
+    # clean URL (the providers assume they get a stripped value).
+    assert (
+        shops.product_url("tme", "  CRG0805F4K7  ")
+        == "https://www.tme.eu/en/details/CRG0805F4K7/"
+    )
+
+
+def test_product_url_matches_shop_key_case_insensitively() -> None:
+    # shop_key is stored lowercase, but don't let a stray upper-cased key silently
+    # yield no link.
+    assert shops.product_url("TME", "SYM1") == shops.product_url("tme", "SYM1")

@@ -14,6 +14,10 @@
   const paramsBox = document.getElementById("component-params");
   const paramsHint = document.getElementById("component-params-hint");
   const errorEl = document.getElementById("component-error");
+  // "Open in shop": opens the distributor product page for the part being created.
+  // Enabled only when that URL is known — a shop import (scanned/pasted code) or an
+  // invoice line supplies it; a manual or BOM create has none, so it stays disabled.
+  const shopOpenBtn = document.getElementById("component-open-shop");
 
   // Monotonic id so overlapping type-select changes can't render stale fields.
   let paramsRequestId = 0;
@@ -28,8 +32,23 @@
   // A datasheet URL from a shop import, attached to the component after it's created
   // (downloaded as a file if the shop allows it, else kept as a link).
   let pendingDatasheetUrl = null;
-  // The shop URL the component was imported from, saved as a `shop` link on create.
+  // The shop URL the component was imported from: saved as a `shop` link on create,
+  // and the target of the "Open in shop" button. Set it only through setShopUrl so
+  // the button's enabled state always tracks it.
   let pendingShopUrl = null;
+  function setShopUrl(url) {
+    pendingShopUrl = url || null;
+    if (shopOpenBtn) shopOpenBtn.disabled = !pendingShopUrl;
+  }
+  // Open in a real separate WINDOW, not a tab: giving window.open sizing/popup
+  // features makes the browser spawn a standalone window (a bare "_blank" opens a
+  // tab in most browsers).
+  const SHOP_WINDOW_FEATURES = "popup,noopener,noreferrer,width=1100,height=850";
+  if (shopOpenBtn) {
+    shopOpenBtn.addEventListener("click", () => {
+      if (pendingShopUrl) window.open(pendingShopUrl, "_blank", SHOP_WINDOW_FEATURES);
+    });
+  }
   // The last shop-imported product, kept so switching type can re-run the engine.
   let lastImport = null;
   // Bumped on every open so a slow shop-lookup can't prefill a reopened dialog.
@@ -317,7 +336,7 @@
         }
       }
       // Used; clear so a later manual (non-import) create can't reuse a stale URL.
-      pendingShopUrl = null;
+      setShopUrl(null);
       pendingDatasheetUrl = null;
       dialog.close();
       if (lost.length) {
@@ -386,7 +405,9 @@
   // the dialog is shown or when Import completes.
   async function applyPrefill(prefill) {
     pendingDatasheetUrl = null;
-    pendingShopUrl = null; // a non-shop prefill (e.g. from a BOM) has no shop URL
+    // An invoice line's prefill carries a prebuilt shop URL; a BOM/blank one has
+    // none. A later shop lookup (runImport) overrides this with its source_url.
+    setShopUrl(prefill && prefill.shopUrl);
     lastImport = null; // no shop import behind a BOM/blank prefill
     if (!prefill) {
       loadParams(""); // clears the fields and shows the hint
@@ -562,8 +583,9 @@
         // applyPrefill cleared these; restore the shop link from the URL the SERVER
         // resolved — a TME QR buries its URL among other tokens, and a barcode has
         // none at all, so the raw code must never be stored as a link — and keep the
-        // product so a later type change can re-run the engine.
-        pendingShopUrl = product.source_url || null;
+        // product so a later type change can re-run the engine. (Also enables the
+        // "Open in shop" button.)
+        setShopUrl(product.source_url);
         lastImport = product;
         // "warn", not "error": the import partly succeeded and the fields ARE
         // filled — red is reserved for the cases where nothing landed.
@@ -631,6 +653,18 @@
       applyPrefill(prefill);
     }
     if (importCode && importUrl && triggerImport) {
+      // On a reopen the reset block above is skipped, so the previous bag's fields
+      // are still in the form — and the new lookup's applyPrefill only OVERWRITES
+      // truthy values, so a label-only import (the ordinary no-API-key case) would
+      // inherit bag A's manufacturer/package/description under bag B's number. Clear
+      // them, and the type's parameter inputs, so only what the new lookup fills
+      // survives. (setShopUrl(null) likewise drops the prior bag's shop link until
+      // this code resolves.)
+      if (reopening) {
+        form.reset();
+        loadParams(""); // clear the previous type's parameter fields too
+      }
+      setShopUrl(null);
       importUrl.value = importCode;
       triggerImport();
     }

@@ -407,6 +407,9 @@ dialog footer {
   display: flex; justify-content: flex-end; gap: 10px;
   padding: 4px 0 0; border: none; margin: 4px 0 0;
 }
+/* Pushes a leading footer action (e.g. "Open in shop") to the left while the
+   primary actions stay right. */
+dialog footer .footer-spacer { flex: 1; }
 dialog .close {
   background: transparent; border: none; color: var(--muted); cursor: pointer;
   width: 28px; height: 28px; border-radius: 6px; display: grid; place-items: center; padding: 0;

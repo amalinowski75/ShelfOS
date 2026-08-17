@@ -69,6 +69,15 @@
 
       <p id="component-error" class="error" hidden></p>
       <footer>
+        {# Opens the distributor product page for the part being created, in a new
+           browser window. Enabled only when the part came from a shop import (a
+           scanned/pasted code, or an invoice line) — otherwise there is no page to
+           open, so it stays disabled. component_dialog.js toggles it. #}
+        <button type="button" class="btn btn-ghost" id="component-open-shop"
+                title="Open the distributor product page in a new window" disabled>
+          Open in shop ↗
+        </button>
+        <span class="footer-spacer"></span>
         <button type="button" class="btn btn-ghost" data-close>Cancel</button>
         <button type="submit" class="btn btn-primary">Create component</button>
       </footer>

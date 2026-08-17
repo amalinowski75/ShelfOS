@@ -152,6 +152,11 @@ class DigiKeyProvider:
         labels = host.split(".")
         return len(labels) > 1 and "digikey" in labels[:-1]
 
+    def product_url(self, part_number: str) -> str:
+        # The direct product path needs Digi-Key's internal id; the keyword search
+        # takes the part number alone and lands an exact one on its product page.
+        return f"https://www.digikey.com/en/products/result?keywords={quote(part_number)}"
+
     def fetch(
         self, url: str, *, transport: httpx.BaseTransport | None = None
     ) -> ProductData:

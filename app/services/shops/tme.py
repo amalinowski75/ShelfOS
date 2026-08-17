@@ -19,7 +19,7 @@ import threading
 import time
 from collections.abc import Iterable
 from typing import Any
-from urllib.parse import unquote, urljoin, urlsplit
+from urllib.parse import quote, unquote, urljoin, urlsplit
 
 import httpx
 
@@ -346,6 +346,11 @@ class TmeProvider:
             return False
         labels = host.split(".")
         return len(labels) > 1 and "tme" in labels[:-1]
+
+    def product_url(self, part_number: str) -> str:
+        # The invoice's supplier-part-number for TME IS the TME symbol, so it maps
+        # straight to the storefront's product page (case-insensitive there).
+        return f"https://www.tme.eu/en/details/{quote(part_number, safe='')}/"
 
     def fetch(
         self, url: str, *, transport: httpx.BaseTransport | None = None
