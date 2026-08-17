@@ -164,18 +164,36 @@ through a printer. A setting that would fail is named in a startup warning.
 To print for real, point ShelfOS at the printer's device:
 
 ```bash
-export SHELFOS_LABEL_DEVICE="/dev/usb/lp0"   # empty (default) = no printer
+export SHELFOS_LABEL_DEVICE="/dev/usb/lp0"   # empty (default) = no printer; see the udev rule below
 export SHELFOS_LABEL_PRINTER_MODEL="QL-800"
 export SHELFOS_LABEL_MAX_JOB="50"            # labels per job
 ```
 
-The raster bytes go straight to that device, so two things about the host matter.
-The ShelfOS user needs write access — join the `lp` group, or install a udev rule:
+The raster bytes go straight to that device, so three things about the host matter.
+
+**The device number is not stable.** `usblp` hands out the next free index, so a
+printer that was `/dev/usb/lp0` can come back as `lp4` after a few replugs. A udev
+rule fixes both that and the permissions (the node is `root:lp 0660`, and the
+ShelfOS user is usually in neither group):
 
 ```
 # /etc/udev/rules.d/99-brother-ql.rules
-SUBSYSTEM=="usbmisc", ATTRS{idVendor}=="04f9", MODE="0660", GROUP="plugdev"
+SUBSYSTEM=="usbmisc", ATTRS{idVendor}=="04f9", MODE="0660", GROUP="plugdev", SYMLINK+="shelfos-label"
 ```
+
+```bash
+sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=usbmisc
+export SHELFOS_LABEL_DEVICE="/dev/shelfos-label"   # stable across replugs
+```
+
+Joining the `lp` group works too (`sudo usermod -aG lp $USER`), but needs a fresh
+login and leaves the unstable device number.
+
+**A QL-800 fresh out of the box is in Editor Lite mode**, in which it enumerates as
+a 2 MB USB *mass storage* device holding Brother's Windows editor — no printer
+interface, so no `/dev/usb/lp*` at all. Hold the Editor Lite button on the printer
+for about a second until its LED goes out; it re-enumerates as a printer
+(`04f9:209b`, "QL-800 Label Printer") and the node appears.
 
 And **CUPS must not own the same printer**: if the QL is installed as a CUPS
 printer, CUPS holds the device and ShelfOS's writes fail with "in use by another
