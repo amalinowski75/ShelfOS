@@ -20,45 +20,59 @@ const ok = (data) => Promise.resolve({ ok: true, json: async () => data });
 const fail = (detail, status = 422) =>
   Promise.resolve({ ok: false, status, json: async () => ({ detail }) });
 
+const DIELECTRIC = {
+  id: 9,
+  name: "dielectric",
+  label: "Dielectric",
+  data_type: "enum",
+  unit: null,
+  sort_order: 0,
+  is_table_column: true,
+  is_filterable: false,
+  enum_values: ["C0G", "X7R"],
+  in_use_count: 0,
+  deletable: true,
+};
+
 const RESISTOR = {
   id: 3,
   name: "resistor",
   parent_name: "passive",
   component_count: 2,
-  parameters: [
-    {
-      id: 9,
-      name: "dielectric",
-      label: "Dielectric",
-      data_type: "enum",
-      unit: null,
-      sort_order: 0,
-      is_table_column: true,
-      is_filterable: false,
-      enum_values: ["C0G", "X7R"],
-    },
-  ],
+  child_count: 0,
+  deletable: false, // 2 components use it
+  parameters: [DIELECTRIC],
 };
 
 describe("types_admin.js — columns", () => {
-  it("labels columns and formats parent / parameter count", () => {
+  it("labels columns and formats parent / child / parameter count", () => {
     const { window } = loadPage(typesAdminPageFixture(), SCRIPTS);
     const columns = window.typeColumns();
     expect(columns.map((c) => c.field)).toEqual([
       "name",
       "parent_name",
       "component_count",
+      "child_count",
       "parameters",
       "actions",
     ]);
     expect(columns[1].formatter(cell(null))).toContain("—"); // no parent
     expect(columns[1].formatter(cell("passive"))).toBe("passive");
-    expect(columns[3].formatter(cell([{}, {}]))).toBe("2"); // count, not the list
+    expect(columns[4].formatter(cell([{}, {}]))).toBe("2"); // count, not the list
+  });
+
+  it("disables the type Delete button when the server would refuse it", () => {
+    const { window } = loadPage(typesAdminPageFixture(), SCRIPTS);
+    const actions = window.typeColumns()[5];
+    expect(actions.formatter(cell(null, { deletable: false }))).toContain("disabled");
+    expect(actions.formatter(cell(null, { deletable: true }))).not.toContain(
+      "disabled",
+    );
   });
 
   it("routes row-action clicks to rename / params / delete", () => {
     const { window, document } = loadPage(typesAdminPageFixture(), SCRIPTS);
-    const actions = window.typeColumns()[4];
+    const actions = window.typeColumns()[5];
     const click = (act) =>
       actions.cellClick(
         { target: { dataset: { act } } },
@@ -92,6 +106,24 @@ describe("types_admin.js — type writes", () => {
     expect(JSON.parse(call[1].body)).toEqual({ name: "res" });
   });
 
+  it("guards against a double submit", async () => {
+    // A never-resolving fetch keeps the first submit in flight; the second must be
+    // dropped by makeGuard rather than firing a duplicate request.
+    let calls = 0;
+    const { window, document } = loadPage(typesAdminPageFixture(), SCRIPTS, {
+      fetchImpl: () => {
+        calls += 1;
+        return new Promise(() => {}); // never resolves
+      },
+    });
+    window.openRenameDialog(RESISTOR);
+    document.getElementById("type-rename-form").elements.name.value = "res";
+    submit(document, "type-rename-form");
+    submit(document, "type-rename-form");
+    await tick();
+    expect(calls).toBe(1);
+  });
+
   it("surfaces the in-use refusal when a delete is blocked", async () => {
     const { window } = loadPage(typesAdminPageFixture(), SCRIPTS, {
       fetchImpl: () => fail("2 components use this type"),
@@ -106,35 +138,77 @@ describe("types_admin.js — type writes", () => {
 });
 
 describe("types_admin.js — parameter writes", () => {
-  it("edits a parameter, sending enum tokens for an enum def", async () => {
+  it("edits a parameter, sending the WHOLE body incl. newline-split enum tokens", async () => {
     const { window, document, fetchMock } = loadPage(typesAdminPageFixture(), SCRIPTS);
     window.openParamsDialog(RESISTOR);
-    // The first row's Edit button (Edit, then Delete).
-    document.querySelector("#type-params-list li button").click();
+    document.querySelector("#type-params-list li button").click(); // the Edit button
 
     const form = document.getElementById("param-edit-form");
     expect(form.definition_id.value).toBe("9");
     expect(form.elements.data_type.value).toBe("enum");
-    expect(form.querySelector(".param-enum").hidden).toBe(false); // shown for enum
-    expect(form.elements.enum_values.value).toBe("C0G, X7R");
+    expect(form.querySelector(".param-enum").hidden).toBe(false);
+    // Tokens are pre-filled one per line (a comma is a legal character in a token).
+    expect(form.elements.enum_values.value).toBe("C0G\nX7R");
 
     form.elements.label.value = "Dielectric material";
-    form.elements.enum_values.value = "C0G, X7R, Y5V";
+    form.elements.enum_values.value = "C0G\nX7R\nY5V";
     submit(document, "param-edit-form");
     await tick();
 
     const call = fetchMock.mock.calls.find(([u]) => u === "/api/admin/parameters/9");
     expect(call[1].method).toBe("PATCH");
-    const body = JSON.parse(call[1].body);
-    expect(body.label).toBe("Dielectric material");
-    expect(body.enum_values).toEqual(["C0G", "X7R", "Y5V"]);
+    // The full body — every field, so a dropped field is caught (the API is a
+    // partial PATCH, so an omitted field would silently keep its old value).
+    expect(JSON.parse(call[1].body)).toEqual({
+      name: "dielectric",
+      label: "Dielectric material",
+      unit: null,
+      sort_order: 0,
+      is_table_column: true,
+      is_filterable: false,
+      enum_values: ["C0G", "X7R", "Y5V"],
+    });
+  });
+
+  it("omits enum_values when editing a non-enum parameter", async () => {
+    const { window, document, fetchMock } = loadPage(typesAdminPageFixture(), SCRIPTS);
+    window.openParamEditDialog({
+      id: 4,
+      name: "resistance",
+      label: "Resistance",
+      data_type: "number",
+      unit: "Ω",
+      sort_order: 1,
+      is_table_column: false,
+      is_filterable: true,
+      enum_values: [],
+    });
+    expect(document.querySelector("#param-edit-form .param-enum").hidden).toBe(true);
+
+    submit(document, "param-edit-form");
+    await tick();
+
+    const call = fetchMock.mock.calls.find(([u]) => u === "/api/admin/parameters/4");
+    expect(JSON.parse(call[1].body).enum_values).toBeUndefined();
+  });
+
+  it("disables a parameter's Delete when a component holds it, showing the count", () => {
+    const { window, document } = loadPage(typesAdminPageFixture(), SCRIPTS);
+    window.openParamsDialog({
+      ...RESISTOR,
+      parameters: [{ ...DIELECTRIC, deletable: false, in_use_count: 3 }],
+    });
+    const buttons = document.querySelectorAll("#type-params-list li button");
+    expect(buttons[1].disabled).toBe(true); // Delete
+    expect(document.querySelector(".param-list-meta").textContent).toContain(
+      "3 in use",
+    );
   });
 
   it("deletes a parameter via DELETE", async () => {
     const { window, document, fetchMock } = loadPage(typesAdminPageFixture(), SCRIPTS);
     window.openParamsDialog(RESISTOR);
-    // The second button in the row is Delete.
-    document.querySelectorAll("#type-params-list li button")[1].click();
+    document.querySelectorAll("#type-params-list li button")[1].click(); // Delete
     await tick();
 
     const call = fetchMock.mock.calls.find(([u]) => u === "/api/admin/parameters/9");
@@ -155,9 +229,7 @@ describe("types_admin.js — parameter writes", () => {
     submit(document, "param-add-form");
     await tick();
 
-    const call = fetchMock.mock.calls.find(
-      ([u]) => u === "/api/types/3/parameters",
-    );
+    const call = fetchMock.mock.calls.find(([u]) => u === "/api/types/3/parameters");
     expect(call[1].method).toBe("POST");
     const body = JSON.parse(call[1].body);
     expect(body).toMatchObject({
@@ -167,5 +239,21 @@ describe("types_admin.js — parameter writes", () => {
       unit: "%",
     });
     expect(body.enum_values).toBeUndefined(); // not an enum, so no tokens sent
+  });
+
+  it("re-renders an open parameters list after a reload", async () => {
+    const updated = {
+      ...RESISTOR,
+      parameters: [DIELECTRIC, { ...DIELECTRIC, id: 10, name: "tolerance" }],
+    };
+    const { window, document } = loadPage(typesAdminPageFixture(), SCRIPTS, {
+      fetchImpl: () => ok({ data: [updated] }),
+    });
+    window.openParamsDialog(RESISTOR); // one parameter shown
+    expect(document.querySelectorAll("#type-params-list li").length).toBe(1);
+
+    await window.loadTypes(); // feed now has two — the open list must follow
+    await tick();
+    expect(document.querySelectorAll("#type-params-list li").length).toBe(2);
   });
 });

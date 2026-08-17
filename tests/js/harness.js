@@ -199,7 +199,7 @@ export function typesAdminPageFixture() {
     <input name="name" />
     <input name="label" />
     <input name="unit" />
-    <div class="field param-enum" hidden><input name="enum_values" /></div>
+    <div class="field param-enum" hidden><textarea name="enum_values"></textarea></div>
     <input type="number" name="sort_order" value="0" />
     <label><input type="checkbox" name="is_table_column" /></label>
     <label><input type="checkbox" name="is_filterable" /></label>`;

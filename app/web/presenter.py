@@ -20,6 +20,7 @@ from app.models.component import (
     ParameterDefinition,
 )
 from app.models.enums import ParameterDataType
+from app.models.invoice import InvoiceImportLine
 from app.services import component_service as cs
 from app.services import invoice_service as inv
 from app.services import stock_service as ss
@@ -274,8 +275,11 @@ def build_types_table(session: Session) -> list[dict[str, Any]]:
 
     Each type with its parent name, live-component and child counts, and its own
     parameter definitions (with enum tokens and a per-parameter in-use count). All
-    counts are batched to avoid an N+1. The ``deletable`` flags are advisory — the
-    DELETE endpoints re-check and are the source of truth.
+    counts are batched to avoid an N+1. The ``deletable`` flags mirror what the DELETE
+    endpoints block on — components, child types AND staged invoice lines for a type;
+    stored values AND staged lines for a parameter — so the page can disable a Delete
+    the server would refuse. They stay advisory: the endpoints re-check and are the
+    source of truth.
     """
     types = cs.list_types(session)
     name_by_id = {t.id: t.name for t in types}
@@ -316,11 +320,31 @@ def build_types_table(session: Session) -> list[dict[str, Any]]:
             )
         ).all()
     )
+    # Staged invoice-import lines also block a delete (added in #79 for types, #80 for
+    # parameters). type_id is a real FK (batched here); the definition ids live in the
+    # parameters JSON, so that side is a small Python scan of the review panel.
+    staged_type_counts: dict[int, int] = {
+        type_id: n
+        for type_id, n in session.exec(
+            select(InvoiceImportLine.type_id, func.count()).group_by(
+                col(InvoiceImportLine.type_id)
+            )
+        ).all()
+        if type_id is not None
+    }
+    staged_def_ids: set[int] = set()
+    for line in session.exec(select(InvoiceImportLine)).all():
+        for entry in line.parameters or []:
+            if isinstance(entry, dict) and isinstance(
+                entry.get("parameter_definition_id"), int
+            ):
+                staged_def_ids.add(entry["parameter_definition_id"])
 
     rows: list[dict[str, Any]] = []
     for ctype in types:
         components = component_counts.get(cast(int, ctype.id), 0)
         children = child_counts.get(cast(int, ctype.id), 0)
+        staged = staged_type_counts.get(cast(int, ctype.id), 0)
         parameters = [
             {
                 "id": d.id,
@@ -333,7 +357,10 @@ def build_types_table(session: Session) -> list[dict[str, Any]]:
                 "is_filterable": d.is_filterable,
                 "enum_values": enum_values.get(cast(int, d.id), []),
                 "in_use_count": usage.get(cast(int, d.id), 0),
-                "deletable": usage.get(cast(int, d.id), 0) == 0,
+                "deletable": (
+                    usage.get(cast(int, d.id), 0) == 0
+                    and cast(int, d.id) not in staged_def_ids
+                ),
             }
             for d in defs_by_type.get(cast(int, ctype.id), [])
         ]
@@ -341,13 +368,12 @@ def build_types_table(session: Session) -> list[dict[str, Any]]:
             {
                 "id": ctype.id,
                 "name": ctype.name,
-                "parent_id": ctype.parent_id,
                 "parent_name": (
                     name_by_id.get(ctype.parent_id) if ctype.parent_id else None
                 ),
                 "component_count": components,
                 "child_count": children,
-                "deletable": components == 0 and children == 0,
+                "deletable": components == 0 and children == 0 and staged == 0,
                 "parameters": parameters,
             }
         )

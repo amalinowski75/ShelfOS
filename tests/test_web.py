@@ -1652,7 +1652,7 @@ def test_types_page_renders_for_admin(client: TestClient) -> None:
     html = client.get("/types").text
     assert 'id="types-table"' in html
     assert "types_admin.js" in html
-    assert ">Types<" in html  # heading / nav link
+    assert "<h1>Types</h1>" in html  # the page heading (not just the nav link)
 
 
 def test_types_feed_lists_types_with_counts_and_params(client: TestClient) -> None:
@@ -1662,8 +1662,9 @@ def test_types_feed_lists_types_with_counts_and_params(client: TestClient) -> No
     ).json()
     client.post(
         f"/api/types/{resistor['id']}/parameters",
-        json={"name": "dielectric", "label": "Dielectric", "data_type": "enum",
-              "enum_values": ["C0G", "X7R"]},
+        json={"name": "resistance", "label": "Resistance", "data_type": "number",
+              "unit": "Ω", "sort_order": 2, "is_table_column": True,
+              "is_filterable": True},
     )
     client.post("/api/components", json={"type_id": resistor["id"], "mpn": "R-1"})
 
@@ -1676,10 +1677,45 @@ def test_types_feed_lists_types_with_counts_and_params(client: TestClient) -> No
     assert rows["passive"]["child_count"] == 1
     assert rows["passive"]["deletable"] is False  # has a child type
     param = rows["resistor"]["parameters"][0]
-    assert param["name"] == "dielectric"
-    assert param["data_type"] == "enum"
-    assert param["enum_values"] == ["C0G", "X7R"]
+    # The dialog needs every editable field back, or a PATCH would drop it.
+    assert param["name"] == "resistance"
+    assert param["unit"] == "Ω"
+    assert param["sort_order"] == 2
+    assert param["is_table_column"] is True
+    assert param["is_filterable"] is True
+    assert param["in_use_count"] == 0
     assert param["deletable"] is True  # no component holds a value for it
+
+
+def test_types_feed_deletable_reflects_staged_invoice_lines(
+    client: TestClient, session
+) -> None:  # type: ignore[no-untyped-def]
+    # A type/parameter a draft invoice holds under review can't be deleted, so the
+    # flag must say so — otherwise the page offers a Delete the server will refuse.
+    from decimal import Decimal
+
+    from app.models.invoice import InvoiceImportLine
+
+    ctype = client.post("/api/types", json={"name": "cable"}).json()
+    client.post(
+        f"/api/types/{ctype['id']}/parameters",
+        json={"name": "ctype", "label": "Type", "data_type": "enum",
+              "enum_values": ["Flat", "Round"]},
+    )
+    definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
+    session.add(
+        InvoiceImportLine(
+            invoice_id=1, line_no=1, quantity=1, unit_price=Decimal("1"),
+            shop_key="tme", reason="", type_id=ctype["id"],
+            parameters=[{"parameter_definition_id": definition["id"], "value": "Flat"}],
+        )
+    )
+    session.commit()
+
+    row = {r["name"]: r for r in client.get("/web/api/types").json()["data"]}["cable"]
+    assert row["component_count"] == 0  # nothing live uses it…
+    assert row["deletable"] is False  # …but a staged line does
+    assert row["parameters"][0]["deletable"] is False
 
 
 def test_types_pages_forbidden_for_non_admin(client: TestClient) -> None:

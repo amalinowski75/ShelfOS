@@ -36,6 +36,7 @@ function typeColumns() {
         cell.getValue() ? esc(cell.getValue()) : `<span class="muted">—</span>`,
     },
     { title: "Components", field: "component_count", hozAlign: "right" },
+    { title: "Child types", field: "child_count", hozAlign: "right" },
     {
       title: "Parameters",
       field: "parameters",
@@ -48,12 +49,21 @@ function typeColumns() {
       headerSort: false,
       width: 300,
       hozAlign: "right",
-      formatter: () =>
-        `<div class="row-actions">
+      // Delete is disabled when the server would refuse it (in use by components,
+      // child types or staged invoice lines) — the flag mirrors the DELETE guard,
+      // so the affordance matches reality instead of springing a refusal.
+      formatter: (cell) => {
+        const row = cell.getRow().getData();
+        const del = row.deletable
+          ? `<button class="btn btn-ghost btn-sm" data-act="delete">Delete</button>`
+          : `<button class="btn btn-ghost btn-sm" data-act="delete" disabled
+                     title="In use by components, child types or staged invoice lines">Delete</button>`;
+        return `<div class="row-actions">
            <button class="btn btn-secondary btn-sm" data-act="params">Parameters</button>
            <button class="btn btn-secondary btn-sm" data-act="rename">Rename</button>
-           <button class="btn btn-ghost btn-sm" data-act="delete">Delete</button>
-         </div>`,
+           ${del}
+         </div>`;
+      },
       cellClick: (event, cell) => {
         const act = event.target.dataset.act;
         if (!act) return;
@@ -68,7 +78,9 @@ function typeColumns() {
 
 async function loadTypes() {
   try {
-    const payload = await fetch("/web/api/types").then((r) => r.json());
+    const resp = await fetch("/web/api/types");
+    if (!resp.ok) throw new Error("feed request failed");
+    const payload = await resp.json();
     typesData = payload.data;
     await typesTable.setData(typesData);
     frameTable(typesTable);
@@ -93,11 +105,13 @@ function makeGuard() {
   };
 }
 
-// Split a comma-separated enum-token field into clean tokens (mirrors the New
-// Type builder's handling).
+// Split the enum-token field (one token per line) into clean tokens. A newline
+// separator — not a comma — because a comma is a legitimate character in a token
+// (a decimal comma, "1,5 mm", is the natural spelling for the invoice data this app
+// parses), so splitting on it would tear such tokens apart.
 function enumTokens(raw) {
   return raw
-    .split(",")
+    .split("\n")
     .map((t) => t.trim())
     .filter(Boolean);
 }
@@ -160,6 +174,14 @@ function openParamsDialog(row) {
   document.getElementById("type-params-dialog").showModal();
 }
 
+// Forget which type's list is showing once the dialog closes, so a later
+// loadTypes() doesn't re-render into a closed dialog.
+document
+  .getElementById("type-params-dialog")
+  ?.addEventListener("close", () => {
+    openParamsTypeId = null;
+  });
+
 // Re-render the parameters dialog from the freshest feed after a write, so an edit
 // or delete is reflected without closing it. No-op when the dialog is closed.
 function refreshOpenParams() {
@@ -182,10 +204,13 @@ function renderParams(row) {
       param.data_type === "enum" && param.enum_values.length
         ? `: ${param.enum_values.join(", ")}`
         : "";
+    // "· N in use" so the admin can see why a Delete is disabled before hovering.
+    const inUse = param.in_use_count ? ` · ${param.in_use_count} in use` : "";
     const meta = document.createElement("span");
     meta.className = "param-list-meta";
     // textContent (not innerHTML) — names/labels/tokens are user text.
-    meta.textContent = `${param.label} — ${param.name} · ${param.data_type}${unit}${enums}`;
+    meta.textContent =
+      `${param.label} — ${param.name} · ${param.data_type}${unit}${enums}${inUse}`;
     const actions = document.createElement("span");
     actions.className = "param-list-actions";
     const edit = document.createElement("button");
@@ -195,6 +220,11 @@ function renderParams(row) {
     const del = document.createElement("button");
     del.className = "btn btn-ghost btn-sm";
     del.textContent = "Delete";
+    // Disabled when the server would refuse it (a component or staged line holds it).
+    del.disabled = !param.deletable;
+    if (!param.deletable) {
+      del.title = "In use by components or staged invoice lines";
+    }
     del.addEventListener("click", () => deleteParam(param));
     actions.append(edit, del);
     li.append(meta, actions);
@@ -217,7 +247,7 @@ function openParamEditDialog(param) {
   const enumWrap = form.querySelector(".param-enum");
   const isEnum = param.data_type === "enum";
   enumWrap.hidden = !isEnum;
-  form.elements.enum_values.value = isEnum ? param.enum_values.join(", ") : "";
+  form.elements.enum_values.value = isEnum ? param.enum_values.join("\n") : "";
   document.getElementById("param-edit-error").hidden = true;
   document.getElementById("param-edit-dialog").showModal();
 }
