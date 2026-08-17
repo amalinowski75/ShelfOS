@@ -178,6 +178,9 @@ class LabelPrintResult(BaseModel):
 
     sent: int
     confirmed: bool
+    # Which tape it went on. Normally the one the printer reports holding, which
+    # is not necessarily the configured one — the layout follows the machine.
+    tape: str
 
 
 class LocationBulkResult(BaseModel):

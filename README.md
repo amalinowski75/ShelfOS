@@ -147,7 +147,7 @@ Brother QL's own 300 dpi grid:
 
 ```bash
 # the tape in the printer, as a brother_ql identifier
-export SHELFOS_LABEL_TAPE="62"          # 62 mm continuous (the roll a QL-800 ships with)
+export SHELFOS_LABEL_TAPE="62red"       # DK-22251, the black/red roll in the box
 # how long each label is, on a CONTINUOUS tape (a die-cut label's length is its die's)
 export SHELFOS_LABEL_LENGTH_MM="30"
 export SHELFOS_LABEL_MARGIN_MM="2"
@@ -155,6 +155,15 @@ export SHELFOS_LABEL_MARGIN_MM="2"
 export SHELFOS_LABEL_FONT="/path/to/Sans.ttf"
 export SHELFOS_LABEL_FONT_BOLD="/path/to/Sans-Bold.ttf"
 ```
+
+**The size mostly settles itself.** A connected printer is asked what tape it
+holds, and the label is laid out for that: swapping a 62 mm roll for a 29 mm one
+changes the labels, not the settings. `SHELFOS_LABEL_TAPE` then matters for the
+one thing the printer will not say — whether the roll is the black/red kind —
+and as the fallback when no printer is answering. The layout follows the tape's
+proportions too: a wide label puts the QR beside the name and path, a squarer or
+taller one stacks them, and the code stops growing at 25 mm, where it is already
+readable across a room.
 
 `GET /api/labels/locations/<id>/preview.png` returns exactly the bitmap the printer
 would receive, and takes `?tape=` / `?length=` to try a roll without touching the

@@ -93,7 +93,8 @@ def test_printing_a_branch_sends_it_to_the_device(  # type: ignore[no-untyped-de
     assert response.status_code == 200
     # A file is not a printer, so nothing confirms the job: the caller has to
     # say "sent" rather than "printed", which is what `confirmed` is for.
-    assert response.json() == {"sent": 2, "confirmed": False}
+    # A file cannot be asked what tape it holds, so the configured one stands.
+    assert response.json() == {"sent": 2, "confirmed": False, "tape": "62"}
     assert device.read_bytes().startswith(b"\x1bia\x01")
 
 

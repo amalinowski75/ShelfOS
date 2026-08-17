@@ -37,10 +37,13 @@ def preview_location_label(
             status_code=422, detail="location id must be a positive 64-bit integer"
         )
     label = lbl.build_labels(session, ids=[location_id])[0]
+    # Without an explicit override, preview what the printer would actually
+    # produce — which means asking it what tape it holds, exactly as printing
+    # does. With no printer answering, that falls back to the configured tape.
     geometry = (
         lp.tape_geometry(tape=tape, length_mm=length)
         if tape is not None or length is not None
-        else None
+        else lp.resolve_geometry()
     )
     return Response(content=lp.render_png(label, geometry), media_type="image/png")
 
@@ -59,4 +62,6 @@ def print_location_labels(
     """
     labels = lbl.build_labels(session, ids=payload.ids, root=payload.root)
     outcome = lp.print_labels(labels, copies=payload.copies)
-    return LabelPrintResult(sent=outcome.sent, confirmed=outcome.confirmed)
+    return LabelPrintResult(
+        sent=outcome.sent, confirmed=outcome.confirmed, tape=outcome.tape
+    )

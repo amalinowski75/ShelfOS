@@ -53,6 +53,9 @@ _PRINT_LOCK = threading.Lock()
 # How often to look at the device while waiting on it, and how much to hand the
 # kernel at a time.
 _POLL_SECONDS: Final = 0.2
+# How long a status question waits for the printer to be free. Short: a preview
+# asking what tape is loaded must never sit behind a whole print job.
+_STATUS_LOCK_SECONDS: Final = 1.0
 _CHUNK_BYTES: Final = 4096
 # How long one label may take to come out before the wait for confirmation is
 # given up on (the job is still printing; only the confirmation is abandoned).
@@ -89,10 +92,21 @@ _FONT_CANDIDATES: Final = (
 # starve it — a QR flush against dark tape edge or text is one that won't scan.
 _QR_BORDER: Final = 4
 
-# How much of the label's width the QR may take. Without a cap it would be a
-# square as tall as the label, which on a narrow tape leaves nothing for the
-# text; with it, a 62 mm tape still gets a ~25 mm code.
+# How much of the label the QR may take, per arrangement. Without a cap it
+# would be a square as large as the short side, leaving nothing for the text;
+# with it, a 62 mm tape still gets a ~25 mm code.
 _QR_WIDTH_SHARE: Final = 0.45
+_QR_HEIGHT_SHARE: Final = 0.55
+
+# A ceiling in millimetres, because a QR stops improving once it is comfortably
+# scannable: 25 mm of version-1 code reads across a room, and every millimetre
+# past that is tape spent on nothing. The same reasoning holds the type sizes
+# fixed — a big label gets white space, not a giant everything.
+_QR_MAX_MM: Final = 25.0
+
+# How much wider than tall a label must be before the QR goes beside the text
+# rather than above it. Below this the side-by-side split starves both.
+_SIDE_BY_SIDE_RATIO: Final = 1.3
 
 # A QR whose modules are thinner than this many printer dots (~0.25 mm) is not
 # reliably readable by a phone, so a tape that cannot do better is refused
@@ -340,8 +354,58 @@ def _qr_image(payload: str, box_px: int, tape: str) -> Image.Image:
     return Image.open(buffer).convert("1")
 
 
+def _layout(box_w: int, box_h: int) -> tuple[bool, int]:
+    """Whether the QR sits BESIDE the text, and how big it may be.
+
+    A label's proportions are set by the tape, and one arrangement does not
+    serve both: on a 62 x 30 mm strip the QR belongs to the left of the text,
+    while on a 29 mm roll the same rule leaves a stamp-sized code and a column
+    two characters wide. So a label that is clearly wider than tall gets the
+    side-by-side layout, and anything squarer or taller stacks the code above
+    the text, where each gets the full width.
+    """
+    ceiling = round(_QR_MAX_MM * _PX_PER_MM)
+    beside = box_w >= box_h * _SIDE_BY_SIDE_RATIO
+    if beside:
+        return True, min(box_h, round(box_w * _QR_WIDTH_SHARE), ceiling)
+    return False, min(box_w, round(box_h * _QR_HEIGHT_SHARE), ceiling)
+
+
+def _text_block(label: LabelData, box_w: int) -> tuple[list[tuple[str, str, int]], int]:
+    """The lines to draw as (text, font path, size), and how tall they stack.
+
+    Measured before anything is placed, so a layout can centre the code and the
+    text together rather than centring each in its own half — which on a long
+    label leaves them at opposite ends with a hole in between.
+    """
+    regular, bold = font_paths()
+    name_lines, name_px = fit_lines(
+        label.name,
+        font_path=bold,
+        box_w=box_w,
+        max_px=_NAME_MAX_PX,
+        min_px=_NAME_MIN_PX,
+        max_lines=1,
+    )
+    path_lines, path_px = fit_lines(
+        label.path,
+        font_path=regular,
+        box_w=box_w,
+        max_px=_PATH_MAX_PX,
+        min_px=_PATH_MIN_PX,
+        max_lines=_PATH_MAX_LINES,
+        separator=_PATH_SEPARATOR,
+    )
+    # Leading of 1.25 reads better than the fonts' own, which is set for prose.
+    name_h = round(name_px * 1.25)
+    path_h = round(path_px * 1.25)
+    lines = [(line, bold, name_px) for line in name_lines]
+    lines += [(line, regular, path_px) for line in path_lines]
+    return lines, name_h * len(name_lines) + path_h * len(path_lines)
+
+
 def render_label(label: LabelData, geometry: TapeGeometry | None = None) -> Image.Image:
-    """Draw one location label: QR on the left, name and path beside it."""
+    """Draw one location label, arranged to suit the tape it will print on."""
     geometry = geometry or tape_geometry()
     margin = round(config.LABEL_MARGIN_MM * _PX_PER_MM)
     box_w = geometry.width_px - 2 * margin
@@ -353,53 +417,33 @@ def render_label(label: LabelData, geometry: TapeGeometry | None = None) -> Imag
         )
 
     canvas = Image.new("1", (geometry.width_px, geometry.length_px), 1)
-    qr = _qr_image(
-        location_qr_payload(label.id),
-        min(box_h, round(box_w * _QR_WIDTH_SHARE)),
-        geometry.tape,
-    )
-    canvas.paste(qr, (margin, margin + (box_h - qr.height) // 2))
-
+    beside, qr_box = _layout(box_w, box_h)
+    qr = _qr_image(location_qr_payload(label.id), qr_box, geometry.tape)
     gap = margin
-    text_x = margin + qr.width + gap
-    text_w = geometry.width_px - margin - text_x
+
+    text_w = (box_w - qr.width - gap) if beside else box_w
     if text_w <= 0:
         raise ValidationError(
             f"tape {geometry.tape!r} leaves no room for text beside the QR"
         )
+    lines, text_h = _text_block(label, text_w)
 
-    regular, bold = font_paths()
-    name_lines, name_px = fit_lines(
-        label.name,
-        font_path=bold,
-        box_w=text_w,
-        max_px=_NAME_MAX_PX,
-        min_px=_NAME_MIN_PX,
-        max_lines=1,
-    )
-    path_lines, path_px = fit_lines(
-        label.path,
-        font_path=regular,
-        box_w=text_w,
-        max_px=_PATH_MAX_PX,
-        min_px=_PATH_MIN_PX,
-        max_lines=_PATH_MAX_LINES,
-        separator=_PATH_SEPARATOR,
-    )
-
-    # Leading of 1.25 reads better than the fonts' own, which is set for prose.
-    name_h = round(name_px * 1.25)
-    path_h = round(path_px * 1.25)
-    block_h = name_h * len(name_lines) + path_h * len(path_lines)
-    y = margin + max(0, (box_h - block_h) // 2)
+    if beside:
+        canvas.paste(qr, (margin, margin + (box_h - qr.height) // 2))
+        text_x = margin + qr.width + gap
+        text_y = margin + max(0, (box_h - text_h) // 2)
+    else:
+        # Code and text are centred as one block, so the pair sits together
+        # wherever the tape leaves spare length.
+        stack_h = qr.height + gap + text_h
+        top = margin + max(0, (box_h - stack_h) // 2)
+        canvas.paste(qr, (margin + (box_w - qr.width) // 2, top))
+        text_x, text_y = margin, top + qr.height + gap
 
     draw = ImageDraw.Draw(canvas)
-    for line in name_lines:
-        draw.text((text_x, y), line, font=_font(bold, name_px), fill=0)
-        y += name_h
-    for line in path_lines:
-        draw.text((text_x, y), line, font=_font(regular, path_px), fill=0)
-        y += path_h
+    for text, font_path, size in lines:
+        draw.text((text_x, text_y), text, font=_font(font_path, size), fill=0)
+        text_y += round(size * 1.25)
     return canvas
 
 
@@ -474,6 +518,7 @@ class PrinterStatus:
     """What the printer says about itself, decoded from one status frame."""
 
     media_width_mm: int
+    media_length_mm: int
     media_type: int
     errors: tuple[str, ...]
     status_type: int
@@ -496,6 +541,8 @@ def _decode_status(frame: bytes) -> PrinterStatus | None:
     )
     return PrinterStatus(
         media_width_mm=frame[10],
+        # Zero on a continuous roll, the die's length on a die-cut one.
+        media_length_mm=frame[17],
         media_type=frame[11],
         errors=errors,
         status_type=frame[18],
@@ -609,6 +656,67 @@ def read_printer_status(device: str | None = None) -> PrinterStatus | None:
         os.close(fd)
 
 
+def detect_tape(status: PrinterStatus) -> str | None:
+    """The tape identifier matching what the printer says it holds.
+
+    Width and continuous-versus-die-cut come straight from the status frame,
+    and a die-cut roll reports its length too — together that is enough to name
+    the tape without anybody configuring it. What the frame cannot say is
+    whether the roll is the black/red kind, so when the configured tape fits
+    the reported geometry it wins: the printer knows the size, the human knows
+    the ink.
+    """
+    endless = status.media_type == _MEDIA_CONTINUOUS
+    if status.media_type not in (_MEDIA_CONTINUOUS, _MEDIA_DIE_CUT):
+        return None
+    matches = [
+        spec.identifier
+        for spec in ALL_LABELS
+        if spec.tape_size[0] == status.media_width_mm
+        and (spec.form_factor == FormFactor.ENDLESS) == endless
+        and (endless or spec.tape_size[1] == status.media_length_mm)
+    ]
+    if not matches:
+        return None
+    return config.LABEL_TAPE if config.LABEL_TAPE in matches else matches[0]
+
+
+def _geometry_for(status: PrinterStatus | None) -> TapeGeometry:
+    """The geometry to render for: the printer's tape when it says, else the
+    configured one."""
+    if status is not None:
+        detected = detect_tape(status)
+        if detected is not None:
+            if detected != config.LABEL_TAPE:
+                _logger.info(
+                    "printing on %s tape (the printer's), not the configured %s",
+                    detected,
+                    config.LABEL_TAPE,
+                )
+            return tape_geometry(tape=detected)
+    return tape_geometry()
+
+
+def resolve_geometry(device: str | None = None) -> TapeGeometry:
+    """What the next label will be laid out for — asking the printer if it can.
+
+    Best-effort by construction: a printer that is unplugged, busy or silent
+    just leaves the configured tape in charge, so a preview still renders with
+    no printer in the building.
+    """
+    device = config.LABEL_DEVICE if device is None else device
+    if not device:
+        return tape_geometry()
+    if not _PRINT_LOCK.acquire(timeout=_STATUS_LOCK_SECONDS):
+        return tape_geometry()  # a print is in flight; do not interrupt it
+    try:
+        return _geometry_for(read_printer_status(device))
+    except (PrinterError, ValidationError):
+        return tape_geometry()
+    finally:
+        _PRINT_LOCK.release()
+
+
 def _refuse_if_not_ready(status: PrinterStatus, geometry: TapeGeometry) -> None:
     """Stop before printing when the printer already knows it cannot."""
     if status.errors:
@@ -616,22 +724,12 @@ def _refuse_if_not_ready(status: PrinterStatus, geometry: TapeGeometry) -> None:
     if not status.has_tape:
         raise PrinterError("there is no tape in the printer")
     if status.media_width_mm != geometry.width_mm:
+        # Only reachable when the tape could not be recognised (detect_tape
+        # found nothing), since otherwise the layout follows the printer.
         raise ValidationError(
-            f"the printer has {status.media_width_mm} mm tape loaded, but "
-            f"SHELFOS_LABEL_TAPE is {geometry.tape!r} ({geometry.width_mm} mm)"
-        )
-    loaded_endless = status.media_type == _MEDIA_CONTINUOUS
-    if status.media_type in (_MEDIA_CONTINUOUS, _MEDIA_DIE_CUT) and (
-        loaded_endless != geometry.endless
-    ):
-        # The other half of what the printer can actually tell us. A die-cut job
-        # on a continuous roll prints across the gaps; the reverse is refused by
-        # the encoder with a raw pixel count, which explains nothing.
-        loaded = "continuous" if loaded_endless else "die-cut"
-        wanted = "continuous" if geometry.endless else "die-cut"
-        raise ValidationError(
-            f"the printer has {loaded} tape loaded, but SHELFOS_LABEL_TAPE is "
-            f"{geometry.tape!r}, which is {wanted}"
+            f"the printer has {status.media_width_mm} mm tape loaded, which "
+            f"matches no tape ShelfOS knows; SHELFOS_LABEL_TAPE is "
+            f"{geometry.tape!r} ({geometry.width_mm} mm)"
         )
 
 
@@ -660,10 +758,11 @@ def _await_completion(fd: int, budget: float) -> bool:
 
 @dataclass(frozen=True)
 class PrintOutcome:
-    """How many labels went, and whether the printer said it printed them."""
+    """How many labels went, whether the printer confirmed, and on what tape."""
 
     sent: int
     confirmed: bool
+    tape: str
 
 
 def _print_job(labels: Sequence[LabelData], geometry: TapeGeometry) -> bytes:
@@ -714,19 +813,24 @@ def print_labels(
             f"{total}); print a smaller branch"
         )
 
-    geometry = tape_geometry()
-    data = _print_job([label for label in labels for _ in range(copies)], geometry)
     if not _PRINT_LOCK.acquire(timeout=config.LABEL_PRINT_TIMEOUT):
         raise PrinterError("the label printer is busy — try again in a moment")
     try:
         fd = _open_device(device)
         try:
             asks = _answers_questions(fd)
+            before = None
             if asks:
                 _write_all(fd, _STATUS_REQUEST, device, config.LABEL_STATUS_TIMEOUT)
                 before = _read_status(fd, budget=config.LABEL_STATUS_TIMEOUT)
-                if before is not None:
-                    _refuse_if_not_ready(before, geometry)
+            # The tape in the machine decides the label's size and shape; the
+            # encoding therefore happens here, once the printer has answered.
+            geometry = _geometry_for(before)
+            if before is not None:
+                _refuse_if_not_ready(before, geometry)
+            data = _print_job(
+                [label for label in labels for _ in range(copies)], geometry
+            )
             _write_all(fd, data, device, budget=config.LABEL_PRINT_TIMEOUT)
             # A silent printer must not hold the request open for the whole
             # print timeout, so the wait is scaled to the job and capped by it.
@@ -742,6 +846,10 @@ def print_labels(
     finally:
         _PRINT_LOCK.release()
     _logger.info(
-        "%s %d label(s) to %s", "printed" if confirmed else "sent", total, device
+        "%s %d label(s) on %s tape to %s",
+        "printed" if confirmed else "sent",
+        total,
+        geometry.tape,
+        device,
     )
-    return PrintOutcome(sent=total, confirmed=confirmed)
+    return PrintOutcome(sent=total, confirmed=confirmed, tape=geometry.tape)

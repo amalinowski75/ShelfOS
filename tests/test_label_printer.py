@@ -410,25 +410,54 @@ def test_a_printer_that_reports_trouble_is_not_printed_to() -> None:
         lp._refuse_if_not_ready(empty, geometry)
 
 
-def test_a_tape_the_printer_does_not_have_is_caught_before_printing() -> None:
-    """The check that would have saved an evening: the tape is 62 mm, and the
-    configuration says 29 mm, so nothing is printed and both numbers are named."""
-    frame = bytearray(_IDLE_FRAME)
-    status = lp._decode_status(bytes(frame))
+def _frame(**fields: int) -> lp.PrinterStatus:
+    """The bench frame with a few bytes changed, decoded."""
+    raw = bytearray(_IDLE_FRAME)
+    for offset, value in fields.items():
+        raw[int(offset[1:])] = value
+    status = lp._decode_status(bytes(raw))
     assert status is not None
-    with pytest.raises(ValidationError, match="62 mm tape loaded"):
-        lp._refuse_if_not_ready(status, lp.tape_geometry(tape="29"))
+    return status
 
-    # Die-cut against continuous is the other half of what the printer knows:
-    # the tape is 62 mm either way, so only the media type gives this away.
-    with pytest.raises(ValidationError, match="continuous tape loaded"):
-        lp._refuse_if_not_ready(status, lp.tape_geometry(tape="62x29"))
 
-    # And the matching cases go through quietly. Note 62red passes: a black/red
-    # roll is indistinguishable from a plain one in the status frame, so the
-    # colour is the one thing this check cannot make sure of.
-    lp._refuse_if_not_ready(status, lp.tape_geometry(tape="62"))
-    lp._refuse_if_not_ready(status, lp.tape_geometry(tape="62red"))
+def test_the_tape_is_recognised_from_what_the_printer_reports(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Width and continuous-versus-die-cut name the tape; nobody has to."""
+    monkeypatch.setattr(config, "LABEL_TAPE", "62")
+    assert lp.detect_tape(_frame()) == "62"  # 62 mm continuous, from the bench
+
+    # A die-cut roll reports its length too, which pins the exact die.
+    assert lp.detect_tape(_frame(b11=0x0B, b17=29)) == "62x29"
+    assert lp.detect_tape(_frame(b10=29, b11=0x0B, b17=90)) == "29x90"
+    assert lp.detect_tape(_frame(b10=29)) == "29"
+
+    # Nothing sensible to say about a width no tape has, or an empty printer.
+    assert lp.detect_tape(_frame(b10=99)) is None
+    assert lp.detect_tape(_frame(b11=0x00)) is None
+
+
+def test_the_configured_tape_settles_what_the_printer_cannot_say(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A black/red roll is indistinguishable from a plain one in the status
+    frame, so the configuration decides the colour — and only the colour."""
+    monkeypatch.setattr(config, "LABEL_TAPE", "62red")
+    assert lp.detect_tape(_frame()) == "62red"
+
+    # But it cannot override the geometry: 29 mm is not a 62 mm roll.
+    assert lp.detect_tape(_frame(b10=29)) == "29"
+
+
+def test_the_layout_follows_the_printer_not_the_configuration(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The point of asking: a roll swap changes the labels, not the settings."""
+    monkeypatch.setattr(config, "LABEL_TAPE", "62")
+    assert _frame(b10=29).media_width_mm == 29
+    assert lp._geometry_for(_frame(b10=29)).tape == "29"
+    # A printer that says nothing leaves the configured tape in charge.
+    assert lp._geometry_for(None).tape == "62"
+
+
+def test_an_unknown_tape_is_refused_rather_than_guessed(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(config, "LABEL_TAPE", "62")
+    with pytest.raises(ValidationError, match="matches no tape"):
+        lp._refuse_if_not_ready(_frame(b10=99), lp.tape_geometry(tape="62"))
 
 
 def test_a_refusal_with_no_reason_given_names_the_likely_tape_mismatch(
