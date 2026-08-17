@@ -1175,3 +1175,92 @@ def test_delete_type_removes_its_definitions_enum_values_and_scoped_rules(
 def test_delete_type_unknown_id(session: Session) -> None:
     with pytest.raises(NotFoundError):
         cs.delete_type(session, 999)
+
+
+# --- type rename/delete: review fixes (#79) ------------------------------------
+
+
+def test_delete_type_blocked_by_a_staged_invoice_line(session: Session) -> None:
+    # InvoiceImportLine.type_id is a real FK; a draft under review holds it before any
+    # component exists. Deleting the type would dangle it (finalize 404), so block.
+    from decimal import Decimal
+
+    from app.models.invoice import InvoiceImportLine
+
+    ctype = cs.create_type(session, "resistor")
+    session.add(
+        InvoiceImportLine(
+            invoice_id=1, line_no=1, quantity=1, unit_price=Decimal("1"),
+            shop_key="tme", type_id=ctype.id, reason="",
+        )
+    )
+    session.commit()
+    with pytest.raises(ValidationError, match="staged invoice lines"):
+        cs.delete_type(session, ctype.id)
+    assert session.get(ComponentType, ctype.id) is not None
+
+
+def test_rename_type_repoints_a_case_different_type_rule(session: Session) -> None:
+    # The engine resolves TYPE rules by name case-insensitively, so a rule stored as
+    # "Resistor" legitimately targets type "resistor" — the rename must carry it too.
+    ctype = cs.create_type(session, "resistor")
+    mrs.create_rule(
+        session, domain=MatchDomain.TYPE, alias="rez", canonical="Resistor"
+    )
+    cs.rename_type(session, ctype.id, name="res")
+    assert mrs.list_rules(session, domain=MatchDomain.TYPE)[0].canonical == "res"
+
+
+def test_rename_type_leaves_rules_when_another_type_shares_the_name(
+    session: Session,
+) -> None:
+    # Type names are unique per parent, not globally. A rule for "resistor" still
+    # resolves to the OTHER "resistor" after this one is renamed, so don't move it.
+    passive = cs.create_type(session, "passive")
+    root = cs.create_type(session, "resistor")
+    cs.create_type(session, "resistor", parent_id=passive.id)  # a second "resistor"
+    mrs.create_rule(
+        session, domain=MatchDomain.TYPE, alias="rez", canonical="resistor"
+    )
+    cs.rename_type(session, root.id, name="flat-resistor")
+    assert mrs.list_rules(session, domain=MatchDomain.TYPE)[0].canonical == "resistor"
+
+
+def test_delete_type_keeps_rules_when_another_type_shares_the_name(
+    session: Session,
+) -> None:
+    passive = cs.create_type(session, "passive")
+    cs.create_type(session, "resistor")  # a root "resistor"
+    child = cs.create_type(session, "resistor", parent_id=passive.id)
+    mrs.create_rule(
+        session, domain=MatchDomain.TYPE, alias="rez", canonical="resistor"
+    )
+    cs.delete_type(session, child.id)  # the root "resistor" still answers to the name
+    assert mrs.list_rules(session, domain=MatchDomain.TYPE)[0].canonical == "resistor"
+
+
+def test_rename_type_is_audited(session: Session) -> None:
+    from app.services import audit_service
+
+    ctype = cs.create_type(session, "resistor")
+    cs.rename_type(session, ctype.id, name="res", user_id=1)
+    entries = audit_service.list_entries(
+        session, entity_type="component_type", entity_id=ctype.id
+    )
+    assert [(e.field, e.old_value, e.new_value) for e in entries] == [
+        (audit_service.FIELD_NAME, "resistor", "res")
+    ]
+
+
+def test_delete_type_is_audited(session: Session) -> None:
+    from app.services import audit_service
+
+    ctype = cs.create_type(session, "throwaway")
+    type_id = ctype.id
+    cs.delete_type(session, type_id, user_id=1)
+    entries = audit_service.list_entries(
+        session, entity_type="component_type", entity_id=type_id
+    )
+    assert [(e.field, e.new_value) for e in entries] == [
+        (audit_service.FIELD_DELETED, "true")
+    ]
