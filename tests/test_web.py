@@ -807,6 +807,43 @@ def test_import_review_panel_renders_with_type_and_location_pickers(
     assert "is-incomplete" in html
 
 
+def test_review_row_carries_a_shop_product_url(
+    client: TestClient,
+    session,  # type: ignore[no-untyped-def]
+) -> None:
+    """The review row exposes a distributor product link built from shop + SPN.
+
+    It feeds the New Component dialog's "open in shop" button so a component
+    created from an invoice line can link back to where it came from — no API
+    call, purely from the line's own fields.
+    """
+    from decimal import Decimal
+
+    from app.models.invoice import InvoiceImportLine
+
+    handles = _invoice_with_line(client)
+    invoice_id = handles["invoice"]["id"]  # type: ignore[index]
+
+    session.add(
+        InvoiceImportLine(
+            invoice_id=invoice_id,
+            line_no=1,
+            mpn="IC",
+            supplier_part_number="CRG0805F4K7",  # a TME symbol
+            quantity=1,
+            unit_price=Decimal("1"),
+            shop_key="tme",
+            reason="",
+        )
+    )
+    session.commit()
+
+    html = client.get(f"/invoices/{invoice_id}").text
+    assert (
+        'data-source-url="https://www.tme.eu/en/details/CRG0805F4K7/"' in html
+    )
+
+
 def test_scan_putaway_panel_renders_on_a_draft_and_not_after_finalize(
     client: TestClient,
 ) -> None:

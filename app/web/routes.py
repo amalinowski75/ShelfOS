@@ -38,6 +38,7 @@ from app.services import invoice_service as inv
 from app.services import label_service as lbl
 from app.services import location_service as ls
 from app.services import match_rule_service as mrs
+from app.services import shops
 from app.services import stock_service as ss
 from app.services import user_service as us
 from app.services._common import require_entity
@@ -84,6 +85,9 @@ def _static_version() -> str:
 
 templates.env.globals["static_version"] = _static_version
 templates.env.globals["format_money"] = format_money
+# Build a distributor product-page link from an invoice line's shop + part number,
+# so the review row can hand it to the New Component dialog's "open in shop" button.
+templates.env.globals["shop_product_url"] = shops.product_url
 
 router = APIRouter(tags=["web"])
 

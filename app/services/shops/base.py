@@ -59,6 +59,17 @@ class ShopProvider(Protocol):
 
     def fetch(self, url: str) -> ProductData: ...
 
+    def product_url(self, part_number: str) -> str | None:
+        """This shop's public product page for ``part_number``, or None.
+
+        Built purely from the part number (the distributor's own number, i.e. the
+        invoice's supplier-part-number) — no API call — so a component created from
+        an invoice line can still link back to where it came from. Returns None when
+        the number is blank; the browser opens the result, so hosts are fixed
+        constants and there is no server-side fetch (no SSRF surface).
+        """
+        ...
+
 
 # Keyword → ShelfOS type name. Order matters: the more specific child types
 # (led, mosfet) come before their parents so "LED" doesn't resolve to "diode".

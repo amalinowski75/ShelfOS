@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 import httpx
 
@@ -60,6 +60,12 @@ class MouserProvider:
         # report "no product found".
         labels = _host(url).split(".")
         return len(labels) > 1 and "mouser" in labels[:-1]
+
+    def product_url(self, part_number: str) -> str | None:
+        # No stable direct-product path from a part number alone, so link the
+        # keyword search — an exact Mouser number lands on the single product.
+        part = part_number.strip()
+        return f"https://www.mouser.com/c/?q={quote(part)}" if part else None
 
     def fetch(
         self, url: str, *, transport: httpx.BaseTransport | None = None

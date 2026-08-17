@@ -396,6 +396,9 @@ if (detail && lineDialog) {
           mountingType: row.dataset.mountingType || null,
           notes: row.dataset.description || null,
           paramValues: stored,
+          // The distributor product page, built from the line's shop + part number
+          // (server-side), for the dialog's "open in shop" button.
+          shopUrl: row.dataset.sourceUrl || null,
         },
         { stage: { invoiceId, importLineId: row.dataset.importLineId } },
       );

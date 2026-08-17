@@ -162,6 +162,9 @@ describe("invoices.js — review imported lines inline", () => {
       mountingType: "THT",
       notes: "A widget",
       paramValues: [{ parameter_definition_id: 9, value: "4k7" }],
+      // The distributor product link (built server-side from shop + SPN) is passed
+      // through so the dialog's "Open in shop" button can target it.
+      shopUrl: "https://www.tme.eu/en/details/ABC123/",
     });
     expect(calls[0].opts).toEqual({
       stage: { invoiceId: "7", importLineId: "21" },

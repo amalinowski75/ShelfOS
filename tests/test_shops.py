@@ -247,3 +247,34 @@ def test_fetch_by_mpn_rejects_a_partial_match(monkeypatch) -> None:  # type: ign
         MouserProvider().fetch_by_mpn(
             "CRCW04021", transport=_transport(_MOUSER_OK)
         )
+
+
+def test_product_url_builds_a_distributor_link_per_shop() -> None:
+    # An invoice line carries the shop and its own part number; product_url turns
+    # them into the public product page the "open in shop" button opens — no API
+    # call, so it works for invoice-created components that were never looked up.
+    tme = shops.product_url("tme", "CRG0805F4K7")
+    assert tme == "https://www.tme.eu/en/details/CRG0805F4K7/"
+    assert "digikey.com" in (shops.product_url("digikey", "311-4.7KCRCT-ND") or "")
+    assert "mouser.com" in (shops.product_url("mouser", "71-CRCW04024K70") or "")
+
+
+def test_product_url_percent_encodes_the_part_number() -> None:
+    # A part number with URL-significant characters must not break the path/query.
+    url = shops.product_url("tme", "A/B C")
+    assert url is not None
+    assert " " not in url and url.endswith("/")
+    assert "A%2FB%20C" in url
+
+
+def test_product_url_is_none_for_an_unknown_shop_or_blank_number() -> None:
+    assert shops.product_url("farnell", "X") is None  # no provider for this shop
+    assert shops.product_url("tme", "") is None
+    assert shops.product_url("tme", "   ") is None
+    assert shops.product_url(None, "X") is None
+
+
+def test_product_url_matches_shop_key_case_insensitively() -> None:
+    # shop_key is stored lowercase, but don't let a stray upper-cased key silently
+    # yield no link.
+    assert shops.product_url("TME", "SYM1") == shops.product_url("tme", "SYM1")

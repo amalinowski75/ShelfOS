@@ -345,6 +345,7 @@ export function detailFixture({
            <tr data-import-line-id="21" class="is-incomplete"
                data-type-id="3" data-mpn="ABC123" data-manufacturer="Acme"
                data-package="SOT23" data-mounting-type="THT" data-description="A widget"
+               data-source-url="https://www.tme.eu/en/details/ABC123/"
                data-parameters='[{"parameter_definition_id":9,"value":"4k7"}]'>
              <td><span class="mono">ABC123</span></td>
              <td><span class="badge">diode</span></td>

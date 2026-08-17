@@ -97,6 +97,7 @@
             data-package="{{ p.package or '' }}"
             data-mounting-type="{{ p.mounting_type.value }}"
             data-description="{{ p.description or '' }}"
+            data-source-url="{{ shop_product_url(p.shop_key, p.supplier_part_number) or '' }}"
             data-parameters='{{ p.parameters | tojson }}'
             class="{{ '' if (p.type_id and p.location_id) else 'is-incomplete' }}">
           <td>

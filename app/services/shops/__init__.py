@@ -58,6 +58,28 @@ _BY_INDEX: dict[str, IndexProvider] = {
     "tme": _tme,
 }
 
+# Provider by the ``shop_key`` an invoice import line stores, for building a public
+# product-page link from the line's supplier part number (no API call).
+_BY_KEY: dict[str, ShopProvider] = {
+    "mouser": _mouser,
+    "digikey": _digikey,
+    "tme": _tme,
+}
+
+
+def product_url(shop_key: str | None, part_number: str | None) -> str | None:
+    """The shop's public product page for a supplier part number, or None.
+
+    Used to link a component created from an invoice line back to its distributor:
+    the line carries the shop and its own part number, which each provider turns
+    into a URL without any API call. Returns None for an unknown shop or a blank
+    number (the caller then leaves the "open in shop" button disabled).
+    """
+    provider = _BY_KEY.get((shop_key or "").lower())
+    if provider is None or not (part_number or "").strip():
+        return None
+    return provider.product_url(part_number or "")
+
 
 def resolve(url: str) -> ShopProvider | None:
     """The provider whose host matches ``url``, or None."""
@@ -132,4 +154,4 @@ def import_code(code: str) -> ProductData:
         return _fallback(scan, exc)
 
 
-__all__ = ["ProductData", "ShopProvider", "import_code", "resolve"]
+__all__ = ["ProductData", "ShopProvider", "import_code", "product_url", "resolve"]
