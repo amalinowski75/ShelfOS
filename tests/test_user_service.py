@@ -33,7 +33,7 @@ def test_authenticate_rejects_bad_password(session: Session) -> None:
 
 def test_authenticate_rejects_inactive_user(session: Session) -> None:
     user = us.create_user(session, username="carol", password="pw")
-    us.set_active(session, user.id, False)
+    us.set_active(session, user.id, False, actor_id=1)
     assert us.authenticate(session, "carol", "pw") is None
 
 
@@ -58,8 +58,8 @@ def test_empty_username_or_password_rejected(session: Session) -> None:
 
 def test_set_role_and_password(session: Session) -> None:
     user = us.create_user(session, username="frank", password="pw")
-    us.set_role(session, user.id, UserRole.ADMIN)
-    us.set_password(session, user.id, "newpw")
+    us.set_role(session, user.id, UserRole.ADMIN, actor_id=1)
+    us.set_password(session, user.id, "newpw", actor_id=1)
 
     refreshed = us.authenticate(session, "frank", "newpw")
     assert refreshed is not None
@@ -69,7 +69,7 @@ def test_set_role_and_password(session: Session) -> None:
 
 def test_set_role_unknown_user_raises(session: Session) -> None:
     with pytest.raises(NotFoundError):
-        us.set_role(session, 999, UserRole.ADMIN)
+        us.set_role(session, 999, UserRole.ADMIN, actor_id=1)
 
 
 def test_password_over_72_bytes_rejected(session: Session) -> None:
@@ -80,7 +80,7 @@ def test_password_over_72_bytes_rejected(session: Session) -> None:
     user = us.create_user(session, username="trent", password="a" * 72)
     assert us.authenticate(session, "trent", "a" * 72) is not None
     with pytest.raises(ValidationError):
-        us.set_password(session, user.id, "a" * 73)
+        us.set_password(session, user.id, "a" * 73, actor_id=1)
 
 
 def test_cannot_lock_out_last_admin(session: Session) -> None:
@@ -92,19 +92,19 @@ def test_cannot_lock_out_last_admin(session: Session) -> None:
     ensure_system_user(session)
 
     with pytest.raises(ValidationError):
-        us.set_role(session, admin.id, UserRole.USER)
+        us.set_role(session, admin.id, UserRole.USER, actor_id=1)
     with pytest.raises(ValidationError):
-        us.set_active(session, admin.id, False)
+        us.set_active(session, admin.id, False, actor_id=1)
 
     # A second real admin lifts the restriction on the first.
     other = us.create_user(
         session, username="admin2", password="pw", role=UserRole.ADMIN
     )
-    us.set_active(session, admin.id, False)
+    us.set_active(session, admin.id, False, actor_id=1)
     assert us.authenticate(session, "admin", "pw") is None
     # Now `other` is the last one and is protected in turn.
     with pytest.raises(ValidationError):
-        us.set_role(session, other.id, UserRole.USER)
+        us.set_role(session, other.id, UserRole.USER, actor_id=1)
 
 
 def test_ensure_admin_is_idempotent(session: Session) -> None:
@@ -143,7 +143,7 @@ def test_verify_password_tolerates_malformed_hash() -> None:
 def test_set_password_rejects_empty(session: Session) -> None:
     user = us.create_user(session, username="carol", password="pw")
     with pytest.raises(ValidationError):
-        us.set_password(session, user.id, "")
+        us.set_password(session, user.id, "", actor_id=1)
 
 
 def test_names_by_id_maps_known_ids_and_skips_the_rest(session: Session) -> None:

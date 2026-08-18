@@ -87,9 +87,7 @@ def test_failed_movement_writes_no_audit(ctx, session: Session) -> None:
 
 def test_parameter_change_is_audited_only_with_user(ctx, session: Session) -> None:
     # Without a user id nothing is logged (system/seed context).
-    cs.set_parameter_value(
-        session, ctx["component_id"], ctx["definition_id"], 4700.0
-    )
+    cs.set_parameter_value(session, ctx["component_id"], ctx["definition_id"], 4700.0)
     assert audit.list_entries(session, entity_type="component") == []
 
     # With a user, each real change is recorded old -> new.
@@ -114,12 +112,18 @@ def test_parameter_change_is_audited_only_with_user(ctx, session: Session) -> No
 def test_parameter_no_op_is_not_audited(ctx, session: Session) -> None:
     """Setting the same normalized value again writes no phantom audit row."""
     cs.set_parameter_value(
-        session, ctx["component_id"], ctx["definition_id"], 4700.0,
+        session,
+        ctx["component_id"],
+        ctx["definition_id"],
+        4700.0,
         user_id=ctx["user_id"],
     )
     # int 4700 normalizes to the stored float 4700.0 -> no change, no new row.
     cs.set_parameter_value(
-        session, ctx["component_id"], ctx["definition_id"], 4700,
+        session,
+        ctx["component_id"],
+        ctx["definition_id"],
+        4700,
         user_id=ctx["user_id"],
     )
     assert len(audit.list_entries(session, entity_type="component")) == 1
@@ -143,9 +147,7 @@ def test_line_location_change_is_audited(ctx, session: Session) -> None:
     inv.set_line_location(
         session, invoice.id, line.id, ctx["location_id"], user_id=ctx["user_id"]
     )
-    entries = audit.list_entries(
-        session, entity_type="invoice_line", entity_id=line.id
-    )
+    entries = audit.list_entries(session, entity_type="invoice_line", entity_id=line.id)
     assert len(entries) == 1
     assert entries[0].field == "location_id"
     assert entries[0].old_value is None
@@ -155,17 +157,13 @@ def test_line_location_change_is_audited(ctx, session: Session) -> None:
     inv.set_line_location(
         session, invoice.id, line.id, ctx["location_id"], user_id=ctx["user_id"]
     )
-    entries = audit.list_entries(
-        session, entity_type="invoice_line", entity_id=line.id
-    )
+    entries = audit.list_entries(session, entity_type="invoice_line", entity_id=line.id)
     assert len(entries) == 1
 
 
 def test_component_deletion_is_audited(ctx, session: Session) -> None:
     """A hard delete leaves an audit row even though the component is gone."""
-    cs.hard_delete_component(
-        session, ctx["component_id"], user_id=ctx["user_id"]
-    )
+    cs.hard_delete_component(session, ctx["component_id"], user_id=ctx["user_id"])
     entries = audit.list_entries(
         session, entity_type="component", entity_id=ctx["component_id"]
     )
@@ -191,9 +189,7 @@ def test_line_removal_is_audited(ctx, session: Session) -> None:
         unit_price=Decimal("1.00"),
     )
     inv.remove_line(session, invoice.id, line.id, user_id=ctx["user_id"])
-    entries = audit.list_entries(
-        session, entity_type="invoice_line", entity_id=line.id
-    )
+    entries = audit.list_entries(session, entity_type="invoice_line", entity_id=line.id)
     assert len(entries) == 1
     assert entries[0].field == "deleted"
     assert entries[0].new_value == "true"
@@ -217,9 +213,7 @@ def test_finalization_is_audited(ctx, session: Session) -> None:
     )
     inv.finalize_invoice(session, invoice.id, user_id=ctx["user_id"])
 
-    entries = audit.list_entries(
-        session, entity_type="invoice", entity_id=invoice.id
-    )
+    entries = audit.list_entries(session, entity_type="invoice", entity_id=invoice.id)
     fields = {e.field: e for e in entries}
     assert fields["is_finalized"].old_value == "false"
     assert fields["is_finalized"].new_value == "true"
@@ -480,3 +474,144 @@ def test_audit_endpoint_rejects_out_of_range_limit(client: TestClient) -> None:
     assert client.get("/api/admin/audit", params={"limit": 0}).status_code == 422
     assert client.get("/api/admin/audit", params={"limit": 5000}).status_code == 422
     assert client.get("/api/admin/audit", params={"limit": 100}).status_code == 200
+
+
+def test_granting_admin_is_recorded(ctx, session: Session) -> None:
+    """The question an audit log exists for, and until now unanswerable here."""
+    from app.models.enums import UserRole
+    from app.services import user_service as us
+
+    bob = us.create_user(session, username="bob", password="password123")
+    us.set_role(session, bob.id, UserRole.ADMIN, actor_id=ctx["user_id"])
+
+    entries = audit.list_entries(session, entity_type="user", entity_id=bob.id)
+    fields = {e.field: e for e in entries}
+    assert fields["role"].old_value == "user"
+    assert fields["role"].new_value == "admin"
+    assert fields["role"].user_id == ctx["user_id"]  # who granted it
+
+    # Setting the role it already has is not a grant and is not recorded.
+    before = len(entries)
+    us.set_role(session, bob.id, UserRole.ADMIN, actor_id=ctx["user_id"])
+    again = audit.list_entries(session, entity_type="user", entity_id=bob.id)
+    assert len(again) == before
+
+
+def test_an_account_is_recorded_with_what_it_may_do(ctx, session: Session) -> None:
+    """Creation is not audited for ordinary rows; an account is the exception,
+    because it is an access grant however it is worded."""
+    from app.models.enums import UserRole
+    from app.services import user_service as us
+
+    made = us.create_user(
+        session,
+        username="carol",
+        password="password123",
+        role=UserRole.ADMIN,
+        actor_id=ctx["user_id"],
+    )
+    entry = audit.list_entries(session, entity_type="user", entity_id=made.id)[0]
+    assert entry.field == "created"
+    assert entry.new_value == "carol (admin)"
+
+    # Seeding has nobody to attribute it to and records nothing.
+    seeded = us.create_user(session, username="dave", password="password123")
+    assert audit.list_entries(session, entity_type="user", entity_id=seeded.id) == []
+
+
+def test_a_password_change_is_recorded_but_never_the_password(
+    ctx, session: Session
+) -> None:
+    """The entry says a password changed and who changed it. Not the password,
+    not the old hash, not a prefix of either."""
+    from app.services import user_service as us
+
+    bob = us.create_user(session, username="bob", password="password123")
+    hash_before = bob.password_hash
+
+    us.set_password(session, bob.id, "hunter2-the-secret", actor_id=ctx["user_id"])
+
+    entry = audit.list_entries(session, entity_type="user", entity_id=bob.id)[0]
+    assert entry.field == "password"
+    assert entry.new_value == "set"
+    written = f"{entry.old_value}{entry.new_value}"
+    assert "hunter2" not in written
+    assert (hash_before or "")[:12] not in written
+    # An admin reset (actor is somebody else) against a self-service change: the
+    # log tells them apart by who is on the entry, not by a separate field.
+    assert entry.user_id == ctx["user_id"] != bob.id
+    us.change_own_password(session, bob, "hunter2-the-secret", "another-secret-1")
+    own = audit.list_entries(session, entity_type="user", entity_id=bob.id)[0]
+    assert own.user_id == bob.id
+
+
+def test_disabling_an_account_is_recorded(ctx, session: Session) -> None:
+    from app.services import user_service as us
+
+    bob = us.create_user(session, username="bob", password="password123")
+    us.set_active(session, bob.id, False, actor_id=ctx["user_id"])
+
+    entry = audit.list_entries(session, entity_type="user", entity_id=bob.id)[0]
+    assert (entry.field, entry.old_value, entry.new_value) == (
+        "is_active",
+        "true",
+        "false",
+    )
+
+
+def test_a_matching_rule_is_recorded_with_what_it_does(ctx, session: Session) -> None:
+    """A rule changes how every later import is read and keeps no history of its
+    own, so both its arrival and its wording belong in the log."""
+    from app.models.enums import MatchDomain
+    from app.services import match_rule_service as mrs
+
+    rule = mrs.create_rule(
+        session,
+        domain=MatchDomain.TYPE,
+        alias="rezystor",
+        canonical="resistor",
+        user_id=ctx["user_id"],
+    )
+    entries = audit.list_entries(session, entity_type="match_rule", entity_id=rule.id)
+    created = entries[0]
+    assert created.field == "created"
+    assert created.new_value == "type: rezystor → resistor"
+
+    mrs.update_rule(session, rule.id, canonical="capacitor", user_id=ctx["user_id"])
+    changed = audit.list_entries(session, entity_type="match_rule", entity_id=rule.id)[
+        0
+    ]
+    assert (changed.field, changed.old_value, changed.new_value) == (
+        "canonical",
+        "resistor",
+        "capacitor",
+    )
+
+
+def test_a_deleted_rule_says_what_it_was(ctx, session: Session) -> None:
+    """ "Who deleted the rule that mapped Rezystancja to resistance" is what
+    someone will bring to the log — and by then the row's id says nothing."""
+    from app.models.enums import MatchDomain
+    from app.services import match_rule_service as mrs
+
+    rule = mrs.create_rule(
+        session,
+        domain=MatchDomain.TYPE,
+        alias="kondensator",
+        canonical="capacitor",
+        user_id=ctx["user_id"],
+    )
+    mrs.delete_rule(session, rule.id, user_id=ctx["user_id"])
+
+    entry = audit.list_entries(session, entity_type="match_rule", entity_id=rule.id)[0]
+    assert entry.field == "deleted"
+    assert entry.old_value == "type: kondensator → capacitor"
+    assert entry.user_id == ctx["user_id"]
+
+
+def test_seeded_rules_are_not_attributed_to_anybody(session: Session) -> None:
+    """They arrive at startup, before there is anyone to blame for them."""
+    from app.services import match_rule_service as mrs
+
+    assert mrs.seed_default_rules(session) > 0
+    assert audit.list_entries(session, entity_type="match_rule") == []

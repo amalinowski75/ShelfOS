@@ -179,9 +179,7 @@ def update_parameter_definition(
     return read
 
 
-@router.delete(
-    "/parameters/{definition_id}", status_code=status.HTTP_204_NO_CONTENT
-)
+@router.delete("/parameters/{definition_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_parameter_definition(
     definition_id: int,
     session: Session = Depends(get_session),
@@ -198,36 +196,54 @@ def list_users(session: Session = Depends(get_session)) -> list[UserRead]:
 
 @router.post("/users", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 def create_user(
-    payload: UserCreate, session: Session = Depends(get_session)
+    payload: UserCreate,
+    session: Session = Depends(get_session),
+    actor_id: int = Depends(current_user_id),
 ) -> UserRead:
     user = us.create_user(
         session,
         username=payload.username,
         password=payload.password,
         role=payload.role,
+        actor_id=actor_id,
     )
     return UserRead.model_validate(user)
 
 
 @router.put("/users/{user_id}/role", response_model=UserRead)
 def set_role(
-    user_id: int, payload: RoleUpdate, session: Session = Depends(get_session)
+    user_id: int,
+    payload: RoleUpdate,
+    session: Session = Depends(get_session),
+    actor_id: int = Depends(current_user_id),
 ) -> UserRead:
-    return UserRead.model_validate(us.set_role(session, user_id, payload.role))
+    return UserRead.model_validate(
+        us.set_role(session, user_id, payload.role, actor_id=actor_id)
+    )
 
 
 @router.put("/users/{user_id}/active", response_model=UserRead)
 def set_active(
-    user_id: int, payload: ActiveUpdate, session: Session = Depends(get_session)
+    user_id: int,
+    payload: ActiveUpdate,
+    session: Session = Depends(get_session),
+    actor_id: int = Depends(current_user_id),
 ) -> UserRead:
-    return UserRead.model_validate(us.set_active(session, user_id, payload.is_active))
+    return UserRead.model_validate(
+        us.set_active(session, user_id, payload.is_active, actor_id=actor_id)
+    )
 
 
 @router.put("/users/{user_id}/password", response_model=UserRead)
 def set_password(
-    user_id: int, payload: PasswordUpdate, session: Session = Depends(get_session)
+    user_id: int,
+    payload: PasswordUpdate,
+    session: Session = Depends(get_session),
+    actor_id: int = Depends(current_user_id),
 ) -> UserRead:
-    return UserRead.model_validate(us.set_password(session, user_id, payload.password))
+    return UserRead.model_validate(
+        us.set_password(session, user_id, payload.password, actor_id=actor_id)
+    )
 
 
 @router.get("/audit", response_model=list[AuditEntryRead])
@@ -256,7 +272,9 @@ def list_match_rules(session: Session = Depends(get_session)) -> list[MatchRuleR
     status_code=status.HTTP_201_CREATED,
 )
 def create_match_rule(
-    payload: MatchRuleCreate, session: Session = Depends(get_session)
+    payload: MatchRuleCreate,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
 ) -> MatchRuleRead:
     rule = mrs.create_rule(
         session,
@@ -265,6 +283,7 @@ def create_match_rule(
         canonical=payload.canonical,
         parameter_definition_id=payload.parameter_definition_id,
         sort_order=payload.sort_order,
+        user_id=user_id,
     )
     return MatchRuleRead.model_validate(rule)
 
@@ -274,14 +293,19 @@ def update_match_rule(
     rule_id: int,
     payload: MatchRuleUpdate,
     session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
 ) -> MatchRuleRead:
     """Edit a rule's alias/target/order in place (only the fields sent change)."""
     changes = payload.model_dump(exclude_unset=True)
-    return MatchRuleRead.model_validate(mrs.update_rule(session, rule_id, **changes))
+    return MatchRuleRead.model_validate(
+        mrs.update_rule(session, rule_id, **changes, user_id=user_id)
+    )
 
 
 @router.delete("/match-rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_match_rule(
-    rule_id: int, session: Session = Depends(get_session)
+    rule_id: int,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
 ) -> None:
-    mrs.delete_rule(session, rule_id)
+    mrs.delete_rule(session, rule_id, user_id=user_id)

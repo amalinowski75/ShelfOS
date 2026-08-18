@@ -89,7 +89,7 @@ def test_delete_rule(session: Session) -> None:
     rule = mrs.create_rule(
         session, domain=MatchDomain.TYPE, alias="widget", canonical="ic"
     )
-    mrs.delete_rule(session, rule.id)
+    mrs.delete_rule(session, rule.id, user_id=1)
     assert not mrs.list_rules(session, domain=MatchDomain.TYPE)
 
 
@@ -99,7 +99,7 @@ def test_update_rule_changes_alias_target_and_order(session: Session) -> None:
     )
     updated = mrs.update_rule(
         session, rule.id, alias="opornik", canonical="resistor", sort_order=5
-    )
+    , user_id=1)
     assert updated.alias == "opornik"
     assert updated.sort_order == 5
     # The rename is what the engine now loads.
@@ -116,7 +116,7 @@ def test_update_rule_rejects_a_duplicate_alias(session: Session) -> None:
     # Renaming onto an alias already used in the same domain is rejected, so the
     # same text never maps two different ways.
     with pytest.raises(ValidationError, match="already exists"):
-        mrs.update_rule(session, other.id, alias="smd")
+        mrs.update_rule(session, other.id, alias="smd", user_id=1)
     # The rejected edit left the original alias intact.
     assert session.get(type(other), other.id).alias == "THT"
 
@@ -126,7 +126,7 @@ def test_update_rule_rejects_a_blank_alias(session: Session) -> None:
         session, domain=MatchDomain.TYPE, alias="widget", canonical="ic"
     )
     with pytest.raises(ValidationError):
-        mrs.update_rule(session, rule.id, alias="   ")
+        mrs.update_rule(session, rule.id, alias="   ", user_id=1)
 
 
 def test_update_rule_can_rename_to_the_same_alias(session: Session) -> None:
@@ -134,7 +134,9 @@ def test_update_rule_can_rename_to_the_same_alias(session: Session) -> None:
     rule = mrs.create_rule(
         session, domain=MatchDomain.TYPE, alias="chip", canonical="ic"
     )
-    updated = mrs.update_rule(session, rule.id, alias="chip", canonical="mosfet")
+    updated = mrs.update_rule(
+        session, rule.id, alias="chip", canonical="mosfet", user_id=1
+    )
     assert updated.canonical == "mosfet"
 
 
@@ -163,7 +165,7 @@ def test_update_rule_folds_a_mounting_target_to_its_enum_case(
     rule = mrs.create_rule(
         session, domain=MatchDomain.MOUNTING, alias="reflow", canonical="SMT"
     )
-    updated = mrs.update_rule(session, rule.id, canonical="other")
+    updated = mrs.update_rule(session, rule.id, canonical="other", user_id=1)
     assert updated.canonical == "Other"
 
 
@@ -232,7 +234,7 @@ def test_update_rule_rejects_an_enum_value_target_that_is_not_a_member(
         canonical="Flat", parameter_definition_id=definition.id,
     )
     with pytest.raises(ValidationError, match="enum_value rule's target"):
-        mrs.update_rule(session, rule.id, canonical="Coax")
+        mrs.update_rule(session, rule.id, canonical="Coax", user_id=1)
     # The rejected edit left the valid target intact.
     assert session.get(type(rule), rule.id).canonical == "Flat"
 
