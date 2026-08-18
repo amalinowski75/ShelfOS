@@ -303,6 +303,13 @@ table.kv tr:last-child th, table.kv tr:last-child td { border-bottom: none; }
   border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
 .bulk-preview-list li { padding: 2px 0; }
 
+/* ---------- delete-component dialog (§20) ---------- */
+/* Consequences, listed. Bulleted on purpose — every other list in the app is a
+   set of controls, this one is a set of losses and reads as prose. */
+.delete-lead { margin: 0; }
+.consequences { margin: 6px 0 0; padding-left: 20px; font-size: 14px; }
+.consequences li { padding: 2px 0; }
+
 /* A checkbox with its label, for filter bars. */
 .check {
   display: inline-flex; align-items: center; gap: 6px;

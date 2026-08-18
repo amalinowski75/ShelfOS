@@ -224,6 +224,54 @@ def _load_parameter_values(
     return grouped
 
 
+def _count(n: int, singular: str, plural: str | None = None) -> str:
+    """``3 attachments`` / ``1 attachment`` — counted things read badly unnamed."""
+    return f"{n} {singular if n == 1 else (plural or singular + 's')}"
+
+
+def build_component_delete_summary(
+    *,
+    parameter_values: int,
+    stock: list[dict[str, Any]],
+    attachments: int,
+    links: int,
+    purchases: int,
+    movements: int,
+) -> dict[str, list[str]]:
+    """What deleting a component destroys, and what survives it (§20).
+
+    A hard delete is the one irreversible thing an admin can do to inventory:
+    there is no soft-delete path, so the dialog has to be specific about what
+    goes rather than ask "are you sure?" about an unnamed amount. Stock leads the
+    list because it is the part nobody expects to lose — the deletion takes the
+    on-hand rows with it, and unlike a location (which refuses while it holds
+    stock) nothing stops it.
+
+    Empty categories are left out entirely: a component with no attachments
+    should not be asked to weigh "0 attachments" against anything.
+    """
+    on_hand = sum(int(row["quantity"]) for row in stock)
+    removed: list[str] = []
+    if on_hand:
+        removed.append(f"{on_hand} in stock, across {_count(len(stock), 'location')}")
+    if parameter_values:
+        removed.append(_count(parameter_values, "parameter value"))
+    if attachments:
+        removed.append(f"{_count(attachments, 'attachment')} (the files too)")
+    if links:
+        removed.append(_count(links, "link"))
+
+    # Not ours to delete: an invoice line and a movement record something that
+    # happened, and money spent does not stop having been spent because the part
+    # is gone from the catalogue.
+    kept: list[str] = []
+    if purchases:
+        kept.append(_count(purchases, "purchase line"))
+    if movements:
+        kept.append(_count(movements, "stock movement"))
+    return {"removed": removed, "kept": kept}
+
+
 def build_location_stock(session: Session) -> dict[int, list[dict[str, Any]]]:
     """``{location_id: [{component_id, mpn, manufacturer, quantity, container}]}``.
 

@@ -1,0 +1,48 @@
+{# Admin-only "Delete component" dialog (§20).
+
+   A hard delete is the one irreversible thing an admin can do to inventory —
+   there is no soft-delete path — so this asks about a named amount rather than
+   an unnamed "are you sure?". Both lists are built server-side
+   (build_component_delete_summary) from what the page already knows: a dialog
+   that guessed at the stock it is about to drop would be worse than one that
+   said nothing. #}
+{% macro component_delete_dialog(component, name, summary) %}
+<dialog id="component-delete-dialog"
+        data-component-id="{{ component.id }}" data-name="{{ name }}">
+  <article>
+    <header>
+      <strong>Delete component</strong>
+      <button type="button" class="close" aria-label="Close" data-close></button>
+    </header>
+    <form id="component-delete-form">
+      <p class="delete-lead">
+        <strong class="mono">{{ name }}</strong> goes for good. There is no undo.
+      </p>
+      {% if summary.removed %}
+      <div>
+        <p class="delete-lead">Deleted with it:</p>
+        <ul class="consequences">
+          {% for line in summary.removed %}<li>{{ line }}</li>{% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+      {% if summary.kept %}
+      {# What survives, said out loud: an invoice line and a movement record
+         something that happened, and money spent does not stop having been
+         spent because the part left the catalogue. #}
+      <p class="muted delete-lead">
+        Kept as a record of what happened: {{ summary.kept | join(", ") }}. The
+        deletion itself is written to the audit log.
+      </p>
+      {% endif %}
+      <p id="component-delete-error" class="error" hidden></p>
+      <footer>
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="button" class="btn btn-danger" id="component-delete-confirm">
+          Delete permanently
+        </button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+{% endmacro %}

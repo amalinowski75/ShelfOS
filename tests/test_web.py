@@ -12,6 +12,7 @@ from app import config
 from app.models.component import ComponentParameter, ParameterDefinition
 from app.models.enums import ParameterDataType
 from app.web.presenter import (
+    build_component_delete_summary,
     build_component_table,
     format_money,
     format_parameter_value,
@@ -513,6 +514,89 @@ def test_component_detail_non_admin_has_no_edit_affordance(
     assert 'id="component-edit-btn"' not in html
     assert 'id="component-edit-dialog"' not in html
     assert "component_edit.js" not in html
+
+
+def test_component_detail_admin_sees_the_delete_dialog(client: TestClient) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "RC0603"}
+    ).json()
+    html = client.get(f"/components/{component['id']}").text  # client is admin
+    assert 'id="component-delete-btn"' in html
+    assert 'id="component-delete-dialog"' in html
+    assert "component_delete.js" in html
+
+
+def test_component_detail_non_admin_has_no_delete_affordance(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    token = _non_admin_token(client, role="user", username="deleter")
+    headers = {"Authorization": f"Bearer {token}"}
+    html = anon_client.get(f"/components/{component['id']}", headers=headers).text
+    # The API refuses a writer anyway; the page should not offer the button that
+    # would earn them a 403.
+    assert 'id="component-delete-btn"' not in html
+    assert 'id="component-delete-dialog"' not in html
+    assert "component_delete.js" not in html
+
+
+def test_component_delete_dialog_names_what_it_destroys(client: TestClient) -> None:
+    """There is no undo and no soft delete, so the dialog has to be specific —
+    above all about the stock, which nobody expects a catalogue edit to drop."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "RC0603"}
+    ).json()
+    location = client.post(
+        "/api/locations", json={"type": "drawer", "name": "D1"}
+    ).json()
+    client.post(
+        "/api/stock/add",
+        json={
+            "component_id": component["id"],
+            "location_id": location["id"],
+            "quantity": 250,
+        },
+    )
+
+    html = client.get(f"/components/{component['id']}").text
+    dialog = html.split('id="component-delete-dialog"', 1)[1].split("</dialog>", 1)[0]
+    assert "250 in stock, across 1 location" in dialog
+    # And what survives it, so the delete is not read as erasing the history too.
+    assert "1 stock movement" in dialog
+
+
+def test_component_delete_dialog_leaves_out_what_there_is_none_of(
+    client: TestClient,
+) -> None:
+    # A component with nothing attached should not be asked to weigh "0
+    # attachments" against anything.
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    html = client.get(f"/components/{component['id']}").text
+    dialog = html.split('id="component-delete-dialog"', 1)[1].split("</dialog>", 1)[0]
+    assert "0 " not in dialog
+    assert "in stock" not in dialog
+
+
+def test_delete_summary_counts_and_names_each_kind() -> None:
+    summary = build_component_delete_summary(
+        parameter_values=1,
+        stock=[{"quantity": 40}, {"quantity": 2}],
+        attachments=3,
+        links=1,
+        purchases=2,
+        movements=1,
+    )
+    assert summary["removed"] == [
+        "42 in stock, across 2 locations",  # the loss nobody expects, first
+        "1 parameter value",
+        "3 attachments (the files too)",  # the files, not just the rows
+        "1 link",
+    ]
+    assert summary["kept"] == ["2 purchase lines", "1 stock movement"]
 
 
 def test_component_detail_writer_can_add_and_take_stock(client: TestClient) -> None:
