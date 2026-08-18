@@ -72,6 +72,14 @@ export function loadPage(
     // their table in a top-level const, so a test cannot reach the instance.
     replaceData(rows) {
       window.Tabulator.rows = rows;
+      // The real library re-runs its header filters once new data lands, which
+      // is why a table that reloads FROM its filters needs a guard against
+      // re-entering. Modelled here, capped so a missing guard fails the test
+      // loudly instead of looping until the runner gives up.
+      if (window.Tabulator.refilters < 20) {
+        window.Tabulator.refilters += 1;
+        window.Tabulator.handlers.dataFiltering?.(window.Tabulator.filters);
+      }
       return Promise.resolve();
     }
     // Header filters, for the tables that drive a server query from them. A
@@ -93,6 +101,7 @@ export function loadPage(
     static handlers = {};
     static rows = [];
     static filters = [];
+    static refilters = 0;
     static columns = [];
   };
 
