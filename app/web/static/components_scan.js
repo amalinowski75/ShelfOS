@@ -67,6 +67,11 @@
           quantity: 1,
           maxQuantity: null, // adding fresh stock — no upper bound
           quantityHint: "no stock on record — set the count, then scan a shelf",
+          // A move reads fine as "X → shelf", but this is the one flow where a
+          // scan can create stock that did not exist — so the confirmation says
+          // so in full ("Added 12 × X to …"), the sentence to read before
+          // walking away from the bench.
+          successToast: (path, quantity) => `Added ${quantity} × ${label} to ${path}`,
           async save(locationId, path, quantity) {
             const added = await scanFetch("/api/stock/add", "POST", {
               component_id: component.id,
@@ -74,9 +79,11 @@
               quantity,
             });
             if (!added.ok) throw new ScanMiss(await errorMessage(added));
-            // An add changes the component's total, which the table shows (a move
-            // leaves it unchanged), so reload to keep the Qty column honest.
-            window.location.reload();
+            // An add changes the component's total, which the table's Qty column
+            // shows (a move leaves it unchanged). Refresh that column in place —
+            // loadTable() is app.js's global on this page — rather than a full
+            // page reload, which would wipe the confirmation toast raised next.
+            if (typeof loadTable === "function") await loadTable();
           },
         };
       }
