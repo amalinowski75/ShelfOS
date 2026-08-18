@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -150,6 +151,36 @@ class LocationBulkCreate(BaseModel):
     parent_id: int | None = None
     # True previews totals and sample paths without creating anything.
     dry_run: bool = False
+
+
+class LabelPrintRequest(BaseModel):
+    """Which location labels to send to the label printer (spec §7).
+
+    ``root`` prints a location and everything under it; ``ids`` prints exactly
+    those, in that order; neither prints every location. Ids are bounded by
+    SQLite's rowid range — past it the driver raises mid-query, which would be
+    an unmapped 500 rather than a 422.
+    """
+
+    ids: list[Annotated[int, Field(gt=0, le=2**63 - 1)]] | None = None
+    root: Annotated[int, Field(gt=0, le=2**63 - 1)] | None = None
+    copies: int = Field(default=1, ge=1, le=10)
+
+
+class LabelPrintResult(BaseModel):
+    """How many labels went to the printer, and whether it confirmed printing.
+
+    A QL answers questions, so a job usually comes back confirmed. ``confirmed``
+    is false when the printer stayed silent — an unusual firmware, or a device
+    that is not really a printer — and the caller should then say a job was
+    *sent* rather than printed.
+    """
+
+    sent: int
+    confirmed: bool
+    # Which tape it went on. Normally the one the printer reports holding, which
+    # is not necessarily the configured one — the layout follows the machine.
+    tape: str
 
 
 class LocationBulkResult(BaseModel):

@@ -142,3 +142,46 @@ These are now prioritized in `ROADMAP.md` ("Post-v1.0 backlog"). Order set by th
 user on 2026-07-08: users/auth first, then type/parameter creation, then invoice
 workflow; CSV and Alembic/PostgreSQL are low priority (migration may never
 happen).
+
+## D12. Label printing goes straight at the device  [2026-08-17]
+
+ShelfOS renders a location label itself and writes the Brother QL raster bytes to
+a device path (`SHELFOS_LABEL_DEVICE`, normally `/dev/usb/lp0`). It does not go
+through CUPS, and it does not use `brother_ql`'s USB backend.
+
+Why: a device path needs no libusb, fails with an errno that turns into a
+sentence worth reading, and — the decisive part — a test can point it at a
+temporary file, so the whole path including the real raster encoder runs in CI
+with no printer and no mocks.
+
+What it costs, and is accepted:
+
+- **Linux only.** ShelfOS is a self-hosted Linux app; this is not a real cost.
+- **Status readback, after all.** This decision first said the opposite — that a
+  one-way write cannot know anything — and that was wrong. `/dev/usb/lp*` is
+  bidirectional: ask a QL for its status and it answers with 32 bytes naming the
+  tape it holds, its phase, and its error bits. So ShelfOS asks before printing
+  (refusing when the printer reports trouble, or holds tape the configured one
+  does not match) and again afterwards, and reports whether the printer
+  confirmed. It is best-effort: a device that stays silent leaves the old
+  behaviour, a job reported as *sent* rather than printed.
+- **CUPS must not own the printer too**, and the conflict is not a tidy `EBUSY`.
+  CUPS's `usb` backend detaches the kernel `usblp` driver whenever it touches the
+  device, so the node vanishes and returns while a job is in flight — observed on
+  first contact with real hardware, as repeating `usblp4: removed` / re-added
+  pairs in `dmesg`. Ubuntu also creates the queue by itself when the printer is
+  plugged in, so this is the default state, not an unusual one.
+- **The tape's colour capability is part of the job format.** A QL-800 with
+  black/red tape (DK-22251) refuses a one-colour job outright, reporting an error
+  with *no error bits set*. So the tape identifier drives whether the job carries
+  one raster plane or two; it is not a rendering preference.
+- **One process.** Jobs are serialised on a process-wide lock, so more than one
+  worker process would fall back on the printer's own `EBUSY`.
+
+The browser-printable page (`/labels/locations`) stays regardless: it works with
+any printer that has a driver, including this one through CUPS.
+
+`brother_ql_next` is a plain dependency rather than an optional extra because its
+label table is the source of truth for a tape's printable width (62 mm of tape is
+732 dots, of which 696 print). A copy of that table here could drift from the
+library that encodes the job, and the failure mode is noise printed on real tape.

@@ -120,3 +120,58 @@ TME_LANGUAGE = os.environ.get("SHELFOS_TME_LANGUAGE", "en")
 # group separator (GS, 0x1D). The scan parser always accepts GS/RS; set this if your
 # scanner is configured to send a printable one (e.g. "|") instead.
 SCAN_SEPARATOR = os.environ.get("SHELFOS_SCAN_SEPARATOR", "").strip()
+
+# --- Label printer (spec §7) -------------------------------------------------
+# The tape in the printer, as a brother_ql identifier ("62" = 62 mm continuous,
+# "62x29" = die-cut, "29", "29x90", "12", …). The default is the continuous
+# 62 mm roll a QL-800 ships with: no die to align to, and the label's length is
+# ours to choose. A tape is a fact about the deployment, not about a request, so
+# it is configured once here rather than passed per print.
+LABEL_TAPE = os.environ.get("SHELFOS_LABEL_TAPE", "62").strip()
+
+# How long each label is, in mm, on a CONTINUOUS tape (a die-cut label's length
+# is fixed by the die, and this is ignored for one). 30 mm fits a QR that a
+# phone reads at arm's length plus three lines of path.
+LABEL_LENGTH_MM = float(os.environ.get("SHELFOS_LABEL_LENGTH_MM", "30"))
+
+# White border kept clear on every side. Thermal tape is never fed perfectly
+# straight, and ink at the very edge of a QR is what makes it unreadable.
+LABEL_MARGIN_MM = float(os.environ.get("SHELFOS_LABEL_MARGIN_MM", "2"))
+
+# TrueType files for the label text. Empty means "find one" — the renderer walks
+# a list of paths common on Linux (DejaVu, Liberation, Noto). Set these when the
+# host has none of those, or to print a font of your own choosing.
+LABEL_FONT = os.environ.get("SHELFOS_LABEL_FONT", "").strip()
+LABEL_FONT_BOLD = os.environ.get("SHELFOS_LABEL_FONT_BOLD", "").strip()
+
+# Where the label printer is, as a device the host can write to — a Brother QL
+# on USB is /dev/usb/lp0. Empty (the default) means no printer: labels can still
+# be previewed and printed through the browser, and the print buttons stay
+# hidden. The raster bytes go to this path directly; ShelfOS does not go through
+# CUPS, and CUPS holding the same device will make writes fail.
+LABEL_DEVICE = os.environ.get("SHELFOS_LABEL_DEVICE", "").strip()
+
+# Which Brother QL is on the other end. The 800 series has its own raster
+# header, so a wrong model here produces a printer that takes the job and does
+# nothing with it.
+LABEL_PRINTER_MODEL = os.environ.get("SHELFOS_LABEL_PRINTER_MODEL", "QL-800").strip()
+
+# Ceiling on one print job. Deliberately far below the 500-label cap on building
+# labels: that many is half a roll fed out by one mis-click, and unlike a
+# mis-typed query it cannot be undone by reloading the page.
+LABEL_MAX_JOB = int(os.environ.get("SHELFOS_LABEL_MAX_JOB", "50"))
+
+# How long a print may wait for the printer to be free. There is exactly one
+# printer, so jobs are serialised; a second click during a six-label job should
+# wait its turn, not be refused, but not hold a worker thread indefinitely.
+LABEL_PRINT_TIMEOUT = float(os.environ.get("SHELFOS_LABEL_PRINT_TIMEOUT", "30"))
+
+# How long to wait for the printer to answer a status question. A QL answers in
+# milliseconds; this is only the ceiling for a device that says nothing at all,
+# after which ShelfOS prints unchecked rather than refusing to print.
+LABEL_STATUS_TIMEOUT = float(os.environ.get("SHELFOS_LABEL_STATUS_TIMEOUT", "2"))
+
+
+def label_printing_configured() -> bool:
+    """True when a printer device is set, so the print buttons are worth showing."""
+    return bool(LABEL_DEVICE)

@@ -137,6 +137,97 @@ If a shop's API can't enrich the scan (its key isn't set, or the lookup fails), 
 dialog is still pre-filled with the part number and manufacturer read off the label,
 and says that's all it managed.
 
+### Location labels
+
+Every location can be printed as a label — a QR holding `SL<id>`, which scanning
+puts straight into the "Set location" flow — in two ways. `/labels/locations` is a
+print-ready page for an ordinary browser print dialog (`?root=<id>` for one branch,
+`?sheet=1` to flow onto A4). Alongside it, ShelfOS renders the same label onto a
+Brother QL's own 300 dpi grid:
+
+```bash
+# the tape in the printer, as a brother_ql identifier
+export SHELFOS_LABEL_TAPE="62red"       # DK-22251, the black/red roll in the box
+# how long each label is, on a CONTINUOUS tape (a die-cut label's length is its die's)
+export SHELFOS_LABEL_LENGTH_MM="30"
+export SHELFOS_LABEL_MARGIN_MM="2"
+# only if the host has no DejaVu, Liberation or Noto
+export SHELFOS_LABEL_FONT="/path/to/Sans.ttf"
+export SHELFOS_LABEL_FONT_BOLD="/path/to/Sans-Bold.ttf"
+```
+
+**The size mostly settles itself.** A connected printer is asked what tape it
+holds, and the label is laid out for that: swapping a 62 mm roll for a 29 mm one
+changes the labels, not the settings. `SHELFOS_LABEL_TAPE` then matters for the
+one thing the printer will not say — whether the roll is the black/red kind —
+and as the fallback when no printer is answering. The layout follows the tape's
+proportions too: a wide label puts the QR beside the name and path, a squarer or
+taller one stacks them, and the code stops growing at 25 mm, where it is already
+readable across a room.
+
+`GET /api/labels/locations/<id>/preview.png` returns exactly the bitmap the printer
+would receive, and takes `?tape=` / `?length=` to try a roll without touching the
+environment — so the layout can be settled by looking, rather than by feeding tape
+through a printer. A setting that would fail is named in a startup warning.
+
+To print for real, point ShelfOS at the printer's device:
+
+```bash
+export SHELFOS_LABEL_DEVICE="/dev/usb/lp0"   # empty (default) = no printer; see the udev rule below
+export SHELFOS_LABEL_PRINTER_MODEL="QL-800"
+export SHELFOS_LABEL_MAX_JOB="50"            # labels per job
+```
+
+The raster bytes go straight to that device, so three things about the host matter.
+
+**The device number is not stable.** `usblp` hands out the next free index, so a
+printer that was `/dev/usb/lp0` can come back as `lp4` after a few replugs. A udev
+rule fixes both that and the permissions (the node is `root:lp 0660`, and the
+ShelfOS user is usually in neither group):
+
+```
+# /etc/udev/rules.d/99-brother-ql.rules
+SUBSYSTEM=="usbmisc", ATTRS{idVendor}=="04f9", MODE="0660", GROUP="plugdev", SYMLINK+="shelfos-label"
+```
+
+```bash
+sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=usbmisc
+export SHELFOS_LABEL_DEVICE="/dev/shelfos-label"   # stable across replugs
+```
+
+Joining the `lp` group works too (`sudo usermod -aG lp $USER`), but needs a fresh
+login and leaves the unstable device number.
+
+**A QL-800 fresh out of the box is in Editor Lite mode**, in which it enumerates as
+a 2 MB USB *mass storage* device holding Brother's Windows editor — no printer
+interface, so no `/dev/usb/lp*` at all. Hold the Editor Lite button on the printer
+for about a second until its LED goes out; it re-enumerates as a printer
+(`04f9:209b`, "QL-800 Label Printer") and the node appears.
+
+And **CUPS must not own the same printer**. Ubuntu creates a queue automatically
+the moment a USB printer appears, and CUPS's `usb` backend *detaches the kernel's
+`usblp` driver* whenever it touches the device. So the conflict does not show up
+as a clean "device busy": the node disappears and comes back (`usblp4: removed`
+in `dmesg`, then re-added a second later) and a job in flight dies mid-stream.
+Remove the queue with `sudo lpadmin -x QL-800` and print through ShelfOS, or keep
+the queue and print through the browser page instead — but not both.
+
+**Two-colour tape is not optional to get right.** With DK-22251 (62 mm black/red)
+loaded, a QL-800 *refuses* a one-colour job: it reports an error with no error
+bits set, which looks exactly like a broken printer. Name the tape and the job is
+built with two raster planes (the red one empty, unless a label uses red):
+
+```bash
+export SHELFOS_LABEL_TAPE="62red"    # DK-22251; "62" is the plain white roll
+```
+
+ShelfOS talks to the printer both ways: before a job it asks what tape is loaded
+and refuses when that is not the configured one ("the printer has 62 mm tape
+loaded, but SHELFOS_LABEL_TAPE is '29'"), or when the printer reports an open
+cover, a jam or an empty roll. After the job it waits for the printer to confirm
+the print. A printer that stays silent is not treated as a failure — the job is
+then reported as *sent* rather than printed.
+
 - **Web UI:** sign in at `/login` (session cookie).
 - **API:** `POST /api/auth/token` with `{"username", "password"}` returns a JWT;
   send it as `Authorization: Bearer <token>`.

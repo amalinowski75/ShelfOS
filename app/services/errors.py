@@ -27,6 +27,16 @@ class InvoiceFinalizedError(ShelfOSError):
     """An attempt was made to modify a finalized (read-only) invoice."""
 
 
+class PrinterError(ShelfOSError):
+    """The label printer could not be reached, or refused the job.
+
+    Its own class, and its own 503, because nothing is wrong with the request:
+    the printer is unplugged, busy, or claimed by another program. A 422 would
+    tell the user to fix what they asked for, and there is nothing to fix —
+    retrying in a moment is exactly the right response.
+    """
+
+
 class DuplicateComponentError(ShelfOSError):
     """A component with the same (MPN, manufacturer) already exists.
 
