@@ -11,6 +11,10 @@ const FIXTURE = `
       <select class="control" id="label-print-tape"></select>
       <p id="label-print-tape-hint"></p>
       <img id="label-print-preview" alt="" />
+      <div id="label-print-progress" hidden>
+        <p id="label-print-progress-text"></p>
+        <button type="button" id="label-print-stop">Stop printing</button>
+      </div>
       <p id="label-print-error" hidden></p>
       <div id="label-print-mismatch" hidden>
         <p id="label-print-mismatch-text"></p>
@@ -171,6 +175,118 @@ describe("label_print.js", () => {
     const after = fetchMock.mock.calls.filter((c) => c[0] === "/api/labels/tapes").length;
     expect(after).toBe(before + 1); // everything it told us is stale
     expect(fetchMock.mock.calls.at(-1)[0]).toBe("/api/labels/locations/print");
+  });
+});
+
+describe("stopping a run", () => {
+  it("shows progress and a way out while the labels are going", async () => {
+    // A whole cabinet is hundreds of labels; being able to say "not that" is
+    // worth more than anything else on the screen while it runs.
+    let release;
+    const inFlight = new Promise((resolve) => {
+      release = () =>
+        resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ sent: 3, confirmed: true, tape: "62red", stopped: true }),
+        });
+    });
+    const { document, fetchMock } = await open(null, routes({ print: () => inFlight }));
+
+    document.getElementById("label-print-form").dispatchEvent(
+      new document.defaultView.Event("submit", { cancelable: true, bubbles: true }),
+    );
+    await tick();
+    expect(document.getElementById("label-print-progress").hidden).toBe(false);
+
+    document.getElementById("label-print-stop").click();
+    await tick();
+    const [url, opts] = fetchMock.mock.calls.at(-1);
+    expect(url).toBe("/api/labels/stop");
+    expect(opts.method).toBe("POST");
+    expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
+
+    release();
+    await tick();
+    // Neither a success nor a failure: the labels that did come out are on the
+    // bench and have to be accounted for.
+    expect(document.querySelector(".toast").textContent).toBe("Stopped after 3 labels.");
+    expect(document.getElementById("label-print-progress").hidden).toBe(true);
+  });
+});
+
+describe("a dialog reopened while a run is going", () => {
+  it("picks the run back up instead of losing the Stop button", async () => {
+    // Escape closes the dialog; the run continues, because the request is still
+    // open. Reopening is the obvious way back to the one control that matters.
+    let release;
+    const inFlight = new Promise((resolve) => {
+      release = () =>
+        resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ sent: 8, confirmed: true, tape: "62red" }),
+        });
+    });
+    const page = loadPage(FIXTURE, SCRIPTS, {
+      fetchImpl: (url) => {
+        if (url === "/api/labels/tapes") return ok(TAPES);
+        if (url === "/api/labels/job")
+          return ok({ printing: true, done: 3, total: 8 });
+        if (url === "/api/labels/locations/print") return inFlight;
+        return ok({});
+      },
+    });
+
+    await page.window.openLabelPrintDialog({ root: 5, preview: 5, what: "8 labels" });
+    page.document.getElementById("label-print-form").dispatchEvent(
+      new page.document.defaultView.Event("submit", { cancelable: true, bubbles: true }),
+    );
+    await tick();
+
+    page.document.getElementById("label-print-dialog").close(); // Escape
+    await page.window.openLabelPrintDialog({ root: 5, preview: 5, what: "8 labels" });
+    await tick();
+
+    const progress = page.document.getElementById("label-print-progress");
+    expect(progress.hidden).toBe(false);
+    expect(page.document.getElementById("label-print-progress-text").textContent).toContain(
+      "3 of 8",
+    );
+    expect(page.document.getElementById("label-print-stop").disabled).toBe(false);
+    release();
+    await tick();
+  });
+
+  it("says how many came out when a run fails part way", async () => {
+    // The failure and the stop leave the same labels on the bench; only one of
+    // them used to account for them.
+    const { document } = await open(
+      null,
+      routes({
+        print: () =>
+          Promise.resolve({
+            ok: false,
+            status: 503,
+            json: () =>
+              Promise.resolve({
+                detail: "the printer stopped: the tape has run out",
+                printed: 3,
+                total: 8,
+              }),
+          }),
+      }),
+    );
+    document.getElementById("label-print-form").dispatchEvent(
+      new document.defaultView.Event("submit", { cancelable: true, bubbles: true }),
+    );
+    await tick();
+
+    const error = document.getElementById("label-print-error");
+    expect(error.hidden).toBe(false);
+    expect(error.textContent).toBe(
+      "Printed 3 of 8, then stopped: the printer stopped: the tape has run out",
+    );
   });
 });
 

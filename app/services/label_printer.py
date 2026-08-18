@@ -50,6 +50,15 @@ _logger = logging.getLogger("shelfos")
 # ShelfOS is documented as a single-process deployment.
 _PRINT_LOCK = threading.Lock()
 
+# Set to ask a running print to stop after the label it is on. A whole cabinet
+# started by mistake is 500 labels, and a job handed to the printer whole cannot
+# be called back — the buffer is the printer's, not ours.
+_STOP = threading.Event()
+
+# (labels done, labels asked for) while a print is running, else None. Plain
+# tuple swap: a progress reading that is one label stale is not worth a lock.
+_progress: tuple[int, int] | None = None
+
 # How often to look at the device while waiting on it, and how much to hand the
 # kernel at a time.
 _POLL_SECONDS: Final = 0.2
@@ -1005,6 +1014,30 @@ class PrintOutcome:
     sent: int
     confirmed: bool
     tape: str
+    # True when a stop was asked for and the run ended early, so the caller can
+    # say "stopped after 3 of 12" rather than reporting 3 as the whole job.
+    stopped: bool = False
+
+
+def request_stop() -> None:
+    """Ask the running print to stop after the label it is on.
+
+    Deliberately does not touch the printer: the label already sent is being
+    printed and cannot be recalled, and interrupting a page mid-raster leaves
+    the machine in a state someone has to clear by hand. Stopping between
+    labels is both reliable and the most anyone can honestly offer.
+    """
+    _STOP.set()
+
+
+def _set_progress(done: int | None, total: int | None) -> None:
+    global _progress
+    _progress = None if done is None or total is None else (done, total)
+
+
+def job_progress() -> tuple[int, int] | None:
+    """(done, total) while a print is running, or ``None`` when none is."""
+    return _progress
 
 
 def _print_job(labels: Sequence[LabelData], geometry: TapeGeometry) -> bytes:
@@ -1102,6 +1135,9 @@ def print_labels(
     _write_budget()
     if not _PRINT_LOCK.acquire(timeout=config.LABEL_PRINT_TIMEOUT):
         raise PrinterError("the label printer is busy — try again in a moment")
+    _STOP.clear()
+    _set_progress(0, total)
+    printed = 0
     try:
         fd = _open_device(device)
         try:
@@ -1116,31 +1152,75 @@ def print_labels(
                 _remember_tape(_geometry_for(before).tape)
             if before is not None:
                 _refuse_if_not_ready(before, geometry)
-            data = _print_job(
-                [label for label in labels for _ in range(copies)], geometry
+            # One label per job, rather than one job of many labels. A whole
+            # job handed over at once lives in the printer's buffer, where
+            # nothing can reach it: the only way to stop a cabinet started by
+            # mistake would be the power switch, mid-label. Sent one at a time,
+            # a stop takes effect after the label being printed.
+            pages = [label for label in labels for _ in range(copies)]
+            answers = before is not None
+            printed, confirmed = 0, answers
+            # One ceiling for the whole run, not just per label. Without it a
+            # 50-label job could wait five minutes in confirmations alone, with
+            # the lock held and an HTTP request open — long past the point where
+            # a proxy or a browser gives up and the outcome is lost with the
+            # connection. A deployment can reason about this number.
+            deadline = (
+                time.monotonic()
+                + config.LABEL_PRINT_TIMEOUT
+                + _CONFIRM_SECONDS_PER_LABEL * total
             )
-            _write_all(fd, data, device, budget=_write_budget())
-            # Only a printer that already answered is waited on. A device that
-            # said nothing when asked directly will not volunteer a completion
-            # frame either, and waiting for one costs the whole budget with the
-            # lock held. The wait is scaled to the job and capped, so a slow
-            # printer is not cut off half way through a long run.
-            confirmed = before is not None and _await_completion(
-                fd,
-                budget=min(
-                    _write_budget(),
-                    _readback_budget() + _CONFIRM_SECONDS_PER_LABEL * total,
-                ),
-            )
+            for page in pages:
+                if _STOP.is_set():
+                    break
+                if time.monotonic() > deadline:
+                    allowed = (
+                        config.LABEL_PRINT_TIMEOUT + _CONFIRM_SECONDS_PER_LABEL * total
+                    )
+                    raise PrinterError(
+                        f"the run is taking longer than the {allowed:g} s allowed "
+                        f"for {total} label(s)",
+                        printed=printed,
+                        total=total,
+                    )
+                data = _print_job([page], geometry)
+                _write_all(fd, data, device, budget=_write_budget())
+                printed += 1
+                _set_progress(printed, total)
+                # Waiting for each label keeps the printer's buffer to one, so
+                # a stop is honoured within a label rather than after the run.
+                # A printer that never answered is not waited on — the stop then
+                # only holds back what has not been written yet, which is still
+                # most of a cabinet.
+                if answers:
+                    confirmed = (
+                        _await_completion(
+                            fd,
+                            budget=min(
+                                _readback_budget() + _CONFIRM_SECONDS_PER_LABEL,
+                                max(0.0, deadline - time.monotonic()),
+                            ),
+                        )
+                        and confirmed
+                    )
         finally:
             os.close(fd)
+    except PrinterError as error:
+        # The labels that did come out are on the bench whether the run ended by
+        # request or by failure, so the count travels with the failure too.
+        raise PrinterError(str(error), printed=printed, total=total) from None
     finally:
+        _set_progress(None, None)
         _PRINT_LOCK.release()
+    stopped = printed < total
     _logger.info(
-        "%s %d label(s) on %s tape to %s",
+        "%s %d of %d label(s) on %s tape to %s",
         "printed" if confirmed else "sent",
+        printed,
         total,
         geometry.tape,
         device,
     )
-    return PrintOutcome(sent=total, confirmed=confirmed, tape=geometry.tape)
+    return PrintOutcome(
+        sent=printed, confirmed=confirmed, tape=geometry.tape, stopped=stopped
+    )

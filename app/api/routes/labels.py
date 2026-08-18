@@ -8,6 +8,7 @@ from sqlmodel import Session
 from app import config
 from app.api.deps import get_session
 from app.api.schemas import (
+    LabelJobRead,
     LabelPrintRequest,
     LabelPrintResult,
     TapeRead,
@@ -77,7 +78,10 @@ def print_location_labels(
         accept_loaded=payload.accept_loaded,
     )
     return LabelPrintResult(
-        sent=outcome.sent, confirmed=outcome.confirmed, tape=outcome.tape
+        sent=outcome.sent,
+        confirmed=outcome.confirmed,
+        tape=outcome.tape,
+        stopped=outcome.stopped,
     )
 
 
@@ -96,4 +100,32 @@ def list_tapes() -> TapesRead:
         tapes=[TapeRead(**vars(choice)) for choice in lp.tape_choices()],
         configured=config.LABEL_TAPE,
         loaded=lp.detect_tape(status) if status is not None else None,
+    )
+
+
+@router.post("/stop", response_model=LabelJobRead)
+def stop_printing() -> LabelJobRead:
+    """Ask a running print to stop after the label it is on (writers).
+
+    The labels already handed to the printer are being printed and cannot be
+    recalled — the buffer belongs to the machine. What this stops is everything
+    not yet sent, which for a cabinet started by mistake is nearly all of it.
+    """
+    lp.request_stop()
+    progress = lp.job_progress()
+    return LabelJobRead(
+        printing=progress is not None,
+        done=progress[0] if progress else 0,
+        total=progress[1] if progress else 0,
+    )
+
+
+@router.get("/job", response_model=LabelJobRead)
+def running_job() -> LabelJobRead:
+    """How far the running print has got, if there is one."""
+    progress = lp.job_progress()
+    return LabelJobRead(
+        printing=progress is not None,
+        done=progress[0] if progress else 0,
+        total=progress[1] if progress else 0,
     )

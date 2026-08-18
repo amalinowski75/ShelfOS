@@ -747,3 +747,117 @@ def test_the_tape_is_remembered_briefly_rather_than_asked_every_time(  # type: i
         asked_once = len(printer.received)
         assert lp.resolve_geometry().tape == "29"  # answered from memory
         assert len(printer.received) == asked_once
+
+
+def test_a_run_can_be_stopped_part_way_through() -> None:
+    """A cabinet started by mistake is hundreds of labels, and a job handed to
+    the printer whole cannot be called back — the buffer belongs to the machine.
+    So labels go one at a time, and a stop takes effect between them."""
+    labels = _labels(12)
+    frames = [_IDLE_FRAME] + [frame(b18=lp._STATUS_COMPLETED)] * 40
+
+    # Asked from the fake, so the stop lands between labels rather than after a
+    # sleep long enough to be flaky.
+    with FakePrinter(frames, on_page=lambda page: page == 2 and lp.request_stop()) as p:
+        outcome = lp.print_labels(labels, device=p.path)
+
+    assert outcome.stopped
+    assert 0 < outcome.sent < len(labels)  # some came out; most did not
+    # And the printer was never handed the rest: the bytes stop where the run did.
+    assert len(p.received) < len(labels) * 20_000
+
+
+def test_the_printer_is_never_handed_more_than_the_label_it_is_printing() -> None:
+    """The mechanism the stop rests on: each label is waited for before the next
+    is written, so the buffer holds one. Written back to back instead, a stop
+    would only hold back what had not been sent — which for a printer that
+    keeps up is nothing, and is the behaviour this replaced."""
+    seen: list[tuple[int, int]] = []
+    frames = [_IDLE_FRAME] + [frame(b18=lp._STATUS_COMPLETED)] * 20
+
+    def watch(page: int) -> None:
+        progress = lp.job_progress()
+        assert progress is not None
+        # At the moment page N reaches the printer, N-1 labels are accounted
+        # for: the run has not run ahead of what the machine has taken.
+        seen.append((page, progress[0]))
+
+    with FakePrinter(frames, on_page=watch) as printer:
+        outcome = lp.print_labels(_labels(4), device=printer.path)
+
+    assert outcome.sent == 4
+    assert seen, "the fake never saw a page"
+    for page, done in seen:
+        # Never more counted than the printer has taken: written back to back,
+        # the run would be four labels ahead of a machine holding one.
+        assert done <= page, seen
+        assert page - done <= 1, seen
+
+
+def test_progress_counts_up_as_the_labels_come_out() -> None:
+    """ "Printing 2 of 200" is the whole point of the endpoint; a progress that
+    is merely present and never moves would satisfy a weaker test."""
+    reported: list[tuple[int, int] | None] = []
+    frames = [_IDLE_FRAME] + [frame(b18=lp._STATUS_COMPLETED)] * 20
+    with FakePrinter(
+        frames, on_page=lambda _p: reported.append(lp.job_progress())
+    ) as p:
+        lp.print_labels(_labels(4), device=p.path)
+
+    counts = [progress[0] for progress in reported if progress is not None]
+    assert counts == sorted(counts)
+    assert counts[-1] > counts[0], counts  # it moved, rather than merely existing
+
+
+def test_a_run_is_confirmed_only_when_every_label_was() -> None:
+    """Any-label confirmation would report "Printed 8 labels" for seven that
+    were only sent — the distinction this module keeps everywhere else."""
+    # One completion frame, then silence: the first label is confirmed and the
+    # rest time out.
+    frames = [_IDLE_FRAME, frame(b18=lp._STATUS_COMPLETED)]
+    with FakePrinter(frames) as printer:
+        outcome = lp.print_labels(_labels(3), device=printer.path)
+
+    assert outcome.sent == 3
+    assert not outcome.confirmed
+
+
+def test_a_run_that_fails_part_way_still_says_how_many_came_out(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A failure and a stop leave the same labels on the bench. Only one of them
+    used to account for them; the other quoted the printer and dropped the count."""
+    calls = {"n": 0}
+    real = lp._await_completion
+
+    def failing(fd: int, budget: float) -> bool:
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise PrinterError("the printer stopped: the tape has run out")
+        return real(fd, budget)
+
+    monkeypatch.setattr(lp, "_await_completion", failing)
+    frames = [_IDLE_FRAME] + [frame(b18=lp._STATUS_COMPLETED)] * 20
+    with FakePrinter(frames) as printer, pytest.raises(PrinterError) as raised:
+        lp.print_labels(_labels(8), device=printer.path)
+
+    assert "tape has run out" in str(raised.value)
+    assert (raised.value.printed, raised.value.total) == (3, 8)
+
+
+def test_a_stop_does_not_leak_into_the_next_run() -> None:
+    """Otherwise one cancelled cabinet would quietly cancel the next job too."""
+    lp.request_stop()
+    with FakePrinter([_IDLE_FRAME, frame(b18=lp._STATUS_COMPLETED)]) as printer:
+        outcome = lp.print_labels(_labels(1), device=printer.path)
+    assert (outcome.sent, outcome.stopped) == (1, False)
+
+
+def test_progress_is_readable_while_a_run_is_going_and_clear_after() -> None:
+    seen: list[tuple[int, int] | None] = []
+    with FakePrinter(
+        [_IDLE_FRAME] + [frame(b18=lp._STATUS_COMPLETED)] * 20,
+        on_page=lambda _page: seen.append(lp.job_progress()),
+    ) as printer:
+        lp.print_labels(_labels(3), device=printer.path)
+
+    assert any(p is not None for p in seen)  # something to show a watcher
+    assert lp.job_progress() is None  # and nothing left behind afterwards

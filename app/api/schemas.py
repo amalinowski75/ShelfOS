@@ -205,6 +205,16 @@ class LabelPrintResult(BaseModel):
     # Which tape it went on. Normally the one the printer reports holding, which
     # is not necessarily the configured one — the layout follows the machine.
     tape: str
+    # True when the run was stopped part-way, so ``sent`` is not the whole job.
+    stopped: bool = False
+
+
+class LabelJobRead(BaseModel):
+    """How far a running print has got, for a caller watching it."""
+
+    printing: bool
+    done: int
+    total: int
 
 
 class LocationBulkResult(BaseModel):

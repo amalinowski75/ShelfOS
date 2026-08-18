@@ -22,6 +22,7 @@ import os
 import threading
 import time
 import tty
+from collections.abc import Callable
 
 # What a QL sends back, as captured from a real QL-800 on the bench: 62 mm
 # continuous tape, no errors, answering a status request.
@@ -42,13 +43,22 @@ def frame(**fields: int) -> bytes:
 class FakePrinter:
     """A device node that drains print jobs and answers status questions."""
 
-    def __init__(self, frames: list[bytes]) -> None:
+    def __init__(
+        self,
+        frames: list[bytes],
+        on_page: Callable[[int], None] | None = None,
+    ) -> None:
         self.master, self._slave = os.openpty()
         tty.setraw(self.master)
         tty.setraw(self._slave)
         self.path = os.ttyname(self._slave)
         self.frames = list(frames)
         self.received = bytearray()
+        # Called with the running page count each time a job's print-and-eject
+        # byte arrives, so a test can act BETWEEN labels — cancelling a run, say
+        # — without racing it on a sleep.
+        self.on_page = on_page
+        self.pages = 0
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
@@ -64,6 +74,10 @@ class FakePrinter:
             self.received += chunk
             # A status request is answered directly; the end of a raster job
             # (its print-and-eject byte) draws the frame that follows it.
+            if chunk.endswith(b"\x1a"):
+                self.pages += 1
+                if self.on_page is not None:
+                    self.on_page(self.pages)
             asked = b"\x1b\x69\x53" in chunk or chunk.endswith(b"\x1a")
             if asked and self.frames:
                 try:

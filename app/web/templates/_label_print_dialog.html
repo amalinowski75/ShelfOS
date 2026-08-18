@@ -23,6 +23,15 @@
       <div class="label-preview">
         <img id="label-print-preview" alt="Preview of the printed label" />
       </div>
+      {# While a run is going, the picker is no use and the only useful control
+         is the one that stops it. A cabinet is hundreds of labels; being able
+         to say "not that" is worth more than anything else on this screen. #}
+      <div id="label-print-progress" hidden>
+        <p id="label-print-progress-text" class="muted"></p>
+        <button type="button" class="btn btn-sm btn-danger" id="label-print-stop">
+          Stop printing
+        </button>
+      </div>
       <p id="label-print-error" class="error" hidden></p>
       {# Shown when the printer is holding a different roll: the choice between
          printing on it and changing it belongs to whoever is standing there. #}
