@@ -233,6 +233,13 @@ built with two raster planes (the red one empty, unless a label uses red):
 export SHELFOS_LABEL_TAPE="62red"    # DK-22251; "62" is the plain white roll
 ```
 
+Labels go to the printer **one at a time**, and the dialog shows how far a run
+has got with a Stop beside it. That matters for the case it was built for: a
+whole cabinet started by mistake is hundreds of labels, and a job handed over in
+one piece lives in the printer's buffer where nothing can reach it — the power
+switch, mid-label, would be the only way out. Stopping takes effect after the
+label being printed, so expect one or two more to come out.
+
 ShelfOS talks to the printer both ways: before a job it asks what tape is loaded
 and refuses when that is not the configured one ("the printer has 62 mm tape
 loaded, but SHELFOS_LABEL_TAPE is '29'"), or when the printer reports an open

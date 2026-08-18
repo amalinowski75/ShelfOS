@@ -22,7 +22,12 @@
   const recheckBtn = document.getElementById("label-print-recheck");
   const submitBtn = document.getElementById("label-print-submit");
 
+  const progressEl = document.getElementById("label-print-progress");
+  const progressText = document.getElementById("label-print-progress-text");
+  const stopBtn = document.getElementById("label-print-stop");
+
   let target = null; // {ids | root, what, preview}
+  let watching = null; // interval id while a run is being watched
   let loaded = null; // the tape the printer last said it holds
   let printing = false;
 
@@ -34,6 +39,34 @@
   function clearMessages() {
     errorEl.hidden = true;
     mismatchEl.hidden = true;
+  }
+
+  // The print request holds its connection until the last label, so progress
+  // comes from a second one. Polling rather than streaming: a label a second
+  // does not need anything cleverer, and there is nothing to reconnect.
+  function watchJob() {
+    stopWatching();
+    progressEl.hidden = false;
+    stopBtn.disabled = false;
+    progressText.textContent = "Printing…";
+    watching = setInterval(async () => {
+      try {
+        const resp = await fetch("/api/labels/job");
+        if (!resp.ok) return;
+        const job = await resp.json();
+        if (job.printing) {
+          progressText.textContent = `Printing ${job.done} of ${job.total}…`;
+        }
+      } catch {
+        /* the run reports itself when it ends; a missed poll is nothing */
+      }
+    }, 700);
+  }
+
+  function stopWatching() {
+    if (watching !== null) clearInterval(watching);
+    watching = null;
+    progressEl.hidden = true;
   }
 
   function refreshPreview() {
@@ -86,6 +119,7 @@
     printing = true;
     submitBtn.disabled = true;
     clearMessages();
+    watchJob();
     try {
       const body = { tape: tapeEl.value, accept_loaded: acceptLoaded };
       if (target.root != null) body.root = target.root;
@@ -122,6 +156,13 @@
       }
       const result = await resp.json();
       const count = `${result.sent} label${result.sent === 1 ? "" : "s"}`;
+      if (result.stopped) {
+        // Not a failure and not a success: say what did come out, because the
+        // labels already printed are on the bench and have to be accounted for.
+        showToast(`Stopped after ${count}.`, { tone: "warn" });
+        dialog.close();
+        return;
+      }
       // "Printed" only when the printer said so: a job can be accepted and then
       // sit there because the cover is open, and the write cannot tell.
       showToast(
@@ -134,8 +175,22 @@
     } finally {
       printing = false;
       submitBtn.disabled = false;
+      stopWatching();
     }
   }
+
+  stopBtn.addEventListener("click", async () => {
+    stopBtn.disabled = true;
+    progressText.textContent = "Stopping after this label…";
+    try {
+      await fetch("/api/labels/stop", {
+        method: "POST",
+        headers: { "X-CSRF-Token": csrfToken },
+      });
+    } catch {
+      showToast("Could not reach the server to stop the print.");
+    }
+  });
 
   tapeEl.addEventListener("change", () => {
     clearMessages();
@@ -167,6 +222,7 @@
     target = options;
     whatEl.textContent = options.what || "";
     clearMessages();
+    stopWatching();
     previewEl.removeAttribute("src");
     dialog.showModal();
     loadTapes();

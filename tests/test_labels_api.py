@@ -93,7 +93,12 @@ def test_printing_a_branch_sends_it_to_the_device(  # type: ignore[no-untyped-de
     # A file is not a printer, so nothing confirms the job: the caller has to
     # say "sent" rather than "printed", which is what `confirmed` is for.
     # A file cannot be asked what tape it holds, so the configured one stands.
-    assert response.json() == {"sent": 2, "confirmed": False, "tape": "62"}
+    assert response.json() == {
+        "sent": 2,
+        "confirmed": False,
+        "tape": "62",
+        "stopped": False,
+    }
     assert device.read_bytes().startswith(b"\x1bia\x01")
 
 
@@ -229,3 +234,43 @@ def test_the_tape_list_stays_out_of_the_way_of_a_print(  # type: ignore[no-untyp
     # the case the dialog already handles ("pick the roll you loaded").
     assert body["loaded"] is None
     assert body["tapes"]
+
+
+def test_a_running_print_can_be_watched_and_stopped(  # type: ignore[no-untyped-def]
+    client: TestClient, monkeypatch
+) -> None:
+    from app.services import label_printer as lp
+
+    monkeypatch.setattr(config, "LABEL_DEVICE", "/dev/null")
+
+    idle = client.get("/api/labels/job").json()
+    assert idle == {"printing": False, "done": 0, "total": 0}
+
+    # Stopping when nothing is printing is not an error: the click may land a
+    # moment after the last label, and there is nothing to apologise for.
+    stopped = client.post("/api/labels/stop")
+    assert stopped.status_code == 200
+    assert stopped.json()["printing"] is False
+    lp._STOP.clear()  # asked for outside a run; do not leak it into the next one
+
+
+def test_stopping_is_a_write_so_read_only_accounts_cannot(  # type: ignore[no-untyped-def]
+    client: TestClient, anon_client: TestClient
+) -> None:
+    client.post(
+        "/api/admin/users",
+        json={"username": "viewer", "password": "password123", "role": "read-only"},
+    )
+    token = client.post(
+        "/api/auth/token", json={"username": "viewer", "password": "password123"}
+    ).json()["access_token"]
+
+    refused = anon_client.post(
+        "/api/labels/stop", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert refused.status_code == 403
+    # Watching is not: a reader may see how far someone else's job has got.
+    watched = anon_client.get(
+        "/api/labels/job", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert watched.status_code == 200

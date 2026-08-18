@@ -11,6 +11,10 @@ const FIXTURE = `
       <select class="control" id="label-print-tape"></select>
       <p id="label-print-tape-hint"></p>
       <img id="label-print-preview" alt="" />
+      <div id="label-print-progress" hidden>
+        <p id="label-print-progress-text"></p>
+        <button type="button" id="label-print-stop">Stop printing</button>
+      </div>
       <p id="label-print-error" hidden></p>
       <div id="label-print-mismatch" hidden>
         <p id="label-print-mismatch-text"></p>
@@ -171,6 +175,43 @@ describe("label_print.js", () => {
     const after = fetchMock.mock.calls.filter((c) => c[0] === "/api/labels/tapes").length;
     expect(after).toBe(before + 1); // everything it told us is stale
     expect(fetchMock.mock.calls.at(-1)[0]).toBe("/api/labels/locations/print");
+  });
+});
+
+describe("stopping a run", () => {
+  it("shows progress and a way out while the labels are going", async () => {
+    // A whole cabinet is hundreds of labels; being able to say "not that" is
+    // worth more than anything else on the screen while it runs.
+    let release;
+    const inFlight = new Promise((resolve) => {
+      release = () =>
+        resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ sent: 3, confirmed: true, tape: "62red", stopped: true }),
+        });
+    });
+    const { document, fetchMock } = await open(null, routes({ print: () => inFlight }));
+
+    document.getElementById("label-print-form").dispatchEvent(
+      new document.defaultView.Event("submit", { cancelable: true, bubbles: true }),
+    );
+    await tick();
+    expect(document.getElementById("label-print-progress").hidden).toBe(false);
+
+    document.getElementById("label-print-stop").click();
+    await tick();
+    const [url, opts] = fetchMock.mock.calls.at(-1);
+    expect(url).toBe("/api/labels/stop");
+    expect(opts.method).toBe("POST");
+    expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
+
+    release();
+    await tick();
+    // Neither a success nor a failure: the labels that did come out are on the
+    // bench and have to be accounted for.
+    expect(document.querySelector(".toast").textContent).toBe("Stopped after 3 labels.");
+    expect(document.getElementById("label-print-progress").hidden).toBe(true);
   });
 });
 

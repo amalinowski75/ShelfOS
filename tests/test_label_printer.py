@@ -747,3 +747,41 @@ def test_the_tape_is_remembered_briefly_rather_than_asked_every_time(  # type: i
         asked_once = len(printer.received)
         assert lp.resolve_geometry().tape == "29"  # answered from memory
         assert len(printer.received) == asked_once
+
+
+def test_a_run_can_be_stopped_part_way_through() -> None:
+    """A cabinet started by mistake is hundreds of labels, and a job handed to
+    the printer whole cannot be called back — the buffer belongs to the machine.
+    So labels go one at a time, and a stop takes effect between them."""
+    labels = _labels(12)
+    frames = [_IDLE_FRAME] + [frame(b18=lp._STATUS_COMPLETED)] * 40
+
+    # Asked from the fake, so the stop lands between labels rather than after a
+    # sleep long enough to be flaky.
+    with FakePrinter(frames, on_page=lambda page: page == 2 and lp.request_stop()) as p:
+        outcome = lp.print_labels(labels, device=p.path)
+
+    assert outcome.stopped
+    assert 0 < outcome.sent < len(labels)  # some came out; most did not
+    # And the printer was never handed the rest: the bytes stop where the run did.
+    assert len(p.received) < len(labels) * 20_000
+
+
+def test_a_stop_does_not_leak_into_the_next_run() -> None:
+    """Otherwise one cancelled cabinet would quietly cancel the next job too."""
+    lp.request_stop()
+    with FakePrinter([_IDLE_FRAME, frame(b18=lp._STATUS_COMPLETED)]) as printer:
+        outcome = lp.print_labels(_labels(1), device=printer.path)
+    assert (outcome.sent, outcome.stopped) == (1, False)
+
+
+def test_progress_is_readable_while_a_run_is_going_and_clear_after() -> None:
+    seen: list[tuple[int, int] | None] = []
+    with FakePrinter(
+        [_IDLE_FRAME] + [frame(b18=lp._STATUS_COMPLETED)] * 20,
+        on_page=lambda _page: seen.append(lp.job_progress()),
+    ) as printer:
+        lp.print_labels(_labels(3), device=printer.path)
+
+    assert any(p is not None for p in seen)  # something to show a watcher
+    assert lp.job_progress() is None  # and nothing left behind afterwards
