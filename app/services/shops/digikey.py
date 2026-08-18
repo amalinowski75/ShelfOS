@@ -23,6 +23,7 @@ from app.services.shops.base import (
     ShopLookupMiss,
     fetch_first_match,
     infer_category,
+    manufacturer_matches,
 )
 
 _logger = logging.getLogger("shelfos")
@@ -122,6 +123,51 @@ def _access_token(client: httpx.Client) -> str:
     return token
 
 
+def _product_data(product: dict[str, object]) -> ProductData:
+    """Normalise a Digi-Key v4 ``Product`` object into :class:`ProductData`.
+
+    Shared by the two endpoints that return one: ``productdetails`` (single result)
+    and ``keyword`` (a list we've already picked from) use the same product schema,
+    so both parse here. Missing optional sections (Parameters, Category) degrade to
+    empty/None rather than failing.
+    """
+
+    def _nested(key: str, field: str) -> str | None:
+        value = product.get(key)
+        return value.get(field) if isinstance(value, dict) else None
+
+    parameters: list[tuple[str, str]] = []
+    raw_params = product.get("Parameters")
+    for param in raw_params if isinstance(raw_params, list) else []:
+        if not isinstance(param, dict):
+            continue
+        name = (param.get("ParameterText") or param.get("Parameter") or "").strip()
+        value = (param.get("ValueText") or param.get("Value") or "").strip()
+        if name and value:
+            parameters.append((name, value))  # raw; cleaned client-side per type
+
+    category = _nested("Category", "Name")
+    description = _nested("Description", "ProductDescription")
+    source_url = product.get("ProductUrl")
+    mpn = product.get("ManufacturerProductNumber")
+    datasheet_url = product.get("DatasheetUrl")
+    return ProductData(
+        # The product page from the response, not from the input: a scan looks a
+        # part up by number and has no URL of its own, and this is what gets kept
+        # as the component's shop link.
+        source_url=source_url if isinstance(source_url, str) and source_url else None,
+        mpn=mpn if isinstance(mpn, str) and mpn else None,
+        manufacturer=_nested("Manufacturer", "Name"),
+        description=description,
+        datasheet_url=(
+            datasheet_url if isinstance(datasheet_url, str) and datasheet_url else None
+        ),
+        category=infer_category(category, description),
+        shop_category=category,
+        parameters=parameters,
+    )
+
+
 def _part_number(url: str) -> str:
     """The MPN from a Digi-Key product URL.
 
@@ -176,14 +222,89 @@ class DigiKeyProvider:
         The invoice's Digi-Key number ("…-ND") comes first — the product-details
         endpoint's path parameter is Digi-Key's own part number, with MPN accepted as
         a best-match fallback — then the parsed MPN (see ``fetch_first_match`` for
-        the miss-only fallthrough and error aggregation). ``manufacturer`` is accepted
-        for the uniform provider interface; the endpoint resolves one product per
-        number, so there is nothing to disambiguate.
+        the miss-only fallthrough and error aggregation). ``manufacturer`` (the
+        invoice line's) breaks ties when a bare MPN is sold under several makers.
         """
         return fetch_first_match(
-            lambda number: self.fetch_by_mpn(number, transport=transport),
+            lambda number: self.fetch_by_mpn(
+                number, manufacturer=manufacturer, transport=transport
+            ),
             candidates,
         )
+
+    def _headers(self, token: str) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {token}",
+            "X-DIGIKEY-Client-Id": config.DIGIKEY_CLIENT_ID,
+            "X-DIGIKEY-Locale-Site": config.DIGIKEY_LOCALE_SITE,
+            "X-DIGIKEY-Locale-Language": config.DIGIKEY_LOCALE_LANGUAGE,
+            "X-DIGIKEY-Locale-Currency": config.DIGIKEY_LOCALE_CURRENCY,
+        }
+
+    def _authed_json(
+        self,
+        client: httpx.Client,
+        method: str,
+        url: str,
+        *,
+        json: object = None,
+    ) -> dict[str, object]:
+        """One authenticated request, retrying once on an early-expired token.
+
+        Shared by the productdetails GET and the keyword POST so the token dance
+        (acquire, retry on 401/403 with a named token so eviction can't discard a
+        newer one) lives in one place. Non-JSON or a non-object body is a clean
+        ValidationError, like Mouser's and TME's — never a 500.
+        """
+        token = _access_token(client)
+        resp = client.request(method, url, headers=self._headers(token), json=json)
+        if resp.status_code in (401, 403):
+            _forget_token(token)
+            resp = client.request(
+                method, url, headers=self._headers(_access_token(client)), json=json
+            )
+        if resp.status_code >= 400:
+            raise _api_error(resp, "product lookup")
+        payload = resp.json()
+        if not isinstance(payload, dict):
+            raise ValidationError("could not read the Digi-Key response")
+        return payload
+
+    def _search_for_maker(
+        self, client: httpx.Client, mpn: str, manufacturer: str
+    ) -> dict[str, object] | None:
+        """The exact-MPN KeywordSearch hit whose maker matches, or None.
+
+        ``productdetails`` resolves a SINGLE product for a number, so for a bare MPN
+        that several makers share ("5120" is Keystone's AND ABB's) it can only return
+        Digi-Key's own pick — the wrong company, silently. KeywordSearch returns the
+        whole candidate list, so this is where the scanned/invoiced manufacturer
+        chooses. Returns None (fall back to productdetails) when nothing matches.
+        """
+        payload = self._authed_json(
+            client,
+            "POST",
+            f"{config.DIGIKEY_API_BASE}/products/v4/search/keyword",
+            json={"Keywords": mpn},
+        )
+        queried = mpn.strip().casefold()
+        # ExactMatches is Digi-Key's own exact-number bucket; the general Products
+        # list is the fallback. Within each, require the manufacturer number to equal
+        # what we asked (KeywordSearch also returns near matches) AND the maker to
+        # match the scan.
+        for bucket in ("ExactMatches", "Products"):
+            entries = payload.get(bucket)
+            for product in entries if isinstance(entries, list) else []:
+                if not isinstance(product, dict):
+                    continue
+                number = str(product.get("ManufacturerProductNumber") or "")
+                if number.strip().casefold() != queried:
+                    continue
+                maker = product.get("Manufacturer")
+                name = maker.get("Name") if isinstance(maker, dict) else None
+                if manufacturer_matches(manufacturer, name):
+                    return product
+        return None
 
     def fetch_by_mpn(
         self,
@@ -194,9 +315,12 @@ class DigiKeyProvider:
     ) -> ProductData:
         """Look a part up by its manufacturer number directly (from a scan).
 
-        ``manufacturer`` is accepted for the uniform provider interface but unused:
-        the product-details endpoint resolves a single product per number, so there
-        is no ambiguous result set to break a tie in.
+        When the caller knows the manufacturer (a scan's ``1V``, an invoice line), a
+        bare MPN can be ambiguous — several makers share "5120". ``productdetails``
+        can only return one product per number, so it can't disambiguate; KeywordSearch
+        is consulted first to pick the exact-MPN product bearing that maker, and only
+        when nothing matches (or no manufacturer was given) does the single-result
+        ``productdetails`` decide, as before.
         """
         if not (config.DIGIKEY_CLIENT_ID and config.DIGIKEY_CLIENT_SECRET):
             raise ValidationError("Digi-Key integration is not configured")
@@ -212,72 +336,26 @@ class DigiKeyProvider:
             with httpx.Client(
                 timeout=config.SHOP_API_TIMEOUT, transport=transport
             ) as client:
-                product_url = (
+                if manufacturer:
+                    product = self._search_for_maker(client, mpn, manufacturer)
+                    if product is not None:
+                        return _product_data(product)
+                    # Nothing bore the scanned maker: fall through to the single-result
+                    # lookup, no worse than before (and reviewed in the dialog).
+                payload = self._authed_json(
+                    client,
+                    "GET",
                     f"{config.DIGIKEY_API_BASE}/products/v4/search/"
-                    f"{path_segment}/productdetails"
+                    f"{path_segment}/productdetails",
                 )
-
-                def _headers(token: str) -> dict[str, str]:
-                    return {
-                        "Authorization": f"Bearer {token}",
-                        "X-DIGIKEY-Client-Id": config.DIGIKEY_CLIENT_ID,
-                        "X-DIGIKEY-Locale-Site": config.DIGIKEY_LOCALE_SITE,
-                        "X-DIGIKEY-Locale-Language": config.DIGIKEY_LOCALE_LANGUAGE,
-                        "X-DIGIKEY-Locale-Currency": config.DIGIKEY_LOCALE_CURRENCY,
-                    }
-
-                token = _access_token(client)
-                resp = client.get(product_url, headers=_headers(token))
-                if resp.status_code in (401, 403):
-                    # The cached token died early (rotated or revoked). Without this
-                    # every import would fail until the cached expiry lapsed. The
-                    # token is named so eviction can't discard a newer one.
-                    _forget_token(token)
-                    resp = client.get(
-                        product_url, headers=_headers(_access_token(client))
-                    )
-                if resp.status_code >= 400:
-                    raise _api_error(resp, "product lookup")
-                # Inside the try: a 200 carrying a non-JSON body (a proxy/WAF page)
-                # raises ValueError here, which must become a clean ValidationError
-                # like Mouser's and TME's — not escape and sink the whole import.
-                payload = resp.json()
         except httpx.HTTPError:
             raise ValidationError("could not reach Digi-Key") from None
         except ValueError:
+            # A 200 carrying a non-JSON body (a proxy/WAF page) → a clean
+            # ValidationError like Mouser's and TME's, not a sunk import.
             raise ValidationError("could not read the Digi-Key response") from None
 
-        if not isinstance(payload, dict):
-            raise ValidationError("could not read the Digi-Key response")
-        product = payload.get("Product")
-        if not isinstance(product, dict):
+        detail = payload.get("Product")
+        if not isinstance(detail, dict):
             raise ShopLookupMiss("no product found")
-
-        def _nested(key: str, field: str) -> str | None:
-            value = product.get(key)
-            return value.get(field) if isinstance(value, dict) else None
-
-        parameters: list[tuple[str, str]] = []
-        for param in product.get("Parameters") or []:
-            if not isinstance(param, dict):
-                continue
-            name = (param.get("ParameterText") or param.get("Parameter") or "").strip()
-            value = (param.get("ValueText") or param.get("Value") or "").strip()
-            if name and value:
-                parameters.append((name, value))  # raw; cleaned client-side per type
-
-        category = _nested("Category", "Name")
-        description = _nested("Description", "ProductDescription")
-        return ProductData(
-            # The product page from the response, not from the input: a scan looks a
-            # part up by number and has no URL of its own, and this is what gets kept
-            # as the component's shop link.
-            source_url=product.get("ProductUrl") or None,
-            mpn=product.get("ManufacturerProductNumber") or None,
-            manufacturer=_nested("Manufacturer", "Name"),
-            description=description,
-            datasheet_url=product.get("DatasheetUrl") or None,
-            category=infer_category(category, description),
-            shop_category=category,
-            parameters=parameters,
-        )
+        return _product_data(detail)
