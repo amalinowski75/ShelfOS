@@ -238,6 +238,18 @@
       applyFilter();
     };
 
+    // Exempt one location from the active filter, the same way a just-created one
+    // is exempt: the caller has deliberately brought it into play (e.g. the user
+    // scanned its label), so it must be selectable and must survive later
+    // re-runs of the filter — otherwise applyFilter's "drop a pick the filter
+    // took away" step would clear it the next time it runs. Reset on setFilter,
+    // so an exception never leaks past the open it was made for.
+    picker.allow = (id) => {
+      if (id == null) return;
+      justCreated.add(String(id));
+      applyFilter();
+    };
+
     // Inline "+ New location": create a location without leaving this picker,
     // then insert it as a selectable entry and select it. Enhanced only when the
     // shared New Location dialog is present on the page (window.openLocationDialog);

@@ -795,7 +795,7 @@ describe("stock_dialog.js — scanning a location label", () => {
     expect(locationId(document)).toBe("5");
   });
 
-  it("Add: scanning an occupied shelf still selects it, with the warning kept", async () => {
+  it("Add: scanning an occupied shelf still selects it, durably, with the warning kept", async () => {
     // "One part per slot" is an advisory default the write endpoint accepts, so a
     // scanned but occupied shelf must fill the field (not strand a warning beside
     // an empty picker, forcing a manual re-pick) — the warning stays as a nudge.
@@ -813,6 +813,22 @@ describe("stock_dialog.js — scanning a location label", () => {
     await tick();
     expect(locationId(document)).toBe("5"); // selected anyway
     expect(scanMsg(document)).toMatch(/already holds another part/); // and warned
+
+    // The scan makes the shelf genuinely choosable, not just written into the
+    // hidden input: its node is enabled, so the greyed-out list no longer
+    // contradicts the filled toggle.
+    const node = document.querySelector('.loc-picker-node[data-loc-id="5"]');
+    expect(node.disabled).toBe(false);
+
+    // …and the selection survives the filter re-running — the real user story is
+    // "scan, then open the list to look around", which toggles "show all". Without
+    // allow(), applyFilter's "drop a pick the filter took away" step would clear it.
+    const showAll = document.querySelector(".loc-picker-showall-box");
+    showAll.checked = true;
+    showAll.dispatchEvent(new window.Event("change"));
+    showAll.checked = false;
+    showAll.dispatchEvent(new window.Event("change"));
+    expect(locationId(document)).toBe("5");
   });
 
   it("focuses the scan field on open, so a wedge scan lands there", () => {
