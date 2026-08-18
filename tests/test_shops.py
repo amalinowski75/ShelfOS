@@ -319,7 +319,13 @@ def test_fetch_by_mpn_falls_back_to_first_when_no_maker_matches(monkeypatch) -> 
         ("KEYSTONE ELECTRONICS", "Keystone Electronics", True),  # case/space
         ("Keystone Electronics", "Keystone", True),  # fuller scan, terser catalogue
         ("Kyocera AVX", "AVX", True),  # a rename/merge, terser catalogue name
+        ("NXP", "NXP Semiconductors", True),  # a short but WHOLE token still matches
         ("Keystone", "ABB Installation Products", False),
+        # The limits: a short code must match a whole token, never sit as a substring
+        # or short prefix inside an unrelated maker — else it picks the WRONG one.
+        ("ABB", "Rabbit Semiconductor", False),  # not a token, not a prefix
+        ("TE", "Texas Instruments", False),  # a 2-char prefix of "texas" is not a match
+        ("ITT", "Littelfuse", False),  # substring, but not a token/prefix
         ("", "Keystone", False),  # a blank never matches — it disambiguates nothing
         ("Keystone", None, False),
         (None, None, False),

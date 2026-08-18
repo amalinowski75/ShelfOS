@@ -9,6 +9,7 @@ review before creating — so imperfect guesses are corrected, not committed bli
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
@@ -120,10 +121,26 @@ def infer_category(*texts: str | None) -> str | None:
     return None
 
 
-def _fold_manufacturer(name: str | None) -> str:
-    """A manufacturer name reduced to its lowercase alphanumerics, so cosmetic
-    differences (case, spaces, punctuation) don't defeat a comparison."""
-    return "".join(ch for ch in (name or "").casefold() if ch.isalnum())
+# A prefix shorter than this is treated as a distinct name, not a truncation of a
+# longer one: distributor names truncate to a recognisable stem ("Keyst…"), but a
+# 2-3 char `1V` is a ticker/abbreviation ("TE", "TI", "ITT", "ABB") that must match
+# a whole token, never sit as a prefix inside an unrelated maker ("TE" in "Texas").
+_MIN_PREFIX_LEN = 4
+
+
+def _tokens(name: str | None) -> list[str]:
+    """A manufacturer name split into lowercase alphanumeric tokens."""
+    return [t for t in re.split(r"[^0-9a-z]+", (name or "").casefold()) if t]
+
+
+def _token_relates(x: str, y: str) -> bool:
+    # Equal tokens match at any length ("AVX" == the "avx" token of "Kyocera AVX");
+    # a prefix must be long enough to be a truncated name, not a short code.
+    if x == y:
+        return True
+    if len(x) >= _MIN_PREFIX_LEN and y.startswith(x):
+        return True
+    return len(y) >= _MIN_PREFIX_LEN and x.startswith(y)
 
 
 def manufacturer_matches(scanned: str | None, candidate: str | None) -> bool:
@@ -131,17 +148,19 @@ def manufacturer_matches(scanned: str | None, candidate: str | None) -> bool:
     shop result's name.
 
     Tolerant of the ways the two routinely differ: a DataMatrix truncates it
-    ("Keyston"), a distributor appends a suffix ("Keystone Electronics"), and
-    case/punctuation vary. Compares the alphanumeric-folded names by containment
-    either way — so a scanned prefix matches the fuller catalogue name, and a fuller
-    scan still matches a terser one. A blank on either side never matches: an absent
-    name disambiguates nothing, and must fall through to the caller's default.
+    ("Keyston" → "Keystone Electronics"), a distributor appends a suffix, a name is
+    reworded ("Kyocera AVX" ↔ "AVX"), and case/punctuation vary. All of those are
+    token-shaped, so it compares TOKENS, not raw substrings: some token of one must
+    equal, or long-enough-prefix, a token of the other. Plain containment ("abb"
+    inside "Rabbit Semiconductor", "TE" inside "Texas Instruments") is exactly the
+    false tiebreaker to avoid — and unlike a missed match it picks the WRONG maker.
+    A blank on either side never matches: an absent name disambiguates nothing.
     """
-    a = _fold_manufacturer(scanned)
-    b = _fold_manufacturer(candidate)
+    a = _tokens(scanned)
+    b = _tokens(candidate)
     if not a or not b:
         return False
-    return a in b or b in a
+    return any(_token_relates(x, y) for x in a for y in b)
 
 
 def fetch_first_match(

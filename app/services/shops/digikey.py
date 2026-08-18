@@ -315,12 +315,13 @@ class DigiKeyProvider:
     ) -> ProductData:
         """Look a part up by its manufacturer number directly (from a scan).
 
-        When the caller knows the manufacturer (a scan's ``1V``, an invoice line), a
-        bare MPN can be ambiguous — several makers share "5120". ``productdetails``
-        can only return one product per number, so it can't disambiguate; KeywordSearch
-        is consulted first to pick the exact-MPN product bearing that maker, and only
-        when nothing matches (or no manufacturer was given) does the single-result
-        ``productdetails`` decide, as before.
+        ``productdetails`` is the authoritative lookup and runs first, as before — so
+        an unambiguous number (and the invoice's Digi-Key SKU, which productdetails
+        resolves directly) stays a single call. Only when a manufacturer was given AND
+        the answer comes back bearing a DIFFERENT one is the number ambiguous: Digi-Key
+        picked for us, so KeywordSearch (which returns the whole candidate list) is
+        consulted to correct it. That correction is best-effort — its own failure keeps
+        the productdetails answer rather than sinking the lookup.
         """
         if not (config.DIGIKEY_CLIENT_ID and config.DIGIKEY_CLIENT_SECRET):
             raise ValidationError("Digi-Key integration is not configured")
@@ -336,26 +337,38 @@ class DigiKeyProvider:
             with httpx.Client(
                 timeout=config.SHOP_API_TIMEOUT, transport=transport
             ) as client:
-                if manufacturer:
-                    product = self._search_for_maker(client, mpn, manufacturer)
-                    if product is not None:
-                        return _product_data(product)
-                    # Nothing bore the scanned maker: fall through to the single-result
-                    # lookup, no worse than before (and reviewed in the dialog).
                 payload = self._authed_json(
                     client,
                     "GET",
                     f"{config.DIGIKEY_API_BASE}/products/v4/search/"
                     f"{path_segment}/productdetails",
                 )
+                detail = payload.get("Product")
+                if not isinstance(detail, dict):
+                    raise ShopLookupMiss("no product found")
+                product = _product_data(detail)
+                if manufacturer and not manufacturer_matches(
+                    manufacturer, product.manufacturer
+                ):
+                    # Ambiguous: productdetails returned a maker we didn't ask for.
+                    # Correct via KeywordSearch — best-effort, so ANY failure of this
+                    # optional step (an outage, a non-JSON body) keeps the answer in
+                    # hand rather than disabling enrichment for the whole invoice.
+                    try:
+                        match = self._search_for_maker(client, mpn, manufacturer)
+                    except (ValidationError, httpx.HTTPError, ValueError) as exc:
+                        _logger.info(
+                            "Digi-Key KeywordSearch unavailable, keeping the "
+                            "productdetails answer: %s",
+                            exc,
+                        )
+                        match = None
+                    if match is not None:
+                        return _product_data(match)
+                return product
         except httpx.HTTPError:
             raise ValidationError("could not reach Digi-Key") from None
         except ValueError:
             # A 200 carrying a non-JSON body (a proxy/WAF page) → a clean
             # ValidationError like Mouser's and TME's, not a sunk import.
             raise ValidationError("could not read the Digi-Key response") from None
-
-        detail = payload.get("Product")
-        if not isinstance(detail, dict):
-            raise ShopLookupMiss("no product found")
-        return _product_data(detail)

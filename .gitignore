@@ -18,8 +18,10 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
-# Node / JS tests (Vitest harness for the web UI scripts)
-node_modules/
+# Node / JS tests (Vitest harness for the web UI scripts). No trailing slash: a
+# worktree's node_modules is often a symlink to a shared install, and "…/" would
+# match only a directory, letting the symlink slip past `git add -A`.
+node_modules
 
 # Database and runtime data
 *.db
