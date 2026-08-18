@@ -103,17 +103,60 @@ def test_qr_is_placed_whole_and_unscaled() -> None:
     assert printed.tobytes() == expected.tobytes()
 
 
-@pytest.mark.parametrize("tape", ["12", "23x23"])
-def test_a_tape_too_narrow_for_a_readable_qr_is_refused(tape: str) -> None:
-    """The two tapes that land inside the readability rule, and only there.
+def test_a_narrow_tape_gives_up_margin_before_readability() -> None:
+    """On 12 mm tape a 2 mm border would eat nearly half the printable width
+    and leave the code unscannable. The border is what yields — down to a
+    hairline, never past the point where the modules get too thin."""
+    geometry = lp.tape_geometry(tape="12")
+    canvas_w, canvas_h, _ = lp._drawing_size(geometry)
+    margin = lp._margin_for(canvas_w, canvas_h)
+    wanted = round(config.LABEL_MARGIN_MM * 300 / 25.4)
 
-    12 mm leaves 58 dots for the code and 23x23 leaves 85, against a 29-module
-    symbol — two dots per module, 0.17 mm, a decorative square rather than
-    something a phone reads. Both print happily if the threshold is lowered,
-    which is what makes them the cases that pin it.
-    """
+    assert lp._MIN_MARGIN_PX <= margin < wanted  # shrunk, but not to nothing
+    box = lp._layout(canvas_w - 2 * margin, canvas_h - 2 * margin)[1]
+    assert box // lp._qr_modules() >= lp._MIN_QR_MODULE_PX
+    # And it gives up no more than it must: one dot more would be too much.
+    bigger = lp._layout(canvas_w - 2 * (margin + 1), canvas_h - 2 * (margin + 1))[1]
+    assert bigger // lp._qr_modules() < lp._MIN_QR_MODULE_PX
+
+    lp.render_label(_label(), geometry)  # and it renders, which is the point
+
+
+def test_a_long_narrow_tape_is_composed_along_its_length() -> None:
+    """A name laid ACROSS 12 mm of tape degenerates into "Dr…"; along it, the
+    whole thing fits. So a label taller than it is wide is drawn in landscape
+    and turned a quarter turn, which is how such a roll is read anyway."""
+    geometry = lp.tape_geometry(tape="12")
+    assert lp._drawing_size(geometry) == (geometry.length_px, geometry.width_px, True)
+    # A 62 x 30 mm strip is already landscape and stays put.
+    wide = lp.tape_geometry(tape="62")
+    assert lp._drawing_size(wide) == (wide.width_px, wide.length_px, False)
+
+    image = lp.render_label(_label(), geometry)
+    # The raster still wants the tape's own dimensions, turned or not.
+    assert image.size == (geometry.width_px, geometry.length_px)
+    # Turn it back and the writing is wider than the tape — which is only
+    # possible if it was composed along the length rather than across it.
+    composed = image.transpose(Image.Transpose.ROTATE_270)
+    box = _ink_box(composed)
+    assert box is not None
+    assert box[2] - box[0] > geometry.width_px
+
+
+def test_a_tape_with_no_room_for_a_readable_code_is_refused() -> None:
+    """No Brother tape is this narrow, which is why the guard needs a synthetic
+    one: it is the last line between a decorative square and a refusal."""
+    unprintable = lp.TapeGeometry(
+        tape="hypothetical",
+        width_px=80,
+        width_mm=7,
+        length_px=354,
+        endless=True,
+        two_color=False,
+    )
+    assert not lp._is_printable(unprintable)
     with pytest.raises(ValidationError, match="too small to scan"):
-        lp.render_label(_label(), lp.tape_geometry(tape=tape))
+        lp.render_label(_label(), unprintable)
 
 
 def test_the_qr_is_built_at_the_strongest_correction_that_fits() -> None:

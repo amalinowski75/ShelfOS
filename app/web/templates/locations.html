@@ -38,6 +38,10 @@
       <a class="btn btn-ghost btn-sm" target="_blank"
          href="/labels/locations?root={{ node.location.id }}"
          aria-describedby="loc-name-{{ node.location.id }}">Labels</a>
+      {% if label_printing %}
+      <button type="button" class="btn btn-ghost btn-sm loc-print"
+              aria-describedby="loc-name-{{ node.location.id }}">Print</button>
+      {% endif %}
       <button type="button" class="btn btn-ghost btn-sm loc-add"
               aria-describedby="loc-name-{{ node.location.id }}">Add</button>
       <button type="button" class="btn btn-ghost btn-sm loc-edit"
@@ -117,9 +121,15 @@
 {% include "_location_dialog.html" %}
 {% include "_bulk_location_dialog.html" %}
 {% endif %}
+{% if label_printing %}
+{% include "_label_print_dialog.html" %}
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
 <script src="/static/locations.js?v={{ static_version() }}"></script>
 <script src="/static/bulk_location_dialog.js?v={{ static_version() }}"></script>
+{% if label_printing %}
+<script src="/static/label_print.js?v={{ static_version() }}"></script>
+{% endif %}
 {% endblock %}

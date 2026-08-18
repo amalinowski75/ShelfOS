@@ -157,7 +157,11 @@
     const addBtn = event.target.closest(".loc-add");
     const editBtn = event.target.closest(".loc-edit");
     const deleteBtn = event.target.closest(".loc-delete");
-    if ((!addBtn && !editBtn && !deleteBtn) || !tree.contains(event.target))
+    const printBtn = event.target.closest(".loc-print");
+    if (
+      (!addBtn && !editBtn && !deleteBtn && !printBtn) ||
+      !tree.contains(event.target)
+    )
       return;
     const item = event.target.closest(".loc-item");
     if (!item) return;
@@ -174,6 +178,22 @@
         null,
         { parentId: id },
       );
+      return;
+    }
+
+    if (printBtn) {
+      // A branch prints with everything under it, so the dialog says how many
+      // labels that is before anyone commits a roll to it.
+      const descendants = item.querySelectorAll(".loc-item[data-id]").length;
+      const path = pathOf(item);
+      window.openLabelPrintDialog({
+        root: id,
+        preview: id,
+        what:
+          descendants > 0
+            ? `${descendants + 1} labels: “${path}” and everything under it`
+            : `One label: “${path}”`,
+      });
       return;
     }
 

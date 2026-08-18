@@ -40,7 +40,7 @@ from brother_ql.raster import BrotherQLRaster
 from PIL import Image, ImageDraw, ImageFont
 
 from app import config
-from app.services.errors import PrinterError, ValidationError
+from app.services.errors import PrinterError, TapeMismatchError, ValidationError
 from app.services.label_service import LabelData, location_qr_payload
 
 _logger = logging.getLogger("shelfos")
@@ -113,6 +113,10 @@ _QR_HEIGHT_SHARE: Final = 0.55
 # past that is tape spent on nothing. The same reasoning holds the type sizes
 # fixed — a big label gets white space, not a giant everything.
 _QR_MAX_MM: Final = 25.0
+
+# The border may shrink to this, and no further: some white is needed for the
+# quiet zone to survive a crooked feed, and thermal edges are not exact.
+_MIN_MARGIN_PX: Final = 6
 
 # How much wider than tall a label must be before the QR goes beside the text
 # rather than above it. Below this the side-by-side split starves both.
@@ -345,6 +349,16 @@ def fit_lines(
     return [_ellipsise(segments[-1], font, box_w)], min_px
 
 
+@lru_cache(maxsize=1)
+def _qr_modules() -> int:
+    """How many modules wide a location QR is, quiet zone included.
+
+    Constant in practice: every realistic id fits version 1 (see
+    ``label_service``), and the layout needs the number before it has a payload.
+    """
+    return int(_qr_code("SL1").symbol_size(scale=1, border=_QR_BORDER)[0])
+
+
 def _qr_code(payload: str) -> segno.QRCode:
     """The code itself, before it is drawn at any size.
 
@@ -377,6 +391,41 @@ def _qr_image(payload: str, box_px: int, tape: str) -> Image.Image:
     buffer = io.BytesIO()
     qr.save(buffer, kind="png", scale=scale, border=_QR_BORDER)
     return Image.open(buffer).convert("1")
+
+
+def _drawing_size(geometry: TapeGeometry) -> tuple[int, int, bool]:
+    """The canvas to draw on, and whether it must be turned before printing.
+
+    The raster's width is the tape's width, so a long label arrives as a tall,
+    narrow canvas — and a name laid across 12 mm of tape degenerates into
+    "Dr…". Every label here is therefore composed in landscape and turned a
+    quarter turn if the tape wants it, which is how a narrow roll is read in
+    the first place: along its length, not across it.
+    """
+    if geometry.length_px > geometry.width_px:
+        return geometry.length_px, geometry.width_px, True
+    return geometry.width_px, geometry.length_px, False
+
+
+def _margin_for(width_px: int, height_px: int) -> int:
+    """The white border, given up where the tape cannot afford it.
+
+    2 mm is right on 62 mm tape and absurd on 12 mm, where it would eat nearly
+    half the printable width and leave the code below the size a phone can
+    read. The border exists so a crooked feed does not clip the label; a label
+    whose QR cannot be scanned has lost more than a crooked one. So the margin
+    shrinks — never below a hairline — until the code fits at a readable size.
+    """
+    wanted = round(config.LABEL_MARGIN_MM * _PX_PER_MM)
+    needed = _qr_modules() * _MIN_QR_MODULE_PX
+    for margin in range(wanted, _MIN_MARGIN_PX - 1, -1):
+        box_w = width_px - 2 * margin
+        box_h = height_px - 2 * margin
+        if box_w <= 0 or box_h <= 0:
+            continue
+        if _layout(box_w, box_h)[1] >= needed:
+            return margin
+    return wanted  # nothing helps; the refusal below says so properly
 
 
 def _layout(box_w: int, box_h: int) -> tuple[bool, int]:
@@ -453,16 +502,17 @@ def _text_block(
 def render_label(label: LabelData, geometry: TapeGeometry | None = None) -> Image.Image:
     """Draw one location label, arranged to suit the tape it will print on."""
     geometry = geometry or tape_geometry()
-    margin = round(config.LABEL_MARGIN_MM * _PX_PER_MM)
-    box_w = geometry.width_px - 2 * margin
-    box_h = geometry.length_px - 2 * margin
+    canvas_w, canvas_h, turn = _drawing_size(geometry)
+    margin = _margin_for(canvas_w, canvas_h)
+    box_w = canvas_w - 2 * margin
+    box_h = canvas_h - 2 * margin
     if box_w <= 0 or box_h <= 0:
         raise ValidationError(
             f"a {config.LABEL_MARGIN_MM:g} mm margin leaves no room on tape "
             f"{geometry.tape!r}"
         )
 
-    canvas = Image.new("1", (geometry.width_px, geometry.length_px), 1)
+    canvas = Image.new("1", (canvas_w, canvas_h), 1)
     beside, qr_box = _layout(box_w, box_h)
     qr = _qr_image(location_qr_payload(label.id), qr_box, geometry.tape)
     gap = margin
@@ -491,6 +541,10 @@ def render_label(label: LabelData, geometry: TapeGeometry | None = None) -> Imag
     for text, font_path, size in lines:
         draw.text((text_x, text_y), text, font=_font(font_path, size), fill=0)
         text_y += round(size * 1.25)
+    if turn:
+        # Anti-clockwise, so the label reads bottom-to-top on the roll and the
+        # right way up once it is peeled and stuck on a drawer front.
+        canvas = canvas.transpose(Image.Transpose.ROTATE_90)
     return canvas
 
 
@@ -726,6 +780,67 @@ def read_printer_status(device: str | None = None) -> PrinterStatus | None:
         os.close(fd)
 
 
+@dataclass(frozen=True)
+class TapeChoice:
+    """A tape someone can pick, described in the terms printed on its box."""
+
+    id: str
+    name: str
+    width_mm: int
+    length_mm: int | None
+    two_color: bool
+
+
+def _tape_name(spec: Any) -> str:
+    width, length = spec.tape_size
+    if spec.form_factor == FormFactor.ENDLESS:
+        name = f"{width} mm continuous"
+    else:
+        name = f"{width} × {length} mm die-cut"
+    return name + (", black/red" if spec.color == Color.BLACK_RED_WHITE else "")
+
+
+def _is_printable(geometry: TapeGeometry) -> bool:
+    """Whether a label with a scannable code fits on this tape at all."""
+    canvas_w, canvas_h, _ = _drawing_size(geometry)
+    margin = _margin_for(canvas_w, canvas_h)
+    box_w, box_h = canvas_w - 2 * margin, canvas_h - 2 * margin
+    if box_w <= 0 or box_h <= 0:
+        return False
+    return _layout(box_w, box_h)[1] >= _qr_modules() * _MIN_QR_MODULE_PX
+
+
+def tape_choices() -> list[TapeChoice]:
+    """The tapes this deployment can be asked to print on.
+
+    ``SHELFOS_LABEL_TAPES`` names the rolls actually owned, which is the useful
+    list — brother_ql knows two dozen. With it unset, every tape ShelfOS can lay
+    a readable label out on is offered, so nothing has to be configured before
+    the picker is usable.
+    """
+    wanted = [t.strip() for t in config.LABEL_TAPES.split(",") if t.strip()]
+    choices = []
+    for spec in ALL_LABELS:
+        if wanted and spec.identifier not in wanted:
+            continue
+        try:
+            geometry = tape_geometry(tape=spec.identifier)
+        except ValidationError:
+            continue  # round tapes and the like: no layout for them
+        if not wanted and not _is_printable(geometry):
+            continue
+        choices.append(
+            TapeChoice(
+                id=spec.identifier,
+                name=_tape_name(spec),
+                width_mm=int(spec.tape_size[0]),
+                length_mm=int(spec.tape_size[1]) or None,
+                two_color=geometry.two_color,
+            )
+        )
+    return choices
+
+
 def detect_tape(status: PrinterStatus) -> str | None:
     """The tape identifier matching what the printer says it holds.
 
@@ -749,6 +864,20 @@ def detect_tape(status: PrinterStatus) -> str | None:
     if not matches:
         return None
     return config.LABEL_TAPE if config.LABEL_TAPE in matches else matches[0]
+
+
+def _same_roll(one: TapeGeometry, other: TapeGeometry) -> bool:
+    """Whether two tapes are the same physical roll to a printer.
+
+    Colour is left out because the status frame cannot report it: a black/red
+    roll looks exactly like a plain one. On a continuous tape the length is
+    ours to choose, so only the width and the form factor identify it.
+    """
+    return (
+        one.width_mm == other.width_mm
+        and one.endless == other.endless
+        and (one.endless or one.length_px == other.length_px)
+    )
 
 
 def _geometry_for(status: PrinterStatus | None) -> TapeGeometry:
@@ -874,13 +1003,51 @@ def _print_job(labels: Sequence[LabelData], geometry: TapeGeometry) -> bytes:
     return bytes(data)
 
 
+def _chosen_geometry(
+    status: PrinterStatus | None, tape: str | None, accept_loaded: bool
+) -> TapeGeometry:
+    """The tape to print on, given what was asked for and what is loaded.
+
+    With no request, the printer decides (and the configuration fills in the
+    colour it cannot report). With one, a disagreement is not resolved here:
+    printing on the wrong roll wastes it, and changing the roll is something
+    only the person at the machine can do — so it is handed back as a question,
+    unless the answer ("print on what is loaded") already came with the request.
+    """
+    if tape is None:
+        return _geometry_for(status)
+    requested = tape_geometry(tape=tape)
+    loaded_id = detect_tape(status) if status is not None else None
+    if loaded_id is None:
+        return requested  # nothing to disagree with
+    loaded = tape_geometry(tape=loaded_id)
+    if accept_loaded:
+        return loaded
+    if not _same_roll(requested, loaded):
+        raise TapeMismatchError(
+            f"the printer is holding {_tape_name(_label_spec(loaded.tape))} tape, "
+            f"but the job asked for {_tape_name(_label_spec(requested.tape))}",
+            requested=requested.tape,
+            loaded=loaded.tape,
+        )
+    # Same roll: the request wins, because it may know the colour.
+    return requested
+
+
 def print_labels(
     labels: Sequence[LabelData],
     *,
     copies: int = 1,
+    tape: str | None = None,
+    accept_loaded: bool = False,
     device: str | None = None,
 ) -> PrintOutcome:
     """Print labels, and say whether the printer confirmed doing so.
+
+    ``tape`` asks for a specific roll; without ``accept_loaded`` a printer
+    holding a different one raises :class:`TapeMismatchError` rather than
+    printing, so the choice between "print on what is loaded" and "wait, I am
+    changing the roll" stays with the person standing next to it.
 
     ``device`` overrides the configured path — the injection point tests use,
     pointing it at a temporary file so the encoder and the write both really
@@ -919,9 +1086,9 @@ def print_labels(
                 before = _read_status(fd, budget=_readback_budget())
             # The tape in the machine decides the label's size and shape; the
             # encoding therefore happens here, once the printer has answered.
-            geometry = _geometry_for(before)
+            geometry = _chosen_geometry(before, tape, accept_loaded)
             if before is not None:
-                _remember_tape(geometry.tape)
+                _remember_tape(_geometry_for(before).tape)
             if before is not None:
                 _refuse_if_not_ready(before, geometry)
             data = _print_job(

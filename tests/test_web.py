@@ -1770,3 +1770,27 @@ def test_types_pages_require_login(anon_client: TestClient) -> None:
         resp = anon_client.get(path, follow_redirects=False)
         assert resp.status_code == 303
         assert resp.headers["location"] == "/login"
+
+
+def test_locations_page_offers_printing_only_with_a_printer(
+    client: TestClient, monkeypatch  # type: ignore[no-untyped-def]
+) -> None:
+    """No printer configured, no print affordances: the dialog would have
+    nothing to offer and the button nothing to do."""
+    from app import config
+
+    client.post("/api/locations", json={"type": "drawer", "name": "D1"})
+
+    monkeypatch.setattr(config, "LABEL_DEVICE", "")
+    plain = client.get("/locations").text
+    assert "loc-print" not in plain
+    assert 'id="label-print-dialog"' not in plain
+    assert "label_print.js" not in plain
+    # The browser-printable page is always offered; it needs no printer.
+    assert "/labels/locations?root=" in plain
+
+    monkeypatch.setattr(config, "LABEL_DEVICE", "/dev/usb/lp0")
+    wired = client.get("/locations").text
+    assert "loc-print" in wired
+    assert 'id="label-print-dialog"' in wired
+    assert "label_print.js" in wired
