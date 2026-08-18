@@ -59,9 +59,30 @@ export function loadPage(
   // app.js constructs a Tabulator at load; stub the few methods it calls so the
   // component-table code can run without the real (CDN) library.
   window.Tabulator = class {
+    constructor(_element, options) {
+      // Kept so a test can check the deal a table struck with the library —
+      // column options are configuration, but they are also the contract.
+      window.Tabulator.columns = options?.columns ?? [];
+    }
     setColumns() {}
     setData() {
       return Promise.resolve();
+    }
+    // Rows land on the CLASS for the same reason handlers do: the scripts keep
+    // their table in a top-level const, so a test cannot reach the instance.
+    replaceData(rows) {
+      window.Tabulator.rows = rows;
+      return Promise.resolve();
+    }
+    // Header filters, for the tables that drive a server query from them. A
+    // test sets Tabulator.filters and fires the recorded handler, which is what
+    // the real library does when someone types in a column header.
+    getHeaderFilters() {
+      return window.Tabulator.filters;
+    }
+    clearHeaderFilter() {
+      window.Tabulator.filters = [];
+      window.Tabulator.handlers.dataFiltering?.([]);
     }
     // Handlers are recorded on the CLASS, not the instance: app.js keeps its table
     // in a top-level `const`, which (unlike `var`) never lands on `window`, so a
@@ -70,6 +91,9 @@ export function loadPage(
       window.Tabulator.handlers[event] = handler;
     }
     static handlers = {};
+    static rows = [];
+    static filters = [];
+    static columns = [];
   };
 
   // Browsers expose form controls as named properties on the form

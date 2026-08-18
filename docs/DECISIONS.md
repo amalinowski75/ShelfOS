@@ -146,6 +146,18 @@ old hash. Who set one — its owner or an admin — is told by comparing the ent
 ``user_id`` with its ``entity_id``, rather than by a second field that could
 drift out of agreement with the first.
 
+**Reading it (2026-08-18).** This is the one table that grows without bound and
+is never pruned, so the reader pages by the last row's `(timestamp, id)` rather
+than by an offset: the log grows at the *head*, and an offset counts from the
+newest row, so an entry written between two pages pushes the boundary row into
+the next one and shows the same change twice — on the page whose whole purpose
+is reconstructing a sequence of events. The three ways it is read (that
+newest-first walk, and the who/kind filters) are indexed for the same reason,
+and since there are no migrations (D10), `init_db` creates indexes an existing
+database is missing — otherwise an index added to a model would reach new
+installations only, working on the developer's fresh database and not on the one
+that has the rows.
+
 ## D10. Out of scope for the first slice  [DEFAULT]
 
 Deferred (per spec, "Future"): CSV import, invoice upload/OCR, BOM, KiCad

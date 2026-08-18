@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 from app import config
@@ -1858,3 +1861,182 @@ def test_labels_page_offers_the_label_printer_with_its_own_csrf_token(
     assert 'id="labels-print-device"' not in plain
     # The browser print button is unconditional: it needs no printer at all.
     assert "window.print()" in plain
+
+
+def _audit_something(client: TestClient) -> dict[str, object]:
+    """Do a couple of audited things so the log has content to render."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "RC0603"}
+    ).json()
+    location = client.post(
+        "/api/locations", json={"type": "drawer", "name": "D1"}
+    ).json()
+    client.post(
+        "/api/stock/add",
+        json={
+            "component_id": component["id"],
+            "location_id": location["id"],
+            "quantity": 25,
+        },
+    )
+    return {"component": component, "location": location}
+
+
+def test_audit_page_is_admin_only(client: TestClient, anon_client: TestClient) -> None:
+    assert client.get("/audit").status_code == 200
+    token = _non_admin_token(client, role="user", username="editor")
+    # A writer is sent home rather than shown who did what.
+    redirected = anon_client.get(
+        "/audit", headers={"Authorization": f"Bearer {token}"}, follow_redirects=False
+    )
+    assert redirected.status_code in (302, 303, 307)
+
+
+def test_audit_feed_reads_the_log_in_words(client: TestClient) -> None:
+    """The log's own field names are terse and parameterised; a reader should
+    never have to learn "quantity@location:5"."""
+    made = _audit_something(client)
+
+    body = client.get("/web/api/audit").json()
+    entry = next(row for row in body["data"] if row["what"].startswith("quantity"))
+
+    assert entry["who"] == "admin"  # resolved, not a bare user id
+    assert entry["entity"] == "component RC0603"  # named, not "component #1"
+    assert entry["entity_url"] == f"/components/{made['component']['id']}"
+    assert entry["what"] == "quantity in D1"  # the location's path, not its id
+    assert (entry["old"], entry["new"]) == ("0", "25")
+
+
+def test_audit_feed_filters_pages_and_stays_out_of_caches(client: TestClient) -> None:
+    made = _audit_something(client)
+
+    response = client.get("/web/api/audit?entity_type=component")
+    # As sensitive as the account list, and kept out of shared caches for the
+    # same reason.
+    assert response.headers["cache-control"] == "no-store"
+    kinds = {row["entity"].split()[0] for row in response.json()["data"]}
+    assert kinds == {"component"}
+
+    # A second audited action, so there is a page behind the first.
+    client.post(
+        "/api/stock/add",
+        json={
+            "component_id": made["component"]["id"],
+            "location_id": made["location"]["id"],
+            "quantity": 5,
+        },
+    )
+    first = client.get("/web/api/audit?limit=1").json()
+    assert len(first["data"]) == 1
+    assert first["more"] is True  # answered by looking, not by the page being full
+    second = client.get(f"/web/api/audit?limit=1&{_cursor(first)}").json()
+    assert second["data"][0] != first["data"][0]
+    assert second["more"] is False  # and the end of the log says so
+    assert second["cursor"] is None  # nothing behind it to point at
+
+
+def _cursor(page: dict[str, Any]) -> str:
+    """The query string that continues a page, as the browser echoes it back."""
+    return f"before_when={page['cursor']['when']}&before_id={page['cursor']['id']}"
+
+
+def test_audit_paging_is_not_shifted_by_entries_arriving_while_it_is_read(
+    client: TestClient,
+) -> None:
+    """The log grows at the head, which is what an offset gets wrong: one entry
+    written between two reads pushes the boundary row down into the next page,
+    and the reader sees the same change twice — on the one page whose purpose is
+    reconstructing a sequence of events."""
+    made = _audit_something(client)
+    body = {
+        "component_id": made["component"]["id"],
+        "location_id": made["location"]["id"],
+    }
+    for quantity in (1, 2, 3):
+        client.post("/api/stock/add", json={**body, "quantity": quantity})
+
+    first = client.get("/web/api/audit?limit=2").json()
+    assert first["more"] is True
+    # Someone else works while this page is being read.
+    client.post("/api/stock/add", json={**body, "quantity": 9})
+    second = client.get(f"/web/api/audit?limit=2&{_cursor(first)}").json()
+
+    assert second["data"], "the page behind the cursor is still there"
+    for row in second["data"]:
+        assert row not in first["data"]
+    # And specifically the row an offset would have repeated: the last of page one.
+    assert first["data"][-1] not in second["data"]
+
+
+def test_audit_refuses_half_a_paging_cursor(client: TestClient) -> None:
+    # Dropping it silently would restart at the newest entry and hand back page
+    # one dressed up as page two.
+    assert client.get("/web/api/audit?before_id=3").status_code == 422
+    bad = client.get("/web/api/audit?before_when=yesterday&before_id=3")
+    assert bad.status_code == 422
+
+
+def test_audit_page_link_is_offered_to_admins_only(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    assert 'href="/audit"' in client.get("/").text
+    token = _non_admin_token(client, role="user", username="stocker2")
+    plain = anon_client.get("/", headers={"Authorization": f"Bearer {token}"}).text
+    assert 'href="/audit"' not in plain
+
+
+def test_audit_feed_narrows_by_who_field_and_value(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    """Column filters go to the database, not to the rows already fetched: the
+    page walks a window over the log, and a filter over that window would
+    answer "nothing" for an entry sitting one page further back."""
+    made = _audit_something(client)
+    body = {
+        "component_id": made["component"]["id"],
+        "location_id": made["location"]["id"],
+        "quantity": 5,
+    }
+    token = _non_admin_token(client, role="user", username="bob")
+    anon_client.post(
+        "/api/stock/add", json=body, headers={"Authorization": f"Bearer {token}"}
+    )
+    bob_id = next(
+        row["id"]
+        for row in client.get("/web/api/users").json()["data"]
+        if row["name"] == "bob"
+    )
+
+    # By who — bob's stock change, not the admin's.
+    mine = client.get(f"/web/api/audit?who={bob_id}").json()["data"]
+    assert mine and {row["who"] for row in mine} == {"bob"}
+
+    by_field = client.get("/web/api/audit?field=quantity").json()["data"]
+    assert by_field and all("quantity" in row["what"] for row in by_field)
+
+    # By value, matching EITHER side of the change: a reader looking for a
+    # number should not have to remember which column it ended up in. Taking
+    # stock away puts 25 on the old side.
+    client.post("/api/stock/remove", json={**body, "quantity": 30})
+    by_value = client.get("/web/api/audit?value=30").json()["data"]
+    assert by_value and any(row["old"] == "30" for row in by_value)
+
+    # And a filter that matches nothing says so rather than falling back to all.
+    assert client.get("/web/api/audit?field=nonsense").json()["data"] == []
+
+
+def test_audit_page_offers_only_filters_the_log_can_answer(client: TestClient) -> None:
+    _audit_something(client)
+    html = client.get("/audit").text
+
+    # The choices ride on the mount, and are the kinds and people actually in
+    # the log — a filter offering an empty result is a filter that lies, and one
+    # offering nothing at all is a filter nobody can use.
+    def mounted(name: str) -> Any:
+        match = re.search(rf"data-{name}='([^']*)'", html)
+        assert match, f"data-{name} is not on the mount"
+        return json.loads(match.group(1))
+
+    assert mounted("kinds") == ["component"]
+    assert mounted("actors") == [{"id": 1, "name": "admin"}]

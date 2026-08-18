@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Audit log — ShelfOS{% endblock %}
+
+{% block content %}
+<div class="head">
+  <div>
+    <h1>Audit log</h1>
+    {# What the log is for, in one line: people come here with a question about
+       a change they did not make, not to browse. #}
+    <p>Who changed what, newest first.</p>
+  </div>
+  <div class="head-actions">
+    <button type="button" class="btn btn-ghost" id="audit-clear" hidden>
+      Clear filters
+    </button>
+  </div>
+</div>
+
+{# The filter choices are the ones the log actually holds, so neither list
+   offers a choice that leads to an empty table. They ride on the mount rather
+   than in a script tag, the same way the scan panel carries its locations. #}
+<div id="audit-table"
+     data-kinds='{{ entity_types | tojson }}'
+     data-actors='{{ actors | tojson }}'></div>
+<div class="head-actions" style="margin-top: 12px">
+  <button type="button" class="btn btn-secondary" id="audit-more" hidden>
+    Show more
+  </button>
+  <p class="empty" id="audit-count"></p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/audit.js?v={{ static_version() }}"></script>
+{% endblock %}

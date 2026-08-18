@@ -7,6 +7,7 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
+from app.models.bom import Bom
 from app.models.enums import LocationType, ParameterDataType
 from app.models.invoice import InvoiceImportLine
 from app.seed import ensure_system_user
@@ -17,6 +18,7 @@ from app.services import invoice_service as inv
 from app.services import location_service as ls
 from app.services import stock_service as ss
 from app.services.errors import InsufficientStockError
+from app.web.presenter import build_audit_table
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
@@ -688,3 +690,109 @@ def test_a_creation_and_its_record_land_together_or_not_at_all(
             assert audit.list_entries(
                 session, entity_type=entity_type, entity_id=row.id
             ), f"{entity_type} exists with nothing in the log"
+
+
+# --- reading the log back (app/web/presenter.py) -----------------------------
+#
+# The field names above are deliberately terse and parameterised, and the whole
+# point of the audit page is that a reader never has to learn them. That makes
+# these branches the ones most likely to rot: they lean on the parsers in
+# audit_service, which lean on the prefixes producers write. If a producer
+# changes its spelling, the parser stops matching and the page quietly falls
+# back to showing the raw token, with nothing to say so.
+
+
+def test_the_log_is_read_in_words_not_in_its_own_tokens(ctx, session: Session) -> None:
+    for field in (
+        audit.quantity_field(ctx["location_id"]),
+        audit.parameter_field("resistance"),
+        audit.import_line_field(3, "quantity"),
+        audit.FIELD_MOUNTING_TYPE,
+    ):
+        audit.record_change(
+            session,
+            entity_type="component",
+            entity_id=ctx["component_id"],
+            field=field,
+            old_value="a",
+            new_value="b",
+            user_id=ctx["user_id"],
+        )
+    session.commit()
+
+    said = {row["what"] for row in build_audit_table(session)["data"]}
+    assert said == {
+        "quantity in D1",  # the location's path, not its id
+        "parameter “resistance”",
+        "import line 3 — quantity",
+        "mounting type",  # even a plain name loses its underscore
+    }
+
+
+def test_a_thing_that_is_gone_is_named_but_not_linked(ctx, session: Session) -> None:
+    """A dead link teaches people the log lies — and the entry someone is most
+    likely to click is the deletion, because it is the one explaining why what
+    they were looking for is missing."""
+    audit.record_change(
+        session,
+        entity_type="component",
+        entity_id=ctx["component_id"],
+        field=audit.FIELD_NOTES,
+        old_value=None,
+        new_value="spare",
+        user_id=ctx["user_id"],
+    )
+    session.commit()
+    live = build_audit_table(session)["data"][0]
+    assert live["entity_url"] == f"/components/{ctx['component_id']}"
+
+    cs.hard_delete_component(session, ctx["component_id"], user_id=ctx["user_id"])
+    session.commit()
+    rows = build_audit_table(session)["data"]
+    gone = next(row for row in rows if row["what"] == "notes")
+    assert gone["entity"] == f"component #{ctx['component_id']}"
+    assert gone["entity_url"] is None
+
+
+def test_a_kind_with_no_page_of_its_own_points_at_its_list(
+    ctx, session: Session
+) -> None:
+    # Locations, users and matching rules have no page each; sending a reader to
+    # the list they live on beats sending them nowhere.
+    audit.record_change(
+        session,
+        entity_type="location",
+        entity_id=ctx["location_id"],
+        field=audit.FIELD_NAME,
+        old_value="D1",
+        new_value="D2",
+        user_id=ctx["user_id"],
+    )
+    session.commit()
+    assert build_audit_table(session)["data"][0]["entity_url"] == "/locations"
+
+
+def test_every_kind_with_a_page_of_its_own_is_named_and_linked(
+    ctx, session: Session
+) -> None:
+    """A kind missing from the name lookup is a kind that stays numbered — and,
+    since names are what the links are gated on, one that silently stops linking
+    the day something starts auditing it."""
+    bom = Bom(name="lamp-v2", created_by=ctx["user_id"])
+    session.add(bom)
+    session.commit()
+    session.refresh(bom)
+    audit.record_change(
+        session,
+        entity_type="bom",
+        entity_id=bom.id,
+        field=audit.FIELD_NAME,
+        old_value="lamp-v1",
+        new_value="lamp-v2",
+        user_id=ctx["user_id"],
+    )
+    session.commit()
+
+    row = build_audit_table(session)["data"][0]
+    assert row["entity"] == "bom lamp-v2"
+    assert row["entity_url"] == f"/boms/{bom.id}"

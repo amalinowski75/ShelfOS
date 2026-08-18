@@ -66,6 +66,26 @@ def init_db(target_engine: Engine | None = None) -> None:
     active_engine = target_engine or engine
     _ensure_sqlite_dir(str(active_engine.url))
     SQLModel.metadata.create_all(active_engine)
+    _create_missing_indexes(active_engine)
+
+
+def _create_missing_indexes(target_engine: Engine) -> None:
+    """Add indexes the models declare but an existing database lacks.
+
+    ``create_all`` skips a table that already exists -- indexes included -- and
+    ShelfOS has no migrations, so an index added to a model would reach new
+    installations only, and the query it was added for would keep scanning
+    everywhere else. That is the worst shape for a performance fix: it works on
+    the developer's fresh database and not on the database that actually has the
+    rows.
+
+    ``checkfirst`` asks what is already there, so this is a no-op on every
+    startup after the one that introduces an index. It creates indexes, never
+    drops or rebuilds them: a column change still needs a human.
+    """
+    for table in SQLModel.metadata.tables.values():
+        for index in table.indexes:
+            index.create(target_engine, checkfirst=True)
 
 
 @contextmanager
