@@ -27,10 +27,25 @@
     change: "value",
   };
 
+  // A typed filter fires on every keystroke, and each keystroke is a query the
+  // database cannot index: `field`/`change` search with a leading wildcard over
+  // the one table that grows without bound. Collapse a burst of them into the
+  // one request the reader actually meant. The list filters are exact and
+  // indexed, but they go through the same path — one click is one request
+  // either way, so there is nothing to gain from treating them differently.
+  const FILTER_SETTLE_MS = 300;
+
   let loaded = [];
   let more = false;
   let cursor = null;
   let reloading = false;
+  let settleTimer = null;
+  // Bumped on every load; an answer whose token is stale is dropped. Filters
+  // and Show more can both be in flight at once, and the last answer to arrive
+  // is not necessarily the one the screen is asking for — a table showing rows
+  // that do not match the filter above them is the one thing this page cannot
+  // afford, since here the filter IS the query.
+  let loadToken = 0;
 
   function change(cell) {
     const row = cell.getRow().getData();
@@ -142,6 +157,7 @@
   }
 
   async function load({ append = false } = {}) {
+    const token = ++loadToken;
     const filters = activeFilters();
     const params = new URLSearchParams({ ...filters, limit: String(PAGE) });
     // Where the last page stopped, not how far in it was: the log grows at the
@@ -157,12 +173,15 @@
     let body;
     try {
       const resp = await fetch(`/web/api/audit?${params}`);
+      if (token !== loadToken) return; // a newer load has been asked for since
       if (!resp.ok) {
         showToast(await errorMessage(resp, "Could not read the audit log."));
         return;
       }
       body = await resp.json();
+      if (token !== loadToken) return;
     } catch {
+      if (token !== loadToken) return;
       showToast("Could not reach the server. Please try again.");
       return;
     }
@@ -188,10 +207,11 @@
   }
 
   // A changed filter restarts the walk from the newest entry rather than
-  // narrowing the window already on screen.
+  // narrowing the window already on screen — once the typing has stopped.
   table.on("dataFiltering", () => {
     if (reloading) return;
-    load();
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => load(), FILTER_SETTLE_MS);
   });
   clearBtn.addEventListener("click", () => {
     table.clearHeaderFilter(); // fires dataFiltering, which reloads

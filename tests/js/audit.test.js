@@ -25,6 +25,14 @@ const ROW = (n) => ({
 const ok = (data) =>
   Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(data) });
 
+// A filter change is asked for once the typing has stopped, so a test that
+// changes one has to let it stop. Real time rather than fake timers: the page
+// also awaits a fetch, and mixing the two clocks reads worse than waiting.
+const settle = async () => {
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  await tick();
+};
+
 describe("audit.js", () => {
   it("loads the newest entries and says how many are shown", async () => {
     const { document, window } = loadPage(FIXTURE, SCRIPTS, {
@@ -60,7 +68,7 @@ describe("audit.js", () => {
       { field: "change", value: "250" },
     ];
     window.Tabulator.handlers.dataFiltering(window.Tabulator.filters);
-    await tick();
+    await settle();
 
     const last = calls.at(-1);
     expect(last).toContain("entity_type=component");
@@ -100,10 +108,10 @@ describe("audit.js", () => {
     await tick();
     window.Tabulator.filters = [{ field: "who_id", value: 2 }];
     window.Tabulator.handlers.dataFiltering(window.Tabulator.filters);
-    await tick();
+    await settle();
 
     document.getElementById("audit-clear").click();
-    await tick();
+    await settle();
 
     expect(calls.at(-1)).not.toContain("who=");
     expect(document.getElementById("audit-clear").hidden).toBe(true);
@@ -159,10 +167,87 @@ describe("audit.js", () => {
 
     window.Tabulator.filters = [{ field: "who_id", value: 2 }];
     window.Tabulator.handlers.dataFiltering(window.Tabulator.filters);
-    await tick();
+    await settle();
 
     expect(calls.at(-1)).toContain("who=2");
     expect(calls.at(-1)).not.toContain("before_id");
+  });
+
+  it("asks once for a burst of keystrokes, not once per keystroke", async () => {
+    // Each of these is a `%like%` over the widest-growing table in the system,
+    // which no index can help with — so a typed word must cost one query, not
+    // one per letter.
+    const calls = [];
+    const { window } = loadPage(FIXTURE, SCRIPTS, {
+      fetchImpl: (url) => {
+        calls.push(url);
+        return ok({ data: [ROW(1)], more: false });
+      },
+    });
+    await tick();
+    const before = calls.length;
+
+    for (const typed of ["r", "re", "res", "resi"]) {
+      window.Tabulator.filters = [{ field: "change", value: typed }];
+      window.Tabulator.handlers.dataFiltering(window.Tabulator.filters);
+    }
+    await settle();
+
+    expect(calls.length - before).toBe(1);
+    expect(calls.at(-1)).toContain("value=resi"); // and it is the last one typed
+  });
+
+  it("does not answer with a query the filter has moved on from", async () => {
+    // Two requests can be in flight at once, and the slower one is not
+    // necessarily the older one. Whichever lands last must not win: a table
+    // showing rows that do not match the filter above them is worse than a
+    // slow one, because nothing on screen says so.
+    const pending = [];
+    const { window } = loadPage(FIXTURE, SCRIPTS, {
+      fetchImpl: (url) => {
+        if (!url.includes("value=")) return ok({ data: [ROW(1)], more: false });
+        return new Promise((release) => pending.push({ url, release }));
+      },
+    });
+    await tick();
+
+    window.Tabulator.filters = [{ field: "change", value: "re" }];
+    window.Tabulator.handlers.dataFiltering(window.Tabulator.filters);
+    await settle();
+    window.Tabulator.filters = [{ field: "change", value: "res" }];
+    window.Tabulator.handlers.dataFiltering(window.Tabulator.filters);
+    await settle();
+    expect(pending).toHaveLength(2);
+
+    // The newer query answers first; the older one lands after it.
+    pending[1].release(ok({ data: [{ ...ROW(2), new: "res-answer" }], more: false }));
+    await tick();
+    pending[0].release(ok({ data: [{ ...ROW(3), new: "re-answer" }], more: false }));
+    await tick();
+
+    expect(window.Tabulator.rows.map((row) => row.new)).toEqual(["res-answer"]);
+  });
+
+  it("reloads once for a filter change, not once per reload", async () => {
+    // Replacing the data makes the table re-run its filters, which is what
+    // asked for the reload — without a guard that is a request loop, and the
+    // page walks the log until somebody closes the tab.
+    const calls = [];
+    const { window } = loadPage(FIXTURE, SCRIPTS, {
+      fetchImpl: (url) => {
+        calls.push(url);
+        return ok({ data: [ROW(1)], more: false });
+      },
+    });
+    await tick();
+    const before = calls.length;
+
+    window.Tabulator.filters = [{ field: "who_id", value: 2 }];
+    window.Tabulator.handlers.dataFiltering(window.Tabulator.filters);
+    await settle();
+    await settle(); // and it stays settled
+
+    expect(calls.length - before).toBe(1);
   });
 
   it("says which zone the timestamps are in", async () => {
