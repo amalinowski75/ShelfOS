@@ -375,6 +375,9 @@ def users_page(
 def audit_feed(
     response: Response,
     entity_type: str | None = None,
+    who: int | None = None,
+    field: str | None = None,
+    value: str | None = None,
     limit: int = 200,
     offset: int = 0,
     session: Session = Depends(get_session),
@@ -389,6 +392,9 @@ def audit_feed(
     return build_audit_table(
         session,
         entity_type=entity_type or None,
+        who=who,
+        field=field or None,
+        value=value or None,
         limit=min(max(limit, 1), _AUDIT_PAGE_MAX),
         offset=max(offset, 0),
     )
@@ -406,9 +412,16 @@ def audit_page(
         "audit.html",
         {
             "current_user": user,
-            # Only the kinds the log actually holds, so the filter offers no
-            # empty choices.
+            # Only the kinds and the people the log actually holds, so neither
+            # filter offers a choice that leads to an empty table.
             "entity_types": audit_service.entity_types(session),
+            "actors": [
+                {"id": actor_id, "name": name}
+                for actor_id, name in sorted(
+                    us.names_by_id(session, audit_service.actor_ids(session)).items(),
+                    key=lambda pair: pair[1].casefold(),
+                )
+            ],
         },
     )
 

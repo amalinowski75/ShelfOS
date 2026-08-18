@@ -3,19 +3,33 @@
 // parameterised ("quantity@location:5"), and turning those into English is the
 // server's job, next to the parsers that built them.
 //
+// The column filters narrow the QUERY, not the rows on screen. This page holds
+// a window onto a log that is walked a page at a time, so a filter applied to
+// what is loaded would answer "nothing" for an entry sitting one page further
+// back — the one failure that would make the log worth less than no log.
+//
 // Read-only by design: an audit trail that can be edited from the app it audits
 // is not one. `esc` comes from shared.js.
 (() => {
   const mount = document.getElementById("audit-table");
   if (!mount) return;
 
-  const entitySelect = document.getElementById("audit-entity");
   const moreBtn = document.getElementById("audit-more");
+  const clearBtn = document.getElementById("audit-clear");
   const countEl = document.getElementById("audit-count");
   const PAGE = 200;
 
+  // Which header filter drives which query parameter.
+  const FILTER_PARAM = {
+    who_id: "who",
+    entity_kind: "entity_type",
+    what: "field",
+    change: "value",
+  };
+
   let loaded = [];
   let more = false;
+  let reloading = false;
 
   function change(cell) {
     const row = cell.getRow().getData();
@@ -33,10 +47,33 @@
     return `${from} <span class="muted">→</span> ${to}`;
   }
 
-  const table = new Tabulator(mount, {
-    layout: "fitDataFill",
-    placeholder: "Nothing recorded yet",
-    columns: [
+  // Every filtered column keeps all its rows: the server has already chosen
+  // them, and a local filter on top would hide some of what it chose.
+  const serverFilter = { headerFilterFunc: () => true };
+
+  function listFilter(values) {
+    return {
+      ...serverFilter,
+      headerFilter: "list",
+      headerFilterParams: { values, clearable: true },
+    };
+  }
+
+  function textFilter(title) {
+    return {
+      ...serverFilter,
+      headerFilter: "input",
+      headerFilterPlaceholder: `Filter ${title}…`,
+      headerFilterParams: {
+        elementAttributes: { "aria-label": `Filter ${title}` },
+      },
+    };
+  }
+
+  function auditColumns() {
+    const kinds = JSON.parse(mount.dataset.kinds || "[]");
+    const actors = JSON.parse(mount.dataset.actors || "[]");
+    return [
       {
         title: "When",
         field: "when",
@@ -44,7 +81,17 @@
         formatter: (cell) =>
           `<span class="cell-mono">${esc(cell.getValue().replace("T", " "))}</span>`,
       },
-      { title: "Who", field: "who", width: 130 },
+      {
+        title: "Who",
+        field: "who",
+        width: 150,
+        // Filtered by id and shown by name: an account can be renamed into
+        // another's history, and an id cannot.
+        headerFilterField: "who_id",
+        ...listFilter(
+          Object.fromEntries(actors.map((actor) => [actor.id, actor.name])),
+        ),
+      },
       {
         title: "What",
         field: "entity",
@@ -56,23 +103,49 @@
             ? `<a href="${esc(row.entity_url)}">${label}</a>`
             : label;
         },
+        headerFilterField: "entity_kind",
+        ...listFilter(
+          Object.fromEntries(
+            kinds.map((kind) => [kind, kind.replace(/_/g, " ")]),
+          ),
+        ),
       },
-      { title: "Field", field: "what", width: 220 },
+      { title: "Field", field: "what", width: 220, ...textFilter("field") },
       {
         title: "Change",
         field: "change",
         headerSort: false,
         formatter: change,
+        ...textFilter("change"),
       },
-    ],
+    ];
+  }
+
+  const table = new Tabulator(mount, {
+    layout: "fitDataFill",
+    placeholder: "Nothing recorded yet",
+    columns: auditColumns(),
   });
 
+  function activeFilters() {
+    const active = {};
+    for (const filter of table.getHeaderFilters()) {
+      const param = FILTER_PARAM[filter.field];
+      if (param && filter.value !== "" && filter.value != null) {
+        active[param] = String(filter.value);
+      }
+    }
+    return active;
+  }
+
   async function load({ append = false } = {}) {
+    const filters = activeFilters();
     const params = new URLSearchParams({
+      ...filters,
       limit: String(PAGE),
       offset: String(append ? loaded.length : 0),
     });
-    if (entitySelect.value) params.set("entity_type", entitySelect.value);
+    clearBtn.hidden = Object.keys(filters).length === 0;
     let body;
     try {
       const resp = await fetch(`/web/api/audit?${params}`);
@@ -87,16 +160,33 @@
     }
     loaded = append ? loaded.concat(body.data) : body.data;
     more = body.more;
-    await table.replaceData(loaded);
+    // Guarded, because replacing the data makes Tabulator re-run its filters,
+    // which is what called this in the first place.
+    reloading = true;
+    try {
+      await table.replaceData(loaded);
+    } finally {
+      reloading = false;
+    }
     moreBtn.hidden = !more;
     // "The 200 most recent" rather than a total: counting the whole log on
     // every page load buys a number nobody acts on.
     countEl.textContent = loaded.length
-      ? `${loaded.length} entr${loaded.length === 1 ? "y" : "ies"}${more ? ", more to show" : ""}`
+      ? `${loaded.length} entr${loaded.length === 1 ? "y" : "ies"}${
+          more ? ", more to show" : ""
+        }`
       : "";
   }
 
-  entitySelect.addEventListener("change", () => load());
+  // A changed filter restarts the walk from the newest entry rather than
+  // narrowing the window already on screen.
+  table.on("dataFiltering", () => {
+    if (reloading) return;
+    load();
+  });
+  clearBtn.addEventListener("click", () => {
+    table.clearHeaderFilter(); // fires dataFiltering, which reloads
+  });
   moreBtn.addEventListener("click", () => load({ append: true }));
   load();
 })();

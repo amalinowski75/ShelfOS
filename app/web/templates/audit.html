@@ -10,17 +10,18 @@
     <p>Who changed what, newest first.</p>
   </div>
   <div class="head-actions">
-    <label class="check" for="audit-entity">Show</label>
-    <select class="control" id="audit-entity">
-      <option value="">everything</option>
-      {% for kind in entity_types %}
-      <option value="{{ kind }}">{{ kind.replace("_", " ") }}</option>
-      {% endfor %}
-    </select>
+    <button type="button" class="btn btn-ghost" id="audit-clear" hidden>
+      Clear filters
+    </button>
   </div>
 </div>
 
-<div id="audit-table"></div>
+{# The filter choices are the ones the log actually holds, so neither list
+   offers a choice that leads to an empty table. They ride on the mount rather
+   than in a script tag, the same way the scan panel carries its locations. #}
+<div id="audit-table"
+     data-kinds='{{ entity_types | tojson }}'
+     data-actors='{{ actors | tojson }}'></div>
 <div class="head-actions" style="margin-top: 12px">
   <button type="button" class="btn btn-secondary" id="audit-more" hidden>
     Show more

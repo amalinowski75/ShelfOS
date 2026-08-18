@@ -1937,3 +1937,52 @@ def test_audit_page_link_is_offered_to_admins_only(
     token = _non_admin_token(client, role="user", username="stocker2")
     plain = anon_client.get("/", headers={"Authorization": f"Bearer {token}"}).text
     assert 'href="/audit"' not in plain
+
+
+def test_audit_feed_narrows_by_who_field_and_value(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    """Column filters go to the database, not to the rows already fetched: the
+    page walks a window over the log, and a filter over that window would
+    answer "nothing" for an entry sitting one page further back."""
+    made = _audit_something(client)
+    body = {
+        "component_id": made["component"]["id"],
+        "location_id": made["location"]["id"],
+        "quantity": 5,
+    }
+    token = _non_admin_token(client, role="user", username="bob")
+    anon_client.post(
+        "/api/stock/add", json=body, headers={"Authorization": f"Bearer {token}"}
+    )
+    bob_id = next(
+        row["id"]
+        for row in client.get("/web/api/users").json()["data"]
+        if row["name"] == "bob"
+    )
+
+    # By who — bob's stock change, not the admin's.
+    mine = client.get(f"/web/api/audit?who={bob_id}").json()["data"]
+    assert mine and {row["who"] for row in mine} == {"bob"}
+
+    by_field = client.get("/web/api/audit?field=quantity").json()["data"]
+    assert by_field and all("quantity" in row["what"] for row in by_field)
+
+    # By value, matching EITHER side of the change: a reader looking for a
+    # number should not have to remember which column it ended up in. Taking
+    # stock away puts 25 on the old side.
+    client.post("/api/stock/remove", json={**body, "quantity": 30})
+    by_value = client.get("/web/api/audit?value=30").json()["data"]
+    assert by_value and any(row["old"] == "30" for row in by_value)
+
+    # And a filter that matches nothing says so rather than falling back to all.
+    assert client.get("/web/api/audit?field=nonsense").json()["data"] == []
+
+
+def test_audit_page_offers_only_filters_the_log_can_answer(client: TestClient) -> None:
+    _audit_something(client)
+    html = client.get("/audit").text
+    # The choices ride on the mount, and are the kinds and people actually in
+    # the log — a filter offering an empty result is a filter that lies.
+    assert "data-kinds=" in html and "component" in html
+    assert "data-actors=" in html and "admin" in html

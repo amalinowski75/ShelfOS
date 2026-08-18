@@ -446,19 +446,33 @@ def build_audit_table(
     session: Session,
     *,
     entity_type: str | None = None,
+    who: int | None = None,
+    field: str | None = None,
+    value: str | None = None,
     limit: int = 200,
     offset: int = 0,
 ) -> dict[str, Any]:
-    """Rows for the audit page: who changed what, in words rather than tokens."""
+    """Rows for the audit page: who changed what, in words rather than tokens.
+
+    Filtering happens in the query, not over the rows this returns: the page
+    walks the log a window at a time, so a filter applied to what is on screen
+    would answer "nothing" for an entry sitting one page further back.
+    """
     # One more than asked for, so "is there anything behind this page" is
     # answered rather than guessed from the page being full — a Show more that
     # then shows nothing is worse than no button.
     entries = audit_service.list_entries(
-        session, entity_type=entity_type, limit=limit + 1, offset=offset
+        session,
+        entity_type=entity_type,
+        user_id=who,
+        field_like=field,
+        value_like=value,
+        limit=limit + 1,
+        offset=offset,
     )
     more = len(entries) > limit
     entries = entries[:limit]
-    who = us.names_by_id(session, (entry.user_id for entry in entries))
+    actors = us.names_by_id(session, (entry.user_id for entry in entries))
     names = _audit_names(session, entries)
 
     # A quantity entry names its location by id; resolve each one once, and
@@ -479,7 +493,7 @@ def build_audit_table(
         rows.append(
             {
                 "when": entry.timestamp.isoformat(timespec="seconds"),
-                "who": who.get(entry.user_id, f"#{entry.user_id}"),
+                "who": actors.get(entry.user_id, f"#{entry.user_id}"),
                 "entity": f"{kind} {label}" if label else f"{kind} #{entry.entity_id}",
                 "entity_url": (
                     link.format(id=entry.entity_id)

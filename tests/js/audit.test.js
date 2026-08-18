@@ -5,11 +5,10 @@ const SCRIPTS = ["shared.js", "audit.js"];
 
 // The audit page shell (mirrors audit.html).
 const FIXTURE = `
-  <select class="control" id="audit-entity">
-    <option value="">everything</option>
-    <option value="component">component</option>
-  </select>
-  <div id="audit-table"></div>
+  <button type="button" id="audit-clear" hidden>Clear filters</button>
+  <div id="audit-table"
+       data-kinds='["component","user"]'
+       data-actors='[{"id":1,"name":"admin"},{"id":2,"name":"bob"}]'></div>
   <button type="button" id="audit-more" hidden>Show more</button>
   <p id="audit-count"></p>`;
 
@@ -39,9 +38,12 @@ describe("audit.js", () => {
     expect(document.getElementById("audit-more").hidden).toBe(true);
   });
 
-  it("filters by what was changed, from the server", async () => {
+  it("narrows from the server when a column is filtered", async () => {
+    // The table itself filters nothing: this page holds a window onto a log
+    // walked a page at a time, so a filter over the rows on screen would answer
+    // "nothing" for an entry sitting one page further back.
     const calls = [];
-    const { document } = loadPage(FIXTURE, SCRIPTS, {
+    const { document, window } = loadPage(FIXTURE, SCRIPTS, {
       fetchImpl: (url) => {
         calls.push(url);
         return ok({ data: [ROW(1)], more: false });
@@ -49,14 +51,60 @@ describe("audit.js", () => {
     });
     await tick();
 
-    const select = document.getElementById("audit-entity");
-    select.value = "component";
-    select.dispatchEvent(new document.defaultView.Event("change"));
+    window.Tabulator.filters = [
+      { field: "entity_kind", value: "component" },
+      { field: "who_id", value: 2 },
+      { field: "what", value: "quantity" },
+      { field: "change", value: "250" },
+    ];
+    window.Tabulator.handlers.dataFiltering(window.Tabulator.filters);
     await tick();
 
-    expect(calls.at(-1)).toContain("entity_type=component");
-    // A filter restarts the walk rather than appending to what was on screen.
-    expect(calls.at(-1)).toContain("offset=0");
+    const last = calls.at(-1);
+    expect(last).toContain("entity_type=component");
+    expect(last).toContain("who=2"); // by id: two people can be renamed
+    expect(last).toContain("field=quantity");
+    expect(last).toContain("value=250");
+    // A changed filter restarts the walk rather than narrowing what is loaded.
+    expect(last).toContain("offset=0");
+    expect(document.getElementById("audit-clear").hidden).toBe(false);
+  });
+
+  it("leaves the narrowing to the server, not to the rows on screen", async () => {
+    // The mechanism behind the test above, asserted where it lives: a column
+    // that filtered locally as well would hide rows the server had already
+    // chosen, and the page would quietly disagree with the query it ran.
+    const { window } = loadPage(FIXTURE, SCRIPTS, {
+      fetchImpl: () => ok({ data: [ROW(1)], more: false }),
+    });
+    await tick();
+
+    const filtered = window.Tabulator.columns.filter((col) => col.headerFilter);
+    expect(filtered.length).toBeGreaterThan(0);
+    for (const column of filtered) {
+      expect(column.headerFilterFunc).toBeTypeOf("function");
+      expect(column.headerFilterFunc("anything", "unrelated")).toBe(true);
+    }
+  });
+
+  it("offers a way out of the filters it is under", async () => {
+    const calls = [];
+    const { document, window } = loadPage(FIXTURE, SCRIPTS, {
+      fetchImpl: (url) => {
+        calls.push(url);
+        return ok({ data: [ROW(1)], more: false });
+      },
+    });
+    await tick();
+    window.Tabulator.filters = [{ field: "who_id", value: 2 }];
+    window.Tabulator.handlers.dataFiltering(window.Tabulator.filters);
+    await tick();
+
+    document.getElementById("audit-clear").click();
+    await tick();
+
+    expect(calls.at(-1)).not.toContain("who=");
+    expect(document.getElementById("audit-clear").hidden).toBe(true);
   });
 
   it("walks further back on demand instead of loading the whole log", async () => {

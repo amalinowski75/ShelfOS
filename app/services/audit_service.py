@@ -191,10 +191,17 @@ def list_entries(
     *,
     entity_type: str | None = None,
     entity_id: int | None = None,
+    user_id: int | None = None,
+    field_like: str | None = None,
+    value_like: str | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[AuditLog]:
     """Return audit entries, most recent first, optionally filtered by entity.
+
+    The filters are applied by the database rather than by whoever is reading,
+    because this log is walked a page at a time: a filter that narrowed only the
+    page on screen would answer "nothing" for an entry sitting just behind it.
 
     ``offset`` walks further back for a reader paging through history. Ordering
     is by timestamp AND id, so entries written in the same second — a single
@@ -206,6 +213,18 @@ def list_entries(
         statement = statement.where(AuditLog.entity_type == entity_type)
     if entity_id is not None:
         statement = statement.where(AuditLog.entity_id == entity_id)
+    if user_id is not None:
+        statement = statement.where(AuditLog.user_id == user_id)
+    if field_like:
+        statement = statement.where(col(AuditLog.field).ilike(f"%{field_like}%"))
+    if value_like:
+        # Either side: someone looking for "admin" wants the grant whichever
+        # direction it went, and remembering which column held it is not the
+        # reader's job.
+        statement = statement.where(
+            col(AuditLog.old_value).ilike(f"%{value_like}%")
+            | col(AuditLog.new_value).ilike(f"%{value_like}%")
+        )
     statement = (
         statement.order_by(col(AuditLog.timestamp).desc(), col(AuditLog.id).desc())
         .offset(offset)
@@ -219,6 +238,12 @@ def entity_types(session: Session) -> list[str]:
     empty choices."""
     rows = session.exec(select(AuditLog.entity_type).distinct()).all()
     return sorted(str(row) for row in rows)
+
+
+def actor_ids(session: Session) -> list[int]:
+    """The users who appear in the log, for the same reason as above."""
+    rows = session.exec(select(AuditLog.user_id).distinct()).all()
+    return sorted(int(row) for row in rows)
 
 
 def _as_text(value: Any) -> str | None:
