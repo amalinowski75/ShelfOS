@@ -160,6 +160,18 @@ def _describe(rule: MatchRule) -> str:
     return f"{rule.domain.value}: {rule.alias} → {rule.canonical}"
 
 
+def _state(rule: MatchRule, alias: str, canonical: str, order: int) -> str:
+    """A rule's whole state in one line, for the entries recording an edit.
+
+    Every value carries the rule rather than just the field that moved, because
+    SQLite hands a deleted rule's id to the next one — rules are added and
+    dropped from the admin table as a matter of course — so a bare
+    "rezystor → rezystory" can end up filed under a rule it never described.
+    Including the order too keeps one shape for all three editable fields.
+    """
+    return f"{rule.domain.value}: {alias} → {canonical} (order {order})"
+
+
 def create_rule(
     session: Session,
     *,
@@ -214,8 +226,9 @@ def create_rule(
         sort_order=sort_order,
     )
     session.add(rule)
-    session.commit()
-    session.refresh(rule)
+    # Flushed for the id, committed once: the rule and the record of it land
+    # together or not at all (see create_user for the same shape and reason).
+    session.flush()
     if user_id is not None:
         audit_service.record_change(
             session,
@@ -226,7 +239,8 @@ def create_rule(
             new_value=_describe(rule),
             user_id=user_id,
         )
-        session.commit()
+    session.commit()
+    session.refresh(rule)
     return rule
 
 
@@ -272,6 +286,8 @@ def update_rule(
         )
     if sort_order is not None:
         rule.sort_order = sort_order
+    after = (rule.alias, rule.canonical, rule.sort_order)
+    was, now = _state(rule, *before), _state(rule, *after)
     for name, old, new in zip(
         (
             audit_service.FIELD_ALIAS,
@@ -279,7 +295,7 @@ def update_rule(
             audit_service.FIELD_SORT_ORDER,
         ),
         before,
-        (rule.alias, rule.canonical, rule.sort_order),
+        after,
         strict=True,
     ):
         if old != new:
@@ -288,8 +304,8 @@ def update_rule(
                 entity_type=_AUDIT_ENTITY,
                 entity_id=rule_id,
                 field=name,
-                old_value=old,
-                new_value=new,
+                old_value=was,
+                new_value=now,
                 user_id=user_id,
             )
     session.add(rule)

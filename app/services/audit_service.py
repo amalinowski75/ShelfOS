@@ -41,6 +41,11 @@ from app.models.audit import AuditLog
 # §19). Some fields are parameterized (a parameter name, a location id); those
 # are built by the helpers below rather than hardcoded, and parsed back by their
 # ``*_of`` counterparts so no consumer has to reinvent the encoding.
+# Two shapes in the log: false → true for a record whose id still identifies it
+# (components, types, parameters, locations, invoices), and the deleted thing's
+# own text → None where the id does not — a matching rule, whose id SQLite hands
+# to the next one. Nothing reads these values today; a future reader should not
+# assume one shape.
 FIELD_DELETED: Final = "deleted"
 FIELD_LOCATION_ID: Final = "location_id"
 FIELD_IS_FINALIZED: Final = "is_finalized"

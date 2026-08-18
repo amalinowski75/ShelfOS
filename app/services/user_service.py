@@ -77,8 +77,11 @@ def create_user(
         password_hash=hash_password(password),
     )
     session.add(user)
-    session.commit()
-    session.refresh(user)
+    # Flushed rather than committed, so the id exists for the entry below while
+    # the transaction stays open: an account and the record of it must land
+    # together. Committing twice would let a grant survive a failure that lost
+    # its audit row, which is the one outcome this log exists to prevent.
+    session.flush()
     if actor_id is not None:
         audit_service.record_change(
             session,
@@ -91,7 +94,8 @@ def create_user(
             new_value=f"{username} ({role.value})",
             user_id=actor_id,
         )
-        session.commit()
+    session.commit()
+    session.refresh(user)
     return user
 
 

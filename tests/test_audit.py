@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from datetime import date
 from decimal import Decimal
 
@@ -17,7 +18,7 @@ from app.services import location_service as ls
 from app.services import stock_service as ss
 from app.services.errors import InsufficientStockError
 from fastapi.testclient import TestClient
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 
 @pytest.fixture
@@ -545,18 +546,25 @@ def test_a_password_change_is_recorded_but_never_the_password(
     assert own.user_id == bob.id
 
 
-def test_disabling_an_account_is_recorded(ctx, session: Session) -> None:
+def test_disabling_an_account_is_recorded_once(ctx, session: Session) -> None:
+    """And disabling an already-disabled account is not recorded at all: a log
+    that fills with entries saying nothing happened is worth less the more it
+    is used."""
     from app.services import user_service as us
 
     bob = us.create_user(session, username="bob", password="password123")
     us.set_active(session, bob.id, False, actor_id=ctx["user_id"])
 
-    entry = audit.list_entries(session, entity_type="user", entity_id=bob.id)[0]
-    assert (entry.field, entry.old_value, entry.new_value) == (
+    entries = audit.list_entries(session, entity_type="user", entity_id=bob.id)
+    assert (entries[0].field, entries[0].old_value, entries[0].new_value) == (
         "is_active",
         "true",
         "false",
     )
+
+    us.set_active(session, bob.id, False, actor_id=ctx["user_id"])
+    again = audit.list_entries(session, entity_type="user", entity_id=bob.id)
+    assert len(again) == len(entries)
 
 
 def test_a_matching_rule_is_recorded_with_what_it_does(ctx, session: Session) -> None:
@@ -581,11 +589,12 @@ def test_a_matching_rule_is_recorded_with_what_it_does(ctx, session: Session) ->
     changed = audit.list_entries(session, entity_type="match_rule", entity_id=rule.id)[
         0
     ]
-    assert (changed.field, changed.old_value, changed.new_value) == (
-        "canonical",
-        "resistor",
-        "capacitor",
-    )
+    # The whole rule on both sides, not just the field that moved: SQLite hands
+    # a deleted rule's id to the next one, so a bare "resistor → capacitor"
+    # could end up filed under a rule it never described.
+    assert changed.field == "canonical"
+    assert changed.old_value == "type: rezystor → resistor (order 0)"
+    assert changed.new_value == "type: rezystor → capacitor (order 0)"
 
 
 def test_a_deleted_rule_says_what_it_was(ctx, session: Session) -> None:
@@ -615,3 +624,67 @@ def test_seeded_rules_are_not_attributed_to_anybody(session: Session) -> None:
 
     assert mrs.seed_default_rules(session) > 0
     assert audit.list_entries(session, entity_type="match_rule") == []
+
+
+def test_a_creation_and_its_record_land_together_or_not_at_all(
+    session: Session,
+) -> None:
+    """The promise this module's docstring makes, on the two paths that create
+    something. Both used to commit twice — the row, then the entry — so a
+    failure between them left an admin account that the log had no record of.
+
+    The fake fails the SECOND commit, because only a second one can belong to
+    the audit row. Written atomically there is no second commit, it never
+    fires, and both exist; written in two steps the account survives alone.
+    """
+    from app.models.enums import MatchDomain, UserRole
+    from app.models.match_rule import MatchRule
+    from app.models.user import User
+    from app.services import match_rule_service as mrs
+    from app.services import user_service as us
+
+    real = session.commit
+    commits = {"n": 0}
+
+    def flaky() -> None:
+        commits["n"] += 1
+        if commits["n"] == 2:
+            raise RuntimeError("the disk is full")
+        real()
+
+    for make in (
+        lambda: us.create_user(
+            session,
+            username="carol",
+            password="password123",
+            role=UserRole.ADMIN,
+            actor_id=1,
+        ),
+        lambda: mrs.create_rule(
+            session,
+            domain=MatchDomain.TYPE,
+            alias="opornik-testowy",
+            canonical="resistor",
+            user_id=1,
+        ),
+    ):
+        commits["n"] = 0
+        session.commit = flaky  # type: ignore[method-assign]
+        try:
+            with contextlib.suppress(RuntimeError):
+                make()
+        finally:
+            session.commit = real  # type: ignore[method-assign]
+            session.rollback()
+
+    # Whatever survived must be accounted for: a row without its entry is the
+    # one outcome that makes the log's silence a lie.
+    account = session.exec(select(User).where(User.name == "carol")).first()
+    rule = session.exec(
+        select(MatchRule).where(MatchRule.alias == "opornik-testowy")
+    ).first()
+    for entity_type, row in (("user", account), ("match_rule", rule)):
+        if row is not None:
+            assert audit.list_entries(
+                session, entity_type=entity_type, entity_id=row.id
+            ), f"{entity_type} exists with nothing in the log"
