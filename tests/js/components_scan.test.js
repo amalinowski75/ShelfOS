@@ -301,7 +301,7 @@ describe("components_scan.js — resolving a bag", () => {
     expect(document.getElementById("putaway-dialog").open).toBe(false);
   });
 
-  it("says so when the component has no stock to move", async () => {
+  it("opens the dialog with an empty current location when the component has no stock", async () => {
     const { document } = await openOn({
       identifiers: ["EMPTY-1"],
       matches: [
@@ -314,9 +314,35 @@ describe("components_scan.js — resolving a bag", () => {
         },
       ],
     });
-    expect(document.getElementById("scan-status").textContent).toMatch(
-      /EMPTY-1 has no stock recorded — use Add stock/,
-    );
+    // Instead of dead-ending, the dialog opens so a scanned shelf can stock it:
+    // current location empty, count defaulted to 1, no upper cap.
+    expect(document.getElementById("putaway-dialog").open).toBe(true);
+    expect(document.getElementById("putaway-part").textContent).toBe("EMPTY-1");
+    expect(document.getElementById("putaway-select").value).toBe("");
+    expect(document.getElementById("putaway-qty").value).toBe("1");
+    expect(document.getElementById("putaway-qty").max).toBe("");
+  });
+
+  it("adds stock at the scanned shelf when the component had none", async () => {
+    const { document, fetchMock } = await openOn({
+      identifiers: ["EMPTY-1"],
+      matches: [
+        { id: 7, mpn: "EMPTY-1", manufacturer: null, description: null, locations: [] },
+      ],
+    });
+    document.getElementById("putaway-qty").value = "12"; // the bag holds 12
+
+    scan(document, "SL9");
+    await tick();
+
+    const call = fetchMock.mock.calls.find(([u]) => u === "/api/stock/add");
+    expect(call).toBeTruthy();
+    expect(call[1].method).toBe("POST");
+    expect(JSON.parse(call[1].body)).toEqual({
+      component_id: 7,
+      location_id: 9,
+      quantity: 12,
+    });
   });
 
   it("lists the places when stock is split, instead of picking one", async () => {
