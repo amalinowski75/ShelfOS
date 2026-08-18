@@ -441,6 +441,25 @@ describe("components_scan.js — resolving a bag", () => {
     expect(document.getElementById("putaway-dialog").open).toBe(false);
   });
 
+  it("stands down while another dialog on the page is open", () => {
+    // The stock dialog (and the New Component dialog) live on this same page and
+    // take their own scans. While one is open the putaway collector must stay
+    // silent, wherever focus rests — else a shelf label scanned into that modal
+    // leaks to this panel behind it. Focus on <body> (a click on the modal's
+    // chrome) is the case a focus-only check misses.
+    const { document } = loadPage(
+      componentsFixture() + `<dialog id="stock-dialog"><input /></dialog>`,
+      SCRIPTS,
+    );
+    document.getElementById("stock-dialog").setAttribute("open", ""); // a foreign modal
+
+    press(document, "S");
+    press(document, "L");
+
+    // Nothing was collected into the putaway panel's field.
+    expect(document.getElementById("scan-input").value).toBe("");
+  });
+
   it("keeps the panel's height fixed whatever it says", () => {
     // Regression: the components table is sized to fit the whole page
     // (shared.js frameTable), so a panel that grows when a message appears

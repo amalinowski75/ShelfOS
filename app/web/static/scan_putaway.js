@@ -67,8 +67,6 @@ window.initScanPutaway = function (adapter) {
   const LOCATIONS = new Map(
     JSON.parse(panel.dataset.locations || "[]").map((o) => [String(o.id), o.path]),
   );
-  // What our own location labels encode (see app/services/label_service.py).
-  const SL = /^SL(\d+)$/i;
 
   let target = null; // what the last resolved scan is waiting to file
   let busy = false;
@@ -109,12 +107,21 @@ window.initScanPutaway = function (adapter) {
   // wouldn't.
   function ownsKeyboard(node) {
     if (!node) return true;
+    // Another of our modals is open (the stock dialog, the New Component dialog):
+    // the keyboard belongs to IT for as long as it is up, wherever focus rests.
+    // A click on the modal's own chrome parks focus on <body>, which is inside no
+    // dialog — without this the collector would rearm and a shelf label scanned
+    // into that dialog would leak to this panel sitting behind it. The putaway
+    // dialog is ours, so it is the one open dialog that does NOT stand us down.
+    const openDialog = document.querySelector("dialog[open]");
+    if (openDialog && openDialog !== dialog) return false;
     if (isPageControl(node)) return false;
     if (node.isContentEditable || node.tagName === "TEXTAREA") return false;
     if (node.tagName === "INPUT" && node !== scanInput && node !== locationInput)
       return false;
-    const openDialog = node.closest?.("dialog[open]");
-    return !(openDialog && openDialog !== dialog);
+    // No foreign dialog is open (the guard above already returned for that), so a
+    // plain control anywhere else on the page is a scan's to collect.
+    return true;
   }
 
   const armed = () => ownsKeyboard(document.activeElement);
@@ -214,7 +221,7 @@ window.initScanPutaway = function (adapter) {
       setStatus("One moment — finishing the previous scan…");
       return;
     }
-    if (SL.test(code)) {
+    if (shelfLabelId(code) !== null) {
       scanError("That is a location label — scan the item first.");
       return;
     }
@@ -259,12 +266,12 @@ window.initScanPutaway = function (adapter) {
       setDialogError("Still saving — scan the location label again in a moment.");
       return;
     }
-    const matched = SL.exec(code);
-    if (!matched) {
+    const id = shelfLabelId(code);
+    if (id === null) {
       setDialogError("That is not a location label — scan the SL… code on the shelf.");
       return;
     }
-    saveLocation(Number(matched[1]));
+    saveLocation(id);
   }
 
   // The quantity to file, or null after explaining what's wrong with the box.

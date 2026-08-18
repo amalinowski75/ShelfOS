@@ -14,9 +14,6 @@
   const title = document.getElementById("stock-dialog-title");
   const locScan = document.getElementById("stock-loc-scan");
   const locScanMsg = document.getElementById("stock-loc-scan-msg");
-  // What our own location labels encode (see label_service.py); shared with the
-  // putaway scanner's format.
-  const SL = /^SL(\d+)$/i;
 
   let onSaved = null;
   // The per-mode predicate narrowLocations applied to the picker (Take: only where
@@ -24,6 +21,10 @@
   // held to the same rule the manual picker enforces. null = unfiltered (or the
   // usage lookup hasn't answered yet), in which case the server is the check.
   let locationFilter = null;
+  // Resolves when the per-mode filter above has settled for the current open, so a
+  // shelf scanned before the usage lookup lands can wait for it instead of racing
+  // it (see the scan handler). Reassigned on every open.
+  let usageReady = Promise.resolve();
   // Ignore a re-entrant submit while this form's write is in flight, enough to stop
   // a fast double-click sending a duplicate POST. The flag is the dialog's OWN: an
   // in-flight stock write must never swallow another dialog's submit.
@@ -68,8 +69,19 @@
     if (locScan) locScan.focus();
     // Bumped HERE, not inside the helper: an early return below must still
     // invalidate a lookup that is already in flight from a previous open.
-    narrowLocations(mode, componentId, ++openToken);
+    usageReady = narrowLocations(mode, componentId, ++openToken);
   };
+
+  // The scan field's focus is load-bearing: while it holds focus, scan_putaway's
+  // page-level collector stands down (a foreign INPUT owns the keyboard) and the
+  // wedge scanner's SL… payload lands HERE. A click on dead space inside the dialog
+  // would drop focus to <body>; pull it back so a scan can never drift to the
+  // putaway panel behind this modal.
+  dialog.addEventListener("click", () => {
+    if (!locScan || !dialog.open) return;
+    const active = document.activeElement;
+    if (active === document.body || active === dialog) locScan.focus();
+  });
 
   // Offer only the locations that make sense for this mode: Take from where the
   // part actually is, Add into a free slot (or back into the one it already
@@ -136,37 +148,49 @@
     locScanMsg.hidden = false;
   }
 
-  locScan?.addEventListener("keydown", (event) => {
+  locScan?.addEventListener("keydown", async (event) => {
     if (event.key !== "Enter") return;
     // A wedge scanner ends its payload with Enter — select the location, never
     // submit the half-filled form.
     event.preventDefault();
-    const code = locScan.value.trim();
+    const raw = locScan.value;
     locScan.value = "";
-    if (!code) return;
-    const matched = SL.exec(code);
-    if (!matched) {
-      setScanMsg(`"${code}" isn't a location label (SL…).`, true);
+    if (!raw.trim()) return; // a stray terminator, or an empty field
+    const id = shelfLabelId(raw); // shelfLabelId owns the trim + SL… parse
+    if (id === null) {
+      setScanMsg(`"${raw.trim()}" isn't a location label (SL…).`, true);
       return;
     }
-    const id = Number(matched[1]);
+    // The per-mode filter is fetched async on open, and a scanner can fire before
+    // it lands. Wait for it, so the shelf is judged against the mode's rule and not
+    // the still-unfiltered tree — otherwise a selection made now would be silently
+    // dropped the instant the filter arrived, stranding a "Location set" message
+    // beside an empty picker. On the fast path (filter already settled) this
+    // resolves on the next microtask, before any paint, so "Checking…" never shows.
+    const token = openToken;
+    setScanMsg("Checking the location…", false);
+    await usageReady.catch(() => {});
+    // A reopen for a different component/mode bumps the token: a scan that was
+    // waiting must not apply to the dialog that replaced the one it was aimed at.
+    // (A plain close without reopen is harmless — the next open resets the picker.)
+    if (token !== openToken) return;
     const picker = form.querySelector(".loc-picker");
-    const node = picker?.querySelector(`.loc-picker-node[data-loc-id="${id}"]`);
-    if (!node) {
+    const path = picker?.pathOf(id);
+    if (path == null) {
       setScanMsg(`Unknown location SL${id} — reprint the label?`, true);
       return;
     }
     if (locationFilter && !locationFilter(id)) {
       setScanMsg(
         form.mode.value === "take"
-          ? `This part isn't stocked in ${node.dataset.locPath}.`
-          : `${node.dataset.locPath} already holds another part.`,
+          ? `This part isn't stocked in ${path}.`
+          : `${path} already holds another part.`,
         true,
       );
       return;
     }
     picker.setValue(id);
-    setScanMsg(`Location set: ${node.dataset.locPath}`, false);
+    setScanMsg(`Location set: ${path}`, false);
   });
 
   // [data-close] buttons are wired once in shared.js.

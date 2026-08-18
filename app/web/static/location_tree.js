@@ -104,6 +104,14 @@
       selectNode(value, node ? node.dataset.locPath : "");
     };
 
+    // The human path for a location id, or null when the tree has no such node.
+    // Lets a caller resolve a scanned SL… label — does it exist, what is it
+    // called — without reaching into this widget's `.loc-picker-node` markup.
+    picker.pathOf = (id) => {
+      const node = id == null ? null : nodeById(id);
+      return node ? node.dataset.locPath : null;
+    };
+
     picker.reset = () => {
       selectNode("", "");
       collapseAll();
