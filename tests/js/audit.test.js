@@ -33,7 +33,9 @@ describe("audit.js", () => {
     await tick();
 
     expect(window.Tabulator.rows).toHaveLength(2);
-    expect(document.getElementById("audit-count").textContent).toBe("2 entries");
+    expect(document.getElementById("audit-count").textContent).toBe(
+      "2 entries",
+    );
     // Nothing behind this page, so nothing offers to fetch it.
     expect(document.getElementById("audit-more").hidden).toBe(true);
   });
@@ -66,7 +68,7 @@ describe("audit.js", () => {
     expect(last).toContain("field=quantity");
     expect(last).toContain("value=250");
     // A changed filter restarts the walk rather than narrowing what is loaded.
-    expect(last).toContain("offset=0");
+    expect(last).not.toContain("before_");
     expect(document.getElementById("audit-clear").hidden).toBe(false);
   });
 
@@ -112,7 +114,12 @@ describe("audit.js", () => {
     const { document, window } = loadPage(FIXTURE, SCRIPTS, {
       fetchImpl: (url) => {
         calls.push(url);
-        return ok({ data: [ROW(calls.length)], more: calls.length < 2 });
+        const n = calls.length;
+        return ok({
+          data: [ROW(n)],
+          more: n < 2,
+          cursor: n < 2 ? { when: "2026-08-18T10:01:00.123456", id: 7 } : null,
+        });
       },
     });
     await tick();
@@ -122,9 +129,52 @@ describe("audit.js", () => {
     more.click();
     await tick();
 
-    expect(calls.at(-1)).toContain("offset=1"); // continues, not restarts
+    // Continues from where the last page stopped, not from how far in it was:
+    // the log grows at the head while it is read, and an offset would push the
+    // boundary row into this page and show the same change twice.
+    expect(calls.at(-1)).toContain("before_id=7");
+    expect(calls.at(-1)).toContain(
+      `before_when=${encodeURIComponent("2026-08-18T10:01:00.123456")}`,
+    );
+    expect(calls.at(-1)).not.toContain("offset=");
     expect(window.Tabulator.rows).toHaveLength(2); // appended, not replaced
     expect(more.hidden).toBe(true); // and the end of the log stops offering
+  });
+
+  it("does not carry a cursor across a change of filter", async () => {
+    // The cursor names a row in the previous query's ordering; keeping it would
+    // start the new, narrower walk somewhere in the middle of the old one.
+    const calls = [];
+    const { window } = loadPage(FIXTURE, SCRIPTS, {
+      fetchImpl: (url) => {
+        calls.push(url);
+        return ok({
+          data: [ROW(1)],
+          more: true,
+          cursor: { when: "2026-08-18T10:01:00", id: 7 },
+        });
+      },
+    });
+    await tick();
+
+    window.Tabulator.filters = [{ field: "who_id", value: 2 }];
+    window.Tabulator.handlers.dataFiltering(window.Tabulator.filters);
+    await tick();
+
+    expect(calls.at(-1)).toContain("who=2");
+    expect(calls.at(-1)).not.toContain("before_id");
+  });
+
+  it("says which zone the timestamps are in", async () => {
+    // The page's whole purpose is "who did what, when"; a column of bare
+    // timestamps leaves the reader to guess whether they are local.
+    const { window } = loadPage(FIXTURE, SCRIPTS, {
+      fetchImpl: () => ok({ data: [ROW(1)], more: false }),
+    });
+    await tick();
+
+    const when = window.Tabulator.columns.find((col) => col.field === "when");
+    expect(when.title).toContain("UTC");
   });
 
   it("shows an absent value as absent rather than as blank", async () => {

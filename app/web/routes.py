@@ -8,6 +8,7 @@ API (``/api/stock/*``) via ``fetch`` from the browser.
 from __future__ import annotations
 
 import math
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -43,6 +44,7 @@ from app.services import match_rule_service as mrs
 from app.services import stock_service as ss
 from app.services import user_service as us
 from app.services._common import require_entity
+from app.services.errors import ValidationError
 from app.web.presenter import (
     build_audit_table,
     build_component_table,
@@ -378,8 +380,9 @@ def audit_feed(
     who: int | None = None,
     field: str | None = None,
     value: str | None = None,
+    before_when: str | None = None,
+    before_id: int | None = None,
     limit: int = 200,
-    offset: int = 0,
     session: Session = Depends(get_session),
     user: User = Depends(require_web_admin),
 ) -> dict[str, Any]:
@@ -387,6 +390,10 @@ def audit_feed(
 
     The log names who did what, so it is as sensitive as the account list and
     kept out of shared caches for the same reason.
+
+    ``before_when``/``before_id`` are the previous page's ``cursor``, echoed
+    back. A page is asked for by where the last one stopped rather than by an
+    offset, because the log grows at the head while it is being read.
     """
     response.headers["Cache-Control"] = "no-store"
     return build_audit_table(
@@ -395,9 +402,28 @@ def audit_feed(
         who=who,
         field=field or None,
         value=value or None,
+        before=_audit_cursor(before_when, before_id),
         limit=min(max(limit, 1), _AUDIT_PAGE_MAX),
-        offset=max(offset, 0),
     )
+
+
+def _audit_cursor(
+    when: str | None, entry_id: int | None
+) -> tuple[datetime, int] | None:
+    """Parse a paging cursor, or refuse it.
+
+    Half a cursor is not a cursor: silently dropping it would restart the walk
+    at the newest entry and quietly hand the reader the first page again, dressed
+    up as the second. Saying so is the only harmless failure here.
+    """
+    if when is None and entry_id is None:
+        return None
+    if when is None or entry_id is None:
+        raise ValidationError("A paging cursor needs both before_when and before_id.")
+    try:
+        return datetime.fromisoformat(when), entry_id
+    except ValueError:
+        raise ValidationError(f"Not a timestamp: {when!r}.") from None
 
 
 @router.get("/audit", response_class=HTMLResponse)

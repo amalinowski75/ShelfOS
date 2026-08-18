@@ -30,6 +30,7 @@ that forgets it fails loudly instead of silently logging nothing.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Final
 
 from sqlmodel import Session, col, select
@@ -194,19 +195,29 @@ def list_entries(
     user_id: int | None = None,
     field_like: str | None = None,
     value_like: str | None = None,
+    before: tuple[datetime, int] | None = None,
     limit: int = 100,
-    offset: int = 0,
 ) -> list[AuditLog]:
-    """Return audit entries, most recent first, optionally filtered by entity.
+    """Return audit entries, most recent first, optionally filtered.
 
     The filters are applied by the database rather than by whoever is reading,
     because this log is walked a page at a time: a filter that narrowed only the
     page on screen would answer "nothing" for an entry sitting just behind it.
 
-    ``offset`` walks further back for a reader paging through history. Ordering
-    is by timestamp AND id, so entries written in the same second — a single
-    edit touching four fields — keep a stable order across pages instead of
-    shuffling and showing one row twice.
+    ``before`` is where the previous page stopped -- the ``(timestamp, id)`` of
+    its last row -- and NOT an offset, because this list grows at the head while
+    somebody reads it. An offset counts from the newest row, so a single entry
+    written between one page and the next pushes the boundary row down into the
+    following page and shows it twice; one component edit touching four fields
+    pushes four. On a page read specifically to reconstruct a sequence of
+    events, a duplicated row is worse than a missing one -- it reads as the
+    change having happened twice. Keying off the last row instead is stable
+    whatever arrives at the head, and it lets the index seek to the page rather
+    than count past everything in front of it.
+
+    Ordering is by timestamp AND id, so entries written in the same second -- a
+    single edit touching four fields -- keep a stable order, and the cursor can
+    name a row unambiguously.
     """
     statement = select(AuditLog)
     if entity_type is not None:
@@ -225,23 +236,39 @@ def list_entries(
             col(AuditLog.old_value).ilike(f"%{value_like}%")
             | col(AuditLog.new_value).ilike(f"%{value_like}%")
         )
-    statement = (
-        statement.order_by(col(AuditLog.timestamp).desc(), col(AuditLog.id).desc())
-        .offset(offset)
-        .limit(limit)
-    )
+    if before is not None:
+        # Spelled out rather than as a row-value comparison: the same SQL works
+        # on every backend, and it reads as what it means -- older, or the same
+        # instant but written earlier.
+        before_time, before_id = before
+        statement = statement.where(
+            (col(AuditLog.timestamp) < before_time)
+            | (
+                (col(AuditLog.timestamp) == before_time)
+                & (col(AuditLog.id) < before_id)
+            )
+        )
+    statement = statement.order_by(
+        col(AuditLog.timestamp).desc(), col(AuditLog.id).desc()
+    ).limit(limit)
     return list(session.exec(statement).all())
 
 
 def entity_types(session: Session) -> list[str]:
     """The entity types the log actually holds, for a filter that offers no
-    empty choices."""
+    empty choices.
+
+    A distinct over the whole log, which is only affordable because
+    ``entity_type`` is indexed -- the answer comes off a one-column index in
+    order, not off every row of the widest-growing table in the system.
+    """
     rows = session.exec(select(AuditLog.entity_type).distinct()).all()
     return sorted(str(row) for row in rows)
 
 
 def actor_ids(session: Session) -> list[int]:
-    """The users who appear in the log, for the same reason as above."""
+    """The users who appear in the log, for the same reason as above (and off
+    the same kind of index)."""
     rows = session.exec(select(AuditLog.user_id).distinct()).all()
     return sorted(int(row) for row in rows)
 

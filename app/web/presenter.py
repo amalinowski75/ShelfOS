@@ -8,6 +8,7 @@ formats EAV values for display, including engineering-notation numbers
 from __future__ import annotations
 
 from contextlib import suppress
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, cast
 
@@ -15,6 +16,7 @@ from sqlalchemy import func
 from sqlmodel import Session, col, select
 
 from app.models.audit import AuditLog
+from app.models.bom import Bom
 from app.models.component import (
     Component,
     ComponentParameter,
@@ -373,9 +375,12 @@ def build_types_table(session: Session) -> list[dict[str, Any]]:
 
 
 # Where a reader can go to see the thing an audit entry is about. Only entities
-# with a page of their own get a link; the rest are named but not linked, which
-# is honest — a dead link to a component page for a deleted component teaches
-# people the log lies.
+# with a page of their own get a link, and only while the thing still exists:
+# a dead link to a component page for a deleted component teaches people the log
+# lies, and the `deleted` row is precisely the one somebody clicks, because it is
+# the one explaining why what they were looking for is gone. Whether it still
+# exists is already known — `_audit_names` returns no name for a row that is not
+# there, which is why such an entry reads "component #1".
 _AUDIT_ENTITY_LINK: dict[str, str] = {
     "component": "/components/{id}",
     "invoice": "/invoices/{id}",
@@ -394,8 +399,17 @@ def _audit_names(
     """Names for the entities an entry set refers to, one query per kind.
 
     "component #42" tells a reader nothing they can act on; "RC0603" does. The
-    lookups are batched because an audit page is a few hundred rows, and every
-    one of them names something.
+    lookups are batched because an audit page is up to _AUDIT_PAGE_MAX rows, and
+    every one of them names something.
+
+    One column each, not whole entities -- for the reason ``build_location_stock``
+    gives a hundred lines up: a Component drags ``notes`` along, uncapped free
+    text that nobody reads here either, and a busy log is mostly component
+    entries.
+
+    A kind missing from here is a kind that stays numbered, and (since the entity
+    link is gated on having a name) also one that stops linking, so anything with
+    a page of its own belongs.
     """
     wanted: dict[str, set[int]] = {}
     for entry in entries:
@@ -404,25 +418,40 @@ def _audit_names(
     names: dict[str, dict[int, str]] = {}
     if ids := wanted.get("component"):
         names["component"] = {
-            cast(int, c.id): c.mpn or f"#{c.id}"
-            for c in session.exec(select(Component).where(col(Component.id).in_(ids)))
+            cast(int, component_id): mpn or f"#{component_id}"
+            for component_id, mpn in session.exec(
+                select(Component.id, Component.mpn).where(col(Component.id).in_(ids))
+            )
         }
     if ids := wanted.get("invoice"):
         names["invoice"] = {
-            cast(int, i.id): i.invoice_number
-            for i in session.exec(select(Invoice).where(col(Invoice.id).in_(ids)))
+            cast(int, invoice_id): number
+            for invoice_id, number in session.exec(
+                select(Invoice.id, Invoice.invoice_number).where(
+                    col(Invoice.id).in_(ids)
+                )
+            )
         }
     if ids := wanted.get("location"):
         names["location"] = {
-            cast(int, loc.id): loc.name
-            for loc in session.exec(select(Location).where(col(Location.id).in_(ids)))
+            cast(int, location_id): name
+            for location_id, name in session.exec(
+                select(Location.id, Location.name).where(col(Location.id).in_(ids))
+            )
+        }
+    if ids := wanted.get("bom"):
+        names["bom"] = {
+            cast(int, bom_id): name
+            for bom_id, name in session.exec(
+                select(Bom.id, Bom.name).where(col(Bom.id).in_(ids))
+            )
         }
     if ids := wanted.get("user"):
         names["user"] = us.names_by_id(session, ids)
     return names
 
 
-def _audit_field_label(session: Session, field: str, paths: dict[int, str]) -> str:
+def _audit_field_label(field: str, paths: dict[int, str]) -> str:
     """The canonical field name, in words.
 
     The log's vocabulary is deliberately terse and parameterised
@@ -449,14 +478,20 @@ def build_audit_table(
     who: int | None = None,
     field: str | None = None,
     value: str | None = None,
+    before: tuple[datetime, int] | None = None,
     limit: int = 200,
-    offset: int = 0,
 ) -> dict[str, Any]:
     """Rows for the audit page: who changed what, in words rather than tokens.
 
     Filtering happens in the query, not over the rows this returns: the page
     walks the log a window at a time, so a filter applied to what is on screen
     would answer "nothing" for an entry sitting one page further back.
+
+    ``before`` continues an earlier page (see ``audit_service.list_entries``).
+    The cursor for the next one is handed back rather than left for the caller
+    to build: it needs the timestamp at full precision, and the one in each row
+    is truncated to the second for reading — paging on that would skip every
+    entry sharing the boundary second.
     """
     # One more than asked for, so "is there anything behind this page" is
     # answered rather than guessed from the page being full — a Show more that
@@ -467,8 +502,8 @@ def build_audit_table(
         user_id=who,
         field_like=field,
         value_like=value,
+        before=before,
         limit=limit + 1,
-        offset=offset,
     )
     more = len(entries) > limit
     entries = entries[:limit]
@@ -497,14 +532,22 @@ def build_audit_table(
                 "entity": f"{kind} {label}" if label else f"{kind} #{entry.entity_id}",
                 "entity_url": (
                     link.format(id=entry.entity_id)
-                    if link
+                    if link and label
                     else _AUDIT_ENTITY_PAGE.get(entry.entity_type)
                 ),
-                "what": _audit_field_label(session, entry.field, paths),
+                "what": _audit_field_label(entry.field, paths),
                 "old": entry.old_value,
                 "new": entry.new_value,
             }
         )
     # "More" rather than a total: counting the whole log on every page load buys
     # a number nobody acts on.
-    return {"data": rows, "more": more}
+    return {
+        "data": rows,
+        "more": more,
+        "cursor": (
+            {"when": entries[-1].timestamp.isoformat(), "id": entries[-1].id}
+            if more and entries
+            else None
+        ),
+    }

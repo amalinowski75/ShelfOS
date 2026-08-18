@@ -29,6 +29,7 @@
 
   let loaded = [];
   let more = false;
+  let cursor = null;
   let reloading = false;
 
   function change(cell) {
@@ -75,7 +76,9 @@
     const actors = JSON.parse(mount.dataset.actors || "[]");
     return [
       {
-        title: "When",
+        // Named, because a page whose whole purpose is "who did what, when"
+        // cannot leave the zone to be guessed. The log records UTC.
+        title: "When (UTC)",
         field: "when",
         width: 170,
         formatter: (cell) =>
@@ -140,11 +143,16 @@
 
   async function load({ append = false } = {}) {
     const filters = activeFilters();
-    const params = new URLSearchParams({
-      ...filters,
-      limit: String(PAGE),
-      offset: String(append ? loaded.length : 0),
-    });
+    const params = new URLSearchParams({ ...filters, limit: String(PAGE) });
+    // Where the last page stopped, not how far in it was: the log grows at the
+    // head while it is being read, and an offset would push the boundary row
+    // into the next page and show it twice — which reads as the change having
+    // happened twice. The cursor comes from the server, so this page never has
+    // to know what a row is keyed by.
+    if (append && cursor) {
+      params.set("before_when", cursor.when);
+      params.set("before_id", String(cursor.id));
+    }
     clearBtn.hidden = Object.keys(filters).length === 0;
     let body;
     try {
@@ -160,6 +168,7 @@
     }
     loaded = append ? loaded.concat(body.data) : body.data;
     more = body.more;
+    cursor = body.cursor;
     // Guarded, because replacing the data makes Tabulator re-run its filters,
     // which is what called this in the first place.
     reloading = true;

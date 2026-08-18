@@ -11,6 +11,7 @@ from app import db
 from app.models.enums import LocationType
 from app.models.location import Location
 from app.models.user import User
+from sqlalchemy import inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, create_engine, select
@@ -105,3 +106,43 @@ def test_api_get_session_yields_then_closes(monkeypatch) -> None:  # type: ignor
     assert isinstance(session, Session)
     with pytest.raises(StopIteration):
         next(generator)
+
+
+def test_init_db_adds_an_index_the_database_is_missing() -> None:
+    """ShelfOS has no migrations, so an index added to a model would otherwise
+    reach new installations only — working on the developer's fresh database and
+    not on the one that actually has the rows."""
+    engine = _memory_engine()
+    db.init_db(engine)
+    named = "ix_audit_log_timestamp_id"
+    with engine.begin() as connection:
+        connection.exec_driver_sql(f"DROP INDEX {named}")
+    assert named not in {ix["name"] for ix in inspect(engine).get_indexes("audit_log")}
+
+    db.init_db(engine)  # the same call every startup makes
+
+    assert named in {ix["name"] for ix in inspect(engine).get_indexes("audit_log")}
+
+
+def test_init_db_leaves_existing_indexes_alone() -> None:
+    # It creates what is missing and nothing else: rebuilding an index on every
+    # start would be a surprise on the one table that grows without bound.
+    engine = _memory_engine()
+    db.init_db(engine)
+    before = inspect(engine).get_indexes("audit_log")
+    db.init_db(engine)
+    assert inspect(engine).get_indexes("audit_log") == before
+
+
+def test_the_audit_log_is_indexed_on_every_way_it_is_read() -> None:
+    """The one table that grows without bound and is never pruned. Its reads are
+    the newest-first walk (which is also its paging key) and the who/kind column
+    filters; a scan is cheap on today's log and the page's problem in two years."""
+    engine = _memory_engine()
+    db.init_db(engine)
+    indexed = {
+        tuple(ix["column_names"]) for ix in inspect(engine).get_indexes("audit_log")
+    }
+    assert ("timestamp", "id") in indexed
+    assert ("entity_type",) in indexed
+    assert ("user_id",) in indexed

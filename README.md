@@ -260,6 +260,10 @@ from the accounts and kinds the log actually holds; field and change are
 free text, and change matches either side of an arrow, so looking for a number
 does not mean remembering which column it landed in.
 
+Show more continues from the last row shown rather than from a count, so entries
+written while the page is open cannot push a row into being shown twice. Times
+are UTC, and the column says so.
+
 - **Web UI:** sign in at `/login` (session cookie).
 - **API:** `POST /api/auth/token` with `{"username", "password"}` returns a JWT;
   send it as `Authorization: Bearer <token>`.

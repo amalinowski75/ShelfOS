@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 from app import config
@@ -1925,9 +1928,51 @@ def test_audit_feed_filters_pages_and_stays_out_of_caches(client: TestClient) ->
     first = client.get("/web/api/audit?limit=1").json()
     assert len(first["data"]) == 1
     assert first["more"] is True  # answered by looking, not by the page being full
-    second = client.get("/web/api/audit?limit=1&offset=1").json()
+    second = client.get(f"/web/api/audit?limit=1&{_cursor(first)}").json()
     assert second["data"][0] != first["data"][0]
     assert second["more"] is False  # and the end of the log says so
+    assert second["cursor"] is None  # nothing behind it to point at
+
+
+def _cursor(page: dict[str, Any]) -> str:
+    """The query string that continues a page, as the browser echoes it back."""
+    return f"before_when={page['cursor']['when']}&before_id={page['cursor']['id']}"
+
+
+def test_audit_paging_is_not_shifted_by_entries_arriving_while_it_is_read(
+    client: TestClient,
+) -> None:
+    """The log grows at the head, which is what an offset gets wrong: one entry
+    written between two reads pushes the boundary row down into the next page,
+    and the reader sees the same change twice — on the one page whose purpose is
+    reconstructing a sequence of events."""
+    made = _audit_something(client)
+    body = {
+        "component_id": made["component"]["id"],
+        "location_id": made["location"]["id"],
+    }
+    for quantity in (1, 2, 3):
+        client.post("/api/stock/add", json={**body, "quantity": quantity})
+
+    first = client.get("/web/api/audit?limit=2").json()
+    assert first["more"] is True
+    # Someone else works while this page is being read.
+    client.post("/api/stock/add", json={**body, "quantity": 9})
+    second = client.get(f"/web/api/audit?limit=2&{_cursor(first)}").json()
+
+    assert second["data"], "the page behind the cursor is still there"
+    for row in second["data"]:
+        assert row not in first["data"]
+    # And specifically the row an offset would have repeated: the last of page one.
+    assert first["data"][-1] not in second["data"]
+
+
+def test_audit_refuses_half_a_paging_cursor(client: TestClient) -> None:
+    # Dropping it silently would restart at the newest entry and hand back page
+    # one dressed up as page two.
+    assert client.get("/web/api/audit?before_id=3").status_code == 422
+    bad = client.get("/web/api/audit?before_when=yesterday&before_id=3")
+    assert bad.status_code == 422
 
 
 def test_audit_page_link_is_offered_to_admins_only(
@@ -1982,7 +2027,14 @@ def test_audit_feed_narrows_by_who_field_and_value(
 def test_audit_page_offers_only_filters_the_log_can_answer(client: TestClient) -> None:
     _audit_something(client)
     html = client.get("/audit").text
+
     # The choices ride on the mount, and are the kinds and people actually in
-    # the log — a filter offering an empty result is a filter that lies.
-    assert "data-kinds=" in html and "component" in html
-    assert "data-actors=" in html and "admin" in html
+    # the log — a filter offering an empty result is a filter that lies, and one
+    # offering nothing at all is a filter nobody can use.
+    def mounted(name: str) -> Any:
+        match = re.search(rf"data-{name}='([^']*)'", html)
+        assert match, f"data-{name} is not on the mount"
+        return json.loads(match.group(1))
+
+    assert mounted("kinds") == ["component"]
+    assert mounted("actors") == [{"id": 1, "name": "admin"}]
