@@ -5,7 +5,9 @@
 {% from "_component_delete_dialog.html" import component_delete_dialog %}
 {% from "_stock_dialog.html" import stock_dialog %}
 {% set is_admin = current_user.role.value == "admin" %}
-{% set can_write = current_user.role.value != "read-only" %}
+{# A deleted component is out of use, so nothing on this page writes to it —
+   the route drops its write context for the same reason (§20). #}
+{% set can_write = current_user.role.value != "read-only" and not is_deleted %}
 {% block title %}{{ component.mpn or "Component" }} — ShelfOS{% endblock %}
 
 {% macro status_badge(status) -%}
@@ -19,6 +21,29 @@
 
 {% block content %}
 <p class="crumb"><a href="/">&larr; Back to components</a></p>
+
+{% if is_deleted %}
+{# Said before anything else on the page: every table below it is history now,
+   and a reader arriving from an old link or an audit entry needs to know that
+   before reading it as current stock. #}
+<div class="notice notice-danger" id="component-deleted-banner">
+  <div>
+    <strong>Deleted</strong>
+    {{ component.deleted_at.strftime("%Y-%m-%d %H:%M") }}
+    {%- if deleted_by %} by {{ deleted_by }}{% endif %}
+    {%- if component.deleted_reason %} — {{ component.deleted_reason }}{% endif %}.
+    <p class="muted">
+      Out of use: it does not appear in lists, pickers or matching, takes no
+      stock, and cannot be edited. Everything that names it — invoice lines,
+      stock movements, the audit log — still does.
+    </p>
+  </div>
+  {% if is_admin %}
+  <button type="button" class="btn btn-secondary btn-sm" id="component-restore-btn"
+          data-component-id="{{ component.id }}">Restore</button>
+  {% endif %}
+</div>
+{% endif %}
 
 <div class="head">
   <div>
@@ -35,7 +60,7 @@
   <div class="card card-pad">
     <div class="widget-head">
       <h2>Overview</h2>
-      {% if is_admin %}
+      {% if is_admin and not is_deleted %}
       <div class="widget-actions">
         <button type="button" class="btn btn-secondary btn-sm" id="component-edit-btn">Edit</button>
         {# Next to Edit, because this is the card that says what the component
@@ -186,11 +211,13 @@
                 current_user.role.value != "read-only", link_kinds) }}
 </div>
 
-{% if is_admin %}
+{% if is_admin and not is_deleted %}
 {{ component_edit_dialog(component, type_name, mounting_types) }}
+{% if not is_deleted %}
 {{ component_delete_dialog(component,
                            component.mpn or ("Component #" ~ component.id),
-                           delete_summary) }}
+                           delete_blocker) }}
+{% endif %}
 {% endif %}
 
 {% if can_write %}
@@ -213,7 +240,11 @@
 <script src="/static/links.js?v={{ static_version() }}"></script>
 <script src="/static/image_gallery.js?v={{ static_version() }}"></script>
 {% if is_admin %}
+{% if not is_deleted %}
 <script src="/static/component_edit.js?v={{ static_version() }}"></script>
+{% endif %}
+{# Both directions live in one file: delete and restore are the same lifecycle,
+   and only one of the two affordances is ever on the page. #}
 <script src="/static/component_delete.js?v={{ static_version() }}"></script>
 {% endif %}
 {% endblock %}

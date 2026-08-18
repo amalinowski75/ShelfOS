@@ -247,6 +247,24 @@ cover, a jam or an empty roll. After the job it waits for the printer to confirm
 the print. A printer that stays silent is not treated as a failure — the job is
 then reported as *sent* rather than printed.
 
+### Deleting a component
+
+Deleting a component (admin, from the component's own page) is a **soft** delete:
+the row stays and the component stops being usable — out of every list, picker
+and matcher, taking no edits and no stock — while the invoice lines, stock
+movements and audit entries that name it keep meaning something.
+
+That is not tidiness. SQLite gives a new row `max(rowid) + 1`, so removing the
+newest component would hand its id, and with it its purchase history and its
+movements, to whatever is created next. Keeping the row costs nothing: every
+lookup that could block a replacement already ignores deleted components, so the
+same MPN and manufacturer can be entered again straight away — and a deleted
+component can be restored from its page unless a replacement has taken its MPN.
+
+A component still holding stock cannot be deleted: the parts are in the drawer,
+and a catalogue entry nobody can take them out of is worse than one that is still
+there. Take the stock out first.
+
 Admins get `/audit`: who changed what, newest first, in words rather than the
 log's own tokens (`quantity@location:5` reads as "quantity in Lab / Rack A / D1").
 It walks the log a page at a time instead of pretending a few thousand rows in a

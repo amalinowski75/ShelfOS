@@ -1,7 +1,8 @@
 """Administrative endpoints (spec §18, §20).
 
-Admin-only: hard component delete and user account management. The router is
-mounted with an admin guard, so every route here requires an admin.
+Admin-only: taking a component out of use (and putting it back), type and
+parameter administration, the matching rules, and user account management. The
+router is mounted with an admin guard, so every route here requires an admin.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from sqlmodel import Session
 from app.api.deps import get_session
 from app.api.schemas import ParameterDefinitionRead
 from app.auth.deps import current_user_id
-from app.models.component import ComponentType
+from app.models.component import Component, ComponentType
 from app.models.enums import MatchDomain, UserRole
 from app.services import audit_service
 from app.services import component_service as cs
@@ -126,11 +127,33 @@ class MatchRuleUpdate(BaseModel):
 @router.delete("/components/{component_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_component(
     component_id: int,
+    reason: str | None = Query(None, max_length=200),
     session: Session = Depends(get_session),
     user_id: int = Depends(current_user_id),
 ) -> None:
-    """Permanently delete a component (spec §20)."""
-    cs.hard_delete_component(session, component_id, user_id=user_id)
+    """Take a component out of use, keeping its row (spec §20).
+
+    Deliberately not the hard delete it used to be: that left invoice lines and
+    stock movements pointing at an id SQLite hands to the next component created,
+    so a replacement part inherited the deleted one's purchase history. Nothing
+    is lost by keeping the row -- every lookup that could block a replacement
+    already ignores deleted components.
+    """
+    cs.soft_delete_component(session, component_id, user_id=user_id, reason=reason)
+
+
+@router.post("/components/{component_id}/restore", response_model=Component)
+def restore_component(
+    component_id: int,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> Component:
+    """Put a deleted component back into use (spec §20).
+
+    Refused when a live component has taken over its MPN in the meantime, which
+    is precisely what deleting it allowed.
+    """
+    return cs.restore_component(session, component_id, user_id=user_id)
 
 
 @router.patch("/types/{type_id}", response_model=ComponentType)

@@ -12,7 +12,6 @@ from app import config
 from app.models.component import ComponentParameter, ParameterDefinition
 from app.models.enums import ParameterDataType
 from app.web.presenter import (
-    build_component_delete_summary,
     build_component_table,
     format_money,
     format_parameter_value,
@@ -542,13 +541,30 @@ def test_component_detail_non_admin_has_no_delete_affordance(
     assert "component_delete.js" not in html
 
 
-def test_component_delete_dialog_names_what_it_destroys(client: TestClient) -> None:
-    """There is no undo and no soft delete, so the dialog has to be specific —
-    above all about the stock, which nobody expects a catalogue edit to drop."""
+def test_component_delete_dialog_says_it_stops_being_usable_not_that_it_vanishes(
+    client: TestClient,
+) -> None:
     ctype = client.post("/api/types", json={"name": "resistor"}).json()
     component = client.post(
         "/api/components", json={"type_id": ctype["id"], "mpn": "RC0603"}
     ).json()
+
+    html = client.get(f"/components/{component['id']}").text
+    dialog = html.split('id="component-delete-dialog"', 1)[1].split("</dialog>", 1)[0]
+    assert "stays in the database" in dialog
+    # The two consequences an admin is deciding between.
+    assert "no more stock movements" in dialog
+    assert "same MPN can be entered again" in dialog
+    assert 'id="component-delete-reason"' in dialog
+
+
+def test_component_delete_dialog_says_up_front_when_stock_blocks_it(
+    client: TestClient,
+) -> None:
+    """The same sentence the server would refuse with, said before the click —
+    two wordings for one rule drift apart."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
     location = client.post(
         "/api/locations", json={"type": "drawer", "name": "D1"}
     ).json()
@@ -563,40 +579,48 @@ def test_component_delete_dialog_names_what_it_destroys(client: TestClient) -> N
 
     html = client.get(f"/components/{component['id']}").text
     dialog = html.split('id="component-delete-dialog"', 1)[1].split("</dialog>", 1)[0]
-    assert "250 in stock, across 1 location" in dialog
-    # And what survives it, so the delete is not read as erasing the history too.
-    assert "1 stock movement" in dialog
+    assert "250 in stock across 1 location" in dialog
+    assert "take the stock out first" in dialog
+    # And no button that would only earn a 422.
+    assert 'id="component-delete-confirm"' not in dialog
 
 
-def test_component_delete_dialog_leaves_out_what_there_is_none_of(
+def test_a_deleted_component_reads_as_a_record_not_as_a_working_page(
     client: TestClient,
 ) -> None:
-    # A component with nothing attached should not be asked to weigh "0
-    # attachments" against anything.
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "RC0603"}
+    ).json()
+    client.delete(
+        f"/api/admin/components/{component['id']}?reason=bought the wrong one"
+    )
+
+    html = client.get(f"/components/{component['id']}").text
+    banner = html.split('id="component-deleted-banner"', 1)[1].split("</div>", 1)[0]
+    assert "bought the wrong one" in banner
+    assert "admin" in banner  # who did it, not just when
+    # Nothing to work with: no edit, no delete, no stock buttons.
+    assert 'id="component-edit-btn"' not in html
+    assert 'id="component-delete-dialog"' not in html
+    assert 'data-stock-act="add"' not in html
+    # But a way back.
+    assert 'id="component-restore-btn"' in html
+
+
+def test_a_writer_cannot_restore_a_deleted_component(
+    client: TestClient, anon_client: TestClient
+) -> None:
     ctype = client.post("/api/types", json={"name": "resistor"}).json()
     component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
-    html = client.get(f"/components/{component['id']}").text
-    dialog = html.split('id="component-delete-dialog"', 1)[1].split("</dialog>", 1)[0]
-    assert "0 " not in dialog
-    assert "in stock" not in dialog
+    client.delete(f"/api/admin/components/{component['id']}")
+    token = _non_admin_token(client, role="user", username="restorer")
 
-
-def test_delete_summary_counts_and_names_each_kind() -> None:
-    summary = build_component_delete_summary(
-        parameter_values=1,
-        stock=[{"quantity": 40}, {"quantity": 2}],
-        attachments=3,
-        links=1,
-        purchases=2,
-        movements=1,
-    )
-    assert summary["removed"] == [
-        "42 in stock, across 2 locations",  # the loss nobody expects, first
-        "1 parameter value",
-        "3 attachments (the files too)",  # the files, not just the rows
-        "1 link",
-    ]
-    assert summary["kept"] == ["2 purchase lines", "1 stock movement"]
+    html = anon_client.get(
+        f"/components/{component['id']}", headers={"Authorization": f"Bearer {token}"}
+    ).text
+    assert 'id="component-deleted-banner"' in html  # they still see WHY it is dead
+    assert 'id="component-restore-btn"' not in html
 
 
 def test_component_detail_writer_can_add_and_take_stock(client: TestClient) -> None:

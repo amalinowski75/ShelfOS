@@ -303,6 +303,22 @@ table.kv tr:last-child th, table.kv tr:last-child td { border-bottom: none; }
   border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
 .bulk-preview-list li { padding: 2px 0; }
 
+/* ---------- deleted-component banner (§20) ---------- */
+/* Above the page rather than beside a field: every table below it is history,
+   and a reader arriving from an old link must know that before reading them. */
+.notice {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  padding: 12px 14px; margin-bottom: 16px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2);
+  font-size: 14px;
+}
+.notice p { margin: 4px 0 0; font-size: 13.5px; }
+.notice-danger {
+  border-color: color-mix(in srgb, var(--danger) 32%, transparent);
+  background: var(--danger-soft);
+}
+.notice-danger strong { color: var(--danger); }
+
 /* ---------- delete-component dialog (§20) ---------- */
 /* Consequences, listed. Bulleted on purpose — every other list in the app is a
    set of controls, this one is a set of losses and reads as prose. */

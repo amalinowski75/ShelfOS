@@ -48,6 +48,10 @@ from app.models.audit import AuditLog
 # to the next one. Nothing reads these values today; a future reader should not
 # assume one shape.
 FIELD_DELETED: Final = "deleted"
+# Why a component was taken out of use (§20). Recorded alongside FIELD_DELETED
+# rather than folded into it, so a reader filtering on "deleted" gets the event
+# and a reader looking for the words gets them.
+FIELD_DELETED_REASON: Final = "deleted_reason"
 FIELD_LOCATION_ID: Final = "location_id"
 FIELD_IS_FINALIZED: Final = "is_finalized"
 FIELD_TOTAL_GROSS: Final = "total_gross"

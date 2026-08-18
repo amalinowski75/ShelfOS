@@ -39,7 +39,6 @@ from app.services import component_service as cs
 from app.services import invoice_import_service as imp
 from app.services import invoice_service as inv
 from app.services import label_service as lbl
-from app.services import link_service as lnk
 from app.services import location_service as ls
 from app.services import match_rule_service as mrs
 from app.services import stock_service as ss
@@ -48,7 +47,6 @@ from app.services._common import require_entity
 from app.services.errors import ValidationError
 from app.web.presenter import (
     build_audit_table,
-    build_component_delete_summary,
     build_component_table,
     build_invoice_table,
     build_location_stock,
@@ -742,29 +740,17 @@ def component_detail(
     movement_authors = us.names_by_id(session, (m.user_id for m in movements))
 
     # For the Add/Take stock dialog and the "New location" it can reach inline.
-    # Only a writer gets that dialog, so only a writer pays for the queries.
-    can_write = user.role != UserRole.READ_ONLY
+    # A deleted component is out of use, so it gets no write affordances at all —
+    # the page is then a record of what it was, not something to work with (§20).
+    is_deleted = component.deleted_at is not None
+    can_write = user.role != UserRole.READ_ONLY and not is_deleted
     tree = ls.location_tree(session) if can_write else []
 
-    # What the Delete dialog spells out. Only an admin can delete, so only an
-    # admin pays for the two counts the page does not otherwise need (the
-    # attachment and link cards fetch their own contents from the browser).
-    delete_summary = (
-        build_component_delete_summary(
-            parameter_values=len(values),
-            stock=locations,
-            attachments=len(
-                ats.list_attachments(
-                    session, entity_type="component", entity_id=component_id
-                )
-            ),
-            links=len(
-                lnk.list_links(session, entity_type="component", entity_id=component_id)
-            ),
-            purchases=len(history),
-            movements=len(movements),
-        )
-        if user.role == UserRole.ADMIN
+    # Said in the dialog rather than only on refusal, so the admin learns what to
+    # do before clicking. Same sentence either way — it comes from the service.
+    delete_blocker = (
+        cs.stock_blocking_delete(session, component_id)
+        if user.role == UserRole.ADMIN and not is_deleted
         else None
     )
 
@@ -785,7 +771,15 @@ def component_detail(
             "attachment_kinds": [k.value for k in AttachmentKind],
             "link_kinds": [k.value for k in LinkKind],
             "mounting_types": [mt.value for mt in MountingType],
-            "delete_summary": delete_summary,
+            "is_deleted": is_deleted,
+            "deleted_by": (
+                us.names_by_id(session, [component.deleted_by]).get(
+                    component.deleted_by
+                )
+                if component.deleted_by is not None
+                else None
+            ),
+            "delete_blocker": delete_blocker,
             "current_user": user,
         },
     )
