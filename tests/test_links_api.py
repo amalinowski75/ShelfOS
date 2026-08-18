@@ -83,6 +83,104 @@ def test_delete_removes_a_link(client: TestClient) -> None:
     assert listed == []
 
 
+def _make_link(client: TestClient, cid: int) -> dict[str, object]:
+    return client.post(
+        "/api/links",
+        json={
+            "entity_type": "component",
+            "entity_id": cid,
+            "kind": "shop",
+            "url": "https://old.example/x",
+            "label": "Old",
+            "notes": "old",
+        },
+    ).json()
+
+
+def test_update_replaces_the_editable_fields(client: TestClient) -> None:
+    cid = _component_id(client)
+    link = _make_link(client, cid)
+    resp = client.patch(
+        f"/api/links/{link['id']}",
+        json={
+            "kind": "datasheet",
+            "url": "https://new.example/y",
+            "label": "New",
+            "notes": "new",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"] == link["id"]
+    assert body["kind"] == "datasheet"
+    assert body["url"] == "https://new.example/y"
+    assert body["label"] == "New"
+    assert body["notes"] == "new"
+
+
+def test_update_blank_label_and_notes_clears_them(client: TestClient) -> None:
+    cid = _component_id(client)
+    link = _make_link(client, cid)
+    # A full replace: omitting label/notes clears the previously stored values.
+    resp = client.patch(
+        f"/api/links/{link['id']}",
+        json={"kind": "shop", "url": "https://x.io"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["label"] is None
+    assert resp.json()["notes"] is None
+
+
+def test_update_rejects_a_non_web_scheme(client: TestClient) -> None:
+    cid = _component_id(client)
+    link = _make_link(client, cid)
+    resp = client.patch(
+        f"/api/links/{link['id']}",
+        json={"kind": "shop", "url": "javascript:alert(1)"},
+    )
+    assert resp.status_code == 422  # ValidationError → 422
+
+
+def test_update_of_a_missing_link_is_404(client: TestClient) -> None:
+    resp = client.patch(
+        "/api/links/9999", json={"kind": "other", "url": "https://x.io"}
+    )
+    assert resp.status_code == 404  # NotFoundError → 404
+
+
+def test_update_requires_kind_so_a_partial_body_is_rejected(client: TestClient) -> None:
+    cid = _component_id(client)
+    link = _make_link(client, cid)
+    # kind has no default: a body omitting it is a partial patch, and this is a
+    # full replace — reject it rather than silently recategorising to "other".
+    resp = client.patch(f"/api/links/{link['id']}", json={"url": "https://x.io"})
+    assert resp.status_code == 422
+
+
+def test_update_rejects_an_over_long_label(client: TestClient) -> None:
+    cid = _component_id(client)
+    link = _make_link(client, cid)
+    resp = client.patch(
+        f"/api/links/{link['id']}",
+        json={"kind": "shop", "url": "https://x.io", "label": "x" * 256},
+    )
+    assert resp.status_code == 422  # the label cap → ValidationError → 422
+
+
+def test_create_rejects_an_over_long_label(client: TestClient) -> None:
+    cid = _component_id(client)
+    resp = client.post(
+        "/api/links",
+        json={
+            "entity_type": "component",
+            "entity_id": cid,
+            "url": "https://x.io",
+            "label": "x" * 256,
+        },
+    )
+    assert resp.status_code == 422
+
+
 def test_create_on_a_missing_entity_is_404(client: TestClient) -> None:
     resp = client.post(
         "/api/links",
@@ -124,6 +222,21 @@ def test_read_only_can_list_but_not_create(
         anon_client.post(
             "/api/links",
             json={"entity_type": "component", "entity_id": cid, "url": "https://x.io"},
+            headers=headers,
+        ).status_code
+        == 403
+    )
+    # …and neither is PATCH (editing an existing link).
+    link_id = client.post(
+        "/api/links",
+        json={"entity_type": "component", "entity_id": cid, "url": "https://x.io"},
+    ).json()["id"]
+    # A complete body (kind present), so only the auth check — not validation —
+    # can reject it.
+    assert (
+        anon_client.patch(
+            f"/api/links/{link_id}",
+            json={"kind": "other", "url": "https://y.io"},
             headers=headers,
         ).status_code
         == 403

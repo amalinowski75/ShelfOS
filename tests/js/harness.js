@@ -298,14 +298,20 @@ export function linksWidgetFixture({ withForm = true } = {}) {
     ? `<button type="button" class="btn link-add"></button>`
     : "";
   const dialog = withForm
-    ? `<dialog class="link-dialog"><form class="link-form">
+    ? `<dialog class="link-dialog">
+         <header><strong>Add link</strong></header>
+         <form class="link-form">
          <input type="url" name="url" />
-         <select name="kind"><option value="shop">shop</option></select>
+         <select name="kind">
+           <option value="shop">shop</option>
+           <option value="datasheet">datasheet</option>
+           <option value="other">other</option>
+         </select>
          <input name="label" />
          <input name="notes" />
          <p class="error link-error" hidden></p>
          <button type="button" data-close></button>
-         <button type="submit"></button>
+         <button type="submit">Add</button>
        </form></dialog>`
     : "";
   return `

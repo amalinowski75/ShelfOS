@@ -20,6 +20,12 @@ function submitForm(document, window) {
   );
 }
 
+// A row now has Edit + Delete; pick one by its text.
+const rowButton = (document, text) =>
+  [...document.querySelectorAll(".link-item button")].find(
+    (b) => b.textContent === text,
+  );
+
 describe("links.js", () => {
   it("renders an external link (new tab, noopener) with a kind badge", async () => {
     const rows = [
@@ -44,7 +50,10 @@ describe("links.js", () => {
     expect(anchor.textContent).toBe("TME page");
     expect(item.textContent).toContain("shop");
     expect(item.textContent).toContain("imported from here");
-    expect(item.querySelector("button").textContent).toBe("Delete");
+    expect([...item.querySelectorAll("button")].map((b) => b.textContent)).toEqual([
+      "Edit",
+      "Delete",
+    ]);
   });
 
   it("falls back to the URL host when there is no label", async () => {
@@ -236,7 +245,7 @@ describe("links.js", () => {
     window.confirm = vi.fn(() => true);
     await tick();
 
-    document.querySelector(".link-item button").click();
+    rowButton(document, "Delete").click();
     await tick();
 
     const del = fetchMock.mock.calls.find((c) => c[1]?.method === "DELETE");
@@ -251,9 +260,115 @@ describe("links.js", () => {
     });
     window.confirm = vi.fn(() => false);
     await tick();
-    document.querySelector(".link-item button").click();
+    rowButton(document, "Delete").click();
     await tick();
     expect(fetchMock.mock.calls.some((c) => c[1]?.method === "DELETE")).toBe(false);
+  });
+
+  it("Edit opens the dialog pre-filled from the row", async () => {
+    const rows = [
+      { id: 9, url: "https://x.io/a", label: "X", kind: "datasheet", notes: "n" },
+    ];
+    const { document } = loadPage(linksWidgetFixture(), SCRIPTS, {
+      fetchImpl: feedImpl(rows),
+    });
+    const dialog = document.querySelector(".link-dialog");
+    dialog.showModal = vi.fn();
+    await tick();
+
+    rowButton(document, "Edit").click();
+
+    const form = document.querySelector(".link-form");
+    expect(form.elements.url.value).toBe("https://x.io/a");
+    expect(form.elements.kind.value).toBe("datasheet");
+    expect(form.elements.label.value).toBe("X");
+    expect(form.elements.notes.value).toBe("n");
+    expect(dialog.querySelector("header strong").textContent).toBe("Edit link");
+    expect(form.querySelector('button[type="submit"]').textContent).toBe("Save");
+    expect(dialog.showModal).toHaveBeenCalled();
+  });
+
+  it("editing PATCHes the link's fields (no entity) and closes", async () => {
+    const rows = [{ id: 9, url: "https://x.io/a", label: "X", kind: "shop" }];
+    const { window, document, fetchMock } = loadPage(linksWidgetFixture(), SCRIPTS, {
+      fetchImpl: feedImpl(rows),
+    });
+    const dialog = document.querySelector(".link-dialog");
+    dialog.showModal = vi.fn();
+    dialog.close = vi.fn();
+    await tick();
+
+    rowButton(document, "Edit").click();
+    const form = document.querySelector(".link-form");
+    form.elements.label.value = "Renamed";
+    form.elements.kind.value = "other";
+    submitForm(document, window);
+    await tick();
+
+    const call = fetchMock.mock.calls.find((c) => c[1]?.method === "PATCH");
+    expect(call[0]).toBe("/api/links/9");
+    expect(call[1].headers["X-CSRF-Token"]).toBe(CSRF);
+    // The entity target is immutable, so the body carries only the editable fields.
+    expect(JSON.parse(call[1].body)).toEqual({
+      url: "https://x.io/a",
+      kind: "other",
+      label: "Renamed",
+      notes: null,
+    });
+    expect(dialog.close).toHaveBeenCalled();
+  });
+
+  it("clearing the label on edit sends it as null", async () => {
+    const rows = [{ id: 9, url: "https://x.io/a", label: "X", kind: "shop", notes: "n" }];
+    const { window, document, fetchMock } = loadPage(linksWidgetFixture(), SCRIPTS, {
+      fetchImpl: feedImpl(rows),
+    });
+    document.querySelector(".link-dialog").showModal = vi.fn();
+    await tick();
+
+    rowButton(document, "Edit").click();
+    document.querySelector(".link-form").elements.label.value = "";
+    submitForm(document, window);
+    await tick();
+
+    const call = fetchMock.mock.calls.find((c) => c[1]?.method === "PATCH");
+    expect(JSON.parse(call[1].body).label).toBeNull();
+  });
+
+  it("switches back to Add mode after an edit (title, button, POST not PATCH)", async () => {
+    // The visible half of the feature: after editing, opening Add must reset the
+    // dialog — else it still says "Edit link"/"Save" and PATCHes the old link
+    // instead of creating a new one.
+    const rows = [{ id: 9, url: "https://x.io/a", label: "X", kind: "shop" }];
+    const { window, document, fetchMock } = loadPage(linksWidgetFixture(), SCRIPTS, {
+      fetchImpl: feedImpl(rows),
+    });
+    const dialog = document.querySelector(".link-dialog");
+    dialog.showModal = vi.fn();
+    dialog.close = vi.fn();
+    await tick();
+
+    // Edit a row → Edit mode…
+    rowButton(document, "Edit").click();
+    const titleEl = dialog.querySelector("header strong");
+    const submitBtn = document.querySelector('.link-form button[type="submit"]');
+    expect(titleEl.textContent).toBe("Edit link");
+
+    // …then open Add: the dialog resets, and a submit creates rather than edits.
+    document.querySelector(".link-add").click();
+    expect(titleEl.textContent).toBe("Add link");
+    expect(submitBtn.textContent).toBe("Add");
+
+    const form = document.querySelector(".link-form");
+    form.elements.url.value = "https://new.example";
+    submitForm(document, window);
+    await tick();
+
+    expect(fetchMock.mock.calls.find((c) => c[1]?.method === "PATCH")).toBeFalsy();
+    const post = fetchMock.mock.calls.find(
+      (c) => c[1]?.method === "POST" && c[0] === "/api/links",
+    );
+    expect(post).toBeTruthy();
   });
 
   it("gives a read-only account no delete buttons and no add form", async () => {

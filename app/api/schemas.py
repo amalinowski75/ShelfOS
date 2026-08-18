@@ -444,6 +444,21 @@ class LinkCreate(BaseModel):
     notes: str | None = None
 
 
+class LinkUpdate(BaseModel):
+    """Edit a link's kind/url/label/notes (the target entity is immutable).
+
+    A full replace of the editable fields — the edit dialog always sends the whole
+    row — so a blank label/notes clears it. ``kind`` and ``url`` are required (no
+    defaults) so the schema itself says "send the whole row": a partial body that
+    omits ``kind`` is rejected rather than silently recategorising the link.
+    """
+
+    kind: LinkKind
+    url: str = Field(max_length=2048)
+    label: str | None = None
+    notes: str | None = None
+
+
 class LinkRead(BaseModel):
     """External-link metadata for the API.
 

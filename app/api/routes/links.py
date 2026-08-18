@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, status
 from sqlmodel import Session
 
 from app.api.deps import get_session
-from app.api.schemas import LinkCreate, LinkRead
+from app.api.schemas import LinkCreate, LinkRead, LinkUpdate
 from app.models.link import Link
 from app.services import link_service as svc
 
@@ -43,6 +43,21 @@ def list_links(
 ) -> list[Link]:
     """List an entity's links, oldest first."""
     return svc.list_links(session, entity_type=entity_type, entity_id=entity_id)
+
+
+@router.patch("/{link_id}", response_model=LinkRead)
+def update_link(
+    link_id: int, payload: LinkUpdate, session: Session = Depends(get_session)
+) -> Link:
+    """Edit a link's kind/url/label/notes (writers only). Non-http(s) URL → 422."""
+    return svc.update_link(
+        session,
+        link_id,
+        kind=payload.kind,
+        url=payload.url,
+        label=payload.label,
+        notes=payload.notes,
+    )
 
 
 @router.delete("/{link_id}", status_code=status.HTTP_204_NO_CONTENT)
