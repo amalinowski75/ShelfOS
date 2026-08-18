@@ -654,7 +654,11 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 .link-item:last-child { border-bottom: none; }
 .link-item a { overflow-wrap: anywhere; }
 .link-notes { font-size: 13px; }
+/* The first action button absorbs the free space so the button group sits at the
+   row's right edge; later buttons reset to 0 (the flex `gap` spaces them) — else a
+   second auto margin would split the space and strand Edit in the middle. */
 .link-item .btn { margin-left: auto; }
+.link-item .btn ~ .btn { margin-left: 0; }
 
 /* ---------- component image gallery + lightbox (§10) ---------- */
 .component-images {
