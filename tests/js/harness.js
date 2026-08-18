@@ -63,6 +63,12 @@ export function loadPage(
     setData() {
       return Promise.resolve();
     }
+    // Rows land on the CLASS for the same reason handlers do: the scripts keep
+    // their table in a top-level const, so a test cannot reach the instance.
+    replaceData(rows) {
+      window.Tabulator.rows = rows;
+      return Promise.resolve();
+    }
     // Handlers are recorded on the CLASS, not the instance: app.js keeps its table
     // in a top-level `const`, which (unlike `var`) never lands on `window`, so a
     // test has no other way to reach what the script subscribed to.
@@ -70,6 +76,7 @@ export function loadPage(
       window.Tabulator.handlers[event] = handler;
     }
     static handlers = {};
+    static rows = [];
   };
 
   // Browsers expose form controls as named properties on the form

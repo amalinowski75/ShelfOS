@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Audit log — ShelfOS{% endblock %}
+
+{% block content %}
+<div class="head">
+  <div>
+    <h1>Audit log</h1>
+    {# What the log is for, in one line: people come here with a question about
+       a change they did not make, not to browse. #}
+    <p>Who changed what, newest first.</p>
+  </div>
+  <div class="head-actions">
+    <label class="check" for="audit-entity">Show</label>
+    <select class="control" id="audit-entity">
+      <option value="">everything</option>
+      {% for kind in entity_types %}
+      <option value="{{ kind }}">{{ kind.replace("_", " ") }}</option>
+      {% endfor %}
+    </select>
+  </div>
+</div>
+
+<div id="audit-table"></div>
+<div class="head-actions" style="margin-top: 12px">
+  <button type="button" class="btn btn-secondary" id="audit-more" hidden>
+    Show more
+  </button>
+  <p class="empty" id="audit-count"></p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/audit.js?v={{ static_version() }}"></script>
+{% endblock %}

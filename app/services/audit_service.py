@@ -192,17 +192,33 @@ def list_entries(
     entity_type: str | None = None,
     entity_id: int | None = None,
     limit: int = 100,
+    offset: int = 0,
 ) -> list[AuditLog]:
-    """Return audit entries, most recent first, optionally filtered by entity."""
+    """Return audit entries, most recent first, optionally filtered by entity.
+
+    ``offset`` walks further back for a reader paging through history. Ordering
+    is by timestamp AND id, so entries written in the same second — a single
+    edit touching four fields — keep a stable order across pages instead of
+    shuffling and showing one row twice.
+    """
     statement = select(AuditLog)
     if entity_type is not None:
         statement = statement.where(AuditLog.entity_type == entity_type)
     if entity_id is not None:
         statement = statement.where(AuditLog.entity_id == entity_id)
-    statement = statement.order_by(
-        col(AuditLog.timestamp).desc(), col(AuditLog.id).desc()
-    ).limit(limit)
+    statement = (
+        statement.order_by(col(AuditLog.timestamp).desc(), col(AuditLog.id).desc())
+        .offset(offset)
+        .limit(limit)
+    )
     return list(session.exec(statement).all())
+
+
+def entity_types(session: Session) -> list[str]:
+    """The entity types the log actually holds, for a filter that offers no
+    empty choices."""
+    rows = session.exec(select(AuditLog.entity_type).distinct()).all()
+    return sorted(str(row) for row in rows)
 
 
 def _as_text(value: Any) -> str | None:

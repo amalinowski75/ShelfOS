@@ -32,6 +32,7 @@ from app.models.enums import (
 )
 from app.models.user import User
 from app.services import attachment_service as ats
+from app.services import audit_service, shops
 from app.services import bom_service as boms_svc
 from app.services import component_service as cs
 from app.services import invoice_import_service as imp
@@ -39,11 +40,11 @@ from app.services import invoice_service as inv
 from app.services import label_service as lbl
 from app.services import location_service as ls
 from app.services import match_rule_service as mrs
-from app.services import shops
 from app.services import stock_service as ss
 from app.services import user_service as us
 from app.services._common import require_entity
 from app.web.presenter import (
+    build_audit_table,
     build_component_table,
     build_invoice_table,
     build_location_stock,
@@ -67,6 +68,11 @@ _PARTS_PER_LOCATION = 50
 
 # SQLite's signed 64-bit rowid ceiling; anything above overflows the driver.
 _MAX_ROWID = 2**63 - 1
+
+# Rows the audit feed will return at once. The log is append-only and grows
+# without bound, so the page walks it with "Show more" rather than pretending a
+# few thousand rows in a browser table is a reading experience.
+_AUDIT_PAGE_MAX = 500
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -362,6 +368,48 @@ def users_page(
         request,
         "users.html",
         {"current_user": user, "roles": [role.value for role in UserRole]},
+    )
+
+
+@router.get("/web/api/audit")
+def audit_feed(
+    response: Response,
+    entity_type: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_web_admin),
+) -> dict[str, Any]:
+    """JSON feed for the audit table (admin only, §19).
+
+    The log names who did what, so it is as sensitive as the account list and
+    kept out of shared caches for the same reason.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    return build_audit_table(
+        session,
+        entity_type=entity_type or None,
+        limit=min(max(limit, 1), _AUDIT_PAGE_MAX),
+        offset=max(offset, 0),
+    )
+
+
+@router.get("/audit", response_class=HTMLResponse)
+def audit_page(
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_web_admin),
+) -> HTMLResponse:
+    """The audit log, in words (admin, §19); rows load from /web/api/audit."""
+    return templates.TemplateResponse(
+        request,
+        "audit.html",
+        {
+            "current_user": user,
+            # Only the kinds the log actually holds, so the filter offers no
+            # empty choices.
+            "entity_types": audit_service.entity_types(session),
+        },
     )
 
 

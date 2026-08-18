@@ -1856,3 +1856,84 @@ def test_labels_page_offers_the_label_printer_with_its_own_csrf_token(
     assert 'id="labels-print-device"' not in plain
     # The browser print button is unconditional: it needs no printer at all.
     assert "window.print()" in plain
+
+
+def _audit_something(client: TestClient) -> dict[str, object]:
+    """Do a couple of audited things so the log has content to render."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "RC0603"}
+    ).json()
+    location = client.post(
+        "/api/locations", json={"type": "drawer", "name": "D1"}
+    ).json()
+    client.post(
+        "/api/stock/add",
+        json={
+            "component_id": component["id"],
+            "location_id": location["id"],
+            "quantity": 25,
+        },
+    )
+    return {"component": component, "location": location}
+
+
+def test_audit_page_is_admin_only(client: TestClient, anon_client: TestClient) -> None:
+    assert client.get("/audit").status_code == 200
+    token = _non_admin_token(client, role="user", username="editor")
+    # A writer is sent home rather than shown who did what.
+    redirected = anon_client.get(
+        "/audit", headers={"Authorization": f"Bearer {token}"}, follow_redirects=False
+    )
+    assert redirected.status_code in (302, 303, 307)
+
+
+def test_audit_feed_reads_the_log_in_words(client: TestClient) -> None:
+    """The log's own field names are terse and parameterised; a reader should
+    never have to learn "quantity@location:5"."""
+    made = _audit_something(client)
+
+    body = client.get("/web/api/audit").json()
+    entry = next(row for row in body["data"] if row["what"].startswith("quantity"))
+
+    assert entry["who"] == "admin"  # resolved, not a bare user id
+    assert entry["entity"] == "component RC0603"  # named, not "component #1"
+    assert entry["entity_url"] == f"/components/{made['component']['id']}"
+    assert entry["what"] == "quantity in D1"  # the location's path, not its id
+    assert (entry["old"], entry["new"]) == ("0", "25")
+
+
+def test_audit_feed_filters_pages_and_stays_out_of_caches(client: TestClient) -> None:
+    made = _audit_something(client)
+
+    response = client.get("/web/api/audit?entity_type=component")
+    # As sensitive as the account list, and kept out of shared caches for the
+    # same reason.
+    assert response.headers["cache-control"] == "no-store"
+    kinds = {row["entity"].split()[0] for row in response.json()["data"]}
+    assert kinds == {"component"}
+
+    # A second audited action, so there is a page behind the first.
+    client.post(
+        "/api/stock/add",
+        json={
+            "component_id": made["component"]["id"],
+            "location_id": made["location"]["id"],
+            "quantity": 5,
+        },
+    )
+    first = client.get("/web/api/audit?limit=1").json()
+    assert len(first["data"]) == 1
+    assert first["more"] is True  # answered by looking, not by the page being full
+    second = client.get("/web/api/audit?limit=1&offset=1").json()
+    assert second["data"][0] != first["data"][0]
+    assert second["more"] is False  # and the end of the log says so
+
+
+def test_audit_page_link_is_offered_to_admins_only(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    assert 'href="/audit"' in client.get("/").text
+    token = _non_admin_token(client, role="user", username="stocker2")
+    plain = anon_client.get("/", headers={"Authorization": f"Bearer {token}"}).text
+    assert 'href="/audit"' not in plain

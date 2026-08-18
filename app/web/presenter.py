@@ -7,12 +7,14 @@ formats EAV values for display, including engineering-notation numbers
 
 from __future__ import annotations
 
+from contextlib import suppress
 from decimal import Decimal
 from typing import Any, cast
 
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
+from app.models.audit import AuditLog
 from app.models.component import (
     Component,
     ComponentParameter,
@@ -20,9 +22,15 @@ from app.models.component import (
     ParameterDefinition,
 )
 from app.models.enums import ParameterDataType
+from app.models.invoice import Invoice
+from app.models.location import Location
+from app.services import audit_service
 from app.services import component_service as cs
 from app.services import invoice_service as inv
+from app.services import location_service as ls
 from app.services import stock_service as ss
+from app.services import user_service as us
+from app.services.errors import NotFoundError, ValidationError
 from app.units import format_engineering
 
 # Columns shown for every component regardless of type (spec §11).
@@ -190,9 +198,7 @@ def build_component_table(
                 if definition.data_type is ParameterDataType.NUMBER:
                     # Raw value beside the formatted string so the client sorts
                     # the column by magnitude (47 Ω < 220 Ω < 1 kΩ), not text.
-                    row[f"{field}__n"] = (
-                        param.value_num if param is not None else None
-                    )
+                    row[f"{field}__n"] = param.value_num if param is not None else None
         rows.append(row)
 
     return {"columns": columns, "data": rows}
@@ -242,9 +248,9 @@ def build_location_stock(session: Session) -> dict[int, list[dict[str, Any]]]:
     named = {
         component_id: (mpn, manufacturer)
         for component_id, mpn, manufacturer in session.exec(
-            select(
-                Component.id, Component.mpn, Component.manufacturer
-            ).where(col(Component.id).in_(component_ids))
+            select(Component.id, Component.mpn, Component.manufacturer).where(
+                col(Component.id).in_(component_ids)
+            )
         ).all()
     }
 
@@ -364,3 +370,127 @@ def build_types_table(session: Session) -> list[dict[str, Any]]:
             }
         )
     return rows
+
+
+# Where a reader can go to see the thing an audit entry is about. Only entities
+# with a page of their own get a link; the rest are named but not linked, which
+# is honest — a dead link to a component page for a deleted component teaches
+# people the log lies.
+_AUDIT_ENTITY_LINK: dict[str, str] = {
+    "component": "/components/{id}",
+    "invoice": "/invoices/{id}",
+    "bom": "/boms/{id}",
+}
+_AUDIT_ENTITY_PAGE: dict[str, str] = {
+    "user": "/users",
+    "match_rule": "/match-rules",
+    "location": "/locations",
+}
+
+
+def _audit_names(
+    session: Session, entries: list[AuditLog]
+) -> dict[str, dict[int, str]]:
+    """Names for the entities an entry set refers to, one query per kind.
+
+    "component #42" tells a reader nothing they can act on; "RC0603" does. The
+    lookups are batched because an audit page is a few hundred rows, and every
+    one of them names something.
+    """
+    wanted: dict[str, set[int]] = {}
+    for entry in entries:
+        wanted.setdefault(entry.entity_type, set()).add(entry.entity_id)
+
+    names: dict[str, dict[int, str]] = {}
+    if ids := wanted.get("component"):
+        names["component"] = {
+            cast(int, c.id): c.mpn or f"#{c.id}"
+            for c in session.exec(select(Component).where(col(Component.id).in_(ids)))
+        }
+    if ids := wanted.get("invoice"):
+        names["invoice"] = {
+            cast(int, i.id): i.invoice_number
+            for i in session.exec(select(Invoice).where(col(Invoice.id).in_(ids)))
+        }
+    if ids := wanted.get("location"):
+        names["location"] = {
+            cast(int, loc.id): loc.name
+            for loc in session.exec(select(Location).where(col(Location.id).in_(ids)))
+        }
+    if ids := wanted.get("user"):
+        names["user"] = us.names_by_id(session, ids)
+    return names
+
+
+def _audit_field_label(session: Session, field: str, paths: dict[int, str]) -> str:
+    """The canonical field name, in words.
+
+    The log's vocabulary is deliberately terse and parameterised
+    (``quantity@location:5``, ``import-line:2:quantity``); the parsers that
+    build those names exist precisely so a reader never has to learn them.
+    """
+    location_id = audit_service.quantity_location_of(field)
+    if location_id is not None:
+        return f"quantity in {paths.get(location_id, f'location {location_id}')}"
+    parameter = audit_service.parameter_name_of(field)
+    if parameter is not None:
+        return f"parameter “{parameter}”"
+    import_line = audit_service.import_line_of(field)
+    if import_line is not None:
+        line_no, inner = import_line
+        return f"import line {line_no} — {inner.replace('_', ' ')}"
+    return field.replace("_", " ")
+
+
+def build_audit_table(
+    session: Session,
+    *,
+    entity_type: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Rows for the audit page: who changed what, in words rather than tokens."""
+    # One more than asked for, so "is there anything behind this page" is
+    # answered rather than guessed from the page being full — a Show more that
+    # then shows nothing is worse than no button.
+    entries = audit_service.list_entries(
+        session, entity_type=entity_type, limit=limit + 1, offset=offset
+    )
+    more = len(entries) > limit
+    entries = entries[:limit]
+    who = us.names_by_id(session, (entry.user_id for entry in entries))
+    names = _audit_names(session, entries)
+
+    # A quantity entry names its location by id; resolve each one once, and
+    # tolerate the ones whose location has since been deleted.
+    paths: dict[int, str] = {}
+    for entry in entries:
+        location_id = audit_service.quantity_location_of(entry.field)
+        if location_id is None or location_id in paths:
+            continue
+        with suppress(NotFoundError, ValidationError):
+            paths[location_id] = ls.format_path(session, location_id)
+
+    rows: list[dict[str, Any]] = []
+    for entry in entries:
+        label = names.get(entry.entity_type, {}).get(entry.entity_id)
+        kind = entry.entity_type.replace("_", " ")
+        link = _AUDIT_ENTITY_LINK.get(entry.entity_type)
+        rows.append(
+            {
+                "when": entry.timestamp.isoformat(timespec="seconds"),
+                "who": who.get(entry.user_id, f"#{entry.user_id}"),
+                "entity": f"{kind} {label}" if label else f"{kind} #{entry.entity_id}",
+                "entity_url": (
+                    link.format(id=entry.entity_id)
+                    if link
+                    else _AUDIT_ENTITY_PAGE.get(entry.entity_type)
+                ),
+                "what": _audit_field_label(session, entry.field, paths),
+                "old": entry.old_value,
+                "new": entry.new_value,
+            }
+        )
+    # "More" rather than a total: counting the whole log on every page load buys
+    # a number nobody acts on.
+    return {"data": rows, "more": more}

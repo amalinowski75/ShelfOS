@@ -247,6 +247,12 @@ cover, a jam or an empty roll. After the job it waits for the printer to confirm
 the print. A printer that stays silent is not treated as a failure — the job is
 then reported as *sent* rather than printed.
 
+Admins get `/audit`: who changed what, newest first, in words rather than the
+log's own tokens (`quantity@location:5` reads as "quantity in Lab / Rack A / D1").
+It walks the log a page at a time instead of pretending a few thousand rows in a
+browser table is a reading experience, and it is read-only — an audit trail that
+can be edited from the app it audits is not one.
+
 - **Web UI:** sign in at `/login` (session cookie).
 - **API:** `POST /api/auth/token` with `{"username", "password"}` returns a JWT;
   send it as `Authorization: Bearer <token>`.
