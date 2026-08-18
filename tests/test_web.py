@@ -63,6 +63,8 @@ def test_stock_dialog_uses_location_tree_picker(client: TestClient) -> None:
     assert "/static/location_tree.js" in html
     # The picker offers inline location creation via the shared New Location dialog.
     assert 'class="loc-picker-new"' in html
+    # …and a scan field, so a wedge scanner can pick a location by its SL label.
+    assert 'id="stock-loc-scan"' in html
     assert 'id="location-dialog"' in html
 
 

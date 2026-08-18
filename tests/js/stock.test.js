@@ -62,6 +62,8 @@ function stockPageFixture(tree = flatTree(), creatable = false) {
         <input name="component_id" />
         <input name="mode" />
         <input name="quantity" type="number" />
+        <input id="stock-loc-scan" />
+        <p id="stock-loc-scan-msg" hidden></p>
         <div class="loc-picker">
           <input type="hidden" name="location_id" value="" />
           <button type="button" class="loc-picker-toggle">
@@ -90,6 +92,26 @@ function submitStock(document) {
       new document.defaultView.Event("submit", { cancelable: true, bubbles: true }),
     );
 }
+
+// A wedge scanner typing an SL… label into the scan field, terminated by Enter.
+// Returns the keydown event so a test can assert it was preventDefault-ed (the
+// scanner's Enter must never submit the form).
+function scanLoc(document, code) {
+  const input = document.getElementById("stock-loc-scan");
+  input.value = code;
+  const event = new document.defaultView.KeyboardEvent("keydown", {
+    key: "Enter",
+    bubbles: true,
+    cancelable: true,
+  });
+  input.dispatchEvent(event);
+  return event;
+}
+
+const locationId = (document) =>
+  document.querySelector('#stock-form [name="location_id"]').value;
+const scanMsg = (document) =>
+  document.getElementById("stock-loc-scan-msg").textContent;
 
 describe("stock_dialog.js — the shared Add/Take dialog", () => {
   it("requires a location: submitting with none picked shows an error, no POST", async () => {
@@ -720,5 +742,52 @@ describe("stock_dialog.js — the location filter", () => {
     expect(node.closest("li").hidden).toBe(false);
     // …and it was selected, so the user can submit straight away.
     expect(document.querySelector('[name="location_id"]').value).toBe("77");
+  });
+});
+
+describe("stock_dialog.js — scanning a location label", () => {
+  it("selects the scanned location and reports its path", () => {
+    const { window, document } = loadPage(stockPageFixture(), SCRIPTS);
+    window.openStockDialog("add", 7);
+    scanLoc(document, "SL5");
+    expect(locationId(document)).toBe("5"); // the picker's hidden input is set
+    expect(scanMsg(document)).toContain("Lab / D1");
+  });
+
+  it("reports an unknown label and selects nothing", () => {
+    const { window, document } = loadPage(stockPageFixture(), SCRIPTS);
+    window.openStockDialog("add", 7);
+    scanLoc(document, "SL999");
+    expect(locationId(document)).toBe("");
+    expect(scanMsg(document)).toMatch(/Unknown location SL999/);
+  });
+
+  it("rejects a code that isn't a location label, and Enter never submits", () => {
+    const { window, document, fetchMock } = loadPage(stockPageFixture(), SCRIPTS);
+    window.openStockDialog("add", 7);
+    const event = scanLoc(document, "R-100"); // an MPN, not a shelf label
+    expect(scanMsg(document)).toMatch(/isn't a location label/);
+    // The scanner's Enter is swallowed here, so it can't submit the form.
+    expect(event.defaultPrevented).toBe(true);
+    expect(fetchMock.mock.calls.some(([u]) => u.startsWith("/api/stock/"))).toBe(false);
+  });
+
+  it("holds a scan to the mode filter: Take only from where the part is stocked", async () => {
+    const fetchImpl = (url) =>
+      url.endsWith("/location-usage")
+        ? Promise.resolve({ ok: true, json: async () => ({ holding: [5], occupied: [5] }) })
+        : Promise.resolve({ ok: true, json: async () => ({}) });
+    const { window, document } = loadPage(stockPageFixture(nestedTree()), SCRIPTS, {
+      fetchImpl,
+    });
+    window.openStockDialog("take", 7);
+    await tick(); // let the usage lookup narrow the picker
+
+    scanLoc(document, "SL6"); // D2 — the part isn't stocked there
+    expect(locationId(document)).toBe(""); // refused, nothing selected
+    expect(scanMsg(document)).toMatch(/isn't stocked/);
+
+    scanLoc(document, "SL5"); // D1 — it IS stocked there
+    expect(locationId(document)).toBe("5");
   });
 });

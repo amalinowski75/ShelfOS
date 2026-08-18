@@ -418,6 +418,8 @@ dialog .close:hover { background: var(--surface-2); color: var(--text); }
 dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 
 .error { color: var(--danger); font-size: 13.5px; margin: 0; }
+/* Feedback under the stock dialog's "scan a location" field. */
+#stock-loc-scan-msg { font-size: 13px; margin: 6px 0 0; }
 /* A partial success — something landed, but not everything asked for. Red would
    overstate it; .muted would hide it. */
 .warn { color: var(--warn); font-size: 13.5px; margin: 0; }

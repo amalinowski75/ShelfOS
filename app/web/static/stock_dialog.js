@@ -12,8 +12,18 @@
   const form = document.getElementById("stock-form");
   const errorEl = document.getElementById("stock-error");
   const title = document.getElementById("stock-dialog-title");
+  const locScan = document.getElementById("stock-loc-scan");
+  const locScanMsg = document.getElementById("stock-loc-scan-msg");
+  // What our own location labels encode (see label_service.py); shared with the
+  // putaway scanner's format.
+  const SL = /^SL(\d+)$/i;
 
   let onSaved = null;
+  // The per-mode predicate narrowLocations applied to the picker (Take: only where
+  // the part is stocked; Add: only free/own slots). Kept so a SCANNED location is
+  // held to the same rule the manual picker enforces. null = unfiltered (or the
+  // usage lookup hasn't answered yet), in which case the server is the check.
+  let locationFilter = null;
   // Ignore a re-entrant submit while this form's write is in flight, enough to stop
   // a fast double-click sending a duplicate POST. The flag is the dialog's OWN: an
   // in-flight stock write must never swallow another dialog's submit.
@@ -49,7 +59,13 @@
     form.quantity.value = 1;
     form.note.value = ""; // else a note leaks into the NEXT movement
     form.querySelector(".loc-picker")?.reset(); // also drops the previous filter
+    locationFilter = null; // narrowLocations sets it once the usage lookup lands
+    if (locScan) locScan.value = "";
+    if (locScanMsg) locScanMsg.hidden = true;
     dialog.showModal();
+    // Focus the scan field so a wedge scanner's SL… payload lands there, not in the
+    // quantity box (a manual user can pick from the tree or type the count instead).
+    if (locScan) locScan.focus();
     // Bumped HERE, not inside the helper: an early return below must still
     // invalidate a lookup that is already in flight from a previous open.
     narrowLocations(mode, componentId, ++openToken);
@@ -102,13 +118,56 @@
     if (!Array.isArray(usage?.holding) || !Array.isArray(usage?.occupied)) return;
     const holding = new Set(usage.holding);
     const occupied = new Set(usage.occupied);
-    picker.setFilter(
+    const predicate =
       mode === "take"
         ? (id) => holding.has(id)
         : // Free, or already holding this same part so a restock can go back in.
-          (id) => !occupied.has(id) || holding.has(id),
-    );
+          (id) => !occupied.has(id) || holding.has(id);
+    locationFilter = predicate; // hold a scan to the same rule as the manual picker
+    picker.setFilter(predicate);
   }
+
+  // A scanned SL… shelf label selects that location in the picker (the manual pick
+  // still works — both set the same hidden location_id).
+  function setScanMsg(text, isError) {
+    if (!locScanMsg) return;
+    locScanMsg.textContent = text;
+    locScanMsg.className = isError ? "error" : "muted";
+    locScanMsg.hidden = false;
+  }
+
+  locScan?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    // A wedge scanner ends its payload with Enter — select the location, never
+    // submit the half-filled form.
+    event.preventDefault();
+    const code = locScan.value.trim();
+    locScan.value = "";
+    if (!code) return;
+    const matched = SL.exec(code);
+    if (!matched) {
+      setScanMsg(`"${code}" isn't a location label (SL…).`, true);
+      return;
+    }
+    const id = Number(matched[1]);
+    const picker = form.querySelector(".loc-picker");
+    const node = picker?.querySelector(`.loc-picker-node[data-loc-id="${id}"]`);
+    if (!node) {
+      setScanMsg(`Unknown location SL${id} — reprint the label?`, true);
+      return;
+    }
+    if (locationFilter && !locationFilter(id)) {
+      setScanMsg(
+        form.mode.value === "take"
+          ? `This part isn't stocked in ${node.dataset.locPath}.`
+          : `${node.dataset.locPath} already holds another part.`,
+        true,
+      );
+      return;
+    }
+    picker.setValue(id);
+    setScanMsg(`Location set: ${node.dataset.locPath}`, false);
+  });
 
   // [data-close] buttons are wired once in shared.js.
 
