@@ -242,3 +242,107 @@ describe("printing right after creating a location", () => {
     expect(pending.message).toContain("the printer is not there");
   });
 });
+
+describe("guards that only matter when something goes wrong", () => {
+  it("a double-click prints one job, not two", async () => {
+    // Unlike a double-POST elsewhere in this app, the second one cannot be
+    // undone by reloading: the server serialises prints, so it does not
+    // collide — it waits its turn and prints everything again, on real tape.
+    let release;
+    const inFlight = new Promise((resolve) => {
+      release = () => resolve({ ok: true, status: 200, json: () => Promise.resolve({ sent: 1, confirmed: true, tape: "62red" }) });
+    });
+    const { document, fetchMock } = await open(
+      null,
+      routes({ print: () => inFlight }),
+    );
+
+    const submit = () =>
+      document.getElementById("label-print-form").dispatchEvent(
+        new document.defaultView.Event("submit", { cancelable: true, bubbles: true }),
+      );
+    submit();
+    submit();
+    await tick();
+
+    const prints = fetchMock.mock.calls.filter(
+      (call) => call[0] === "/api/labels/locations/print",
+    );
+    expect(prints).toHaveLength(1);
+    expect(document.getElementById("label-print-submit").disabled).toBe(true);
+
+    release();
+    await tick();
+    expect(document.getElementById("label-print-submit").disabled).toBe(false);
+  });
+
+  it("a message left for after a reload is shown on the next page", () => {
+    // The whole reason shared.js grew this: "created, but the label did not
+    // print" is reported by a page that is about to be replaced.
+    const session = {
+      "shelfos:pending-toast": JSON.stringify({
+        message: "Label sent to the printer.",
+        options: { tone: "ok" },
+      }),
+    };
+    const { document, window } = loadPage("<div></div>", ["shared.js"], {
+      sessionStorage: session,
+    });
+
+    const toast = document.querySelector(".toast");
+    expect(toast).not.toBeNull();
+    expect(toast.textContent).toBe("Label sent to the printer.");
+    expect(toast.className).toContain("toast-ok");
+    // Taken, not left to reappear on every page for the rest of the session.
+    expect(window.sessionStorage.getItem("shelfos:pending-toast")).toBeNull();
+  });
+
+  it("editing a location does not offer to reprint its label", async () => {
+    const page = loadPage(
+      `<dialog id="location-dialog"><form id="location-form">
+         <select name="type"><option value="drawer">drawer</option></select>
+         <input name="name" /><select name="parent_id"><option value="">None</option></select>
+         <label class="check" id="location-print-row">
+           <input type="checkbox" id="location-print-label" /></label>
+         <p id="location-error" hidden></p>
+       </form></dialog>`,
+      ["shared.js", "location_dialog.js"],
+    );
+
+    page.window.openLocationDialog(() => {}, { id: 3, name: "D1", type: "drawer" });
+    expect(page.document.getElementById("location-print-row").hidden).toBe(true);
+
+    page.window.openLocationDialog(() => {});
+    expect(page.document.getElementById("location-print-row").hidden).toBe(false);
+  });
+
+  it("and does not reprint even if the hidden box is ticked", async () => {
+    // Hiding the offer and refusing to act on it are two guards, and only the
+    // second one survives a stray click, a restored form, or a future layout.
+    const page = loadPage(
+      `<dialog id="location-dialog"><form id="location-form">
+         <select name="type"><option value="drawer">drawer</option></select>
+         <input name="name" /><select name="parent_id"><option value="">None</option></select>
+         <label class="check" id="location-print-row">
+           <input type="checkbox" id="location-print-label" /></label>
+         <p id="location-error" hidden></p>
+       </form></dialog>`,
+      ["shared.js", "location_dialog.js"],
+      { fetchImpl: (url) => ok(url === "/api/locations/3" ? { id: 3 } : {}) },
+    );
+
+    page.window.openLocationDialog(() => {}, { id: 3, name: "D1", type: "drawer" });
+    page.document.getElementById("location-print-label").checked = true;
+    page.document.querySelector('[name="name"]').value = "D1 renamed";
+    page.document.getElementById("location-form").dispatchEvent(
+      new page.document.defaultView.Event("submit", { cancelable: true, bubbles: true }),
+    );
+    await tick();
+    await tick();
+
+    const printed = page.fetchMock.mock.calls.filter(
+      (call) => call[0] === "/api/labels/locations/print",
+    );
+    expect(printed).toHaveLength(0);
+  });
+});

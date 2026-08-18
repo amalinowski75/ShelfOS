@@ -21,6 +21,7 @@
   // can't POST twice and leave a duplicate Location row behind.
   let submitting = false;
   const printBox = document.getElementById("location-print-label");
+  const printRow = document.getElementById("location-print-row");
 
   // No tape is named, so the printer's own roll decides — asking which roll to
   // use belongs to the print dialog, not to creating a shelf.
@@ -130,6 +131,9 @@
     form.reset();
     errorEl.hidden = true;
     if (titleEl) titleEl.textContent = editing ? "Edit location" : "New location";
+    // Editing a location does not call for a fresh label, and an offer that
+    // silently does nothing teaches people the feature is unreliable.
+    if (printRow) printRow.hidden = Boolean(editing);
     if (submitBtn)
       submitBtn.textContent = editing ? "Save changes" : "Create location";
     const parentSelect = form.querySelector('[name="parent_id"]');

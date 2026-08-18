@@ -765,8 +765,37 @@ def _read_status(fd: int, budget: float) -> PrinterStatus | None:
     return None
 
 
+def status_if_free(device: str | None = None) -> PrinterStatus | None:
+    """Ask the printer how it is, but only while it is not printing.
+
+    A status question is three bytes on the same wire the raster travels, so
+    asking during a job splices them into the middle of it — worse than two
+    competing jobs, because nothing downstream can tell the bytes apart from
+    the label. Anything that asks out of curiosity (the tape list, a preview)
+    goes through here; a print asks on the connection it already holds.
+
+    Not answering is a normal outcome and callers handle it: the dialog says
+    the printer is not saying what it holds and lets the roll be picked by hand.
+    """
+    device = config.LABEL_DEVICE if device is None else device
+    if not device:
+        return None
+    if not _PRINT_LOCK.acquire(timeout=_STATUS_LOCK_SECONDS):
+        return None  # a print is in flight; do not interrupt it
+    try:
+        return read_printer_status(device)
+    except (PrinterError, ValidationError):
+        return None
+    finally:
+        _PRINT_LOCK.release()
+
+
 def read_printer_status(device: str | None = None) -> PrinterStatus | None:
-    """Ask the printer how it is, or ``None`` if it does not answer."""
+    """Ask the printer how it is, or ``None`` if it does not answer.
+
+    Assumes the caller owns the printer: see :func:`status_if_free` for the
+    version that takes the lock first.
+    """
     device = config.LABEL_DEVICE if device is None else device
     if not device:
         raise ValidationError(_NOT_CONFIGURED)
@@ -922,14 +951,10 @@ def resolve_geometry(device: str | None = None) -> TapeGeometry:
     remembered = _remembered_tape()
     if remembered is not None:
         return tape_geometry(tape=remembered)
-    if not _PRINT_LOCK.acquire(timeout=_STATUS_LOCK_SECONDS):
-        return tape_geometry()  # a print is in flight; do not interrupt it
-    try:
-        geometry = _geometry_for(read_printer_status(device))
-    except (PrinterError, ValidationError):
+    status = status_if_free(device)
+    if status is None:
         return tape_geometry()
-    finally:
-        _PRINT_LOCK.release()
+    geometry = _geometry_for(status)
     _remember_tape(geometry.tape)
     return geometry
 

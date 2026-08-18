@@ -15,7 +15,6 @@ from app.api.schemas import (
 )
 from app.services import label_printer as lp
 from app.services import label_service as lbl
-from app.services.errors import PrinterError, ValidationError
 
 router = APIRouter(prefix="/api/labels", tags=["labels"])
 
@@ -89,12 +88,10 @@ def list_tapes() -> TapesRead:
     ``loaded`` is best-effort: an unplugged or silent printer simply leaves it
     null, and the picker then has nothing to pre-select but the configuration.
     """
-    status = None
-    if config.label_printing_configured():
-        try:
-            status = lp.read_printer_status()
-        except (PrinterError, ValidationError):
-            status = None
+    # Asked only while the printer is idle: three bytes on the wire during a job
+    # would be spliced into the raster. A silent answer is what the dialog
+    # already copes with, so the degraded reply costs nothing.
+    status = lp.status_if_free()
     return TapesRead(
         tapes=[TapeRead(**vars(choice)) for choice in lp.tape_choices()],
         configured=config.LABEL_TAPE,

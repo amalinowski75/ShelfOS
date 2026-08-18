@@ -143,6 +143,48 @@ def test_a_long_narrow_tape_is_composed_along_its_length() -> None:
     assert box[2] - box[0] > geometry.width_px
 
 
+def _ink_per_quarter(image: Image.Image) -> list[int]:
+    """How much ink each quarter of the label holds, top to bottom.
+
+    The QR is the dense part of any label, so this says which end it is on —
+    which is the only way to tell a quarter turn from the opposite one without
+    a printed label in hand.
+    """
+    height = image.height // 4
+    quarters = []
+    for index in range(4):
+        band = image.crop((0, index * height, image.width, (index + 1) * height))
+        quarters.append(sum(1 for pixel in band.convert("L").tobytes() if pixel < 128))
+    return quarters
+
+
+def test_two_die_cut_rolls_of_the_same_width_are_not_the_same_roll() -> None:
+    """62 x 29 and 62 x 100 are both 62 mm and both die-cut; only the die tells
+    them apart, so a job for one must not print itself onto the other."""
+    small = lp.tape_geometry(tape="62x29")
+    large = lp.tape_geometry(tape="62x100")
+    assert not lp._same_roll(small, large)
+    # A continuous roll's length is ours to choose, so length is not part of
+    # its identity — 62 and 62red are the same roll to a printer.
+    assert lp._same_roll(lp.tape_geometry(tape="62"), lp.tape_geometry(tape="62red"))
+    assert not lp._same_roll(lp.tape_geometry(tape="62"), small)
+
+
+def test_the_turn_puts_the_code_at_the_end_that_leaves_the_printer_first() -> None:
+    """Which way the label is turned decides whether it reads upright, and that
+    is not something code review catches — it is a roll of tape.
+
+    The code is composed at the LEFT of the landscape canvas, so an
+    anti-clockwise turn must leave it at the BOTTOM of the printed label.
+    """
+    quarters = _ink_per_quarter(lp.render_label(_label(), lp.tape_geometry(tape="12")))
+    # Turned the other way the whole distribution mirrors, so both ends of this
+    # comparison move — which is what makes it a direction test and not a
+    # coincidence about where text happens to be dense.
+    assert quarters[-1] == max(quarters), quarters
+    assert quarters[0] == min(quarters), quarters
+
+
 def test_a_tape_with_no_room_for_a_readable_code_is_refused() -> None:
     """No Brother tape is this narrow, which is why the guard needs a synthetic
     one: it is the last line between a decorative square and a refusal."""

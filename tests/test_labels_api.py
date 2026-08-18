@@ -208,3 +208,24 @@ def test_printing_on_a_tape_the_printer_is_not_holding_asks_first(  # type: igno
         )
         assert accepted.status_code == 200
         assert accepted.json()["tape"] == "62"
+
+
+def test_the_tape_list_stays_out_of_the_way_of_a_print(  # type: ignore[no-untyped-def]
+    client: TestClient, monkeypatch
+) -> None:
+    """A status question is three bytes on the wire the raster travels, so
+    asking during a job splices them into the middle of it — worse than two
+    competing jobs, because nothing downstream can tell them from the label."""
+    from app.services import label_printer as lp
+
+    monkeypatch.setattr(config, "LABEL_DEVICE", "/dev/null")
+    lp._PRINT_LOCK.acquire()  # stand in for a print in flight
+    try:
+        body = client.get("/api/labels/tapes").json()
+    finally:
+        lp._PRINT_LOCK.release()
+
+    # Answered anyway, just without the printer's own answer — which is exactly
+    # the case the dialog already handles ("pick the roll you loaded").
+    assert body["loaded"] is None
+    assert body["tapes"]
