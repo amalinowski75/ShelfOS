@@ -46,7 +46,7 @@ def _patch_parse(monkeypatch, invoice: ParsedInvoice) -> None:
 
 def _fake_provider(monkeypatch, shop_key: str, product: ProductData) -> None:
     class _Fake:
-        def fetch_by_index(self, candidates):  # type: ignore[no-untyped-def]
+        def fetch_by_index(self, candidates, *, manufacturer=None):  # type: ignore[no-untyped-def]
             return product
 
     monkeypatch.setitem(shops._BY_INDEX, shop_key, _Fake())
@@ -241,7 +241,7 @@ def test_enrich_offers_the_supplier_index_before_the_mpn(
     seen: list[list[str]] = []
 
     class _Recorder:
-        def fetch_by_index(self, candidates):  # type: ignore[no-untyped-def]
+        def fetch_by_index(self, candidates, *, manufacturer=None):  # type: ignore[no-untyped-def]
             seen.append(list(candidates))
             return ProductData(mpn="NX3P1108UKZ", manufacturer="NXP")
 
@@ -267,7 +267,7 @@ def test_enrich_deduplicates_identical_index_and_mpn(
     seen: list[list[str]] = []
 
     class _Recorder:
-        def fetch_by_index(self, candidates):  # type: ignore[no-untyped-def]
+        def fetch_by_index(self, candidates, *, manufacturer=None):  # type: ignore[no-untyped-def]
             seen.append(list(candidates))
             return ProductData(mpn="AO3400A")
 
@@ -284,6 +284,32 @@ def test_enrich_deduplicates_identical_index_and_mpn(
     assert seen == [["AO3400A"]]
 
 
+def test_enrich_forwards_the_invoice_manufacturer_for_disambiguation(
+    session: Session, monkeypatch
+) -> None:
+    # A bare MPN can be sold under several makers (Mouser "5120" is Keystone's and
+    # ABB's); the invoice line's manufacturer must reach the provider so enrichment
+    # picks the right one — the same fix as the scan path.
+    seen: list[str | None] = []
+
+    class _Recorder:
+        def fetch_by_index(self, candidates, *, manufacturer=None):  # type: ignore[no-untyped-def]
+            seen.append(manufacturer)
+            return ProductData(mpn="5120", manufacturer="Keystone Electronics")
+
+    monkeypatch.setitem(shops._BY_INDEX, "mouser", _Recorder())
+    _patch_parse(
+        monkeypatch,
+        _invoice(
+            _line(mpn="5120", supplier_part_number="534-5120", manufacturer="Keystone"),
+            shop_key="mouser",
+        ),
+    )
+
+    iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
+    assert seen == ["Keystone"]
+
+
 def test_a_hard_enrich_failure_disables_the_api_for_the_rest_of_the_import(
     session: Session, monkeypatch
 ) -> None:
@@ -293,7 +319,7 @@ def test_a_hard_enrich_failure_disables_the_api_for_the_rest_of_the_import(
     calls: list[list[str]] = []
 
     class _Hard:
-        def fetch_by_index(self, candidates):  # type: ignore[no-untyped-def]
+        def fetch_by_index(self, candidates, *, manufacturer=None):  # type: ignore[no-untyped-def]
             calls.append(list(candidates))
             raise ValidationError("could not reach Mouser")
 
@@ -317,7 +343,7 @@ def test_a_plain_miss_keeps_trying_the_api_for_later_lines(
     calls: list[list[str]] = []
 
     class _Miss:
-        def fetch_by_index(self, candidates):  # type: ignore[no-untyped-def]
+        def fetch_by_index(self, candidates, *, manufacturer=None):  # type: ignore[no-untyped-def]
             calls.append(list(candidates))
             raise ShopLookupMiss("no product found")
 
@@ -690,7 +716,7 @@ def test_enrichment_failure_degrades_to_parsed_data(
     session: Session, monkeypatch
 ) -> None:
     class _Broken:
-        def fetch_by_index(self, candidates):  # type: ignore[no-untyped-def]
+        def fetch_by_index(self, candidates, *, manufacturer=None):  # type: ignore[no-untyped-def]
             raise ValidationError("Mouser integration is not configured")
 
     monkeypatch.setitem(shops._BY_INDEX, "mouser", _Broken())

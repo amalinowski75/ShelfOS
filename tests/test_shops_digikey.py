@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import threading
 import time
@@ -382,7 +383,7 @@ def test_fetch_by_index_first_hit_wins(monkeypatch) -> None:  # type: ignore[no-
     calls: list[str] = []
     hit = ProductData(mpn="AP22615AWU-7")
 
-    def fake(self, number, *, transport=None):  # type: ignore[no-untyped-def]
+    def fake(self, number, *, manufacturer=None, transport=None):  # type: ignore[no-untyped-def]
         calls.append(number)
         return hit
 
@@ -395,12 +396,28 @@ def test_fetch_by_index_first_hit_wins(monkeypatch) -> None:  # type: ignore[no-
     assert calls == ["AP22615AWU-7DICT-ND"]
 
 
+def test_fetch_by_index_forwards_the_manufacturer(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from app.services.shops.base import ProductData
+
+    seen: list[str | None] = []
+
+    def fake(self, number, *, manufacturer=None, transport=None):  # type: ignore[no-untyped-def]
+        seen.append(manufacturer)
+        return ProductData(mpn=number)
+
+    monkeypatch.setattr(DigiKeyProvider, "fetch_by_mpn", fake)
+    # The invoice line's manufacturer must reach fetch_by_mpn so a shared MPN
+    # disambiguates via KeywordSearch, same as the scan path.
+    DigiKeyProvider().fetch_by_index(["5120"], manufacturer="Keystone")
+    assert seen == ["Keystone"]
+
+
 def test_fetch_by_index_miss_fallback_and_aggregation(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     from app.services.shops.base import ProductData, ShopLookupMiss
 
     hit = ProductData(mpn="AP22615AWU-7")
 
-    def fake_fallback(self, number, *, transport=None):  # type: ignore[no-untyped-def]
+    def fake_fallback(self, number, *, manufacturer=None, transport=None):  # type: ignore[no-untyped-def]
         if number.endswith("-ND"):
             raise ShopLookupMiss("no product found")
         return hit
@@ -408,7 +425,7 @@ def test_fetch_by_index_miss_fallback_and_aggregation(monkeypatch) -> None:  # t
     monkeypatch.setattr(DigiKeyProvider, "fetch_by_mpn", fake_fallback)
     assert DigiKeyProvider().fetch_by_index(["X-ND", "AP22615AWU-7"]) is hit
 
-    def fake_all_miss(self, number, *, transport=None):  # type: ignore[no-untyped-def]
+    def fake_all_miss(self, number, *, manufacturer=None, transport=None):  # type: ignore[no-untyped-def]
         raise ShopLookupMiss(f"failed for {number}")
 
     monkeypatch.setattr(DigiKeyProvider, "fetch_by_mpn", fake_all_miss)
@@ -421,7 +438,7 @@ def test_fetch_by_index_raises_a_hard_failure_immediately(monkeypatch) -> None: 
     # A transport/config failure repeats identically per candidate — no fallthrough.
     calls: list[str] = []
 
-    def fake(self, number, *, transport=None):  # type: ignore[no-untyped-def]
+    def fake(self, number, *, manufacturer=None, transport=None):  # type: ignore[no-untyped-def]
         calls.append(number)
         raise ValidationError("could not reach Digi-Key")
 
@@ -443,3 +460,140 @@ def test_fetch_by_mpn_rejects_a_non_json_200_body(monkeypatch) -> None:  # type:
         DigiKeyProvider().fetch_by_mpn(
             "AP22615AWU-7", transport=httpx.MockTransport(handler)
         )
+
+
+# --- disambiguating a shared MPN by manufacturer (KeywordSearch) -------------
+
+# "5120" is sold by both Keystone and ABB. productdetails returns Digi-Key's own
+# single pick — ABB here — which is the wrong maker for a Keystone scan.
+_DETAIL_5120_ABB = {
+    "Product": {
+        "ManufacturerProductNumber": "5120",
+        "Manufacturer": {"Name": "ABB Installation Products"},
+        "Description": {"ProductDescription": "Cable Gland"},
+        "ProductUrl": "https://www.digikey.pl/x/ABB/5120",
+        "DatasheetUrl": "https://x/abb.pdf",
+    }
+}
+
+# KeywordSearch returns the whole list; near matches ("5120-2") come with it, and
+# the right maker's exact "5120" sits after a near match to pin both guards.
+_KEYWORD_5120 = {
+    "ProductsCount": 3,
+    "ExactMatches": [
+        {
+            "ManufacturerProductNumber": "5120",
+            "Manufacturer": {"Name": "ABB Installation Products"},
+            "ProductUrl": "https://www.digikey.pl/x/ABB/5120",
+        },
+        {
+            "ManufacturerProductNumber": "5120-2",  # a near match, right maker
+            "Manufacturer": {"Name": "Keystone Electronics"},
+            "ProductUrl": "https://www.digikey.pl/x/Keystone/5120-2",
+        },
+        {
+            "ManufacturerProductNumber": "5120",
+            "Manufacturer": {"Name": "Keystone Electronics"},
+            "Description": {"ProductDescription": "PC Test Point"},
+            "ProductUrl": "https://www.digikey.pl/x/Keystone/5120",
+            "DatasheetUrl": "https://x/keystone.pdf",
+            "Category": {"Name": "Test Points"},
+            "Parameters": [{"ParameterText": "Type", "ValueText": "Multipurpose"}],
+        },
+    ],
+    "Products": [],
+}
+
+
+def _routing_transport(
+    detail: object = _DETAIL_5120_ABB, keyword: object = _KEYWORD_5120
+):  # type: ignore[no-untyped-def]
+    """Routes the token POST, the productdetails GET, and the KeywordSearch POST,
+    recording which of the two lookups ran and in what order."""
+
+    seen: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/oauth2/token"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 600})
+        if req.url.path.endswith("/search/keyword"):
+            seen.append("keyword")
+            return httpx.Response(200, json=keyword)
+        seen.append("productdetails")
+        return httpx.Response(200, json=detail)
+
+    return httpx.MockTransport(handler), seen
+
+
+def test_fetch_by_mpn_corrects_a_wrong_maker_via_keyword_search() -> None:
+    transport, seen = _routing_transport()
+    # productdetails answers ABB; the scanned 1V says Keystone, so KeywordSearch is
+    # consulted to correct it to Keystone's exact "5120".
+    product = DigiKeyProvider().fetch_by_mpn(
+        "5120", manufacturer="Keystone", transport=transport
+    )
+    assert product.manufacturer == "Keystone Electronics"
+    assert product.mpn == "5120"  # the exact part, not the "5120-2" near match
+    assert product.source_url == "https://www.digikey.pl/x/Keystone/5120"
+    assert seen == ["productdetails", "keyword"]  # authoritative first, correct after
+
+
+def test_fetch_by_mpn_keeps_a_matching_maker_without_a_second_call() -> None:
+    transport, seen = _routing_transport()
+    # productdetails already bears the scanned maker → no correction needed, one call.
+    product = DigiKeyProvider().fetch_by_mpn(
+        "5120", manufacturer="ABB", transport=transport
+    )
+    assert product.manufacturer == "ABB Installation Products"
+    assert seen == ["productdetails"]  # KeywordSearch never consulted
+
+
+def test_fetch_by_mpn_without_a_manufacturer_uses_only_productdetails() -> None:
+    transport, seen = _routing_transport()
+    product = DigiKeyProvider().fetch_by_mpn("5120", transport=transport)
+    assert product.manufacturer == "ABB Installation Products"  # Digi-Key's own pick
+    assert seen == ["productdetails"]
+
+
+def test_fetch_by_mpn_keeps_productdetails_when_no_maker_matches() -> None:
+    transport, seen = _routing_transport()
+    # A maker matching none of the KeywordSearch results keeps the productdetails
+    # answer — no worse than before, still reviewed in the dialog.
+    product = DigiKeyProvider().fetch_by_mpn(
+        "5120", manufacturer="Nonesuch Corp", transport=transport
+    )
+    assert product.manufacturer == "ABB Installation Products"
+    assert seen == ["productdetails", "keyword"]
+
+
+def test_fetch_by_mpn_keeps_productdetails_when_keyword_search_is_down() -> None:
+    # The correction is optional: a KeywordSearch outage must NOT sink the lookup
+    # (which _enrich would turn into "disable the shop for the whole invoice").
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/oauth2/token"):
+            return httpx.Response(200, json={"access_token": "t", "expires_in": 600})
+        if req.url.path.endswith("/search/keyword"):
+            return httpx.Response(503, json={"detail": "KeywordSearch is down"})
+        return httpx.Response(200, json=_DETAIL_5120_ABB)
+
+    product = DigiKeyProvider().fetch_by_mpn(
+        "5120", manufacturer="Keystone", transport=httpx.MockTransport(handler)
+    )
+    assert product.manufacturer == "ABB Installation Products"  # kept, not raised
+
+
+def test_keyword_search_sends_the_mpn_as_keywords() -> None:
+    bodies: list[bytes] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/oauth2/token"):
+            return httpx.Response(200, json={"access_token": "t", "expires_in": 600})
+        if req.url.path.endswith("/search/keyword"):
+            bodies.append(req.content)
+            return httpx.Response(200, json=_KEYWORD_5120)
+        return httpx.Response(200, json=_DETAIL_5120_ABB)  # productdetails: wrong maker
+
+    DigiKeyProvider().fetch_by_mpn(
+        "5120", manufacturer="Keystone", transport=httpx.MockTransport(handler)
+    )
+    assert json.loads(bodies[0]) == {"Keywords": "5120"}

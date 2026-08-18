@@ -9,7 +9,12 @@ import pytest
 from app import config
 from app.services import shops
 from app.services.errors import ValidationError
-from app.services.shops.base import ProductData, ShopLookupMiss, infer_category
+from app.services.shops.base import (
+    ProductData,
+    ShopLookupMiss,
+    infer_category,
+    manufacturer_matches,
+)
 from app.services.shops.mouser import MouserProvider
 
 _MOUSER_OK = {
@@ -191,7 +196,7 @@ def test_fetch_by_index_first_hit_wins(monkeypatch) -> None:  # type: ignore[no-
     calls: list[str] = []
     hit = ProductData(mpn="NX3P1108UKZ")
 
-    def fake(self, number, *, transport=None):  # type: ignore[no-untyped-def]
+    def fake(self, number, *, manufacturer=None, transport=None):  # type: ignore[no-untyped-def]
         calls.append(number)
         return hit
 
@@ -205,7 +210,7 @@ def test_fetch_by_index_falls_back_on_a_miss_only(monkeypatch) -> None:  # type:
     provider = MouserProvider()
     hit = ProductData(mpn="NX3P1108UKZ")
 
-    def fake(self, number, *, transport=None):  # type: ignore[no-untyped-def]
+    def fake(self, number, *, manufacturer=None, transport=None):  # type: ignore[no-untyped-def]
         if number == "771-BROKEN":
             raise ShopLookupMiss("no product found")
         return hit
@@ -215,7 +220,7 @@ def test_fetch_by_index_falls_back_on_a_miss_only(monkeypatch) -> None:  # type:
 
 
 def test_fetch_by_index_reports_every_candidates_miss(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    def fake(self, number, *, transport=None):  # type: ignore[no-untyped-def]
+    def fake(self, number, *, manufacturer=None, transport=None):  # type: ignore[no-untyped-def]
         raise ShopLookupMiss(f"no product found for {number}")
 
     monkeypatch.setattr(MouserProvider, "fetch_by_mpn", fake)
@@ -229,7 +234,7 @@ def test_fetch_by_index_raises_a_hard_failure_immediately(monkeypatch) -> None: 
     # candidate — it must NOT fall through and burn another round-trip (or timeout).
     calls: list[str] = []
 
-    def fake(self, number, *, transport=None):  # type: ignore[no-untyped-def]
+    def fake(self, number, *, manufacturer=None, transport=None):  # type: ignore[no-untyped-def]
         calls.append(number)
         raise ValidationError("Mouser integration is not configured")
 
@@ -247,6 +252,87 @@ def test_fetch_by_mpn_rejects_a_partial_match(monkeypatch) -> None:  # type: ign
         MouserProvider().fetch_by_mpn(
             "CRCW04021", transport=_transport(_MOUSER_OK)
         )
+
+
+# --- disambiguating a shared MPN by manufacturer -----------------------------
+
+# "5120" is a real collision: Mouser sells it as both a Keystone Electronics part
+# and an ABB one. The API here lists ABB FIRST, so "first match wins" would pick
+# the wrong maker for a Keystone scan.
+_MOUSER_SHARED_MPN = {
+    "Errors": [],
+    "SearchResults": {
+        "NumberOfResult": 2,
+        "Parts": [
+            {
+                "ManufacturerPartNumber": "5120",
+                "Manufacturer": "ABB Installation Products",
+                "Description": "Cable Gland",
+                "ProductDetailUrl": "https://www.mouser.pl/x/ABB/5120",
+            },
+            {
+                "ManufacturerPartNumber": "5120",
+                "Manufacturer": "Keystone Electronics",
+                "Description": "PC Test Point",
+                "ProductDetailUrl": "https://www.mouser.pl/x/Keystone/5120",
+            },
+        ],
+    },
+}
+
+
+def test_fetch_by_mpn_disambiguates_a_shared_mpn_by_manufacturer(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(config, "MOUSER_API_KEY", "key")
+    # The scan's 1V manufacturer ("Keystone") picks Keystone even though Mouser
+    # listed ABB first — the reported bug.
+    product = MouserProvider().fetch_by_mpn(
+        "5120", manufacturer="Keystone", transport=_transport(_MOUSER_SHARED_MPN)
+    )
+    assert product.manufacturer == "Keystone Electronics"
+    assert product.source_url == "https://www.mouser.pl/x/Keystone/5120"
+
+
+def test_fetch_by_mpn_without_a_manufacturer_keeps_the_first_match(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(config, "MOUSER_API_KEY", "key")
+    # No manufacturer to disambiguate with → Mouser's own first, as before.
+    product = MouserProvider().fetch_by_mpn(
+        "5120", transport=_transport(_MOUSER_SHARED_MPN)
+    )
+    assert product.manufacturer == "ABB Installation Products"
+
+
+def test_fetch_by_mpn_falls_back_to_first_when_no_maker_matches(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(config, "MOUSER_API_KEY", "key")
+    # A manufacturer that matches none of the results is no worse than having none:
+    # still an exact-MPN part, left for the user to correct in the dialog.
+    product = MouserProvider().fetch_by_mpn(
+        "5120", manufacturer="Nonesuch Corp", transport=_transport(_MOUSER_SHARED_MPN)
+    )
+    assert product.manufacturer == "ABB Installation Products"
+
+
+@pytest.mark.parametrize(
+    "scanned,candidate,expected",
+    [
+        ("Keystone", "Keystone Electronics", True),  # distributor appends a suffix
+        ("Keyston", "Keystone Electronics", True),  # a DataMatrix truncated it
+        ("KEYSTONE ELECTRONICS", "Keystone Electronics", True),  # case/space
+        ("Keystone Electronics", "Keystone", True),  # fuller scan, terser catalogue
+        ("Kyocera AVX", "AVX", True),  # a rename/merge, terser catalogue name
+        ("NXP", "NXP Semiconductors", True),  # a short but WHOLE token still matches
+        ("Keystone", "ABB Installation Products", False),
+        # The limits: a short code must match a whole token, never sit as a substring
+        # or short prefix inside an unrelated maker — else it picks the WRONG one.
+        ("ABB", "Rabbit Semiconductor", False),  # not a token, not a prefix
+        ("TE", "Texas Instruments", False),  # a 2-char prefix of "texas" is not a match
+        ("ITT", "Littelfuse", False),  # substring, but not a token/prefix
+        ("", "Keystone", False),  # a blank never matches — it disambiguates nothing
+        ("Keystone", None, False),
+        (None, None, False),
+    ],
+)
+def test_manufacturer_matches(scanned, candidate, expected) -> None:  # type: ignore[no-untyped-def]
+    assert manufacturer_matches(scanned, candidate) is expected
 
 
 def test_product_url_builds_a_distributor_link_per_shop() -> None:

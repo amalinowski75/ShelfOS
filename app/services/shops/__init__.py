@@ -22,9 +22,16 @@ _logger = logging.getLogger("shelfos")
 
 
 class MpnProvider(Protocol):
-    """A provider that can also look a part up by its part number alone."""
+    """A provider that can also look a part up by its part number alone.
 
-    def fetch_by_mpn(self, mpn: str) -> ProductData: ...
+    ``manufacturer`` (a scan's ``1V`` field, an invoice line's) disambiguates a bare
+    MPN sold under several makers; a provider that resolves one product per number
+    accepts and ignores it, for a uniform interface.
+    """
+
+    def fetch_by_mpn(
+        self, mpn: str, *, manufacturer: str | None = None
+    ) -> ProductData: ...
 
 
 class IndexProvider(Protocol):
@@ -32,10 +39,13 @@ class IndexProvider(Protocol):
 
     ``candidates`` are tried best-first (the invoice's shop index, then the parsed
     MPN); how they are consumed is the provider's business — Mouser/Digi-Key try
-    them one call at a time, TME offers them all in a single call.
+    them one call at a time, TME offers them all in a single call. ``manufacturer``
+    (the invoice line's) breaks ties when a bare MPN maps to several makers.
     """
 
-    def fetch_by_index(self, candidates: list[str]) -> ProductData: ...
+    def fetch_by_index(
+        self, candidates: list[str], *, manufacturer: str | None = None
+    ) -> ProductData: ...
 
 
 _mouser = MouserProvider()
@@ -147,7 +157,10 @@ def import_code(code: str) -> ProductData:
     if provider_by_mpn is None or not scan.mpn:
         return _fallback(scan, None)  # raises if there was no MPN either
     try:
-        return provider_by_mpn.fetch_by_mpn(scan.mpn)
+        # The label's 1V manufacturer disambiguates a bare MPN that several makers
+        # share ("5120" is Keystone's and ABB's) — otherwise the shop's own ordering
+        # would pick, and the wrong company could win.
+        return provider_by_mpn.fetch_by_mpn(scan.mpn, manufacturer=scan.manufacturer)
     except ValidationError as exc:
         return _fallback(scan, exc)
 

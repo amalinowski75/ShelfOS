@@ -14,6 +14,7 @@ from app.services.shops.base import (
     ShopLookupMiss,
     fetch_first_match,
     infer_category,
+    manufacturer_matches,
 )
 
 _API_URL = "https://api.mouser.com/api/v1/search/partnumber"
@@ -81,24 +82,41 @@ class MouserProvider:
         return self.fetch_by_mpn(part_number, transport=transport)
 
     def fetch_by_index(
-        self, candidates: list[str], *, transport: httpx.BaseTransport | None = None
+        self,
+        candidates: list[str],
+        *,
+        manufacturer: str | None = None,
+        transport: httpx.BaseTransport | None = None,
     ) -> ProductData:
         """Try each candidate number in order; first hit wins (invoice import).
 
         The invoice's own Mouser number ("771-NX3P1108UKZ") comes first — it is the
         canonical key and ``mouserPartNumber`` matches Mouser's own SKU directly —
         with the parsed MPN as the fallback (see ``fetch_first_match`` for the
-        miss-only fallthrough and error aggregation).
+        miss-only fallthrough and error aggregation). ``manufacturer`` (the invoice
+        line's) breaks ties when a bare MPN is sold under several makers.
         """
         return fetch_first_match(
-            lambda number: self.fetch_by_mpn(number, transport=transport),
+            lambda number: self.fetch_by_mpn(
+                number, manufacturer=manufacturer, transport=transport
+            ),
             candidates,
         )
 
     def fetch_by_mpn(
-        self, mpn: str, *, transport: httpx.BaseTransport | None = None
+        self,
+        mpn: str,
+        *,
+        manufacturer: str | None = None,
+        transport: httpx.BaseTransport | None = None,
     ) -> ProductData:
-        """Look a part up by its number directly (from a scan, not a URL)."""
+        """Look a part up by its number directly (from a scan, not a URL).
+
+        ``manufacturer`` (from the scanned ``1V`` field, or the invoice line) is the
+        tiebreaker when the same bare MPN is sold under several makers — e.g. "5120"
+        is both a Keystone Electronics part and an ABB one. Without it Mouser's own
+        arbitrary ordering decided, and the wrong company could win.
+        """
         if not config.MOUSER_API_KEY:
             raise ValidationError("Mouser integration is not configured")
         # partSearchOptions is optional; omit it rather than risk an invalid value.
@@ -138,21 +156,30 @@ class MouserProvider:
         # Anything else is a miss — the next candidate (or review) beats silently
         # importing a different part's identity.
         queried = mpn.strip().casefold()
+        matches = [
+            p
+            for p in parts
+            if isinstance(p, dict)
+            and queried
+            in (
+                str(p.get("MouserPartNumber") or "").strip().casefold(),
+                str(p.get("ManufacturerPartNumber") or "").strip().casefold(),
+            )
+        ]
+        if not matches:
+            raise ShopLookupMiss(f"no exact match for {mpn!r}")
+        # A bare MPN can be sold by several makers ("5120" is Keystone's AND ABB's).
+        # When the caller knows the manufacturer (a scan's 1V, an invoice line), it is
+        # the tiebreaker; otherwise, and when none of the matches bear it, fall back to
+        # Mouser's own first — no worse than before, still an exact-MPN part.
         part = next(
             (
                 p
-                for p in parts
-                if isinstance(p, dict)
-                and queried
-                in (
-                    str(p.get("MouserPartNumber") or "").strip().casefold(),
-                    str(p.get("ManufacturerPartNumber") or "").strip().casefold(),
-                )
+                for p in matches
+                if manufacturer_matches(manufacturer, p.get("Manufacturer"))
             ),
-            None,
+            matches[0],
         )
-        if part is None:
-            raise ShopLookupMiss(f"no exact match for {mpn!r}")
 
         parameters: list[tuple[str, str]] = []
         for attr in part.get("ProductAttributes") or []:

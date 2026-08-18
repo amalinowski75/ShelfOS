@@ -349,6 +349,7 @@ class _Recorder:
         self.product = product
         self.url: str | None = None
         self.mpn: str | None = None
+        self.manufacturer: str | None = None
 
     def matches(self, url: str) -> bool:
         return True
@@ -359,8 +360,11 @@ class _Recorder:
             raise ValidationError("boom")
         return self.product
 
-    def fetch_by_mpn(self, mpn: str) -> ProductData:
+    def fetch_by_mpn(
+        self, mpn: str, *, manufacturer: str | None = None
+    ) -> ProductData:
         self.mpn = mpn
+        self.manufacturer = manufacturer
         if self.product is None:
             raise ValidationError("boom")
         return self.product
@@ -383,6 +387,9 @@ def test_import_code_routes_a_datamatrix_through_fetch_by_mpn(monkeypatch) -> No
     monkeypatch.setitem(shops._BY_MPN, "mouser", provider)
     product = shops.import_code(_label(_MOUSER_FIELDS))
     assert provider.mpn == "5277"  # the API call, not the URL path
+    # The label's 1V manufacturer is forwarded so the provider can disambiguate a
+    # bare MPN sold under several makers.
+    assert provider.manufacturer == "Keystone"
     assert product.manufacturer == "Keystone Electronics"
 
 

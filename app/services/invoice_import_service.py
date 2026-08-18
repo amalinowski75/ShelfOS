@@ -261,7 +261,10 @@ def _enrich(shop_key: str, line: ParsedLine, enrich_disabled: set[str]) -> Produ
     ]
     if provider is not None and candidates and shop_key not in enrich_disabled:
         try:
-            return provider.fetch_by_index(candidates)
+            # The invoice line's manufacturer breaks ties when a bare MPN is sold
+            # under several makers (Mouser) — otherwise enrichment could stamp the
+            # wrong one, which step 3's re-match would then trust.
+            return provider.fetch_by_index(candidates, manufacturer=line.manufacturer)
         except ShopLookupMiss as exc:
             _logger.info("no shop product for %s: %s", candidates, exc)
         except ValidationError as exc:
