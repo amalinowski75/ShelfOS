@@ -120,19 +120,23 @@ def _check_label_settings() -> None:
         label_printer.font_paths()
     except ValidationError as error:
         _logger.warning("Labels cannot be rendered: %s", error)
-    for name, value in (
-        ("SHELFOS_LABEL_PRINT_TIMEOUT", config.LABEL_PRINT_TIMEOUT),
-        ("SHELFOS_LABEL_STATUS_TIMEOUT", config.LABEL_STATUS_TIMEOUT),
-    ):
-        if value <= 0:
-            # A negative wait is not a shorter wait: it is an endless one, on a
-            # thread that is meant to be handed back.
-            _logger.warning(
-                "%s=%r is not a positive number of seconds; it is treated as no "
-                "wait at all.",
-                name,
-                value,
-            )
+    if config.LABEL_STATUS_TIMEOUT <= 0:
+        # A supported way to say "do not talk to the printer", so it is stated
+        # rather than warned about — but stated, because it turns off the checks
+        # that would otherwise catch a wrong tape before it is printed on.
+        _logger.info(
+            "SHELFOS_LABEL_STATUS_TIMEOUT=%r: not asking the printer anything, "
+            "so jobs are sent unchecked and reported as sent, not printed.",
+            config.LABEL_STATUS_TIMEOUT,
+        )
+    if config.LABEL_PRINT_TIMEOUT <= 0:
+        # Not a mode: a negative wait for the lock is an endless one, and a
+        # non-positive write budget fails every job before a byte leaves.
+        _logger.warning(
+            "SHELFOS_LABEL_PRINT_TIMEOUT=%r is not a positive number of "
+            "seconds; printing will be refused until it is.",
+            config.LABEL_PRINT_TIMEOUT,
+        )
     if not config.label_printing_configured():
         return  # no printer is a normal setup, not a misconfiguration
     device = Path(config.LABEL_DEVICE)

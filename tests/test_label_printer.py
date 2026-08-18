@@ -21,6 +21,8 @@ from app.services.errors import PrinterError, ValidationError
 from app.services.label_service import LabelData, location_qr_payload
 from PIL import Image, ImageChops
 
+from tests.fake_printer import IDLE_FRAME, FakePrinter, frame
+
 _DEJAVU = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
 
@@ -544,34 +546,119 @@ def test_a_short_label_keeps_the_name_and_the_useful_end_of_the_path() -> None:
     assert len(tall) > len(lines)
 
 
-def test_a_negative_print_timeout_is_reported_and_not_obeyed(  # type: ignore[no-untyped-def]
+def test_a_non_positive_print_timeout_is_refused_not_obeyed(  # type: ignore[no-untyped-def]
     monkeypatch, caplog
 ) -> None:
-    """Lock.acquire reads a negative timeout as "wait for ever" — the one thing
-    the setting exists to prevent, and a plausible typo while tuning it."""
+    """A negative wait is not a shorter wait but an endless one, on a thread
+    that is meant to be handed back — and zero seconds cannot send a job at
+    all. Both are plausible typos while tuning, so they are refused by name
+    rather than acted on."""
     from app.main import _check_label_settings
 
-    monkeypatch.setattr(config, "LABEL_PRINT_TIMEOUT", -1.0)
-    with caplog.at_level("WARNING", logger="shelfos"):
-        _check_label_settings()
-    assert "SHELFOS_LABEL_PRINT_TIMEOUT" in caplog.text
+    for value in (-1.0, 0.0):
+        caplog.clear()
+        monkeypatch.setattr(config, "LABEL_PRINT_TIMEOUT", value)
+        with caplog.at_level("WARNING", logger="shelfos"):
+            _check_label_settings()
+        assert "SHELFOS_LABEL_PRINT_TIMEOUT" in caplog.text
 
-    # And it does not wait: the clamp turns it into no wait at all. Run in a
-    # thread so a regression here fails the test instead of hanging the suite.
-    outcome: list[str] = []
+        # In a thread, because the failure this guards against is a hang: a
+        # regression should fail the test rather than stop the suite.
+        outcome: list[str] = []
 
-    def attempt() -> None:
-        try:
-            lp.print_labels(_labels(1), device="/nonexistent/lp0")
-        except Exception as error:  # noqa: BLE001 - the type is the assertion
-            outcome.append(type(error).__name__)
+        def attempt(into: list[str] = outcome) -> None:
+            try:
+                lp.print_labels(_labels(1), device="/nonexistent/lp0")
+            except Exception as error:  # noqa: BLE001 - the type is the assertion
+                into.append(type(error).__name__)
 
-    lp._PRINT_LOCK.acquire()
-    try:
         worker = threading.Thread(target=attempt, daemon=True)
         worker.start()
         worker.join(timeout=5)
-        assert not worker.is_alive(), "a negative timeout waited for the lock"
-    finally:
-        lp._PRINT_LOCK.release()
-    assert outcome == ["PrinterError"]
+        assert not worker.is_alive(), f"{value} waited instead of refusing"
+        assert outcome == ["ValidationError"]
+
+
+def test_zero_status_timeout_turns_the_readback_off(monkeypatch, caplog) -> None:  # type: ignore[no-untyped-def]
+    """Zero is what someone reaches for to mean "do not ask the printer
+    anything". It used to be read as a deadline already passed, so the status
+    request failed before a byte left and the printer was blamed for it."""
+    from app.main import _check_label_settings
+
+    monkeypatch.setattr(config, "LABEL_STATUS_TIMEOUT", 0.0)
+    assert lp._readback_budget() == 0
+    with caplog.at_level("INFO", logger="shelfos"):
+        _check_label_settings()
+    assert "not asking the printer anything" in caplog.text
+
+    # /dev/null is a character device that never answers: with the readback off
+    # it is written to and reported as sent, immediately and without complaint.
+    outcome = lp.print_labels(_labels(1), device="/dev/null")
+    assert (outcome.sent, outcome.confirmed) == (1, False)
+
+
+# --- The whole round trip, against a pty pretending to be a QL ---------------
+#
+# Everything above tests the pieces: decoders against captured frames, refusals
+# against synthetic statuses, jobs against a file. What none of it covered is
+# the wiring — that a printer which answers gets asked, believed, and confirmed.
+# `confirmed` was asserted False in two places and true in none, so cutting the
+# wire entirely (`confirmed = False and ...`) survived the suite.
+
+
+def test_a_printer_that_answers_is_asked_believed_and_confirmed() -> None:
+    """The headline of the feature, end to end and in milliseconds."""
+    with FakePrinter([IDLE_FRAME, frame(b18=lp._STATUS_COMPLETED)]) as printer:
+        outcome = lp.print_labels(_labels(1), device=printer.path)
+        printer.wait_for(b"\x1a")  # the job's tail is still in flight
+
+    assert outcome.confirmed  # the printer said it printed, and was heard
+    assert outcome.sent == 1
+    assert outcome.tape == "62"  # from the frame, not from configuration
+    # A whole raster job really went down the wire after the status question,
+    # not just the question itself.
+    assert printer.received.startswith(lp._STATUS_REQUEST)
+    assert printer.received[len(lp._STATUS_REQUEST) :].startswith(b"\x1b\x69\x61")
+    assert printer.received.endswith(b"\x1a")  # print and eject
+    assert len(printer.received) > 30_000
+
+
+def test_a_printer_reporting_a_fault_is_not_printed_to() -> None:
+    """The refusal must come BEFORE any tape moves, which the byte count shows:
+    only the three-byte status question reached the device."""
+    with FakePrinter([frame(b8=0x02)]) as printer:  # end of media
+        with pytest.raises(PrinterError, match="tape has run out"):
+            lp.print_labels(_labels(1), device=printer.path)
+
+        assert bytes(printer.received) == lp._STATUS_REQUEST
+
+
+def test_the_tape_the_printer_reports_decides_the_label(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A roll swap changes the labels, not the settings — through the real
+    device, not a synthesised status object."""
+    monkeypatch.setattr(config, "LABEL_TAPE", "62")
+    monkeypatch.setattr(lp, "_tape_cache", None)
+    # One frame for the preview's question, one for the print's own, one to
+    # confirm — the print never trusts a remembered answer.
+    answers = [frame(b10=29), frame(b10=29), frame(b10=29, b18=lp._STATUS_COMPLETED)]
+    with FakePrinter(answers) as printer:
+        monkeypatch.setattr(config, "LABEL_DEVICE", printer.path)
+        assert lp.resolve_geometry().width_px == 306  # a 29 mm roll
+
+        monkeypatch.setattr(lp, "_tape_cache", None)
+        outcome = lp.print_labels(_labels(1), device=printer.path)
+    assert outcome.tape == "29"
+
+
+def test_the_tape_is_remembered_briefly_rather_than_asked_every_time(  # type: ignore[no-untyped-def]
+    monkeypatch,
+) -> None:
+    """A preview per label would otherwise be a status round trip per label,
+    each taking the print lock, from any account allowed to look."""
+    monkeypatch.setattr(lp, "_tape_cache", None)
+    with FakePrinter([frame(b10=29)]) as printer:  # one frame, two questions
+        monkeypatch.setattr(config, "LABEL_DEVICE", printer.path)
+        assert lp.resolve_geometry().tape == "29"
+        asked_once = len(printer.received)
+        assert lp.resolve_geometry().tape == "29"  # answered from memory
+        assert len(printer.received) == asked_once

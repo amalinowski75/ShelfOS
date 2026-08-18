@@ -37,14 +37,17 @@ def preview_location_label(
             status_code=422, detail="location id must be a positive 64-bit integer"
         )
     label = lbl.build_labels(session, ids=[location_id])[0]
-    # Without an explicit override, preview what the printer would actually
-    # produce — which means asking it what tape it holds, exactly as printing
-    # does. With no printer answering, that falls back to the configured tape.
-    geometry = (
-        lp.tape_geometry(tape=tape, length_mm=length)
-        if tape is not None or length is not None
-        else lp.resolve_geometry()
-    )
+    # Preview what the printer would actually produce, which means asking it
+    # what tape it holds, exactly as printing does; with no printer answering,
+    # the configured tape stands. An override replaces only what it names — a
+    # length alone must not quietly take the width back off the printer.
+    if tape is None and length is None:
+        geometry = lp.resolve_geometry()
+    else:
+        geometry = lp.tape_geometry(
+            tape=tape if tape is not None else lp.resolve_geometry().tape,
+            length_mm=length,
+        )
     return Response(content=lp.render_png(label, geometry), media_type="image/png")
 
 

@@ -56,6 +56,16 @@ _POLL_SECONDS: Final = 0.2
 # How long a status question waits for the printer to be free. Short: a preview
 # asking what tape is loaded must never sit behind a whole print job.
 _STATUS_LOCK_SECONDS: Final = 1.0
+
+# How long a detected tape may be reused without asking again. Previews would
+# otherwise open the device and take the print lock on every GET — for a page
+# of labels, once per label, from any account that may look. Nobody swaps a roll
+# between two page loads, and the worst a stale answer costs is a preview drawn
+# for the previous tape: printing re-reads the status regardless.
+_TAPE_CACHE_SECONDS: Final = 30.0
+
+# (expires at, tape). A plain tuple swap, which is atomic enough for a hint.
+_tape_cache: tuple[float, str] | None = None
 _CHUNK_BYTES: Final = 4096
 # How long one label may take to come out before the wait for confirmation is
 # given up on (the job is still printing; only the confirmation is abandoned).
@@ -645,6 +655,29 @@ def _write_all(fd: int, data: bytes, device: str, budget: float) -> None:
             raise PrinterError("the label printer did not accept the job") from None
 
 
+def _readback_budget() -> float:
+    """Seconds to give the printer to answer, or 0 to not ask at all.
+
+    Zero is the spelling for "skip the readback": it is what someone reaches
+    for to mean "do not bother asking", and treating it as a deadline that has
+    already passed made the status request fail before a byte left, then blame
+    the printer for it.
+    """
+    return max(0.0, config.LABEL_STATUS_TIMEOUT)
+
+
+def _write_budget() -> float:
+    """Seconds a write may take. Unlike the readback, this cannot be skipped —
+    a job with no time to be sent is a setting to fix, not a mode to support."""
+    budget = config.LABEL_PRINT_TIMEOUT
+    if budget <= 0:
+        raise ValidationError(
+            "SHELFOS_LABEL_PRINT_TIMEOUT must be a positive number of seconds "
+            f"(it is {budget:g}); nothing can be sent to the printer in none"
+        )
+    return budget
+
+
 def _answers_questions(fd: int) -> bool:
     """Whether this device can be asked anything.
 
@@ -685,10 +718,10 @@ def read_printer_status(device: str | None = None) -> PrinterStatus | None:
         raise ValidationError(_NOT_CONFIGURED)
     fd = _open_device(device)
     try:
-        if not _answers_questions(fd):
+        if _readback_budget() <= 0 or not _answers_questions(fd):
             return None
-        _write_all(fd, _STATUS_REQUEST, device, budget=config.LABEL_STATUS_TIMEOUT)
-        return _read_status(fd, budget=config.LABEL_STATUS_TIMEOUT)
+        _write_all(fd, _STATUS_REQUEST, device, budget=_readback_budget())
+        return _read_status(fd, budget=_readback_budget())
     finally:
         os.close(fd)
 
@@ -734,24 +767,42 @@ def _geometry_for(status: PrinterStatus | None) -> TapeGeometry:
     return tape_geometry()
 
 
+def _remember_tape(tape: str) -> None:
+    global _tape_cache
+    _tape_cache = (time.monotonic() + _TAPE_CACHE_SECONDS, tape)
+
+
+def _remembered_tape() -> str | None:
+    cached = _tape_cache
+    if cached is None or cached[0] < time.monotonic():
+        return None
+    return cached[1]
+
+
 def resolve_geometry(device: str | None = None) -> TapeGeometry:
     """What the next label will be laid out for — asking the printer if it can.
 
     Best-effort by construction: a printer that is unplugged, busy or silent
     just leaves the configured tape in charge, so a preview still renders with
-    no printer in the building.
+    no printer in the building. The answer is remembered briefly, because this
+    is called once per rendered preview and a roll does not change that often.
     """
     device = config.LABEL_DEVICE if device is None else device
     if not device:
         return tape_geometry()
+    remembered = _remembered_tape()
+    if remembered is not None:
+        return tape_geometry(tape=remembered)
     if not _PRINT_LOCK.acquire(timeout=_STATUS_LOCK_SECONDS):
         return tape_geometry()  # a print is in flight; do not interrupt it
     try:
-        return _geometry_for(read_printer_status(device))
+        geometry = _geometry_for(read_printer_status(device))
     except (PrinterError, ValidationError):
         return tape_geometry()
     finally:
         _PRINT_LOCK.release()
+    _remember_tape(geometry.tape)
+    return geometry
 
 
 def _refuse_if_not_ready(status: PrinterStatus, geometry: TapeGeometry) -> None:
@@ -853,32 +904,40 @@ def print_labels(
     # Clamped: Lock.acquire treats a negative timeout as "wait for ever" (and
     # raises below -1), so a typo in the setting would hold a worker thread
     # exactly as long as the setting's own comment says it must not.
-    if not _PRINT_LOCK.acquire(timeout=max(0.0, config.LABEL_PRINT_TIMEOUT)):
+    # Checked before the lock, so a bad setting is a plain 422 rather than a
+    # refusal that looks like the printer's fault — and so the timeout below is
+    # known positive, where a negative one would mean "wait for ever".
+    _write_budget()
+    if not _PRINT_LOCK.acquire(timeout=config.LABEL_PRINT_TIMEOUT):
         raise PrinterError("the label printer is busy — try again in a moment")
     try:
         fd = _open_device(device)
         try:
-            asks = _answers_questions(fd)
             before = None
-            if asks:
-                _write_all(fd, _STATUS_REQUEST, device, config.LABEL_STATUS_TIMEOUT)
-                before = _read_status(fd, budget=config.LABEL_STATUS_TIMEOUT)
+            if _readback_budget() > 0 and _answers_questions(fd):
+                _write_all(fd, _STATUS_REQUEST, device, _readback_budget())
+                before = _read_status(fd, budget=_readback_budget())
             # The tape in the machine decides the label's size and shape; the
             # encoding therefore happens here, once the printer has answered.
             geometry = _geometry_for(before)
+            if before is not None:
+                _remember_tape(geometry.tape)
             if before is not None:
                 _refuse_if_not_ready(before, geometry)
             data = _print_job(
                 [label for label in labels for _ in range(copies)], geometry
             )
-            _write_all(fd, data, device, budget=config.LABEL_PRINT_TIMEOUT)
-            # A silent printer must not hold the request open for the whole
-            # print timeout, so the wait is scaled to the job and capped by it.
-            confirmed = asks and _await_completion(
+            _write_all(fd, data, device, budget=_write_budget())
+            # Only a printer that already answered is waited on. A device that
+            # said nothing when asked directly will not volunteer a completion
+            # frame either, and waiting for one costs the whole budget with the
+            # lock held. The wait is scaled to the job and capped, so a slow
+            # printer is not cut off half way through a long run.
+            confirmed = before is not None and _await_completion(
                 fd,
                 budget=min(
-                    config.LABEL_PRINT_TIMEOUT,
-                    config.LABEL_STATUS_TIMEOUT + _CONFIRM_SECONDS_PER_LABEL * total,
+                    _write_budget(),
+                    _readback_budget() + _CONFIRM_SECONDS_PER_LABEL * total,
                 ),
             )
         finally:
