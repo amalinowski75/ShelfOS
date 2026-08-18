@@ -131,7 +131,20 @@ A single generic `audit_log` table:
 - `user_id`
 - `timestamp`
 
-Tracking scope per spec §19: quantity, location, invoice and parameter changes.
+Tracking scope per spec §19: quantity, location, invoice and parameter changes,
+extended since to staged import lines, user accounts and matching rules.
+
+Creation is not audited for ordinary records — there is no prior value, and the
+bulk location generator would write hundreds of rows saying "this exists now".
+Two kinds are the exception, because for them the row appearing *is* the event:
+a user account, which is an access grant however it is worded, and a matching
+rule, which silently changes how every later import is read. Both are counted in
+tens over a system's life.
+
+Passwords are recorded as having been set and never in any form, not even the
+old hash. Who set one — its owner or an admin — is told by comparing the entry's
+``user_id`` with its ``entity_id``, rather than by a second field that could
+drift out of agreement with the first.
 
 ## D10. Out of scope for the first slice  [DEFAULT]
 

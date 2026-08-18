@@ -15,12 +15,14 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from typing import cast
 
 from sqlmodel import Session, select
 
 from app.models.component import ParameterDefinition
 from app.models.enums import MatchDomain, MountingType
 from app.models.match_rule import MatchRule
+from app.services import audit_service
 from app.services._common import require_entity
 from app.services.component_service import enum_values_of
 from app.services.errors import ValidationError
@@ -41,6 +43,10 @@ def normalize(name: str | None) -> str:
         c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c)
     )
     return _NON_ALNUM.sub("", text)
+
+
+# What the audit log calls a matching rule (spec §19).
+_AUDIT_ENTITY = "match_rule"
 
 
 @dataclass
@@ -144,6 +150,28 @@ def _canonical_target(
     return canonical
 
 
+def _describe(rule: MatchRule) -> str:
+    """A rule in one line, for a log entry that has to stand on its own.
+
+    An audit row names an entity by id, which is no use once the rule is gone —
+    and "who deleted the rule that mapped Rezystancja to resistance" is exactly
+    the question someone will bring to the log.
+    """
+    return f"{rule.domain.value}: {rule.alias} → {rule.canonical}"
+
+
+def _state(rule: MatchRule, alias: str, canonical: str, order: int) -> str:
+    """A rule's whole state in one line, for the entries recording an edit.
+
+    Every value carries the rule rather than just the field that moved, because
+    SQLite hands a deleted rule's id to the next one — rules are added and
+    dropped from the admin table as a matter of course — so a bare
+    "rezystor → rezystory" can end up filed under a rule it never described.
+    Including the order too keeps one shape for all three editable fields.
+    """
+    return f"{rule.domain.value}: {alias} → {canonical} (order {order})"
+
+
 def create_rule(
     session: Session,
     *,
@@ -152,11 +180,16 @@ def create_rule(
     canonical: str,
     parameter_definition_id: int | None = None,
     sort_order: int = 0,
+    user_id: int | None = None,
 ) -> MatchRule:
     """Add a rule, rejecting blanks and exact duplicates.
 
     The scoped domains (param_name, enum_value) require a definition; the global ones
     (type, mounting) must not carry one.
+
+    Audited when a ``user_id`` is given (§19): a rule changes how every later
+    import is read, and the rule row keeps no history of its own. ``None`` is
+    for :func:`seed_default_rules`, which runs at startup with nobody to blame.
     """
     alias = alias.strip()
     canonical = canonical.strip()
@@ -193,6 +226,19 @@ def create_rule(
         sort_order=sort_order,
     )
     session.add(rule)
+    # Flushed for the id, committed once: the rule and the record of it land
+    # together or not at all (see create_user for the same shape and reason).
+    session.flush()
+    if user_id is not None:
+        audit_service.record_change(
+            session,
+            entity_type=_AUDIT_ENTITY,
+            entity_id=cast(int, rule.id),
+            field=audit_service.FIELD_CREATED,
+            old_value=None,
+            new_value=_describe(rule),
+            user_id=user_id,
+        )
     session.commit()
     session.refresh(rule)
     return rule
@@ -205,6 +251,7 @@ def update_rule(
     alias: str | None = None,
     canonical: str | None = None,
     sort_order: int | None = None,
+    user_id: int,
 ) -> MatchRule:
     """Edit a rule's alias, target or order in place (only the fields given change).
 
@@ -216,6 +263,7 @@ def update_rule(
     rule = session.get(MatchRule, rule_id)
     if rule is None:
         raise ValidationError("matching rule not found")
+    before = (rule.alias, rule.canonical, rule.sort_order)
     if alias is not None:
         alias = alias.strip()
         if not alias:
@@ -238,16 +286,52 @@ def update_rule(
         )
     if sort_order is not None:
         rule.sort_order = sort_order
+    after = (rule.alias, rule.canonical, rule.sort_order)
+    was, now = _state(rule, *before), _state(rule, *after)
+    for name, old, new in zip(
+        (
+            audit_service.FIELD_ALIAS,
+            audit_service.FIELD_CANONICAL,
+            audit_service.FIELD_SORT_ORDER,
+        ),
+        before,
+        after,
+        strict=True,
+    ):
+        if old != new:
+            audit_service.record_change(
+                session,
+                entity_type=_AUDIT_ENTITY,
+                entity_id=rule_id,
+                field=name,
+                old_value=was,
+                new_value=now,
+                user_id=user_id,
+            )
     session.add(rule)
     session.commit()
     session.refresh(rule)
     return rule
 
 
-def delete_rule(session: Session, rule_id: int) -> None:
+def delete_rule(session: Session, rule_id: int, *, user_id: int) -> None:
+    """Remove a rule, recording what it was (§19).
+
+    The entry carries the rule's text rather than only "deleted", because by the
+    time anyone reads it the row is gone and its id says nothing.
+    """
     rule = session.get(MatchRule, rule_id)
     if rule is None:
         raise ValidationError("matching rule not found")
+    audit_service.record_change(
+        session,
+        entity_type=_AUDIT_ENTITY,
+        entity_id=rule_id,
+        field=audit_service.FIELD_DELETED,
+        old_value=_describe(rule),
+        new_value=None,
+        user_id=user_id,
+    )
     session.delete(rule)
     session.commit()
 

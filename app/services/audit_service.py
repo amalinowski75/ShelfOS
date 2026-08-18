@@ -7,17 +7,19 @@ persists atomically with the change that produced it -- either both land or
 neither does.
 
 What is covered, as of now: stock quantities, components and their parameters,
-invoices, their lines, their staged import lines, and locations. Five services
-still mutate without recording anything -- ``user_service`` (so "who granted
-admin" is unanswerable), ``match_rule_service`` (whose rules silently change how
-every later import is read), ``link_service``, ``attachment_service`` and
-``bom_service``. The list is here so the gaps are known rather than assumed
+invoices, their lines, their staged import lines, locations, user accounts, and
+the matching rules. Three services still mutate without recording anything --
+``link_service``, ``attachment_service`` and ``bom_service``. They attach things
+to records rather than deciding what anyone may do or how data is read, which is
+why they are last; the list is here so the gaps stay known rather than assumed
 closed.
 
-Creation is deliberately not audited anywhere: there is no prior value to record,
-and the bulk location generator would otherwise write hundreds of rows saying
-nothing but "this exists now". The consequence worth knowing is that no table
-carries its creator, only its editors.
+Creation is not audited for ordinary records: there is no prior value, and the
+bulk location generator would write hundreds of rows saying nothing but "this
+exists now". Two kinds are the exception, because for them the row appearing IS
+the event -- a user account, which is an access grant however it is worded, and a
+matching rule, which silently changes how every later import is read. Both are
+counted in tens over a system's life, not hundreds per click.
 
 Producers take ``user_id`` in one of two shapes, and the difference is
 deliberate: a service that is also called from a system context (import
@@ -39,6 +41,11 @@ from app.models.audit import AuditLog
 # §19). Some fields are parameterized (a parameter name, a location id); those
 # are built by the helpers below rather than hardcoded, and parsed back by their
 # ``*_of`` counterparts so no consumer has to reinvent the encoding.
+# Two shapes in the log: false → true for a record whose id still identifies it
+# (components, types, parameters, locations, invoices), and the deleted thing's
+# own text → None where the id does not — a matching rule, whose id SQLite hands
+# to the next one. Nothing reads these values today; a future reader should not
+# assume one shape.
 FIELD_DELETED: Final = "deleted"
 FIELD_LOCATION_ID: Final = "location_id"
 FIELD_IS_FINALIZED: Final = "is_finalized"
@@ -70,6 +77,21 @@ FIELD_SORT_ORDER: Final = "sort_order"
 FIELD_IS_TABLE_COLUMN: Final = "is_table_column"
 FIELD_IS_FILTERABLE: Final = "is_filterable"
 FIELD_ENUM_VALUES: Final = "enum_values"
+
+# A user account (``user``, §18). A password is recorded as having been set and
+# never in any form, not even hashed; who set it — the account's owner or an
+# admin — is told by comparing the entry's user_id with its entity_id.
+FIELD_ROLE: Final = "role"
+FIELD_IS_ACTIVE: Final = "is_active"
+FIELD_PASSWORD: Final = "password"
+# A matching rule (``match_rule``, §21). Its ``sort_order`` reuses the constant
+# above, since it means the same thing.
+FIELD_ALIAS: Final = "alias"
+FIELD_CANONICAL: Final = "canonical"
+# The row coming into existence, for the two entities where that is itself the
+# event (see the module docstring). The value says what was created rather than
+# repeating "true", because the id alone tells a later reader nothing.
+FIELD_CREATED: Final = "created"
 
 _PARAMETER_PREFIX: Final = "parameter:"
 _QUANTITY_PREFIX: Final = "quantity@location:"

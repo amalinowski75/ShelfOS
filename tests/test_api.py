@@ -1885,14 +1885,22 @@ def test_create_scoped_match_rule_binds_to_a_parameter(client: TestClient) -> No
     ctype = client.post("/api/types", json={"name": "resistor"}).json()
     client.post(
         f"/api/types/{ctype['id']}/parameters",
-        json={"name": "resistance", "label": "Resistance", "data_type": "number",
-              "unit": "Ω"},
+        json={
+            "name": "resistance",
+            "label": "Resistance",
+            "data_type": "number",
+            "unit": "Ω",
+        },
     )
     definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
     resp = client.post(
         "/api/admin/match-rules",
-        json={"domain": "param_name", "alias": "Rezystancja", "canonical": "resistance",
-              "parameter_definition_id": definition["id"]},
+        json={
+            "domain": "param_name",
+            "alias": "Rezystancja",
+            "canonical": "resistance",
+            "parameter_definition_id": definition["id"],
+        },
     )
     assert resp.status_code == 201
     assert resp.json()["parameter_definition_id"] == definition["id"]
@@ -1924,22 +1932,34 @@ def test_enum_value_rule_target_must_be_one_of_the_parameters_values(
     ctype = client.post("/api/types", json={"name": "cable"}).json()
     client.post(
         f"/api/types/{ctype['id']}/parameters",
-        json={"name": "ctype", "label": "Type", "data_type": "enum",
-              "enum_values": ["Flat", "Round"]},
+        json={
+            "name": "ctype",
+            "label": "Type",
+            "data_type": "enum",
+            "enum_values": ["Flat", "Round"],
+        },
     )
     definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
 
     bad = client.post(
         "/api/admin/match-rules",
-        json={"domain": "enum_value", "alias": "wstazkowy", "canonical": "Flatt",
-              "parameter_definition_id": definition["id"]},
+        json={
+            "domain": "enum_value",
+            "alias": "wstazkowy",
+            "canonical": "Flatt",
+            "parameter_definition_id": definition["id"],
+        },
     )
     assert bad.status_code == 422
 
     good = client.post(
         "/api/admin/match-rules",
-        json={"domain": "enum_value", "alias": "wstazkowy", "canonical": "flat",
-              "parameter_definition_id": definition["id"]},
+        json={
+            "domain": "enum_value",
+            "alias": "wstazkowy",
+            "canonical": "flat",
+            "parameter_definition_id": definition["id"],
+        },
     )
     # A valid member is folded to its stored spelling.
     assert good.status_code == 201 and good.json()["canonical"] == "Flat"
@@ -2043,8 +2063,12 @@ def _enum_param(client: TestClient, values: list[str]) -> dict:
     ctype = client.post("/api/types", json={"name": "cable"}).json()
     client.post(
         f"/api/types/{ctype['id']}/parameters",
-        json={"name": "ctype", "label": "Type", "data_type": "enum",
-              "enum_values": values},
+        json={
+            "name": "ctype",
+            "label": "Type",
+            "data_type": "enum",
+            "enum_values": values,
+        },
     )
     definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
     return {"type": ctype, "definition": definition}
@@ -2054,8 +2078,11 @@ def test_update_parameter_definition_via_admin_api(client: TestClient) -> None:
     d = _enum_param(client, ["Flat", "Round"])["definition"]
     resp = client.patch(
         f"/api/admin/parameters/{d['id']}",
-        json={"name": "ctype", "label": "Cable type",
-              "enum_values": ["Flat", "Round", "Coax"]},
+        json={
+            "name": "ctype",
+            "label": "Cable type",
+            "enum_values": ["Flat", "Round", "Coax"],
+        },
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -2068,8 +2095,10 @@ def test_update_parameter_enum_remove_in_use_is_422(client: TestClient) -> None:
     d = ctx["definition"]
     client.post(
         "/api/components",
-        json={"type_id": ctx["type"]["id"],
-              "parameters": [{"parameter_definition_id": d["id"], "value": "Flat"}]},
+        json={
+            "type_id": ctx["type"]["id"],
+            "parameters": [{"parameter_definition_id": d["id"], "value": "Flat"}],
+        },
     )
     resp = client.patch(
         f"/api/admin/parameters/{d['id']}",
@@ -2083,8 +2112,7 @@ def test_delete_parameter_definition_via_admin_api(client: TestClient) -> None:
     ctype = client.post("/api/types", json={"name": "resistor"}).json()
     client.post(
         f"/api/types/{ctype['id']}/parameters",
-        json={"name": "resistance", "label": "R", "data_type": "number",
-              "unit": "ohm"},
+        json={"name": "resistance", "label": "R", "data_type": "number", "unit": "ohm"},
     )
     d = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
     assert client.delete(f"/api/admin/parameters/{d['id']}").status_code == 204
@@ -2100,8 +2128,10 @@ def test_delete_parameter_definition_in_use_is_422(client: TestClient) -> None:
     d = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
     client.post(
         "/api/components",
-        json={"type_id": ctype["id"],
-              "parameters": [{"parameter_definition_id": d["id"], "value": "4k7"}]},
+        json={
+            "type_id": ctype["id"],
+            "parameters": [{"parameter_definition_id": d["id"], "value": "4k7"}],
+        },
     )
     assert client.delete(f"/api/admin/parameters/{d['id']}").status_code == 422
 
@@ -2119,7 +2149,8 @@ def test_parameter_edit_forbidden_for_non_admin(
     assert (
         anon_client.patch(
             f"/api/admin/parameters/{d['id']}",
-            json={"name": "resistance", "label": "R"}, headers=headers,
+            json={"name": "resistance", "label": "R"},
+            headers=headers,
         ).status_code
         == 403
     )
@@ -2138,8 +2169,14 @@ def test_update_parameter_definition_patch_leaves_unsent_fields(
     ctype = client.post("/api/types", json={"name": "resistor"}).json()
     client.post(
         f"/api/types/{ctype['id']}/parameters",
-        json={"name": "resistance", "label": "R", "data_type": "number",
-              "unit": "ohm", "sort_order": 5, "is_table_column": True},
+        json={
+            "name": "resistance",
+            "label": "R",
+            "data_type": "number",
+            "unit": "ohm",
+            "sort_order": 5,
+            "is_table_column": True,
+        },
     )
     d = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
 
@@ -2152,3 +2189,45 @@ def test_update_parameter_definition_patch_leaves_unsent_fields(
     assert body["unit"] == "ohm"  # untouched
     assert body["sort_order"] == 5
     assert body["is_table_column"] is True
+
+
+def test_admin_actions_on_users_are_attributed(client: TestClient) -> None:
+    """Through the API, not just the service: the actor is the signed-in admin,
+    which is the only way "who granted admin" gets an answer."""
+    created = client.post(
+        "/api/admin/users",
+        json={"username": "bob", "password": "password123", "role": "user"},
+    ).json()
+    client.put(f"/api/admin/users/{created['id']}/role", json={"role": "admin"})
+
+    entries = client.get(
+        f"/api/admin/audit?entity_type=user&entity_id={created['id']}"
+    ).json()
+    by_field = {entry["field"]: entry for entry in entries}
+    assert by_field["created"]["new_value"] == "bob (user)"
+    assert by_field["role"]["old_value"] == "user"
+    assert by_field["role"]["new_value"] == "admin"
+    # Attributed to the admin doing it, not to the account it happened to.
+    assert by_field["role"]["user_id"] != created["id"]
+
+
+def test_editing_a_matching_rule_is_attributed(client: TestClient) -> None:
+    # An alias no seeded default uses, so this is a create rather than a clash.
+    created = client.post(
+        "/api/admin/match-rules",
+        json={"domain": "type", "alias": "opornik-testowy", "canonical": "resistor"},
+    )
+    assert created.status_code == 201, created.json()
+    rule = created.json()
+    client.patch(
+        f"/api/admin/match-rules/{rule['id']}", json={"alias": "opornik-zmieniony"}
+    )
+    client.delete(f"/api/admin/match-rules/{rule['id']}")
+
+    entries = client.get(
+        f"/api/admin/audit?entity_type=match_rule&entity_id={rule['id']}"
+    ).json()
+    fields = [entry["field"] for entry in entries]
+    assert fields == ["deleted", "alias", "created"]  # newest first
+    # The delete carries what the rule was, since by now the row is gone.
+    assert entries[0]["old_value"] == "type: opornik-zmieniony → resistor"

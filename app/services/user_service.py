@@ -14,6 +14,7 @@ from sqlmodel import Session, col, select
 
 from app.models.enums import UserRole
 from app.models.user import User
+from app.services import audit_service
 from app.services._common import require_entity
 from app.services.errors import NotFoundError, ValidationError
 
@@ -22,13 +23,14 @@ from app.services.errors import NotFoundError, ValidationError
 # up front instead of silently truncating.
 _MAX_PASSWORD_BYTES = 72
 
+# What the audit log calls a user account (spec §19).
+_AUDIT_ENTITY = "user"
+
 
 def hash_password(password: str) -> str:
     """Return a bcrypt hash for a plaintext password."""
     if len(password.encode()) > _MAX_PASSWORD_BYTES:
-        raise ValidationError(
-            f"password must be at most {_MAX_PASSWORD_BYTES} bytes"
-        )
+        raise ValidationError(f"password must be at most {_MAX_PASSWORD_BYTES} bytes")
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
@@ -52,8 +54,15 @@ def create_user(
     password: str,
     role: UserRole = UserRole.USER,
     is_active: bool = True,
+    actor_id: int | None = None,
 ) -> User:
-    """Create a user with a hashed password (admin action, D11)."""
+    """Create a user with a hashed password (admin action, D11).
+
+    Audited when an ``actor_id`` is given (§19) — an account is an access grant,
+    so its existence is the event, not merely a row. ``None`` is for the seeding
+    that runs before anyone can be the actor: the bootstrap admin and the system
+    user, which have nobody to attribute them to.
+    """
     if not username.strip():
         raise ValidationError("username must not be empty")
     if not password:
@@ -68,6 +77,23 @@ def create_user(
         password_hash=hash_password(password),
     )
     session.add(user)
+    # Flushed rather than committed, so the id exists for the entry below while
+    # the transaction stays open: an account and the record of it must land
+    # together. Committing twice would let a grant survive a failure that lost
+    # its audit row, which is the one outcome this log exists to prevent.
+    session.flush()
+    if actor_id is not None:
+        audit_service.record_change(
+            session,
+            entity_type=_AUDIT_ENTITY,
+            entity_id=cast(int, user.id),
+            field=audit_service.FIELD_CREATED,
+            old_value=None,
+            # The role, because "an account exists" is not the interesting half
+            # — what it may do is, and it is what a reader will be looking for.
+            new_value=f"{username} ({role.value})",
+            user_id=actor_id,
+        )
     session.commit()
     session.refresh(user)
     return user
@@ -103,11 +129,25 @@ def names_by_id(session: Session, user_ids: Iterable[int]) -> dict[int, str]:
     return {cast(int, user.id): user.name for user in users}
 
 
-def set_role(session: Session, user_id: int, role: UserRole) -> User:
-    """Change a user's role."""
+def set_role(session: Session, user_id: int, role: UserRole, *, actor_id: int) -> User:
+    """Change a user's role, recording who did it (§19).
+
+    "Who granted admin" is the question an audit log exists for, and until this
+    was written it had no answer anywhere in ShelfOS.
+    """
     user = require_entity(session, User, user_id, "user")
     if role is not UserRole.ADMIN and _is_last_login_admin(session, user):
         raise ValidationError("cannot demote the last active admin")
+    if user.role is not role:
+        audit_service.record_change(
+            session,
+            entity_type=_AUDIT_ENTITY,
+            entity_id=user_id,
+            field=audit_service.FIELD_ROLE,
+            old_value=user.role.value,
+            new_value=role.value,
+            user_id=actor_id,
+        )
     user.role = role
     session.add(user)
     session.commit()
@@ -115,11 +155,23 @@ def set_role(session: Session, user_id: int, role: UserRole) -> User:
     return user
 
 
-def set_active(session: Session, user_id: int, is_active: bool) -> User:
-    """Enable or disable a user account."""
+def set_active(
+    session: Session, user_id: int, is_active: bool, *, actor_id: int
+) -> User:
+    """Enable or disable a user account, recording who did it (§19)."""
     user = require_entity(session, User, user_id, "user")
     if not is_active and _is_last_login_admin(session, user):
         raise ValidationError("cannot disable the last active admin")
+    if user.is_active != is_active:
+        audit_service.record_change(
+            session,
+            entity_type=_AUDIT_ENTITY,
+            entity_id=user_id,
+            field=audit_service.FIELD_IS_ACTIVE,
+            old_value=user.is_active,
+            new_value=is_active,
+            user_id=actor_id,
+        )
     user.is_active = is_active
     session.add(user)
     session.commit()
@@ -150,11 +202,28 @@ def _is_last_login_admin(session: Session, user: User) -> bool:
     return len(login_admins) <= 1
 
 
-def set_password(session: Session, user_id: int, password: str) -> User:
-    """Set a new password for a user."""
+def set_password(
+    session: Session, user_id: int, password: str, *, actor_id: int
+) -> User:
+    """Set a new password for a user, recording that it changed (§19).
+
+    The password itself is never recorded, in any form — not the new one, not
+    the old hash. What the entry says is that it changed and who changed it;
+    an ``actor_id`` equal to ``user_id`` is someone changing their own, and
+    anything else is an admin reset.
+    """
     if not password:
         raise ValidationError("password must not be empty")
     user = require_entity(session, User, user_id, "user")
+    audit_service.record_change(
+        session,
+        entity_type=_AUDIT_ENTITY,
+        entity_id=user_id,
+        field=audit_service.FIELD_PASSWORD,
+        old_value=None,
+        new_value="set",
+        user_id=actor_id,
+    )
     user.password_hash = hash_password(password)
     session.add(user)
     session.commit()
@@ -177,7 +246,8 @@ def change_own_password(
         current_password, user.password_hash
     ):
         raise ValidationError("current password is incorrect")
-    return set_password(session, cast(int, user.id), new_password)
+    own_id = cast(int, user.id)
+    return set_password(session, own_id, new_password, actor_id=own_id)
 
 
 def ensure_admin(session: Session, *, username: str, password: str) -> User:
