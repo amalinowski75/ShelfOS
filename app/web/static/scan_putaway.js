@@ -303,7 +303,14 @@ window.initScanPutaway = function (adapter) {
       await saving.save(locationId, path, quantity);
       if (target === saving) target = null;
       dialog.close(); // a no-op if the user already closed it
-      showToast(`${saving.label} → ${path}`, { tone: "ok" });
+      // Most saves are a move ("X → shelf"); a target may override the wording
+      // for a save that isn't (the components add says "Added N × X to …").
+      showToast(
+        saving.successToast
+          ? saving.successToast(path, quantity)
+          : `${saving.label} → ${path}`,
+        { tone: "ok" },
+      );
     } catch (error) {
       setDialogError(
         error instanceof ScanMiss ? error.message : "Could not reach the server.",

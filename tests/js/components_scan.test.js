@@ -301,7 +301,7 @@ describe("components_scan.js — resolving a bag", () => {
     expect(document.getElementById("putaway-dialog").open).toBe(false);
   });
 
-  it("says so when the component has no stock to move", async () => {
+  it("opens the dialog with an empty current location when the component has no stock", async () => {
     const { document } = await openOn({
       identifiers: ["EMPTY-1"],
       matches: [
@@ -314,9 +314,108 @@ describe("components_scan.js — resolving a bag", () => {
         },
       ],
     });
-    expect(document.getElementById("scan-status").textContent).toMatch(
-      /EMPTY-1 has no stock recorded — use Add stock/,
+    // Instead of dead-ending, the dialog opens so a scanned shelf can stock it:
+    // current location empty, count defaulted to 1, no upper cap.
+    expect(document.getElementById("putaway-dialog").open).toBe(true);
+    expect(document.getElementById("putaway-part").textContent).toBe("EMPTY-1");
+    expect(document.getElementById("putaway-select").value).toBe("");
+    expect(document.getElementById("putaway-qty").value).toBe("1");
+    expect(document.getElementById("putaway-qty").max).toBe("");
+    // The hint is what tells the user why the current-location box is empty —
+    // the whole difference from the ordinary move flow.
+    expect(document.getElementById("putaway-qty-hint").textContent).toBe(
+      "no stock on record — set the count, then scan a shelf",
     );
+  });
+
+  it("adds stock at the scanned shelf when the component had none", async () => {
+    const { document, fetchMock } = await openOn({
+      identifiers: ["EMPTY-1"],
+      matches: [
+        { id: 7, mpn: "EMPTY-1", manufacturer: null, description: null, locations: [] },
+      ],
+    });
+    document.getElementById("putaway-qty").value = "12"; // the bag holds 12
+
+    scan(document, "SL9");
+    await tick();
+
+    const call = fetchMock.mock.calls.find(([u]) => u === "/api/stock/add");
+    expect(call).toBeTruthy();
+    expect(call[1].method).toBe("POST");
+    expect(JSON.parse(call[1].body)).toEqual({
+      component_id: 7,
+      location_id: 9,
+      quantity: 12,
+    });
+  });
+
+  it("confirms an add as an add, naming the count and the shelf", async () => {
+    const { document } = await openOn({
+      identifiers: ["EMPTY-1"],
+      matches: [
+        { id: 7, mpn: "EMPTY-1", manufacturer: null, description: null, locations: [] },
+      ],
+    });
+    document.getElementById("putaway-qty").value = "12";
+
+    scan(document, "SL9");
+    await tick();
+
+    // Not "EMPTY-1 → …" (which reads as a move): this scan created stock, so the
+    // toast says so in full.
+    expect(document.querySelector(".toast-ok").textContent).toBe(
+      "Added 12 × EMPTY-1 to Lab / Shelf 02",
+    );
+  });
+
+  it("refreshes the table after an add so the Qty column stays honest", async () => {
+    const page = await openOn({
+      identifiers: ["EMPTY-1"],
+      matches: [
+        { id: 7, mpn: "EMPTY-1", manufacturer: null, description: null, locations: [] },
+      ],
+    });
+    // app.js's loadTable is global on the real page; stub it here and assert the
+    // add refreshes the Qty column in place (no full reload, so the toast lives).
+    const refresh = vi.fn();
+    page.window.loadTable = refresh;
+    page.document.getElementById("putaway-qty").value = "12";
+
+    scan(page.document, "SL9");
+    await tick();
+
+    expect(refresh).toHaveBeenCalled();
+    // The confirmation survives — a full reload would have wiped it.
+    expect(page.document.querySelector(".toast-ok")).toBeTruthy();
+  });
+
+  it("keeps the dialog open and shows why when the add is refused", async () => {
+    // The guard between "the stock is on the shelf" and "you were told it was":
+    // a refused add must not close the dialog or fire a green toast.
+    const { document } = await openOn(
+      {
+        identifiers: ["EMPTY-1"],
+        matches: [
+          { id: 7, mpn: "EMPTY-1", manufacturer: null, description: null, locations: [] },
+        ],
+      },
+      Promise.resolve({
+        ok: false,
+        status: 404,
+        json: () => Promise.resolve({ detail: "location 9 not found" }),
+      }),
+    );
+    document.getElementById("putaway-qty").value = "12";
+
+    scan(document, "SL9");
+    await tick();
+
+    const error = document.getElementById("putaway-error");
+    expect(error.hidden).toBe(false);
+    expect(error.textContent).toContain("location 9 not found");
+    expect(document.getElementById("putaway-dialog").open).toBe(true);
+    expect(document.querySelector(".toast-ok")).toBe(null); // no false success
   });
 
   it("lists the places when stock is split, instead of picking one", async () => {

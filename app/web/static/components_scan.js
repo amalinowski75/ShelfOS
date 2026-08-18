@@ -4,10 +4,11 @@
 //
 // "Set location" means something different here than on an invoice: a component
 // has no location field, its stock does. So a save moves every unit out of the
-// one place that holds it and into the scanned one. Two situations can't be
-// answered by a single scan and say so instead of guessing: stock in no place
-// at all (nothing to move — use Add stock), and stock split across several
-// (which pile was in your hand?).
+// one place that holds it and into the scanned one — EXCEPT when it holds no stock
+// at all: then there is nothing to move, so a scanned shelf STOCKS it there instead
+// (an add), with the "current location" left empty. The one case a single scan
+// still can't answer is stock split across several places (which pile was in your
+// hand?) — that one says so rather than guessing.
 (() => {
   if (!document.getElementById("scan-panel")) return;
 
@@ -54,11 +55,37 @@
       }
       const component = matches[0];
       const held = component.locations;
+      const label = component.mpn || `Component #${component.id}`;
       if (!held.length) {
-        throw new ScanMiss(
-          `${component.mpn || "That component"} has no stock recorded — ` +
-            "use Add stock to put it somewhere first.",
-        );
+        // No stock anywhere: nothing to move, so open the dialog with an empty
+        // current location and let a scanned shelf STOCK it there (an add). The
+        // count defaults to 1 and is editable — the bag in hand sets it.
+        return {
+          label,
+          description: describe(component),
+          locationId: null, // current location is empty
+          quantity: 1,
+          maxQuantity: null, // adding fresh stock — no upper bound
+          quantityHint: "no stock on record — set the count, then scan a shelf",
+          // A move reads fine as "X → shelf", but this is the one flow where a
+          // scan can create stock that did not exist — so the confirmation says
+          // so in full ("Added 12 × X to …"), the sentence to read before
+          // walking away from the bench.
+          successToast: (path, quantity) => `Added ${quantity} × ${label} to ${path}`,
+          async save(locationId, path, quantity) {
+            const added = await scanFetch("/api/stock/add", "POST", {
+              component_id: component.id,
+              location_id: locationId,
+              quantity,
+            });
+            if (!added.ok) throw new ScanMiss(await errorMessage(added));
+            // An add changes the component's total, which the table's Qty column
+            // shows (a move leaves it unchanged). Refresh that column in place —
+            // loadTable() is app.js's global on this page — rather than a full
+            // page reload, which would wipe the confirmation toast raised next.
+            if (typeof loadTable === "function") await loadTable();
+          },
+        };
       }
       if (held.length > 1) {
         const where = held.map((l) => `${l.path} (${l.quantity})`).join(", ");
@@ -69,7 +96,7 @@
       }
       const source = held[0];
       return {
-        label: component.mpn || `Component #${component.id}`,
+        label,
         description: describe(component),
         locationId: source.id,
         // The whole slot, because a bag usually moves whole — but editable for
