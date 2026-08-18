@@ -1137,6 +1137,7 @@ def print_labels(
         raise PrinterError("the label printer is busy — try again in a moment")
     _STOP.clear()
     _set_progress(0, total)
+    printed = 0
     try:
         fd = _open_device(device)
         try:
@@ -1159,9 +1160,29 @@ def print_labels(
             pages = [label for label in labels for _ in range(copies)]
             answers = before is not None
             printed, confirmed = 0, answers
+            # One ceiling for the whole run, not just per label. Without it a
+            # 50-label job could wait five minutes in confirmations alone, with
+            # the lock held and an HTTP request open — long past the point where
+            # a proxy or a browser gives up and the outcome is lost with the
+            # connection. A deployment can reason about this number.
+            deadline = (
+                time.monotonic()
+                + config.LABEL_PRINT_TIMEOUT
+                + _CONFIRM_SECONDS_PER_LABEL * total
+            )
             for page in pages:
                 if _STOP.is_set():
                     break
+                if time.monotonic() > deadline:
+                    allowed = (
+                        config.LABEL_PRINT_TIMEOUT + _CONFIRM_SECONDS_PER_LABEL * total
+                    )
+                    raise PrinterError(
+                        f"the run is taking longer than the {allowed:g} s allowed "
+                        f"for {total} label(s)",
+                        printed=printed,
+                        total=total,
+                    )
                 data = _print_job([page], geometry)
                 _write_all(fd, data, device, budget=_write_budget())
                 printed += 1
@@ -1172,15 +1193,22 @@ def print_labels(
                 # only holds back what has not been written yet, which is still
                 # most of a cabinet.
                 if answers:
-                    confirmed = _await_completion(
-                        fd,
-                        budget=min(
-                            _write_budget(),
-                            _readback_budget() + _CONFIRM_SECONDS_PER_LABEL,
-                        ),
-                    ) and confirmed
+                    confirmed = (
+                        _await_completion(
+                            fd,
+                            budget=min(
+                                _readback_budget() + _CONFIRM_SECONDS_PER_LABEL,
+                                max(0.0, deadline - time.monotonic()),
+                            ),
+                        )
+                        and confirmed
+                    )
         finally:
             os.close(fd)
+    except PrinterError as error:
+        # The labels that did come out are on the bench whether the run ended by
+        # request or by failure, so the count travels with the failure too.
+        raise PrinterError(str(error), printed=printed, total=total) from None
     finally:
         _set_progress(None, None)
         _PRINT_LOCK.release()

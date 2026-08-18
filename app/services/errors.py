@@ -34,7 +34,17 @@ class PrinterError(ShelfOSError):
     the printer is unplugged, busy, or claimed by another program. A 422 would
     tell the user to fix what they asked for, and there is nothing to fix —
     retrying in a moment is exactly the right response.
+
+    Carries how many labels had already printed when it went wrong. A run that
+    fails half way through a cabinet leaves those on the bench, and they have
+    to be accounted for exactly as a stopped run's are — the failure is not a
+    reason to lose the count.
     """
+
+    def __init__(self, message: str, *, printed: int = 0, total: int = 0) -> None:
+        super().__init__(message)
+        self.printed = printed
+        self.total = total
 
 
 class TapeMismatchError(ShelfOSError):

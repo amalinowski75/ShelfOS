@@ -215,6 +215,81 @@ describe("stopping a run", () => {
   });
 });
 
+describe("a dialog reopened while a run is going", () => {
+  it("picks the run back up instead of losing the Stop button", async () => {
+    // Escape closes the dialog; the run continues, because the request is still
+    // open. Reopening is the obvious way back to the one control that matters.
+    let release;
+    const inFlight = new Promise((resolve) => {
+      release = () =>
+        resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ sent: 8, confirmed: true, tape: "62red" }),
+        });
+    });
+    const page = loadPage(FIXTURE, SCRIPTS, {
+      fetchImpl: (url) => {
+        if (url === "/api/labels/tapes") return ok(TAPES);
+        if (url === "/api/labels/job")
+          return ok({ printing: true, done: 3, total: 8 });
+        if (url === "/api/labels/locations/print") return inFlight;
+        return ok({});
+      },
+    });
+
+    await page.window.openLabelPrintDialog({ root: 5, preview: 5, what: "8 labels" });
+    page.document.getElementById("label-print-form").dispatchEvent(
+      new page.document.defaultView.Event("submit", { cancelable: true, bubbles: true }),
+    );
+    await tick();
+
+    page.document.getElementById("label-print-dialog").close(); // Escape
+    await page.window.openLabelPrintDialog({ root: 5, preview: 5, what: "8 labels" });
+    await tick();
+
+    const progress = page.document.getElementById("label-print-progress");
+    expect(progress.hidden).toBe(false);
+    expect(page.document.getElementById("label-print-progress-text").textContent).toContain(
+      "3 of 8",
+    );
+    expect(page.document.getElementById("label-print-stop").disabled).toBe(false);
+    release();
+    await tick();
+  });
+
+  it("says how many came out when a run fails part way", async () => {
+    // The failure and the stop leave the same labels on the bench; only one of
+    // them used to account for them.
+    const { document } = await open(
+      null,
+      routes({
+        print: () =>
+          Promise.resolve({
+            ok: false,
+            status: 503,
+            json: () =>
+              Promise.resolve({
+                detail: "the printer stopped: the tape has run out",
+                printed: 3,
+                total: 8,
+              }),
+          }),
+      }),
+    );
+    document.getElementById("label-print-form").dispatchEvent(
+      new document.defaultView.Event("submit", { cancelable: true, bubbles: true }),
+    );
+    await tick();
+
+    const error = document.getElementById("label-print-error");
+    expect(error.hidden).toBe(false);
+    expect(error.textContent).toBe(
+      "Printed 3 of 8, then stopped: the printer stopped: the tape has run out",
+    );
+  });
+});
+
 describe("printing right after creating a location", () => {
   const DIALOG = `
     <dialog id="location-dialog">

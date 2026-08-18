@@ -151,7 +151,15 @@
         }
       }
       if (!resp.ok) {
-        showError(await errorMessage(resp, "The labels could not be printed."));
+        // A failed run still printed labels, and they are on the bench: say how
+        // many before saying what went wrong.
+        const failure = await resp.json().catch(() => ({}));
+        const detail = failure.detail || "The labels could not be printed.";
+        showError(
+          failure.printed
+            ? `Printed ${failure.printed} of ${failure.total}, then stopped: ${detail}`
+            : detail,
+        );
         return;
       }
       const result = await resp.json();
@@ -218,13 +226,32 @@
     send(false);
   });
 
-  window.openLabelPrintDialog = (options) => {
+  // A run continues when the dialog is closed — Escape, or Cancel — because the
+  // request is still open. Reopening it is then the obvious way back to the Stop
+  // button, so the dialog picks the run back up instead of hiding the one
+  // control that matters while a cabinet comes out.
+  async function reattachToRunningJob() {
+    try {
+      const resp = await fetch("/api/labels/job");
+      if (!resp.ok) return false;
+      const job = await resp.json();
+      if (!job.printing) return false;
+      watchJob();
+      progressText.textContent = `Printing ${job.done} of ${job.total}…`;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  window.openLabelPrintDialog = async (options) => {
     target = options;
     whatEl.textContent = options.what || "";
     clearMessages();
     stopWatching();
     previewEl.removeAttribute("src");
     dialog.showModal();
+    if (await reattachToRunningJob()) return; // a run is going; do not disturb it
     loadTapes();
   };
 })();

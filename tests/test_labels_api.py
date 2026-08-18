@@ -274,3 +274,27 @@ def test_stopping_is_a_write_so_read_only_accounts_cannot(  # type: ignore[no-un
         "/api/labels/job", headers={"Authorization": f"Bearer {token}"}
     )
     assert watched.status_code == 200
+
+
+def test_a_failed_run_reports_the_labels_it_had_already_printed(  # type: ignore[no-untyped-def]
+    client: TestClient, monkeypatch
+) -> None:
+    """503 with only a sentence would leave the user counting labels by hand."""
+    from app.services import label_printer as lp
+    from app.services.errors import PrinterError
+
+    def half_way(*_args: object, **_kwargs: object) -> lp.PrintOutcome:
+        raise PrinterError(
+            "the printer stopped: the tape has run out", printed=3, total=8
+        )
+
+    monkeypatch.setattr(config, "LABEL_DEVICE", "/dev/null")
+    monkeypatch.setattr(lp, "print_labels", half_way)
+    location_id = _location(client)
+
+    response = client.post("/api/labels/locations/print", json={"ids": [location_id]})
+
+    assert response.status_code == 503
+    body = response.json()
+    assert (body["printed"], body["total"]) == (3, 8)
+    assert "tape has run out" in body["detail"]

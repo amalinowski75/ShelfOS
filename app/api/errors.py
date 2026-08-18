@@ -26,9 +26,9 @@ _STATUS_BY_ERROR: list[tuple[type[ShelfOSError], int]] = [
     (ValidationError, status.HTTP_422_UNPROCESSABLE_CONTENT),
     (InsufficientStockError, status.HTTP_409_CONFLICT),
     (InvoiceFinalizedError, status.HTTP_409_CONFLICT),
-    # Not a client error: the request was fine and the printer was not there.
-    (PrinterError, status.HTTP_503_SERVICE_UNAVAILABLE),
 ]
+# PrinterError and the two below carry more than a sentence, so each has a
+# handler of its own further down rather than a row here.
 
 
 def register_error_handlers(app: FastAPI) -> None:
@@ -42,6 +42,20 @@ def register_error_handlers(app: FastAPI) -> None:
 
     for error_type, status_code in _STATUS_BY_ERROR:
         app.add_exception_handler(error_type, make_handler(status_code))
+
+    async def printer_handler(_request: Request, exc: Exception) -> JSONResponse:
+        # A run that failed part way still printed labels, and they exist. The
+        # count travels with the failure so a client can say "3 of 12 printed,
+        # then the tape ran out" rather than only quoting the printer.
+        assert isinstance(exc, PrinterError)
+        body: dict[str, object] = {"detail": str(exc)}
+        if exc.total:
+            body |= {"printed": exc.printed, "total": exc.total}
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content=body
+        )
+
+    app.add_exception_handler(PrinterError, printer_handler)
 
     async def duplicate_handler(_request: Request, exc: Exception) -> JSONResponse:
         # A duplicate carries the existing component's id so the client can link to
