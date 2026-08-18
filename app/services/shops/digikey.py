@@ -165,14 +165,20 @@ class DigiKeyProvider:
         return self.fetch_by_mpn(_part_number(url), transport=transport)
 
     def fetch_by_index(
-        self, candidates: list[str], *, transport: httpx.BaseTransport | None = None
+        self,
+        candidates: list[str],
+        *,
+        manufacturer: str | None = None,
+        transport: httpx.BaseTransport | None = None,
     ) -> ProductData:
         """Try each candidate number in order; first hit wins (invoice import).
 
         The invoice's Digi-Key number ("…-ND") comes first — the product-details
         endpoint's path parameter is Digi-Key's own part number, with MPN accepted as
         a best-match fallback — then the parsed MPN (see ``fetch_first_match`` for
-        the miss-only fallthrough and error aggregation).
+        the miss-only fallthrough and error aggregation). ``manufacturer`` is accepted
+        for the uniform provider interface; the endpoint resolves one product per
+        number, so there is nothing to disambiguate.
         """
         return fetch_first_match(
             lambda number: self.fetch_by_mpn(number, transport=transport),
@@ -180,9 +186,18 @@ class DigiKeyProvider:
         )
 
     def fetch_by_mpn(
-        self, mpn: str, *, transport: httpx.BaseTransport | None = None
+        self,
+        mpn: str,
+        *,
+        manufacturer: str | None = None,
+        transport: httpx.BaseTransport | None = None,
     ) -> ProductData:
-        """Look a part up by its manufacturer number directly (from a scan)."""
+        """Look a part up by its manufacturer number directly (from a scan).
+
+        ``manufacturer`` is accepted for the uniform provider interface but unused:
+        the product-details endpoint resolves a single product per number, so there
+        is no ambiguous result set to break a tie in.
+        """
         if not (config.DIGIKEY_CLIENT_ID and config.DIGIKEY_CLIENT_SECRET):
             raise ValidationError("Digi-Key integration is not configured")
         # Escaped OUTSIDE the try below: a part number that can't be encoded (a lone

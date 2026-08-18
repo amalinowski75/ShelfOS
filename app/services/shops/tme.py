@@ -362,9 +362,16 @@ class TmeProvider:
         return self.fetch_by_symbols(_symbol_candidates(url), transport=transport)
 
     def fetch_by_index(
-        self, candidates: list[str], *, transport: httpx.BaseTransport | None = None
+        self,
+        candidates: list[str],
+        *,
+        manufacturer: str | None = None,
+        transport: httpx.BaseTransport | None = None,
     ) -> ProductData:
         """Uniform invoice-import entry: TME's index IS its symbol (one API call).
+
+        ``manufacturer`` is accepted for the uniform provider interface; TME resolves
+        one product per symbol, so there is nothing to disambiguate.
 
         ``mpn_from_symbol=False``: on this path a parsed MPN from the invoice exists
         and is accurate ("Symbol producenta:"), so when the API's answer carries no

@@ -120,6 +120,30 @@ def infer_category(*texts: str | None) -> str | None:
     return None
 
 
+def _fold_manufacturer(name: str | None) -> str:
+    """A manufacturer name reduced to its lowercase alphanumerics, so cosmetic
+    differences (case, spaces, punctuation) don't defeat a comparison."""
+    return "".join(ch for ch in (name or "").casefold() if ch.isalnum())
+
+
+def manufacturer_matches(scanned: str | None, candidate: str | None) -> bool:
+    """True when a manufacturer name from a scan/invoice denotes the same maker as a
+    shop result's name.
+
+    Tolerant of the ways the two routinely differ: a DataMatrix truncates it
+    ("Keyston"), a distributor appends a suffix ("Keystone Electronics"), and
+    case/punctuation vary. Compares the alphanumeric-folded names by containment
+    either way — so a scanned prefix matches the fuller catalogue name, and a fuller
+    scan still matches a terser one. A blank on either side never matches: an absent
+    name disambiguates nothing, and must fall through to the caller's default.
+    """
+    a = _fold_manufacturer(scanned)
+    b = _fold_manufacturer(candidate)
+    if not a or not b:
+        return False
+    return a in b or b in a
+
+
 def fetch_first_match(
     fetch_one: Callable[[str], ProductData], candidates: list[str]
 ) -> ProductData:
