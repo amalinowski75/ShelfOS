@@ -181,12 +181,22 @@
       return;
     }
     if (locationFilter && !locationFilter(id)) {
-      setScanMsg(
-        form.mode.value === "take"
-          ? `This part isn't stocked in ${path}.`
-          : `${path} already holds another part.`,
-        true,
-      );
+      if (form.mode.value === "take") {
+        // A Take from a shelf the part isn't stocked in can't succeed, so leave
+        // the field empty rather than fill a location that would only be cleared.
+        setScanMsg(`This part isn't stocked in ${path}.`, true);
+        return;
+      }
+      // Add mode: "one part per slot" is an advisory default the write endpoint
+      // accepts, and the scan names the real shelf the user is standing at. Select
+      // it so they aren't forced to re-pick by hand, and keep the warning to
+      // explain the flag. allow() first: setValue alone would leave the picker
+      // treating the shelf as forbidden — greyed out, and dropped the next time
+      // the filter re-runs (e.g. toggling "show all") — so the field would look
+      // filled, then silently empty. allow() makes the selection real and durable.
+      picker.allow(id);
+      picker.setValue(id);
+      setScanMsg(`${path} already holds another part — selected anyway.`, true);
       return;
     }
     picker.setValue(id);
