@@ -748,10 +748,10 @@ def component_detail(
 
     # Said in the dialog rather than only on refusal, so the admin learns what to
     # do before clicking. Same sentence either way — it comes from the service.
-    delete_blocker = (
-        cs.stock_blocking_delete(session, component_id)
+    delete_blockers = (
+        cs.delete_blockers(session, component_id)
         if user.role == UserRole.ADMIN and not is_deleted
-        else None
+        else []
     )
 
     return templates.TemplateResponse(
@@ -779,7 +779,7 @@ def component_detail(
                 if component.deleted_by is not None
                 else None
             ),
-            "delete_blocker": delete_blocker,
+            "delete_blockers": delete_blockers,
             "current_user": user,
         },
     )

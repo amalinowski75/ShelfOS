@@ -585,6 +585,36 @@ def test_component_delete_dialog_says_up_front_when_stock_blocks_it(
     assert 'id="component-delete-confirm"' not in dialog
 
 
+def test_component_delete_dialog_names_a_draft_invoice_in_the_way(
+    client: TestClient,
+) -> None:
+    """The other thing that points at a live component. Deleting anyway leaves an
+    invoice that can never be finalized, so the dialog names it up front."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "RC0603"}
+    ).json()
+    invoice = client.post(
+        "/api/invoices",
+        json={
+            "supplier": "Mouser",
+            "invoice_number": "FV-7",
+            "invoice_date": "2026-07-08",
+            "currency": "EUR",
+        },
+    ).json()
+    client.post(
+        f"/api/invoices/{invoice['id']}/lines",
+        json={"component_id": component["id"], "quantity": 2, "unit_price": "1.00"},
+    )
+
+    html = client.get(f"/components/{component['id']}").text
+    dialog = html.split('id="component-delete-dialog"', 1)[1].split("</dialog>", 1)[0]
+    assert "draft invoice FV-7" in dialog
+    assert "finalize or remove it first" in dialog
+    assert 'id="component-delete-confirm"' not in dialog
+
+
 def test_a_deleted_component_reads_as_a_record_not_as_a_working_page(
     client: TestClient,
 ) -> None:
@@ -592,8 +622,10 @@ def test_a_deleted_component_reads_as_a_record_not_as_a_working_page(
     component = client.post(
         "/api/components", json={"type_id": ctype["id"], "mpn": "RC0603"}
     ).json()
-    client.delete(
-        f"/api/admin/components/{component['id']}?reason=bought the wrong one"
+    client.request(
+        "DELETE",
+        f"/api/admin/components/{component['id']}",
+        json={"reason": "bought the wrong one"},
     )
 
     html = client.get(f"/components/{component['id']}").text
@@ -604,8 +636,9 @@ def test_a_deleted_component_reads_as_a_record_not_as_a_working_page(
     assert 'id="component-edit-btn"' not in html
     assert 'id="component-delete-dialog"' not in html
     assert 'data-stock-act="add"' not in html
-    # But a way back.
+    # But a way back, and somewhere for it to answer.
     assert 'id="component-restore-btn"' in html
+    assert 'id="component-restore-error"' in html
 
 
 def test_a_writer_cannot_restore_a_deleted_component(

@@ -39,8 +39,14 @@
     </p>
   </div>
   {% if is_admin %}
-  <button type="button" class="btn btn-secondary btn-sm" id="component-restore-btn"
-          data-component-id="{{ component.id }}">Restore</button>
+  <div class="notice-actions">
+    <button type="button" class="btn btn-secondary btn-sm" id="component-restore-btn"
+            data-component-id="{{ component.id }}">Restore</button>
+    {# Inline and persistent, not a toast: the usual refusal is "a replacement
+       took this MPN", which asks the admin to go and look at a DIFFERENT
+       component — an answer worth keeping on screen, with a link to it. #}
+    <p id="component-restore-error" class="error" hidden></p>
+  </div>
   {% endif %}
 </div>
 {% endif %}
@@ -216,7 +222,7 @@
 {% if not is_deleted %}
 {{ component_delete_dialog(component,
                            component.mpn or ("Component #" ~ component.id),
-                           delete_blocker) }}
+                           delete_blockers) }}
 {% endif %}
 {% endif %}
 

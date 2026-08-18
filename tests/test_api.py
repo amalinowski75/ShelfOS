@@ -312,8 +312,10 @@ def test_admin_delete_takes_a_component_out_of_use_without_removing_it(
         "/api/components", json={"type_id": ctype["id"], "mpn": "RC0603"}
     ).json()
 
-    deleted = client.delete(
-        f"/api/admin/components/{component['id']}?reason=created by mistake"
+    deleted = client.request(
+        "DELETE",
+        f"/api/admin/components/{component['id']}",
+        json={"reason": "created by mistake"},
     )
     assert deleted.status_code == 204
 
@@ -338,6 +340,27 @@ def test_admin_delete_takes_a_component_out_of_use_without_removing_it(
     assert stocking.status_code == 422
 
 
+def test_the_delete_reason_is_bounded_and_never_blank(client: TestClient) -> None:
+    """The reason is the only part of this request the audit log keeps verbatim,
+    so it is bounded — and a reason made of spaces is no reason at all."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    first = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    too_long = client.request(
+        "DELETE",
+        f"/api/admin/components/{first['id']}",
+        json={"reason": "x" * 201},
+    )
+    assert too_long.status_code == 422
+
+    client.request(
+        "DELETE", f"/api/admin/components/{first['id']}", json={"reason": "   "}
+    )
+    entries = client.get(
+        f"/api/admin/audit?entity_type=component&entity_id={first['id']}"
+    ).json()
+    assert [e["field"] for e in entries] == ["deleted"]  # no empty reason recorded
+
+
 def test_a_replacement_gets_its_own_id_not_the_deleted_one(client: TestClient) -> None:
     """The reason this is a soft delete. SQLite hands the next row
     ``max(rowid) + 1``, so removing the newest component would give its id — and
@@ -357,6 +380,42 @@ def test_a_replacement_gets_its_own_id_not_the_deleted_one(client: TestClient) -
     assert replacement.status_code == 201
     # …and not handed the dead component's identity either.
     assert replacement.json()["id"] != original["id"]
+
+
+def _drafted_purchase(client: TestClient) -> tuple[dict, dict]:
+    """A component named by a line on a DRAFT (unfinalized) invoice."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "RC0603"}
+    ).json()
+    invoice = client.post(
+        "/api/invoices",
+        json={
+            "supplier": "Mouser",
+            "invoice_number": "FV-9",
+            "invoice_date": "2026-07-08",
+            "currency": "EUR",
+        },
+    ).json()
+    client.post(
+        f"/api/invoices/{invoice['id']}/lines",
+        json={
+            "component_id": component["id"],
+            "quantity": 2,
+            "unit_price": "1.00",
+        },
+    )
+    return component, invoice
+
+
+def test_a_draft_invoice_line_refuses_the_delete(client: TestClient) -> None:
+    # Otherwise: finalize needs the component live, and restoring it is refused
+    # by the replacement that deleting it invited — an invoice with no way out.
+    component, invoice = _drafted_purchase(client)
+
+    refused = client.delete(f"/api/admin/components/{component['id']}")
+    assert refused.status_code == 422
+    assert "draft invoice FV-9" in refused.json()["detail"]
 
 
 def test_admin_can_put_a_deleted_component_back(client: TestClient) -> None:

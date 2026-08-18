@@ -29,7 +29,8 @@ const BLOCKED_FIXTURE = `
 const RESTORE_FIXTURE = `
   <button type="button" id="component-restore-btn" data-component-id="7">
     Restore
-  </button>`;
+  </button>
+  <p id="component-restore-error" class="error" hidden></p>`;
 
 const PENDING_TOAST = "shelfos:pending-toast";
 const ok = () => Promise.resolve({ ok: true, status: 204 });
@@ -54,23 +55,28 @@ describe("component_delete.js", () => {
     await tick();
 
     const [url, options] = fetchMock.mock.calls[0];
-    expect(url).toBe("/api/admin/components/7?reason=created+by+mistake");
+    expect(url).toBe("/api/admin/components/7");
     expect(options.method).toBe("DELETE");
     expect(options.headers["X-CSRF-Token"]).toBe(CSRF);
+    // In the body, never the query string: a reason is free text about someone
+    // else's part, and a query string is logged by every hop that sees it.
+    expect(JSON.parse(options.body).reason).toBe("created by mistake");
     // The page still exists — it now says "deleted" — so this reloads rather
     // than navigating away, and the toast has to survive that.
     const pending = JSON.parse(window.sessionStorage.getItem(PENDING_TOAST));
     expect(pending.message).toBe("RC0603 is no longer in use.");
   });
 
-  it("leaves the reason out of the request when none was typed", async () => {
+  it("sends no reason at all when none was typed", async () => {
     const { document, fetchMock } = loadPage(DELETE_FIXTURE, SCRIPTS, {
       fetchImpl: ok,
     });
     document.getElementById("component-delete-confirm").click();
     await tick();
 
-    expect(fetchMock.mock.calls[0][0]).toBe("/api/admin/components/7");
+    // Null, not "" — the column means "no reason given", and a blank string
+    // would be a reason that says nothing.
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).reason).toBeNull();
   });
 
   it("shows a refusal in the dialog and stays put", async () => {
@@ -136,25 +142,52 @@ describe("component_delete.js", () => {
     ).toBe("Back in use.");
   });
 
-  it("says why a restore was refused, as a toast beside the banner", async () => {
+  it("keeps a refused restore on screen, with a link to what is in the way", async () => {
     // The usual reason: a replacement has taken the MPN, which is exactly what
-    // deleting this one allowed to happen.
-    const { document, window } = loadPage(RESTORE_FIXTURE, SCRIPTS, {
+    // deleting this one allowed to happen. That answer asks the admin to go and
+    // look at a DIFFERENT component, so it must not expire after five seconds —
+    // and the id the API sends alongside it should be clickable, not dropped.
+    const { document, window, fetchMock } = loadPage(RESTORE_FIXTURE, SCRIPTS, {
       fetchImpl: () =>
         Promise.resolve({
           ok: false,
           status: 409,
           json: async () => ({
             detail: "A component with MPN RC0603 already exists",
+            existing_id: 12,
           }),
         }),
     });
     document.getElementById("component-restore-btn").click();
     await tick();
 
-    expect(document.querySelector(".toast").textContent).toContain(
-      "already exists",
+    const error = document.getElementById("component-restore-error");
+    expect(error.hidden).toBe(false);
+    expect(error.textContent).toContain("already exists");
+    expect(error.querySelector("a").getAttribute("href")).toBe(
+      "/components/12",
     );
     expect(window.sessionStorage.getItem(PENDING_TOAST)).toBeNull();
+    // Released after a failure: the admin can act on the answer and try again.
+    document.getElementById("component-restore-btn").click();
+    await tick();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("says a plain refusal plainly, with nothing to click", async () => {
+    const { document } = loadPage(RESTORE_FIXTURE, SCRIPTS, {
+      fetchImpl: () =>
+        Promise.resolve({
+          ok: false,
+          status: 422,
+          json: async () => ({ detail: "That component is not deleted." }),
+        }),
+    });
+    document.getElementById("component-restore-btn").click();
+    await tick();
+
+    const error = document.getElementById("component-restore-error");
+    expect(error.textContent).toBe("That component is not deleted.");
+    expect(error.querySelector("a")).toBeNull();
   });
 });

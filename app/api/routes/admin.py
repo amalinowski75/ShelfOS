@@ -12,6 +12,7 @@ from typing import cast
 
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, ConfigDict
+from pydantic import Field as PydanticField
 from sqlmodel import Session
 
 from app.api.deps import get_session
@@ -124,10 +125,24 @@ class MatchRuleUpdate(BaseModel):
     sort_order: int | None = None
 
 
+class ComponentDelete(BaseModel):
+    """Why a component is being taken out of use (§20).
+
+    In the BODY, not the query string: this is free text one person types about
+    another person's part, and a query string is the one part of a request that
+    is written down everywhere by default — the access log, any proxy in front,
+    the browser history, the Referer. The audit log keeps it properly, with the
+    actor and the timestamp; a second unmanaged copy in a place with no retention
+    policy is not something to hand out for free.
+    """
+
+    reason: str | None = PydanticField(default=None, max_length=200)
+
+
 @router.delete("/components/{component_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_component(
     component_id: int,
-    reason: str | None = Query(None, max_length=200),
+    payload: ComponentDelete | None = None,
     session: Session = Depends(get_session),
     user_id: int = Depends(current_user_id),
 ) -> None:
@@ -139,7 +154,12 @@ def delete_component(
     is lost by keeping the row -- every lookup that could block a replacement
     already ignores deleted components.
     """
-    cs.soft_delete_component(session, component_id, user_id=user_id, reason=reason)
+    cs.soft_delete_component(
+        session,
+        component_id,
+        user_id=user_id,
+        reason=payload.reason if payload else None,
+    )
 
 
 @router.post("/components/{component_id}/restore", response_model=Component)

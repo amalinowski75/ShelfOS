@@ -28,11 +28,11 @@ from app.models.component import (
     ParameterEnumValue,
 )
 from app.models.enums import MatchDomain, MountingType, ParameterDataType
-from app.models.invoice import InvoiceImportLine
+from app.models.invoice import Invoice, InvoiceImportLine, InvoiceLine
 from app.models.location import ComponentLocation
 from app.models.match_rule import MatchRule
 from app.services import attachment_service, audit_service, link_service
-from app.services._common import require_entity
+from app.services._common import refuse_if_deleted, require_entity
 from app.services.errors import DuplicateComponentError, ValidationError
 from app.units import UnitParseError, parse_engineering
 
@@ -1146,40 +1146,65 @@ def require_live_component(session: Session, component_id: int) -> Component:
     """The component, or a refusal if it has been deleted (§20).
 
     A soft-deleted component keeps its row so the history that points at it keeps
-    meaning something, but it is out of use: it cannot be edited, stocked or
-    matched. Everything that WRITES to a component goes through here, so
-    "unusable" is one rule in one place rather than a check each caller might
+    meaning something, but it is out of use: it cannot be edited, stocked,
+    matched, invoiced or attached to. Every write that names a component by id
+    goes through here; the ones that reach it generically, by ``entity_type``
+    (attachments and links), get the same rule through ``refuse_if_deleted``,
+    which is where it actually lives. One rule, not a check each caller might
     forget.
     """
     component = require_entity(session, Component, component_id, "component")
-    if component.deleted_at is not None:
-        raise ValidationError(
-            f"{component.mpn or f'Component #{component_id}'} is deleted. "
-            "Restore it first."
-        )
+    refuse_if_deleted(component, component.mpn or f"Component #{component_id}")
     return component
 
 
-def stock_blocking_delete(session: Session, component_id: int) -> str | None:
-    """Why this component cannot be deleted yet, or ``None`` if it can.
+def delete_blockers(session: Session, component_id: int) -> list[str]:
+    """Why this component cannot be deleted yet; empty when it can.
 
     Returned rather than raised so the UI can say it BEFORE the click: the
-    dialog and the refusal are then the same sentence, instead of two wordings
+    dialog and the refusal are then the same sentences, instead of two wordings
     that drift apart.
+
+    Two things point at a component in a way that deleting would strand. Stock,
+    because the parts are still in the drawer and a catalogue entry nobody can
+    take them out of is worse than one that is still there. And a DRAFT invoice
+    line, because finalizing needs the component live -- and by then the same MPN
+    may have been entered again (which deleting is what allows), so restoring is
+    refused as a duplicate and the invoice can never be finalized at all. Neither
+    refusal is wrong on its own; together they are a dead end, and the only way
+    out of it is not to get in.
     """
+    blockers: list[str] = []
     held = session.exec(
         select(ComponentLocation)
         .where(ComponentLocation.component_id == component_id)
         .where(ComponentLocation.quantity > 0)
     ).all()
-    if not held:
-        return None
-    total = sum(row.quantity for row in held)
-    where = "location" if len(held) == 1 else "locations"
-    return (
-        f"Still holds {total} in stock across {len(held)} {where} — "
-        "take the stock out first."
-    )
+    if held:
+        total = sum(row.quantity for row in held)
+        where = "location" if len(held) == 1 else "locations"
+        blockers.append(
+            f"Still holds {total} in stock across {len(held)} {where} — "
+            "take the stock out first."
+        )
+
+    drafts = session.exec(
+        select(Invoice.invoice_number)
+        .join(InvoiceLine, col(InvoiceLine.invoice_id) == col(Invoice.id))
+        .where(InvoiceLine.component_id == component_id)
+        .where(col(Invoice.is_finalized).is_(False))
+        .order_by(col(Invoice.invoice_number))
+    ).all()
+    if drafts:
+        numbers = sorted(set(drafts))
+        lines = "1 line" if len(drafts) == 1 else f"{len(drafts)} lines"
+        invoices = "invoice" if len(numbers) == 1 else "invoices"
+        them = "it" if len(drafts) == 1 else "them"
+        blockers.append(
+            f"Named by {lines} on draft {invoices} {', '.join(numbers)} — "
+            f"finalize or remove {them} first."
+        )
+    return blockers
 
 
 def soft_delete_component(
@@ -1208,9 +1233,8 @@ def soft_delete_component(
     them out of is worse than one that is still there.
     """
     component = require_live_component(session, component_id)
-    blocker = stock_blocking_delete(session, component_id)
-    if blocker is not None:
-        raise ValidationError(blocker)
+    if blockers := delete_blockers(session, component_id):
+        raise ValidationError(" ".join(blockers))
 
     component.deleted_at = datetime.now(UTC)
     component.deleted_by = user_id

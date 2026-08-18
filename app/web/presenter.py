@@ -200,9 +200,7 @@ def build_component_table(
                 if definition.data_type is ParameterDataType.NUMBER:
                     # Raw value beside the formatted string so the client sorts
                     # the column by magnitude (47 Ω < 220 Ω < 1 kΩ), not text.
-                    row[f"{field}__n"] = (
-                        param.value_num if param is not None else None
-                    )
+                    row[f"{field}__n"] = param.value_num if param is not None else None
         rows.append(row)
 
     return {"columns": columns, "data": rows}
@@ -252,9 +250,9 @@ def build_location_stock(session: Session) -> dict[int, list[dict[str, Any]]]:
     named = {
         component_id: (mpn, manufacturer)
         for component_id, mpn, manufacturer in session.exec(
-            select(
-                Component.id, Component.mpn, Component.manufacturer
-            ).where(col(Component.id).in_(component_ids))
+            select(Component.id, Component.mpn, Component.manufacturer).where(
+                col(Component.id).in_(component_ids)
+            )
         ).all()
     }
 

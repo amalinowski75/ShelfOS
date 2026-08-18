@@ -2,11 +2,23 @@
 
 from __future__ import annotations
 
+from datetime import date
+from decimal import Decimal
+
 import pytest
 from app.models.component import Component, ComponentType, ParameterDefinition
-from app.models.enums import LocationType, MatchDomain, ParameterDataType
+from app.models.enums import (
+    AttachmentKind,
+    LinkKind,
+    LocationType,
+    MatchDomain,
+    ParameterDataType,
+)
+from app.services import attachment_service as attachments
 from app.services import audit_service as audit
 from app.services import component_service as cs
+from app.services import invoice_service as inv
+from app.services import link_service as links
 from app.services import location_service as ls
 from app.services import match_rule_service as mrs
 from app.services import stock_service as ss
@@ -1652,6 +1664,81 @@ def test_stock_on_hand_refuses_the_delete(session: Session) -> None:
     )
     cs.soft_delete_component(session, component.id, user_id=1)
     assert component.deleted_at is not None
+
+
+def test_a_draft_invoice_line_refuses_the_delete(session: Session) -> None:
+    """Otherwise the two headline behaviours combine into a dead end: finalize
+    needs the component live, and restoring it is refused by the replacement that
+    deleting it invited. Neither refusal is wrong; together there is no way out,
+    so the only fix is not to get in."""
+    component = _live_component(session)
+    invoice = inv.create_invoice(
+        session,
+        supplier="Mouser",
+        invoice_number="FV-1",
+        invoice_date=date(2026, 7, 8),
+        currency="EUR",
+    )
+    inv.add_line(
+        session,
+        invoice.id,
+        component_id=component.id,
+        quantity=2,
+        unit_price=Decimal("1.00"),
+    )
+
+    with pytest.raises(ValidationError, match="draft invoice FV-1"):
+        cs.soft_delete_component(session, component.id, user_id=1)
+    # Said before the click too, so the dialog and the refusal are one wording.
+    blockers = cs.delete_blockers(session, component.id)
+    assert any("FV-1" in blocker for blocker in blockers)
+
+
+def test_a_deleted_component_takes_no_new_invoice_line(session: Session) -> None:
+    # The same trap from the other side: accepted here, refused at finalize.
+    component = _live_component(session)
+    cs.soft_delete_component(session, component.id, user_id=1)
+    invoice = inv.create_invoice(
+        session,
+        supplier="Mouser",
+        invoice_number="FV-2",
+        invoice_date=date(2026, 7, 8),
+        currency="EUR",
+    )
+
+    with pytest.raises(ValidationError, match="is deleted"):
+        inv.add_line(
+            session,
+            invoice.id,
+            component_id=component.id,
+            quantity=1,
+            unit_price=Decimal("1.00"),
+        )
+
+
+def test_a_deleted_component_takes_no_links_or_attachments(session: Session) -> None:
+    # Reached generically (by entity_type), so the rule lives on the row rather
+    # than in each service that can hang something off a component.
+    component = _live_component(session)
+    cs.soft_delete_component(session, component.id, user_id=1)
+
+    with pytest.raises(ValidationError, match="is deleted"):
+        links.create_link(
+            session,
+            entity_type="component",
+            entity_id=component.id,
+            kind=LinkKind.DATASHEET,
+            url="https://example.com/d.pdf",
+        )
+    with pytest.raises(ValidationError, match="is deleted"):
+        attachments.create_attachment(
+            session,
+            entity_type="component",
+            entity_id=component.id,
+            kind=AttachmentKind.DATASHEET,
+            filename="d.pdf",
+            data=b"%PDF-1.4",
+        )
 
 
 def test_restore_puts_it_back_and_is_audited(session: Session) -> None:

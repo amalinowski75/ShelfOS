@@ -18,7 +18,7 @@ from sqlmodel import Session, col, select
 
 from app.models.enums import LinkKind
 from app.models.link import Link
-from app.services._common import entity_model, require_entity
+from app.services._common import entity_model, refuse_if_deleted, require_entity
 from app.services.errors import ValidationError
 
 _MAX_URL_LEN = 2048
@@ -84,7 +84,8 @@ def create_link(
 ) -> Link:
     """Attach an external link to an entity (validates the URL and the target)."""
     model = entity_model(entity_type)
-    require_entity(session, model, entity_id, entity_type)
+    entity = require_entity(session, model, entity_id, entity_type)
+    refuse_if_deleted(entity, f"{entity_type} #{entity_id}")
 
     link = Link(
         entity_type=entity_type,

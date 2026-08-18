@@ -7,9 +7,10 @@
    history. The dialog says what actually changes, which is "stops being usable",
    not "disappears".
 
-   `blocker` is the service's own refusal sentence when the component still holds
-   stock, shown here instead of after the click. #}
-{% macro component_delete_dialog(component, name, blocker) %}
+   `blockers` are the service's own refusal sentences — stock still on hand, or a
+   draft invoice line naming this component — shown here instead of after the
+   click. #}
+{% macro component_delete_dialog(component, name, blockers) %}
 <dialog id="component-delete-dialog"
         data-component-id="{{ component.id }}" data-name="{{ name }}">
   <article>
@@ -18,8 +19,12 @@
       <button type="button" class="close" aria-label="Close" data-close></button>
     </header>
     <form id="component-delete-form">
-      {% if blocker %}
-      <p class="delete-lead" id="component-delete-blocked">{{ blocker }}</p>
+      {% if blockers %}
+      <div id="component-delete-blocked">
+        {% for blocker in blockers %}
+        <p class="delete-lead">{{ blocker }}</p>
+        {% endfor %}
+      </div>
       {% else %}
       <p class="delete-lead">
         <strong class="mono">{{ name }}</strong> stops being usable —
@@ -41,9 +46,9 @@
       <p id="component-delete-error" class="error" hidden></p>
       <footer>
         <button type="button" class="btn btn-ghost" data-close>
-          {{ "Close" if blocker else "Cancel" }}
+          {{ "Close" if blockers else "Cancel" }}
         </button>
-        {% if not blocker %}
+        {% if not blockers %}
         <button type="button" class="btn btn-danger" id="component-delete-confirm">
           Delete
         </button>

@@ -27,6 +27,21 @@ def entity_model(entity_type: str) -> type[SQLModel]:
     return model
 
 
+def refuse_if_deleted(entity: SQLModel, name: str) -> None:
+    """Refuse a write to something that has been taken out of use (§20).
+
+    A soft delete keeps the row so that the records pointing at it keep meaning
+    something -- not so that it can go on being written to. Whether a model has
+    the notion at all is read off the row, so this covers every service that
+    reaches an entity generically (attachments, links) as well as the component
+    paths, and a second soft-deleted entity would get the rule rather than a
+    second copy of it. The caller passes the best name it has, so the sentence
+    says "RC0603" where it can and "component #7" where it cannot.
+    """
+    if getattr(entity, "deleted_at", None) is not None:
+        raise ValidationError(f"{name} is deleted — restore it first.")
+
+
 def require_entity[M: SQLModel](
     session: Session, model: type[M], entity_id: int, label: str
 ) -> M:

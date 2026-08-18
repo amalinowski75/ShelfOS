@@ -318,6 +318,9 @@ table.kv tr:last-child th, table.kv tr:last-child td { border-bottom: none; }
   background: var(--danger-soft);
 }
 .notice-danger strong { color: var(--danger); }
+/* The button and any refusal it earned, stacked so the message stays put. */
+.notice-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.notice-actions .error { text-align: right; max-width: 34ch; }
 
 /* ---------- delete-component dialog (§20) ---------- */
 /* Consequences, listed. Bulleted on purpose — every other list in the app is a

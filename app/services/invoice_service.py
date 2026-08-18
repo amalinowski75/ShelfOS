@@ -21,6 +21,7 @@ from app.models.enums import StockReason
 from app.models.invoice import Invoice, InvoiceImportLine, InvoiceLine
 from app.models.location import Location
 from app.services import attachment_service, audit_service, stock_service
+from app.services import component_service as cs
 from app.services._common import require_entity
 from app.services.errors import (
     InvoiceFinalizedError,
@@ -153,7 +154,10 @@ def add_line(
 ) -> InvoiceLine:
     """Add a line to a draft invoice; ``total_price`` is computed automatically."""
     invoice = _require_draft(session, invoice_id)
-    require_entity(session, Component, component_id, "component")
+    # Live, not merely existing: a line for a deleted component would be accepted
+    # here and refused at finalize, which is the trap `delete_blockers` closes
+    # from the other side (§20).
+    cs.require_live_component(session, component_id)
     if quantity <= 0:
         raise ValidationError("invoice line quantity must be positive")
     if unit_price < 0:

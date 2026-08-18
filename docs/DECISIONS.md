@@ -185,10 +185,21 @@ every write path goes through): no edits, no parameter values, no stock movement
 and absent from every list, picker and matcher. The detail page stays reachable —
 audit entries and invoice lines link to it — and says so at the top.
 
-Stock on hand refuses the delete, the way a location holding stock does: the
-parts are still in the drawer, and a catalogue entry nobody can take them out of
-is worse than one that is still there. The refusal sentence is produced by the
-service and shown in the dialog *before* the click, so there is one wording.
+Two things refuse the delete, and the refusal sentences are produced by the
+service and shown in the dialog *before* the click, so there is one wording
+either way. Stock on hand, as for a location holding stock: the parts are still
+in the drawer, and a catalogue entry nobody can take them out of is worse than
+one that is still there. And a line on a **draft** invoice — because finalizing
+needs the component live, while restoring it is refused by the replacement that
+deleting it invited, so the two rules would otherwise combine into an invoice
+that can never be finalized at all. `add_line` refuses a deleted component from
+the other side, so the trap has no entrance.
+
+The reason travels in the request BODY, not the query string: it is free text one
+person types about another's part, and a query string is written down by every
+hop that sees it (the access log, a proxy, the browser history, the `Referer`)
+with no retention policy. The audit log keeps it properly, with the actor and the
+timestamp.
 
 Restore is offered because the row is still there; it is refused when a live
 component has taken over the MPN in the meantime — which is exactly what deleting
