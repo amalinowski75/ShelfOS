@@ -444,6 +444,19 @@ class LinkCreate(BaseModel):
     notes: str | None = None
 
 
+class LinkUpdate(BaseModel):
+    """Edit a link's kind/url/label/notes (the target entity is immutable).
+
+    A full replace of the editable fields — the edit dialog always sends the whole
+    row — so a blank label/notes clears it.
+    """
+
+    kind: LinkKind = LinkKind.OTHER
+    url: str = Field(max_length=2048)
+    label: str | None = None
+    notes: str | None = None
+
+
 class LinkRead(BaseModel):
     """External-link metadata for the API.
 

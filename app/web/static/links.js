@@ -34,6 +34,9 @@ function setupLinks(widget) {
     `/api/links?entity_type=${encodeURIComponent(entityType)}` +
     `&entity_id=${encodeURIComponent(entityId)}`;
   const emptyText = empty.textContent; // the macro's "No links." default
+  // Assigned inside the form block below (writers only); a row's Edit button calls
+  // it. Rows render after that assignment, so it is set by the time it's used.
+  let openEdit = null;
 
   async function load() {
     try {
@@ -71,6 +74,13 @@ function setupLinks(widget) {
     li.innerHTML =
       anchor + `<span class="badge b-neutral">${esc(row.kind)}</span>${notes}`;
     if (canWrite) {
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "btn btn-secondary btn-sm";
+      edit.textContent = "Edit";
+      edit.addEventListener("click", () => openEdit?.(row));
+      li.appendChild(edit);
+
       const del = document.createElement("button");
       del.type = "button";
       del.className = "btn btn-ghost btn-sm";
@@ -105,7 +115,11 @@ function setupLinks(widget) {
 
   if (form) {
     const error = form.querySelector(".link-error");
+    const titleEl = dialog?.querySelector("header strong");
+    const submitBtn = form.querySelector('button[type="submit"]');
     let submitting = false;
+    // null in "Add" mode; a link id in "Edit" mode (submit PATCHes that link).
+    let editingId = null;
     // Bumped on every submit and on every close; an in-flight submit only touches
     // the dialog if its token is still current (see attachments.js for the race).
     let submitToken = 0;
@@ -116,17 +130,33 @@ function setupLinks(widget) {
     dialog?.addEventListener("close", () => {
       submitting = false;
       submitToken += 1;
+      editingId = null;
     });
 
-    // The form lives in a dialog opened from the card header, so the panel stays a
-    // clean list. Open with a fresh form; the shared [data-close] handler closes it.
-    if (addBtn && dialog) {
-      addBtn.addEventListener("click", () => {
-        form.reset();
-        error.hidden = true;
-        dialog.showModal();
-      });
+    // The form lives in a dialog opened from the card header (Add) or a row's Edit
+    // button, so the panel stays a clean list. Both open a fresh form; the shared
+    // [data-close] handler closes it.
+    function openAdd() {
+      form.reset();
+      editingId = null;
+      if (titleEl) titleEl.textContent = "Add link";
+      if (submitBtn) submitBtn.textContent = "Add";
+      error.hidden = true;
+      dialog.showModal();
     }
+    openEdit = (row) => {
+      form.reset();
+      editingId = row.id;
+      form.elements.url.value = row.url;
+      form.elements.kind.value = row.kind;
+      form.elements.label.value = row.label || "";
+      form.elements.notes.value = row.notes || "";
+      if (titleEl) titleEl.textContent = "Edit link";
+      if (submitBtn) submitBtn.textContent = "Save";
+      error.hidden = true;
+      dialog.showModal();
+    };
+    if (addBtn && dialog) addBtn.addEventListener("click", openAdd);
 
     form.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -139,23 +169,29 @@ function setupLinks(widget) {
       }
       submitting = true;
       const token = ++submitToken;
+      const editing = editingId; // pin for the whole round trip
+      const kind = form.elements.kind.value;
+      const label = form.elements.label.value.trim() || null;
+      const notes = form.elements.notes.value.trim() || null;
       (async () => {
         try {
-          const resp = await fetch("/api/links", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-CSRF-Token": csrfToken,
+          // Edit PATCHes the link's editable fields; Add POSTs a new one. The edit
+          // body omits the entity — a link's target is immutable.
+          const resp = await fetch(
+            editing == null ? "/api/links" : `/api/links/${editing}`,
+            {
+              method: editing == null ? "POST" : "PATCH",
+              headers: {
+                "Content-Type": "application/json",
+                "X-CSRF-Token": csrfToken,
+              },
+              body: JSON.stringify(
+                editing == null
+                  ? { entity_type: entityType, entity_id: Number(entityId), url, kind, label, notes }
+                  : { url, kind, label, notes },
+              ),
             },
-            body: JSON.stringify({
-              entity_type: entityType,
-              entity_id: Number(entityId),
-              url,
-              kind: form.elements.kind.value,
-              label: form.elements.label.value.trim() || null,
-              notes: form.elements.notes.value.trim() || null,
-            }),
-          });
+          );
           if (token !== submitToken) return; // dialog closed/reopened meanwhile
           if (resp.ok) {
             form.reset();

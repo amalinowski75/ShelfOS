@@ -57,6 +57,21 @@ def _validate_url(url: str) -> str:
     return cleaned
 
 
+def _clean_optional(value: str | None, max_len: int, what: str) -> str | None:
+    """A label/notes value stripped to None-or-nonblank, with its length enforced.
+
+    Shared by create and edit so the two agree on what a blank field means (nothing)
+    and where the length cap is. A missing, empty, or whitespace-only value all become
+    ``None`` — so on edit, clearing the field really clears it.
+    """
+    cleaned = value.strip() if value else None
+    if not cleaned:  # None or blank-after-strip both mean "nothing given"
+        return None
+    if len(cleaned) > max_len:
+        raise ValidationError(f"{what} must be at most {max_len} characters")
+    return cleaned
+
+
 def create_link(
     session: Session,
     *,
@@ -71,22 +86,40 @@ def create_link(
     model = entity_model(entity_type)
     require_entity(session, model, entity_id, entity_type)
 
-    clean_url = _validate_url(url)
-    label = label.strip() if label else None
-    notes = notes.strip() if notes else None
-    if label is not None and len(label) > _MAX_LABEL_LEN:
-        raise ValidationError(f"the label must be at most {_MAX_LABEL_LEN} characters")
-    if notes is not None and len(notes) > _MAX_NOTES_LEN:
-        raise ValidationError(f"notes must be at most {_MAX_NOTES_LEN} characters")
-
     link = Link(
         entity_type=entity_type,
         entity_id=entity_id,
         kind=kind,
-        url=clean_url,
-        label=label or None,
-        notes=notes or None,
+        url=_validate_url(url),
+        label=_clean_optional(label, _MAX_LABEL_LEN, "the label"),
+        notes=_clean_optional(notes, _MAX_NOTES_LEN, "notes"),
     )
+    session.add(link)
+    session.commit()
+    session.refresh(link)
+    return link
+
+
+def update_link(
+    session: Session,
+    link_id: int,
+    *,
+    kind: LinkKind,
+    url: str,
+    label: str | None = None,
+    notes: str | None = None,
+) -> Link:
+    """Replace a link's editable fields (kind/url/label/notes); validates the URL.
+
+    A full replace, not a partial patch: the dialog always sends the whole row, so a
+    blank label/notes CLEARS it. The target entity (entity_type/entity_id) is
+    immutable — a link points where it points.
+    """
+    link = get_link(session, link_id)  # 404 if missing
+    link.url = _validate_url(url)
+    link.kind = kind
+    link.label = _clean_optional(label, _MAX_LABEL_LEN, "the label")
+    link.notes = _clean_optional(notes, _MAX_NOTES_LEN, "notes")
     session.add(link)
     session.commit()
     session.refresh(link)
@@ -143,4 +176,5 @@ __all__ = [
     "delete_links_for",
     "get_link",
     "list_links",
+    "update_link",
 ]

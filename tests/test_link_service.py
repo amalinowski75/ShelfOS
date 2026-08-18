@@ -134,6 +134,77 @@ def test_delete_removes_a_single_link(session: Session) -> None:
         ls.get_link(session, link.id)
 
 
+def test_update_replaces_every_editable_field(session: Session) -> None:
+    component = _component(session)
+    link = ls.create_link(
+        session,
+        entity_type="component",
+        entity_id=component.id,
+        kind=LinkKind.SHOP,
+        url="https://old.example/x",
+        label="Old",
+        notes="old notes",
+    )
+    updated = ls.update_link(
+        session,
+        link.id,
+        kind=LinkKind.DATASHEET,
+        url="https://new.example/y",
+        label="New",
+        notes="new notes",
+    )
+    assert updated.id == link.id  # same row, not a new one
+    assert updated.kind == LinkKind.DATASHEET
+    assert updated.url == "https://new.example/y"
+    assert updated.label == "New"
+    assert updated.notes == "new notes"
+
+
+def test_update_is_a_full_replace_blank_clears_label_and_notes(
+    session: Session,
+) -> None:
+    component = _component(session)
+    link = ls.create_link(
+        session,
+        entity_type="component",
+        entity_id=component.id,
+        kind=LinkKind.SHOP,
+        url="https://x.io",
+        label="Kept",
+        notes="Kept too",
+    )
+    updated = ls.update_link(
+        session,
+        link.id,
+        kind=LinkKind.SHOP,
+        url="https://x.io",
+        label="   ",  # blank → cleared, not left as-is
+        notes=None,
+    )
+    assert updated.label is None
+    assert updated.notes is None
+
+
+def test_update_rejects_a_non_web_url(session: Session) -> None:
+    component = _component(session)
+    link = ls.create_link(
+        session,
+        entity_type="component",
+        entity_id=component.id,
+        kind=LinkKind.OTHER,
+        url="https://ok.example",
+    )
+    with pytest.raises(ValidationError):
+        ls.update_link(
+            session, link.id, kind=LinkKind.OTHER, url="javascript:alert(1)"
+        )
+
+
+def test_update_of_a_missing_link_is_not_found(session: Session) -> None:
+    with pytest.raises(NotFoundError):
+        ls.update_link(session, 9999, kind=LinkKind.OTHER, url="https://x.io")
+
+
 def test_delete_links_for_clears_every_row(session: Session) -> None:
     component = _component(session)
     for url in ("https://a.io", "https://b.io"):
