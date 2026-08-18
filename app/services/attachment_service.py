@@ -20,7 +20,7 @@ from app import config
 from app.models.attachment import Attachment
 from app.models.enums import AttachmentKind
 from app.services._common import entity_model as _entity_model
-from app.services._common import require_entity
+from app.services._common import refuse_if_deleted, require_entity
 from app.services.errors import NotFoundError, ValidationError
 
 # A short, alphanumeric file extension, e.g. ".pdf" / ".jpg".
@@ -72,7 +72,8 @@ def create_attachment(
     insert never leaves an orphan file behind.
     """
     model = _entity_model(entity_type)
-    require_entity(session, model, entity_id, entity_type)
+    entity = require_entity(session, model, entity_id, entity_type)
+    refuse_if_deleted(entity, f"{entity_type} #{entity_id}")
 
     if not data:
         raise ValidationError("attachment file must not be empty")

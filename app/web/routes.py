@@ -740,9 +740,19 @@ def component_detail(
     movement_authors = us.names_by_id(session, (m.user_id for m in movements))
 
     # For the Add/Take stock dialog and the "New location" it can reach inline.
-    # Only a writer gets that dialog, so only a writer pays for the queries.
-    can_write = user.role != UserRole.READ_ONLY
+    # A deleted component is out of use, so it gets no write affordances at all —
+    # the page is then a record of what it was, not something to work with (§20).
+    is_deleted = component.deleted_at is not None
+    can_write = user.role != UserRole.READ_ONLY and not is_deleted
     tree = ls.location_tree(session) if can_write else []
+
+    # Said in the dialog rather than only on refusal, so the admin learns what to
+    # do before clicking. Same sentence either way — it comes from the service.
+    delete_blockers = (
+        cs.delete_blockers(session, component_id)
+        if user.role == UserRole.ADMIN and not is_deleted
+        else []
+    )
 
     return templates.TemplateResponse(
         request,
@@ -761,6 +771,15 @@ def component_detail(
             "attachment_kinds": [k.value for k in AttachmentKind],
             "link_kinds": [k.value for k in LinkKind],
             "mounting_types": [mt.value for mt in MountingType],
+            "is_deleted": is_deleted,
+            "deleted_by": (
+                us.names_by_id(session, [component.deleted_by]).get(
+                    component.deleted_by
+                )
+                if component.deleted_by is not None
+                else None
+            ),
+            "delete_blockers": delete_blockers,
             "current_user": user,
         },
     )

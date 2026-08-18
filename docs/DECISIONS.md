@@ -158,6 +158,53 @@ database is missing — otherwise an index added to a model would reach new
 installations only, working on the developer's fresh database and not on the one
 that has the rows.
 
+## D13. Deleting a component is soft  [2026-08-18]
+
+`DELETE /api/admin/components/{id}` marks the row (`deleted_at`, `deleted_by`,
+`deleted_reason` — columns the spec's §20 already provided) instead of removing
+it. `hard_delete_component` stays in the service for maintenance and tests, and
+is no longer reachable over HTTP.
+
+The reason is id reuse, and it is not theoretical. A hard delete deliberately
+leaves the invoice lines and stock movements that name the component behind, as
+a record of what happened. `components.id` is a plain `INTEGER PRIMARY KEY`, so
+SQLite assigns the next row `max(rowid) + 1` — delete the newest component and
+the next one created takes its id, and with it its purchase history, its
+movements and its audit trail. Measured, not assumed: deleting component #1 and
+re-adding the same MPN produced a component #1 whose detail page showed two
+movements it never had and an audit entry saying it had been deleted.
+
+Nothing is lost by keeping the row. Every lookup that could block a replacement
+— `find_duplicate_component`, `find_components_by_mpn`, `list_components`, the
+type counts, BOM matching — already filtered `deleted_at IS NULL`; only the
+setter was missing. So the same MPN and manufacturer can be entered again
+immediately, which is the case that motivated deleting at all.
+
+"Deleted" means out of use, enforced in one place (`require_live_component`, which
+every write path goes through): no edits, no parameter values, no stock movements,
+and absent from every list, picker and matcher. The detail page stays reachable —
+audit entries and invoice lines link to it — and says so at the top.
+
+Two things refuse the delete, and the refusal sentences are produced by the
+service and shown in the dialog *before* the click, so there is one wording
+either way. Stock on hand, as for a location holding stock: the parts are still
+in the drawer, and a catalogue entry nobody can take them out of is worse than
+one that is still there. And a line on a **draft** invoice — because finalizing
+needs the component live, while restoring it is refused by the replacement that
+deleting it invited, so the two rules would otherwise combine into an invoice
+that can never be finalized at all. `add_line` refuses a deleted component from
+the other side, so the trap has no entrance.
+
+The reason travels in the request BODY, not the query string: it is free text one
+person types about another's part, and a query string is written down by every
+hop that sees it (the access log, a proxy, the browser history, the `Referer`)
+with no retention policy. The audit log keeps it properly, with the actor and the
+timestamp.
+
+Restore is offered because the row is still there; it is refused when a live
+component has taken over the MPN in the meantime — which is exactly what deleting
+allowed to happen — naming the part that is in the way.
+
 ## D10. Out of scope for the first slice  [DEFAULT]
 
 Deferred (per spec, "Future"): CSV import, invoice upload/OCR, BOM, KiCad

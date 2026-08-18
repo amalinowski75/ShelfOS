@@ -515,6 +515,147 @@ def test_component_detail_non_admin_has_no_edit_affordance(
     assert "component_edit.js" not in html
 
 
+def test_component_detail_admin_sees_the_delete_dialog(client: TestClient) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "RC0603"}
+    ).json()
+    html = client.get(f"/components/{component['id']}").text  # client is admin
+    assert 'id="component-delete-btn"' in html
+    assert 'id="component-delete-dialog"' in html
+    assert "component_delete.js" in html
+
+
+def test_component_detail_non_admin_has_no_delete_affordance(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    token = _non_admin_token(client, role="user", username="deleter")
+    headers = {"Authorization": f"Bearer {token}"}
+    html = anon_client.get(f"/components/{component['id']}", headers=headers).text
+    # The API refuses a writer anyway; the page should not offer the button that
+    # would earn them a 403.
+    assert 'id="component-delete-btn"' not in html
+    assert 'id="component-delete-dialog"' not in html
+    assert "component_delete.js" not in html
+
+
+def test_component_delete_dialog_says_it_stops_being_usable_not_that_it_vanishes(
+    client: TestClient,
+) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "RC0603"}
+    ).json()
+
+    html = client.get(f"/components/{component['id']}").text
+    dialog = html.split('id="component-delete-dialog"', 1)[1].split("</dialog>", 1)[0]
+    assert "stays in the database" in dialog
+    # The two consequences an admin is deciding between.
+    assert "no more stock movements" in dialog
+    assert "same MPN can be entered again" in dialog
+    assert 'id="component-delete-reason"' in dialog
+
+
+def test_component_delete_dialog_says_up_front_when_stock_blocks_it(
+    client: TestClient,
+) -> None:
+    """The same sentence the server would refuse with, said before the click —
+    two wordings for one rule drift apart."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    location = client.post(
+        "/api/locations", json={"type": "drawer", "name": "D1"}
+    ).json()
+    client.post(
+        "/api/stock/add",
+        json={
+            "component_id": component["id"],
+            "location_id": location["id"],
+            "quantity": 250,
+        },
+    )
+
+    html = client.get(f"/components/{component['id']}").text
+    dialog = html.split('id="component-delete-dialog"', 1)[1].split("</dialog>", 1)[0]
+    assert "250 in stock across 1 location" in dialog
+    assert "take the stock out first" in dialog
+    # And no button that would only earn a 422.
+    assert 'id="component-delete-confirm"' not in dialog
+
+
+def test_component_delete_dialog_names_a_draft_invoice_in_the_way(
+    client: TestClient,
+) -> None:
+    """The other thing that points at a live component. Deleting anyway leaves an
+    invoice that can never be finalized, so the dialog names it up front."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "RC0603"}
+    ).json()
+    invoice = client.post(
+        "/api/invoices",
+        json={
+            "supplier": "Mouser",
+            "invoice_number": "FV-7",
+            "invoice_date": "2026-07-08",
+            "currency": "EUR",
+        },
+    ).json()
+    client.post(
+        f"/api/invoices/{invoice['id']}/lines",
+        json={"component_id": component["id"], "quantity": 2, "unit_price": "1.00"},
+    )
+
+    html = client.get(f"/components/{component['id']}").text
+    dialog = html.split('id="component-delete-dialog"', 1)[1].split("</dialog>", 1)[0]
+    assert "draft invoice FV-7" in dialog
+    assert "finalize or remove it first" in dialog
+    assert 'id="component-delete-confirm"' not in dialog
+
+
+def test_a_deleted_component_reads_as_a_record_not_as_a_working_page(
+    client: TestClient,
+) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "RC0603"}
+    ).json()
+    client.request(
+        "DELETE",
+        f"/api/admin/components/{component['id']}",
+        json={"reason": "bought the wrong one"},
+    )
+
+    html = client.get(f"/components/{component['id']}").text
+    banner = html.split('id="component-deleted-banner"', 1)[1].split("</div>", 1)[0]
+    assert "bought the wrong one" in banner
+    assert "admin" in banner  # who did it, not just when
+    # Nothing to work with: no edit, no delete, no stock buttons.
+    assert 'id="component-edit-btn"' not in html
+    assert 'id="component-delete-dialog"' not in html
+    assert 'data-stock-act="add"' not in html
+    # But a way back, and somewhere for it to answer.
+    assert 'id="component-restore-btn"' in html
+    assert 'id="component-restore-error"' in html
+
+
+def test_a_writer_cannot_restore_a_deleted_component(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    client.delete(f"/api/admin/components/{component['id']}")
+    token = _non_admin_token(client, role="user", username="restorer")
+
+    html = anon_client.get(
+        f"/components/{component['id']}", headers={"Authorization": f"Bearer {token}"}
+    ).text
+    assert 'id="component-deleted-banner"' in html  # they still see WHY it is dead
+    assert 'id="component-restore-btn"' not in html
+
+
 def test_component_detail_writer_can_add_and_take_stock(client: TestClient) -> None:
     """The list's row actions, replicated on the detail page (same shared dialog)."""
     ctype = client.post("/api/types", json={"name": "resistor"}).json()

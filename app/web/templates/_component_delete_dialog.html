@@ -1,0 +1,60 @@
+{# Admin-only "Delete component" dialog (§20).
+
+   The delete is soft: the row stays, and with it every invoice line, stock
+   movement and audit entry that names this component. That is not tidiness — a
+   hard delete leaves those records pointing at an id SQLite hands to the next
+   component created, so the replacement part inherits the dead one's purchase
+   history. The dialog says what actually changes, which is "stops being usable",
+   not "disappears".
+
+   `blockers` are the service's own refusal sentences — stock still on hand, or a
+   draft invoice line naming this component — shown here instead of after the
+   click. #}
+{% macro component_delete_dialog(component, name, blockers) %}
+<dialog id="component-delete-dialog"
+        data-component-id="{{ component.id }}" data-name="{{ name }}">
+  <article>
+    <header>
+      <strong>Delete component</strong>
+      <button type="button" class="close" aria-label="Close" data-close></button>
+    </header>
+    <form id="component-delete-form">
+      {% if blockers %}
+      <div id="component-delete-blocked">
+        {% for blocker in blockers %}
+        <p class="delete-lead">{{ blocker }}</p>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="delete-lead">
+        <strong class="mono">{{ name }}</strong> stops being usable —
+        but it stays in the database.
+      </p>
+      <ul class="consequences">
+        <li>gone from the components list, the pickers and BOM/invoice matching</li>
+        <li>no more edits and no more stock movements</li>
+        <li>its purchase history and movements stay attached to it</li>
+        <li>the same MPN can be entered again straight away</li>
+      </ul>
+      <div class="field">
+        <label for="component-delete-reason">Reason (optional)</label>
+        <input class="control" id="component-delete-reason" name="reason"
+               maxlength="200" placeholder="e.g. created by mistake" />
+      </div>
+      <p class="muted delete-lead">You can restore it from this page later.</p>
+      {% endif %}
+      <p id="component-delete-error" class="error" hidden></p>
+      <footer>
+        <button type="button" class="btn btn-ghost" data-close>
+          {{ "Close" if blockers else "Cancel" }}
+        </button>
+        {% if not blockers %}
+        <button type="button" class="btn btn-danger" id="component-delete-confirm">
+          Delete
+        </button>
+        {% endif %}
+      </footer>
+    </form>
+  </article>
+</dialog>
+{% endmacro %}

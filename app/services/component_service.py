@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from sqlalchemy import func
@@ -27,11 +28,11 @@ from app.models.component import (
     ParameterEnumValue,
 )
 from app.models.enums import MatchDomain, MountingType, ParameterDataType
-from app.models.invoice import InvoiceImportLine
+from app.models.invoice import Invoice, InvoiceImportLine, InvoiceLine
 from app.models.location import ComponentLocation
 from app.models.match_rule import MatchRule
 from app.services import attachment_service, audit_service, link_service
-from app.services._common import require_entity
+from app.services._common import refuse_if_deleted, require_entity
 from app.services.errors import DuplicateComponentError, ValidationError
 from app.units import UnitParseError, parse_engineering
 
@@ -1141,15 +1142,183 @@ def list_parameter_values(
     )
 
 
+def require_live_component(session: Session, component_id: int) -> Component:
+    """The component, or a refusal if it has been deleted (§20).
+
+    A soft-deleted component keeps its row so the history that points at it keeps
+    meaning something, but it is out of use: it cannot be edited, stocked,
+    matched, invoiced or attached to. Every write that names a component by id
+    goes through here; the ones that reach it generically, by ``entity_type``
+    (attachments and links), get the same rule through ``refuse_if_deleted``,
+    which is where it actually lives. One rule, not a check each caller might
+    forget.
+    """
+    component = require_entity(session, Component, component_id, "component")
+    refuse_if_deleted(component, component.mpn or f"Component #{component_id}")
+    return component
+
+
+def delete_blockers(session: Session, component_id: int) -> list[str]:
+    """Why this component cannot be deleted yet; empty when it can.
+
+    Returned rather than raised so the UI can say it BEFORE the click: the
+    dialog and the refusal are then the same sentences, instead of two wordings
+    that drift apart.
+
+    Two things point at a component in a way that deleting would strand. Stock,
+    because the parts are still in the drawer and a catalogue entry nobody can
+    take them out of is worse than one that is still there. And a DRAFT invoice
+    line, because finalizing needs the component live -- and by then the same MPN
+    may have been entered again (which deleting is what allows), so restoring is
+    refused as a duplicate and the invoice can never be finalized at all. Neither
+    refusal is wrong on its own; together they are a dead end, and the only way
+    out of it is not to get in.
+    """
+    blockers: list[str] = []
+    held = session.exec(
+        select(ComponentLocation)
+        .where(ComponentLocation.component_id == component_id)
+        .where(ComponentLocation.quantity > 0)
+    ).all()
+    if held:
+        total = sum(row.quantity for row in held)
+        where = "location" if len(held) == 1 else "locations"
+        blockers.append(
+            f"Still holds {total} in stock across {len(held)} {where} — "
+            "take the stock out first."
+        )
+
+    drafts = session.exec(
+        select(Invoice.invoice_number)
+        .join(InvoiceLine, col(InvoiceLine.invoice_id) == col(Invoice.id))
+        .where(InvoiceLine.component_id == component_id)
+        .where(col(Invoice.is_finalized).is_(False))
+        .order_by(col(Invoice.invoice_number))
+    ).all()
+    if drafts:
+        numbers = sorted(set(drafts))
+        lines = "1 line" if len(drafts) == 1 else f"{len(drafts)} lines"
+        invoices = "invoice" if len(numbers) == 1 else "invoices"
+        them = "it" if len(drafts) == 1 else "them"
+        blockers.append(
+            f"Named by {lines} on draft {invoices} {', '.join(numbers)} — "
+            f"finalize or remove {them} first."
+        )
+    return blockers
+
+
+def soft_delete_component(
+    session: Session,
+    component_id: int,
+    *,
+    user_id: int,
+    reason: str | None = None,
+) -> Component:
+    """Take a component out of use without taking it out of the database (§20).
+
+    The row stays, and with it every record that points at its id -- invoice
+    lines, stock movements, the audit trail. That is the whole point: a hard
+    delete leaves those records pointing at an id SQLite then hands to the next
+    component created (it assigns ``max(rowid) + 1``), so the replacement part
+    silently inherits the deleted one's purchase history and movements. Marking
+    the row instead means the id is never reused and nothing is ever misattached.
+
+    A replacement is not blocked: every lookup that could refuse one --
+    ``find_duplicate_component``, ``find_components_by_mpn``, the listings --
+    already excludes deleted rows, so the same MPN and manufacturer can be
+    entered again immediately.
+
+    Stock on hand refuses the delete, the way a location holding stock refuses
+    one: the parts are still in the drawer, and a catalogue entry nobody can take
+    them out of is worse than one that is still there.
+    """
+    component = require_live_component(session, component_id)
+    if blockers := delete_blockers(session, component_id):
+        raise ValidationError(" ".join(blockers))
+
+    component.deleted_at = datetime.now(UTC)
+    component.deleted_by = user_id
+    component.deleted_reason = _blank_to_none(reason)
+    audit_service.record_change(
+        session,
+        entity_type="component",
+        entity_id=component_id,
+        field=audit_service.FIELD_DELETED,
+        old_value=False,
+        new_value=True,
+        user_id=user_id,
+    )
+    if component.deleted_reason:
+        audit_service.record_change(
+            session,
+            entity_type="component",
+            entity_id=component_id,
+            field=audit_service.FIELD_DELETED_REASON,
+            old_value=None,
+            new_value=component.deleted_reason,
+            user_id=user_id,
+        )
+    session.add(component)
+    session.commit()
+    session.refresh(component)
+    return component
+
+
+def restore_component(
+    session: Session, component_id: int, *, user_id: int
+) -> Component:
+    """Put a deleted component back into use (§20).
+
+    Refused when a live component has taken over its (MPN, manufacturer) in the
+    meantime -- which is exactly what deleting it allowed to happen. The
+    duplicate is named the same way the create flow names it, so the caller can
+    point at the part that is now in the way instead of just saying no.
+    """
+    component = require_entity(session, Component, component_id, "component")
+    if component.deleted_at is None:
+        raise ValidationError("That component is not deleted.")
+    duplicate = find_duplicate_component(
+        session, mpn=component.mpn, manufacturer=component.manufacturer
+    )
+    if duplicate is not None:
+        origin = f" from {component.manufacturer}" if component.manufacturer else ""
+        raise DuplicateComponentError(
+            f"A component with MPN {component.mpn}{origin} already exists — "
+            "restoring this one would make two.",
+            existing_id=cast(int, duplicate.id),
+        )
+
+    component.deleted_at = None
+    component.deleted_by = None
+    component.deleted_reason = None
+    audit_service.record_change(
+        session,
+        entity_type="component",
+        entity_id=component_id,
+        field=audit_service.FIELD_DELETED,
+        old_value=True,
+        new_value=False,
+        user_id=user_id,
+    )
+    session.add(component)
+    session.commit()
+    session.refresh(component)
+    return component
+
+
 def hard_delete_component(
     session: Session, component_id: int, *, user_id: int | None = None
 ) -> None:
-    """Permanently delete a component and its EAV/stock rows (admin only, §20).
+    """Permanently delete a component and its EAV/stock rows (§20).
 
-    This is the administrative delete exposed through the backend API; the normal
-    UI never deletes components. Related stock movements and invoice lines are
-    left untouched as historical records. When ``user_id`` is given the deletion
-    is recorded in the audit log (spec §19) within the same transaction.
+    NOT reachable from the application any more: deleting through the API or the
+    UI is ``soft_delete_component``. The reason is id reuse -- this leaves the
+    invoice lines and stock movements that name the component behind, pointing at
+    an id SQLite hands straight to the next component created (it assigns
+    ``max(rowid) + 1``), so a replacement part silently inherits the deleted
+    one's purchase history. Kept for maintenance and for tests that need a
+    component gone rather than marked: it is still the only path that also
+    removes the attachments and links, neither of which has an FK cascade.
     """
     component = require_entity(session, Component, component_id, "component")
     if user_id is not None:
@@ -1193,9 +1362,10 @@ def set_parameter_value(
     The definition must be part of the component type's effective set, enforcing
     parameter inheritance (decision D3). The value is routed to the column that
     matches the definition's ``data_type`` (decision D6). When ``user_id`` is
-    given the change is recorded in the audit log (spec §19).
+    given the change is recorded in the audit log (spec §19). A deleted component
+    takes no values: it is out of use (§20).
     """
-    component = require_entity(session, Component, component_id, "component")
+    component = require_live_component(session, component_id)
     definition = require_entity(
         session, ParameterDefinition, parameter_definition_id, "parameter definition"
     )
@@ -1294,11 +1464,10 @@ def update_component(
     Concurrency is last-write-wins: there is no version check, so two admins editing
     the same component at once means the later Save overwrites the earlier one
     (consistent with the create-race stance). Acceptable for this app's single-writer
-    use. ``require_entity`` intentionally fetches by id without a ``deleted_at``
-    filter — no soft-delete path exists today (only ``hard_delete_component``); if one
-    is ever added, guard against editing a deleted component here.
+    use. A deleted component is refused outright: it is out of use, and an edit is
+    the clearest case of use there is.
     """
-    component = require_entity(session, Component, component_id, "component")
+    component = require_live_component(session, component_id)
     pairs = list(values)
     # MPN is immutable but manufacturer is editable, so an edit can still collide with
     # another part — apply the same (MPN, manufacturer) guard as create, excluding

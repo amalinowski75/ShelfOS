@@ -2,12 +2,31 @@
 
 from __future__ import annotations
 
+from datetime import date
+from decimal import Decimal
+
 import pytest
-from app.models.component import ComponentType, ParameterDefinition
-from app.models.enums import MatchDomain, ParameterDataType
+from app.models.component import Component, ComponentType, ParameterDefinition
+from app.models.enums import (
+    AttachmentKind,
+    LinkKind,
+    LocationType,
+    MatchDomain,
+    ParameterDataType,
+)
+from app.services import attachment_service as attachments
+from app.services import audit_service as audit
 from app.services import component_service as cs
+from app.services import invoice_service as inv
+from app.services import link_service as links
+from app.services import location_service as ls
 from app.services import match_rule_service as mrs
-from app.services.errors import NotFoundError, ValidationError
+from app.services import stock_service as ss
+from app.services.errors import (
+    DuplicateComponentError,
+    NotFoundError,
+    ValidationError,
+)
 from sqlmodel import Session
 
 
@@ -1554,3 +1573,208 @@ def test_staged_definition_ids_and_type_counts(session: Session) -> None:
     session.commit()
     assert cs.staged_definition_ids(session) == {definition.id}
     assert cs.staged_type_counts(session) == {ctype.id: 1}
+
+# --- taking a component out of use (§20) -------------------------------------
+
+
+def _live_component(session: Session):  # type: ignore[no-untyped-def]
+    ctype = cs.create_type(session, "resistor")
+    return cs.create_component(session, ctype.id, mpn="RC0603", manufacturer="Yageo")
+
+
+def test_soft_delete_marks_the_row_and_says_who_and_why(session: Session) -> None:
+    component = _live_component(session)
+    cs.soft_delete_component(
+        session, component.id, user_id=1, reason="created by mistake"
+    )
+
+    assert component.deleted_at is not None
+    assert component.deleted_by == 1
+    assert component.deleted_reason == "created by mistake"
+    fields = {
+        e.field: e
+        for e in audit.list_entries(
+            session, entity_type="component", entity_id=component.id
+        )
+    }
+    assert fields["deleted"].old_value == "false"
+    assert fields["deleted"].new_value == "true"
+    # The words too, so the log answers "why" without opening the component.
+    assert fields["deleted_reason"].new_value == "created by mistake"
+
+
+def test_a_deleted_component_is_out_of_every_lookup(session: Session) -> None:
+    """The whole meaning of "deleted" here: still in the database, out of use."""
+    component = _live_component(session)
+    cs.soft_delete_component(session, component.id, user_id=1)
+
+    assert cs.list_components(session) == []
+    assert cs.find_components_by_mpn(session, "RC0603") == []
+    assert cs.count_components_of_type(session, component.type_id) == 0
+    # …and it no longer reserves its MPN, which is the point of deleting it.
+    assert (
+        cs.find_duplicate_component(session, mpn="RC0603", manufacturer="Yageo") is None
+    )
+    # But the row is still there for everything that names it.
+    assert session.get(Component, component.id) is not None
+
+
+def test_a_deleted_component_takes_no_edits_and_no_stock(session: Session) -> None:
+    component = _live_component(session)
+    location = ls.create_location(session, type=LocationType.DRAWER, name="D1")
+    cs.soft_delete_component(session, component.id, user_id=1)
+
+    with pytest.raises(ValidationError, match="is deleted"):
+        cs.update_component(
+            session, component.id, manufacturer="Vishay", user_id=1, values=[]
+        )
+    with pytest.raises(ValidationError, match="is deleted"):
+        ss.add_stock(
+            session,
+            component_id=component.id,
+            location_id=location.id,
+            quantity=1,
+            user_id=1,
+        )
+
+
+def test_stock_on_hand_refuses_the_delete(session: Session) -> None:
+    # The parts are still in the drawer; a catalogue entry nobody can take them
+    # out of is worse than one that is still there.
+    component = _live_component(session)
+    location = ls.create_location(session, type=LocationType.DRAWER, name="D1")
+    ss.add_stock(
+        session,
+        component_id=component.id,
+        location_id=location.id,
+        quantity=5,
+        user_id=1,
+    )
+
+    with pytest.raises(ValidationError, match="take the stock out first"):
+        cs.soft_delete_component(session, component.id, user_id=1)
+    assert component.deleted_at is None
+
+    ss.remove_stock(
+        session,
+        component_id=component.id,
+        location_id=location.id,
+        quantity=5,
+        user_id=1,
+    )
+    cs.soft_delete_component(session, component.id, user_id=1)
+    assert component.deleted_at is not None
+
+
+def test_a_draft_invoice_line_refuses_the_delete(session: Session) -> None:
+    """Otherwise the two headline behaviours combine into a dead end: finalize
+    needs the component live, and restoring it is refused by the replacement that
+    deleting it invited. Neither refusal is wrong; together there is no way out,
+    so the only fix is not to get in."""
+    component = _live_component(session)
+    invoice = inv.create_invoice(
+        session,
+        supplier="Mouser",
+        invoice_number="FV-1",
+        invoice_date=date(2026, 7, 8),
+        currency="EUR",
+    )
+    inv.add_line(
+        session,
+        invoice.id,
+        component_id=component.id,
+        quantity=2,
+        unit_price=Decimal("1.00"),
+    )
+
+    with pytest.raises(ValidationError, match="draft invoice FV-1"):
+        cs.soft_delete_component(session, component.id, user_id=1)
+    # Said before the click too, so the dialog and the refusal are one wording.
+    blockers = cs.delete_blockers(session, component.id)
+    assert any("FV-1" in blocker for blocker in blockers)
+
+
+def test_a_deleted_component_takes_no_new_invoice_line(session: Session) -> None:
+    # The same trap from the other side: accepted here, refused at finalize.
+    component = _live_component(session)
+    cs.soft_delete_component(session, component.id, user_id=1)
+    invoice = inv.create_invoice(
+        session,
+        supplier="Mouser",
+        invoice_number="FV-2",
+        invoice_date=date(2026, 7, 8),
+        currency="EUR",
+    )
+
+    with pytest.raises(ValidationError, match="is deleted"):
+        inv.add_line(
+            session,
+            invoice.id,
+            component_id=component.id,
+            quantity=1,
+            unit_price=Decimal("1.00"),
+        )
+
+
+def test_a_deleted_component_takes_no_links_or_attachments(session: Session) -> None:
+    # Reached generically (by entity_type), so the rule lives on the row rather
+    # than in each service that can hang something off a component.
+    component = _live_component(session)
+    cs.soft_delete_component(session, component.id, user_id=1)
+
+    with pytest.raises(ValidationError, match="is deleted"):
+        links.create_link(
+            session,
+            entity_type="component",
+            entity_id=component.id,
+            kind=LinkKind.DATASHEET,
+            url="https://example.com/d.pdf",
+        )
+    with pytest.raises(ValidationError, match="is deleted"):
+        attachments.create_attachment(
+            session,
+            entity_type="component",
+            entity_id=component.id,
+            kind=AttachmentKind.DATASHEET,
+            filename="d.pdf",
+            data=b"%PDF-1.4",
+        )
+
+
+def test_restore_puts_it_back_and_is_audited(session: Session) -> None:
+    component = _live_component(session)
+    cs.soft_delete_component(session, component.id, user_id=1, reason="oops")
+    cs.restore_component(session, component.id, user_id=1)
+
+    assert component.deleted_at is None
+    assert component.deleted_reason is None
+    assert cs.list_components(session) == [component]
+    latest = audit.list_entries(
+        session, entity_type="component", entity_id=component.id
+    )[0]
+    assert (latest.field, latest.old_value, latest.new_value) == (
+        "deleted",
+        "true",
+        "false",
+    )
+
+
+def test_restore_is_refused_when_a_replacement_took_the_mpn(session: Session) -> None:
+    # Restoring would leave two live components with one MPN — which the create
+    # path refuses outright, so this names the part that is in the way.
+    component = _live_component(session)
+    cs.soft_delete_component(session, component.id, user_id=1)
+    replacement = cs.create_component(
+        session, component.type_id, mpn="RC0603", manufacturer="Yageo"
+    )
+
+    with pytest.raises(DuplicateComponentError) as caught:
+        cs.restore_component(session, component.id, user_id=1)
+    assert caught.value.existing_id == replacement.id
+    assert component.deleted_at is not None  # and it stays deleted
+
+
+def test_restoring_something_that_is_not_deleted_says_so(session: Session) -> None:
+    component = _live_component(session)
+    with pytest.raises(ValidationError, match="not deleted"):
+        cs.restore_component(session, component.id, user_id=1)

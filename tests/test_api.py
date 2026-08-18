@@ -7,7 +7,9 @@ dependency, so requests exercise the real services against an isolated database.
 from __future__ import annotations
 
 import pytest
+from app.services import component_service as cs
 from fastapi.testclient import TestClient
+from sqlmodel import Session
 
 
 def test_health(client: TestClient) -> None:
@@ -293,16 +295,195 @@ def test_invoice_full_flow(client: TestClient) -> None:
     assert conflict.status_code == 409
 
 
-def test_admin_delete_component(client: TestClient) -> None:
-    ctype = client.post("/api/types", json={"name": "resistor"}).json()
-    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+# The component PATCH replaces the whole editable set, so every field is required.
+_EDIT = {
+    "manufacturer": "Yageo",
+    "package": None,
+    "mounting_type": "SMT",
+    "notes": None,
+}
 
-    deleted = client.delete(f"/api/admin/components/{component['id']}")
+
+def test_admin_delete_takes_a_component_out_of_use_without_removing_it(
+    client: TestClient,
+) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "RC0603"}
+    ).json()
+
+    deleted = client.request(
+        "DELETE",
+        f"/api/admin/components/{component['id']}",
+        json={"reason": "created by mistake"},
+    )
     assert deleted.status_code == 204
 
-    # Setting a parameter on the deleted component now 404s.
-    missing = client.get(f"/api/components/{component['id']}/parameters")
-    assert missing.status_code == 404
+    # The row stays, so everything that points at its id keeps meaning something.
+    still_there = client.get(f"/api/components/{component['id']}/parameters")
+    assert still_there.status_code == 200
+    # But it is out of use: no edits, no stock.
+    edit = client.patch(f"/api/components/{component['id']}", json=_EDIT)
+    assert edit.status_code == 422
+    assert "is deleted" in edit.json()["detail"]
+    location = client.post(
+        "/api/locations", json={"type": "drawer", "name": "D1"}
+    ).json()
+    stocking = client.post(
+        "/api/stock/add",
+        json={
+            "component_id": component["id"],
+            "location_id": location["id"],
+            "quantity": 1,
+        },
+    )
+    assert stocking.status_code == 422
+
+
+def test_the_delete_reason_is_bounded_and_never_blank(client: TestClient) -> None:
+    """The reason is the only part of this request the audit log keeps verbatim,
+    so it is bounded — and a reason made of spaces is no reason at all."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    first = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    too_long = client.request(
+        "DELETE",
+        f"/api/admin/components/{first['id']}",
+        json={"reason": "x" * 201},
+    )
+    assert too_long.status_code == 422
+
+    client.request(
+        "DELETE", f"/api/admin/components/{first['id']}", json={"reason": "   "}
+    )
+    entries = client.get(
+        f"/api/admin/audit?entity_type=component&entity_id={first['id']}"
+    ).json()
+    assert [e["field"] for e in entries] == ["deleted"]  # no empty reason recorded
+
+
+def test_a_replacement_gets_its_own_id_not_the_deleted_one(client: TestClient) -> None:
+    """The reason this is a soft delete. SQLite hands the next row
+    ``max(rowid) + 1``, so removing the newest component would give its id — and
+    with it its invoice lines and movements — to whatever is created next."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    original = client.post(
+        "/api/components",
+        json={"type_id": ctype["id"], "mpn": "RC0603", "manufacturer": "Yageo"},
+    ).json()
+    client.delete(f"/api/admin/components/{original['id']}")
+
+    replacement = client.post(
+        "/api/components",
+        json={"type_id": ctype["id"], "mpn": "RC0603", "manufacturer": "Yageo"},
+    )
+    # Not blocked as a duplicate — a deleted part must not reserve its MPN…
+    assert replacement.status_code == 201
+    # …and not handed the dead component's identity either.
+    assert replacement.json()["id"] != original["id"]
+
+
+def _drafted_purchase(client: TestClient) -> tuple[dict, dict]:
+    """A component named by a line on a DRAFT (unfinalized) invoice."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "RC0603"}
+    ).json()
+    invoice = client.post(
+        "/api/invoices",
+        json={
+            "supplier": "Mouser",
+            "invoice_number": "FV-9",
+            "invoice_date": "2026-07-08",
+            "currency": "EUR",
+        },
+    ).json()
+    client.post(
+        f"/api/invoices/{invoice['id']}/lines",
+        json={
+            "component_id": component["id"],
+            "quantity": 2,
+            "unit_price": "1.00",
+        },
+    )
+    return component, invoice
+
+
+def test_a_draft_invoice_line_refuses_the_delete(client: TestClient) -> None:
+    # Otherwise: finalize needs the component live, and restoring it is refused
+    # by the replacement that deleting it invited — an invoice with no way out.
+    component, invoice = _drafted_purchase(client)
+
+    refused = client.delete(f"/api/admin/components/{component['id']}")
+    assert refused.status_code == 422
+    assert "draft invoice FV-9" in refused.json()["detail"]
+
+
+def test_admin_can_put_a_deleted_component_back(client: TestClient) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "RC0603"}
+    ).json()
+    client.delete(f"/api/admin/components/{component['id']}")
+
+    restored = client.post(f"/api/admin/components/{component['id']}/restore")
+    assert restored.status_code == 200
+    assert restored.json()["deleted_at"] is None
+    # In use again: it edits.
+    assert (
+        client.patch(f"/api/components/{component['id']}", json=_EDIT).status_code
+        == 200
+    )
+
+
+def test_restore_is_refused_when_a_replacement_took_the_mpn(
+    client: TestClient,
+) -> None:
+    # Restoring would leave two live components with one MPN, which the create
+    # path refuses outright — so this says which part is in the way.
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "RC0603"}
+    ).json()
+    client.delete(f"/api/admin/components/{component['id']}")
+    replacement = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "RC0603"}
+    ).json()
+
+    refused = client.post(f"/api/admin/components/{component['id']}/restore")
+    assert refused.status_code == 409
+    assert refused.json()["existing_id"] == replacement["id"]
+
+
+def test_delete_is_refused_while_the_component_holds_stock(client: TestClient) -> None:
+    # The parts are still in the drawer; a catalogue entry nobody can take them
+    # out of is worse than one that is still there.
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    location = client.post(
+        "/api/locations", json={"type": "drawer", "name": "D1"}
+    ).json()
+    client.post(
+        "/api/stock/add",
+        json={
+            "component_id": component["id"],
+            "location_id": location["id"],
+            "quantity": 5,
+        },
+    )
+
+    refused = client.delete(f"/api/admin/components/{component['id']}")
+    assert refused.status_code == 422
+    assert "take the stock out first" in refused.json()["detail"]
+
+    client.post(
+        "/api/stock/remove",
+        json={
+            "component_id": component["id"],
+            "location_id": location["id"],
+            "quantity": 5,
+        },
+    )
+    assert client.delete(f"/api/admin/components/{component['id']}").status_code == 204
 
 
 def test_not_found_and_validation_mapping(client: TestClient) -> None:
@@ -418,10 +599,15 @@ def test_list_invoices_tie_break_by_id_desc(client: TestClient) -> None:
     assert ids == [second["id"], first["id"]]
 
 
-def test_invoice_detail_survives_deleted_component(client: TestClient) -> None:
-    """Hard-deleting a component leaves its invoice line readable (component null)."""
+_PURCHASE_STOCK: dict[str, int] = {}
+
+
+def _finalized_purchase(client: TestClient) -> tuple[dict, dict]:
+    """A component bought on a finalized invoice — 2 pcs land in D1."""
     ctype = client.post("/api/types", json={"name": "resistor"}).json()
-    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "RC0603"}
+    ).json()
     location = client.post(
         "/api/locations", json={"type": "drawer", "name": "D1"}
     ).json()
@@ -444,8 +630,33 @@ def test_invoice_detail_survives_deleted_component(client: TestClient) -> None:
         },
     )
     client.post(f"/api/invoices/{invoice['id']}/finalize", json={})
+    _PURCHASE_STOCK.update(
+        {"component_id": component["id"], "location_id": location["id"]}
+    )
+    return component, invoice
 
+
+def test_invoice_detail_still_names_a_deleted_component(client: TestClient) -> None:
+    """The point of keeping the row: money spent does not stop having been spent
+    because the part left the catalogue, and the line should still say on what."""
+    component, invoice = _finalized_purchase(client)
+    # Deleting needs the parts out of the drawer first.
+    client.post("/api/stock/remove", json={**_PURCHASE_STOCK, "quantity": 2})
     assert client.delete(f"/api/admin/components/{component['id']}").status_code == 204
+
+    line = client.get(f"/api/invoices/{invoice['id']}").json()["lines"][0]
+    assert line["component_id"] == component["id"]
+    assert line["component"]["mpn"] == "RC0603"
+
+
+def test_invoice_detail_survives_a_component_that_is_really_gone(
+    client: TestClient, session: Session
+) -> None:
+    """``hard_delete_component`` is no longer reachable over HTTP, but a database
+    can still lose a component (a maintenance script, an older install), and the
+    invoice reader has to cope rather than 500."""
+    component, invoice = _finalized_purchase(client)
+    cs.hard_delete_component(session, component["id"])
 
     detail = client.get(f"/api/invoices/{invoice['id']}")
     assert detail.status_code == 200

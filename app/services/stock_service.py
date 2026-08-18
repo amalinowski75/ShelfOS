@@ -16,11 +16,11 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, func, select
 
-from app.models.component import Component
 from app.models.enums import ContainerType, StockReason
 from app.models.location import ComponentLocation, Location
 from app.models.stock import StockMovement
 from app.services import audit_service
+from app.services import component_service as cs
 from app.services._common import require_entity
 from app.services.errors import InsufficientStockError, ValidationError
 
@@ -304,7 +304,10 @@ def _record_movement(
     With ``commit=False`` the movement and cache update are only flushed, so
     they join the caller's transaction and commit (or roll back) together.
     """
-    require_entity(session, Component, component_id, "component")
+    # Deleted components take no movements: the row survives so the history
+    # pointing at it keeps meaning something, not so stock can keep moving
+    # through it (§20).
+    cs.require_live_component(session, component_id)
     require_entity(session, Location, location_id, "location")
 
     new_quantity = _apply_delta(
