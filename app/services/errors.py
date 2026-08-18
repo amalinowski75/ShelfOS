@@ -37,6 +37,20 @@ class PrinterError(ShelfOSError):
     """
 
 
+class TapeMismatchError(ShelfOSError):
+    """The tape asked for is not the tape the printer is holding.
+
+    Carries both, because the answer is the user's to give: print on what is
+    loaded, or go and change the roll. Refusing with only a sentence would make
+    the caller parse it to offer that choice.
+    """
+
+    def __init__(self, message: str, *, requested: str, loaded: str) -> None:
+        super().__init__(message)
+        self.requested = requested
+        self.loaded = loaded
+
+
 class DuplicateComponentError(ShelfOSError):
     """A component with the same (MPN, manufacturer) already exists.
 

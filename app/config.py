@@ -129,6 +129,12 @@ SCAN_SEPARATOR = os.environ.get("SHELFOS_SCAN_SEPARATOR", "").strip()
 # it is configured once here rather than passed per print.
 LABEL_TAPE = os.environ.get("SHELFOS_LABEL_TAPE", "62").strip()
 
+# The tapes actually owned, as a comma-separated list of the same identifiers —
+# what the printing dialog offers to choose between. brother_ql knows two dozen
+# tapes and nobody stocks them all, so naming yours makes the picker a short
+# list of real rolls. Empty offers every tape a readable label fits on.
+LABEL_TAPES = os.environ.get("SHELFOS_LABEL_TAPES", "").strip()
+
 # How long each label is, in mm, on a CONTINUOUS tape (a die-cut label's length
 # is fixed by the die, and this is ignored for one). 30 mm fits a QR that a
 # phone reads at arm's length plus three lines of path.

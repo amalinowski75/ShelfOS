@@ -17,6 +17,7 @@ from app.services.errors import (
     NotFoundError,
     PrinterError,
     ShelfOSError,
+    TapeMismatchError,
     ValidationError,
 )
 
@@ -52,6 +53,22 @@ def register_error_handlers(app: FastAPI) -> None:
         )
 
     app.add_exception_handler(DuplicateComponentError, duplicate_handler)
+
+    async def tape_handler(_request: Request, exc: Exception) -> JSONResponse:
+        # Both tapes travel with the message: the client's next move is to ask
+        # whether to print on the loaded one or wait for the roll to be changed,
+        # and it should not have to read the sentence to find out which is which.
+        assert isinstance(exc, TapeMismatchError)
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={
+                "detail": str(exc),
+                "requested": exc.requested,
+                "loaded": exc.loaded,
+            },
+        )
+
+    app.add_exception_handler(TapeMismatchError, tape_handler)
 
     async def integrity_handler(_request: Request, _exc: Exception) -> JSONResponse:
         # A DB constraint violation that slipped past an app-level check — e.g.

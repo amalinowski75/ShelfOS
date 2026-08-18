@@ -156,14 +156,26 @@ export SHELFOS_LABEL_FONT="/path/to/Sans.ttf"
 export SHELFOS_LABEL_FONT_BOLD="/path/to/Sans-Bold.ttf"
 ```
 
+Pick the roll in the app: the per-location **Print** button opens a dialog with
+the tapes you stock, the bitmap that tape would produce, and — when the printer
+is holding something else — the question of whether to print on what is loaded
+or go and change the roll. List the rolls you own so the picker is short:
+
+```bash
+export SHELFOS_LABEL_TAPES="62red,29x90,12,17x54,62x29"
+```
+
 **The size mostly settles itself.** A connected printer is asked what tape it
 holds, and the label is laid out for that: swapping a 62 mm roll for a 29 mm one
 changes the labels, not the settings. `SHELFOS_LABEL_TAPE` then matters for the
 one thing the printer will not say — whether the roll is the black/red kind —
 and as the fallback when no printer is answering. The layout follows the tape's
-proportions too: a wide label puts the QR beside the name and path, a squarer or
-taller one stacks them, and the code stops growing at 25 mm, where it is already
-readable across a room.
+proportions too: a wide label puts the QR beside the name and path, a squarer one
+stacks them, and a label longer than it is wide — a 12 mm roll, a 29 × 90 mm
+address label — is composed along its length and turned a quarter turn, which is
+how such a roll is read anyway. The code stops growing at 25 mm, where it is
+already readable across a room, and on a narrow tape the margin gives way before
+the code does.
 
 `GET /api/labels/locations/<id>/preview.png` returns exactly the bitmap the printer
 would receive, and takes `?tape=` / `?length=` to try a roll without touching the

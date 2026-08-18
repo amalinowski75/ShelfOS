@@ -5,8 +5,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlmodel import Session
 
+from app import config
 from app.api.deps import get_session
-from app.api.schemas import LabelPrintRequest, LabelPrintResult
+from app.api.schemas import (
+    LabelPrintRequest,
+    LabelPrintResult,
+    TapeRead,
+    TapesRead,
+)
 from app.services import label_printer as lp
 from app.services import label_service as lbl
 
@@ -64,7 +70,30 @@ def print_location_labels(
     configured one does not match.
     """
     labels = lbl.build_labels(session, ids=payload.ids, root=payload.root)
-    outcome = lp.print_labels(labels, copies=payload.copies)
+    outcome = lp.print_labels(
+        labels,
+        copies=payload.copies,
+        tape=payload.tape,
+        accept_loaded=payload.accept_loaded,
+    )
     return LabelPrintResult(
         sent=outcome.sent, confirmed=outcome.confirmed, tape=outcome.tape
+    )
+
+
+@router.get("/tapes", response_model=TapesRead)
+def list_tapes() -> TapesRead:
+    """The rolls that can be picked, and what the printer says it is holding.
+
+    ``loaded`` is best-effort: an unplugged or silent printer simply leaves it
+    null, and the picker then has nothing to pre-select but the configuration.
+    """
+    # Asked only while the printer is idle: three bytes on the wire during a job
+    # would be spliced into the raster. A silent answer is what the dialog
+    # already copes with, so the degraded reply costs nothing.
+    status = lp.status_if_free()
+    return TapesRead(
+        tapes=[TapeRead(**vars(choice)) for choice in lp.tape_choices()],
+        configured=config.LABEL_TAPE,
+        loaded=lp.detect_tape(status) if status is not None else None,
     )

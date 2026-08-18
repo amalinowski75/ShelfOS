@@ -30,6 +30,13 @@
           {% endfor %}
         </select>
       </div>
+      {% if label_printing %}
+      {# Only on create: editing a location does not call for a fresh label, and
+         the checkbox would quietly reprint one every time a name was fixed. #}
+      <label class="check" id="location-print-row">
+        <input type="checkbox" id="location-print-label" /> Print a label for it
+      </label>
+      {% endif %}
       <p id="location-error" class="error" hidden></p>
       <footer>
         <button type="button" class="btn btn-ghost" data-close>Cancel</button>

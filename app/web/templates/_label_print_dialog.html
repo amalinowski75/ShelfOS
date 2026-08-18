@@ -1,0 +1,48 @@
+{# Shared print dialog (§7): sends location labels to the label printer. Include
+   on any page that has something to print; behaviour lives in label_print.js,
+   which exposes `openLabelPrintDialog({ids | root, what, preview})`.
+
+   The tape list, the preview and the printer's own answer all come from
+   /api/labels/*, so this markup carries no label knowledge — a roll swapped in
+   the machine changes what the dialog offers without touching the page. #}
+<dialog id="label-print-dialog">
+  <article>
+    <header>
+      <strong>Print labels</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <form id="label-print-form">
+      <p id="label-print-what" class="muted"></p>
+      <div class="field">
+        <label for="label-print-tape">Tape</label>
+        <select class="control" id="label-print-tape"></select>
+        <p id="label-print-tape-hint" class="hint"></p>
+      </div>
+      {# The bitmap the printer would receive, at the selected tape's real
+         proportions — so a wrong roll is visible before any tape moves. #}
+      <div class="label-preview">
+        <img id="label-print-preview" alt="Preview of the printed label" />
+      </div>
+      <p id="label-print-error" class="error" hidden></p>
+      {# Shown when the printer is holding a different roll: the choice between
+         printing on it and changing it belongs to whoever is standing there. #}
+      <div id="label-print-mismatch" hidden>
+        <p id="label-print-mismatch-text" class="error"></p>
+        <div class="row-actions-inline">
+          <button type="button" class="btn btn-sm" id="label-print-use-loaded">
+            Print on the loaded tape
+          </button>
+          <button type="button" class="btn btn-sm btn-ghost" id="label-print-recheck">
+            I changed the roll — check again
+          </button>
+        </div>
+      </div>
+      <footer>
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" class="btn btn-primary" id="label-print-submit">
+          Print
+        </button>
+      </footer>
+    </form>
+  </article>
+</dialog>

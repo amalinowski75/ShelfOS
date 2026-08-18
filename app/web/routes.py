@@ -17,6 +17,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session
 
+from app import config
 from app.api.deps import get_session
 from app.auth.deps import get_optional_user, issue_csrf_token
 from app.models.component import ComponentType, ParameterDefinition
@@ -244,6 +245,9 @@ def locations_page(
             # itself empty or occupied for the page's two filters.
             "location_stock": build_location_stock(session),
             "parts_per_location": _PARTS_PER_LOCATION,
+            # No printer configured, no print affordances: the dialog would have
+            # nothing to offer and the button nothing to do.
+            "label_printing": config.label_printing_configured(),
             "current_user": user,
         },
     )
@@ -296,6 +300,7 @@ def location_labels_page(
         "labels.html",
         {
             "labels": labels,
+            "label_printing": config.label_printing_configured(),
             "w": min(max(w, 20.0), 200.0),
             "h": min(max(h, 10.0), 200.0),
             "sheet": sheet,

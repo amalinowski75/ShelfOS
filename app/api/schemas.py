@@ -165,6 +165,30 @@ class LabelPrintRequest(BaseModel):
     ids: list[Annotated[int, Field(gt=0, le=2**63 - 1)]] | None = None
     root: Annotated[int, Field(gt=0, le=2**63 - 1)] | None = None
     copies: int = Field(default=1, ge=1, le=10)
+    # The roll to print on. Omitted, the printer's own tape decides; named, a
+    # printer holding something else answers 409 with both tapes rather than
+    # printing, unless ``accept_loaded`` settles it in advance.
+    tape: str | None = None
+    accept_loaded: bool = False
+
+
+class TapeRead(BaseModel):
+    """A tape the printer can be asked to print on."""
+
+    id: str
+    name: str
+    width_mm: int
+    length_mm: int | None
+    two_color: bool
+
+
+class TapesRead(BaseModel):
+    """The tapes on offer, plus which one is configured and which is loaded."""
+
+    tapes: list[TapeRead]
+    configured: str
+    # What the printer says it is holding, or null when it is not answering.
+    loaded: str | None
 
 
 class LabelPrintResult(BaseModel):
