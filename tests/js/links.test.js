@@ -335,6 +335,42 @@ describe("links.js", () => {
     expect(JSON.parse(call[1].body).label).toBeNull();
   });
 
+  it("switches back to Add mode after an edit (title, button, POST not PATCH)", async () => {
+    // The visible half of the feature: after editing, opening Add must reset the
+    // dialog — else it still says "Edit link"/"Save" and PATCHes the old link
+    // instead of creating a new one.
+    const rows = [{ id: 9, url: "https://x.io/a", label: "X", kind: "shop" }];
+    const { window, document, fetchMock } = loadPage(linksWidgetFixture(), SCRIPTS, {
+      fetchImpl: feedImpl(rows),
+    });
+    const dialog = document.querySelector(".link-dialog");
+    dialog.showModal = vi.fn();
+    dialog.close = vi.fn();
+    await tick();
+
+    // Edit a row → Edit mode…
+    rowButton(document, "Edit").click();
+    const titleEl = dialog.querySelector("header strong");
+    const submitBtn = document.querySelector('.link-form button[type="submit"]');
+    expect(titleEl.textContent).toBe("Edit link");
+
+    // …then open Add: the dialog resets, and a submit creates rather than edits.
+    document.querySelector(".link-add").click();
+    expect(titleEl.textContent).toBe("Add link");
+    expect(submitBtn.textContent).toBe("Add");
+
+    const form = document.querySelector(".link-form");
+    form.elements.url.value = "https://new.example";
+    submitForm(document, window);
+    await tick();
+
+    expect(fetchMock.mock.calls.find((c) => c[1]?.method === "PATCH")).toBeFalsy();
+    const post = fetchMock.mock.calls.find(
+      (c) => c[1]?.method === "POST" && c[0] === "/api/links",
+    );
+    expect(post).toBeTruthy();
+  });
+
   it("gives a read-only account no delete buttons and no add form", async () => {
     const rows = [{ id: 1, url: "https://x.io", label: "X", kind: "other" }];
     const { document } = loadPage(linksWidgetFixture({ withForm: false }), SCRIPTS, {

@@ -179,10 +179,42 @@ def test_update_is_a_full_replace_blank_clears_label_and_notes(
         kind=LinkKind.SHOP,
         url="https://x.io",
         label="   ",  # blank → cleared, not left as-is
-        notes=None,
+        notes="   ",  # blank notes clears too (pins notes' own cleaning, not label's)
     )
     assert updated.label is None
     assert updated.notes is None
+
+
+def test_update_rejects_an_over_long_label_or_notes(session: Session) -> None:
+    component = _component(session)
+    link = ls.create_link(
+        session,
+        entity_type="component",
+        entity_id=component.id,
+        kind=LinkKind.OTHER,
+        url="https://x.io",
+    )
+    with pytest.raises(ValidationError):
+        ls.update_link(
+            session, link.id, kind=LinkKind.OTHER, url="https://x.io", label="x" * 256
+        )
+    with pytest.raises(ValidationError):
+        ls.update_link(
+            session, link.id, kind=LinkKind.OTHER, url="https://x.io", notes="x" * 2001
+        )
+
+
+def test_create_rejects_an_over_long_label(session: Session) -> None:
+    component = _component(session)
+    with pytest.raises(ValidationError):
+        ls.create_link(
+            session,
+            entity_type="component",
+            entity_id=component.id,
+            kind=LinkKind.OTHER,
+            url="https://x.io",
+            label="x" * 256,
+        )
 
 
 def test_update_rejects_a_non_web_url(session: Session) -> None:

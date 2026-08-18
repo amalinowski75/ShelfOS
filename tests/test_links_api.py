@@ -142,8 +142,43 @@ def test_update_rejects_a_non_web_scheme(client: TestClient) -> None:
 
 
 def test_update_of_a_missing_link_is_404(client: TestClient) -> None:
-    resp = client.patch("/api/links/9999", json={"url": "https://x.io"})
+    resp = client.patch(
+        "/api/links/9999", json={"kind": "other", "url": "https://x.io"}
+    )
     assert resp.status_code == 404  # NotFoundError → 404
+
+
+def test_update_requires_kind_so_a_partial_body_is_rejected(client: TestClient) -> None:
+    cid = _component_id(client)
+    link = _make_link(client, cid)
+    # kind has no default: a body omitting it is a partial patch, and this is a
+    # full replace — reject it rather than silently recategorising to "other".
+    resp = client.patch(f"/api/links/{link['id']}", json={"url": "https://x.io"})
+    assert resp.status_code == 422
+
+
+def test_update_rejects_an_over_long_label(client: TestClient) -> None:
+    cid = _component_id(client)
+    link = _make_link(client, cid)
+    resp = client.patch(
+        f"/api/links/{link['id']}",
+        json={"kind": "shop", "url": "https://x.io", "label": "x" * 256},
+    )
+    assert resp.status_code == 422  # the label cap → ValidationError → 422
+
+
+def test_create_rejects_an_over_long_label(client: TestClient) -> None:
+    cid = _component_id(client)
+    resp = client.post(
+        "/api/links",
+        json={
+            "entity_type": "component",
+            "entity_id": cid,
+            "url": "https://x.io",
+            "label": "x" * 256,
+        },
+    )
+    assert resp.status_code == 422
 
 
 def test_create_on_a_missing_entity_is_404(client: TestClient) -> None:
@@ -196,10 +231,12 @@ def test_read_only_can_list_but_not_create(
         "/api/links",
         json={"entity_type": "component", "entity_id": cid, "url": "https://x.io"},
     ).json()["id"]
+    # A complete body (kind present), so only the auth check — not validation —
+    # can reject it.
     assert (
         anon_client.patch(
             f"/api/links/{link_id}",
-            json={"url": "https://y.io"},
+            json={"kind": "other", "url": "https://y.io"},
             headers=headers,
         ).status_code
         == 403
