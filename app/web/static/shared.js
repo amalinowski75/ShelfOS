@@ -19,6 +19,16 @@ const userRole =
   document.querySelector('meta[name="user-role"]')?.content || "";
 const canWrite = userRole !== "" && userRole !== "read-only";
 
+// Our own location labels encode the shelf id as "SL<id>" (defined by
+// label_service.py). This is the ONE client-side copy of that format, shared by
+// the two scanners that read it — the putaway panel and the stock dialog — so the
+// format lives in as few places as the server's. Returns the numeric id, or null
+// when the text isn't one of our shelf labels.
+function shelfLabelId(code) {
+  const matched = /^SL(\d+)$/i.exec(String(code ?? "").trim());
+  return matched ? Number(matched[1]) : null;
+}
+
 // Per-page cache of attachment-list GETs, so the attachments panel and the image
 // gallery (both on the component-detail page) don't each fetch the same feed.
 // Returns a promise of the parsed rows; pass {fresh:true} after a write to skip

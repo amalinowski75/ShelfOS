@@ -24,6 +24,12 @@
       </div>
       <div class="field">
         <label>Location</label>
+        {# A keyboard-wedge scanner types an SL… shelf label here (focused on open);
+           stock_dialog.js selects that location in the picker below. Manual pick
+           still works — the two set the same hidden location_id. #}
+        <input class="control" id="stock-loc-scan" type="text" autocomplete="off"
+               placeholder="Scan a location label (SL…), or pick below" />
+        <p id="stock-loc-scan-msg" hidden></p>
         {{ location_picker(location_tree, name="location_id") }}
       </div>
       <div class="field">
