@@ -20,6 +20,34 @@
   // Ignore re-entrant submits while a write is in flight, so a fast double-click
   // can't POST twice and leave a duplicate Location row behind.
   let submitting = false;
+  const printBox = document.getElementById("location-print-label");
+
+  // No tape is named, so the printer's own roll decides — asking which roll to
+  // use belongs to the print dialog, not to creating a shelf.
+  async function printLabelFor(locationId) {
+    let resp;
+    try {
+      resp = await fetch("/api/labels/locations/print", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body: JSON.stringify({ ids: [locationId] }),
+      });
+    } catch {
+      showToastAfterReload("The location was created, but the printer could not be reached.");
+      return;
+    }
+    if (!resp.ok) {
+      showToastAfterReload(
+        `The location was created, but its label did not print: ${await errorMessage(resp)}`,
+      );
+      return;
+    }
+    const result = await resp.json();
+    showToastAfterReload(
+      result.confirmed ? "Label printed." : "Label sent to the printer.",
+      { tone: result.confirmed ? "ok" : "warn" },
+    );
+  }
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -67,6 +95,13 @@
         const parentPath = parent ? parentSelect.selectedOptions[0].text : "";
         const path = parentPath ? `${parentPath} / ${name}` : name;
         parentSelect.appendChild(new Option(path, saved.id));
+      }
+      // Print before handing back, because the caller reloads the page: the
+      // request has to be in flight (and its outcome recorded) first. A failure
+      // here must never make a saved location look unsaved, so it is reported
+      // separately and swallowed otherwise.
+      if (!editing && printBox && printBox.checked) {
+        await printLabelFor(saved.id);
       }
       dialog.close();
       // A caller's DOM update must not turn into an unhandled rejection (or leave

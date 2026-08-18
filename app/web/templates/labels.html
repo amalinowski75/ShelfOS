@@ -10,6 +10,10 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  {# This page is standalone — no base.html — so the CSRF token it needs for the
+     print request has to be put here by hand; without it a cookie-authenticated
+     POST is rejected and the button looks broken rather than forbidden. #}
+  <meta name="csrf-token" content="{{ request.session.get('csrf_token', '') }}" />
   <title>Location labels — ShelfOS</title>
   <style>
     {% if sheet %}
@@ -56,7 +60,13 @@
 </head>
 <body>
   <div class="toolbar">
-    <button type="button" onclick="window.print()">Print</button>
+    <button type="button" onclick="window.print()">Print in the browser</button>
+    {% if label_printing and labels %}
+    <button type="button" id="labels-print-device"
+            data-ids="{{ labels | map(attribute='id') | join(',') }}">
+      Print on the label printer
+    </button>
+    {% endif %}
     {% if sheet %}
     <a href="{{ request.url.remove_query_params('sheet') }}">Label roll (one per label)</a>
     {% else %}
@@ -83,6 +93,28 @@
   </div>
   {% if not labels %}
   <p style="padding: 16px; color: #555;">Nothing to print — no locations matched.</p>
+  {% endif %}
+  {% if label_printing and labels %}
+  {% include "_label_print_dialog.html" %}
+  <script src="/static/shared.js?v={{ static_version() }}"></script>
+  <script src="/static/label_print.js?v={{ static_version() }}"></script>
+  <script>
+    document
+      .getElementById("labels-print-device")
+      .addEventListener("click", (event) => {
+        const ids = event.currentTarget.dataset.ids
+          .split(",")
+          .map(Number)
+          .filter(Boolean);
+        // The ids of the labels ON SCREEN, not the query that produced them, so
+        // "print what I am looking at" stays true however this page was reached.
+        window.openLabelPrintDialog({
+          ids,
+          preview: ids[0],
+          what: `${ids.length} label${ids.length === 1 ? "" : "s"}, as shown`,
+        });
+      });
+  </script>
   {% endif %}
 </body>
 </html>

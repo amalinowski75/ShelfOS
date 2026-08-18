@@ -133,6 +133,40 @@ document
 // user's dialog has already closed — e.g. the component was created but its
 // datasheet couldn't be downloaded — where an alert() would be an interruption and
 // silence would be a lie. Stacks if several fire; click to dismiss early.
+// A toast that survives the reload the caller is about to do. Several flows
+// save something and then reload the page to show it; anything they have to
+// report about a SECOND step — "created, but the label did not print" — would
+// otherwise be wiped off the screen a moment after appearing.
+const PENDING_TOAST_KEY = "shelfos:pending-toast";
+
+function showToastAfterReload(message, options) {
+  try {
+    sessionStorage.setItem(
+      PENDING_TOAST_KEY,
+      JSON.stringify({ message, options: options || {} }),
+    );
+  } catch {
+    showToast(message, options); // private mode, or storage full: say it now
+  }
+}
+
+function drainPendingToast() {
+  let stored;
+  try {
+    stored = sessionStorage.getItem(PENDING_TOAST_KEY);
+    sessionStorage.removeItem(PENDING_TOAST_KEY);
+  } catch {
+    return;
+  }
+  if (!stored) return;
+  try {
+    const { message, options } = JSON.parse(stored);
+    if (message) showToast(message, options);
+  } catch {
+    /* a mangled entry is not worth a broken page */
+  }
+}
+
 function showToast(message, { tone = "warn", timeout = 5000 } = {}) {
   let tray = document.querySelector(".toast-tray");
   if (!tray) {
@@ -150,3 +184,5 @@ function showToast(message, { tone = "warn", timeout = 5000 } = {}) {
   if (timeout) setTimeout(dismiss, timeout);
   return toast;
 }
+
+drainPendingToast();

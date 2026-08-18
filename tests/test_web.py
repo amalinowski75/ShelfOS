@@ -845,9 +845,7 @@ def test_review_row_carries_a_shop_product_url(
     session.commit()
 
     html = client.get(f"/invoices/{invoice_id}").text
-    assert (
-        'data-source-url="https://www.tme.eu/en/details/CRG0805F4K7/"' in html
-    )
+    assert 'data-source-url="https://www.tme.eu/en/details/CRG0805F4K7/"' in html
 
 
 def test_scan_putaway_panel_renders_on_a_draft_and_not_after_finalize(
@@ -1588,22 +1586,30 @@ def test_match_rules_page_renders_for_admin(client: TestClient) -> None:
     assert 'href="/match-rules"' in html
     # The mounting target is a select of the MountingType enum, not free text.
     assert 'name="canonical_mounting"' in html
-    assert "<option value=\"SMT\">SMT</option>" in html
-    assert "<option value=\"THT\">THT</option>" in html
+    assert '<option value="SMT">SMT</option>' in html
+    assert '<option value="THT">THT</option>' in html
 
 
 def test_match_rules_feed_labels_a_scoped_rule(client: TestClient) -> None:
     ctype = client.post("/api/types", json={"name": "resistor"}).json()
     client.post(
         f"/api/types/{ctype['id']}/parameters",
-        json={"name": "resistance", "label": "Resistance", "data_type": "number",
-              "unit": "Ω"},
+        json={
+            "name": "resistance",
+            "label": "Resistance",
+            "data_type": "number",
+            "unit": "Ω",
+        },
     )
     definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
     client.post(
         "/api/admin/match-rules",
-        json={"domain": "param_name", "alias": "Rezystancja", "canonical": "resistance",
-              "parameter_definition_id": definition["id"]},
+        json={
+            "domain": "param_name",
+            "alias": "Rezystancja",
+            "canonical": "resistance",
+            "parameter_definition_id": definition["id"],
+        },
     )
     feed = client.get("/web/api/match-rules").json()["data"]
     row = next(r for r in feed if r["alias"] == "Rezystancja")
@@ -1621,14 +1627,22 @@ def test_match_rules_feed_carries_enum_values_for_an_enum_value_rule(
     ctype = client.post("/api/types", json={"name": "cable"}).json()
     client.post(
         f"/api/types/{ctype['id']}/parameters",
-        json={"name": "ctype", "label": "Type", "data_type": "enum",
-              "enum_values": ["Flat", "Round"]},
+        json={
+            "name": "ctype",
+            "label": "Type",
+            "data_type": "enum",
+            "enum_values": ["Flat", "Round"],
+        },
     )
     definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
     client.post(
         "/api/admin/match-rules",
-        json={"domain": "enum_value", "alias": "wstazkowy", "canonical": "Flat",
-              "parameter_definition_id": definition["id"]},
+        json={
+            "domain": "enum_value",
+            "alias": "wstazkowy",
+            "canonical": "Flat",
+            "parameter_definition_id": definition["id"],
+        },
     )
     feed = client.get("/web/api/match-rules").json()["data"]
     enum_row = next(r for r in feed if r["alias"] == "wstazkowy")
@@ -1673,9 +1687,15 @@ def test_types_feed_lists_types_with_counts_and_params(client: TestClient) -> No
     ).json()
     client.post(
         f"/api/types/{resistor['id']}/parameters",
-        json={"name": "resistance", "label": "Resistance", "data_type": "number",
-              "unit": "Ω", "sort_order": 2, "is_table_column": True,
-              "is_filterable": True},
+        json={
+            "name": "resistance",
+            "label": "Resistance",
+            "data_type": "number",
+            "unit": "Ω",
+            "sort_order": 2,
+            "is_table_column": True,
+            "is_filterable": True,
+        },
     )
     client.post("/api/components", json={"type_id": resistor["id"], "mpn": "R-1"})
 
@@ -1710,14 +1730,23 @@ def test_types_feed_deletable_reflects_staged_invoice_lines(
     ctype = client.post("/api/types", json={"name": "cable"}).json()
     client.post(
         f"/api/types/{ctype['id']}/parameters",
-        json={"name": "ctype", "label": "Type", "data_type": "enum",
-              "enum_values": ["Flat", "Round"]},
+        json={
+            "name": "ctype",
+            "label": "Type",
+            "data_type": "enum",
+            "enum_values": ["Flat", "Round"],
+        },
     )
     definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
     session.add(
         InvoiceImportLine(
-            invoice_id=1, line_no=1, quantity=1, unit_price=Decimal("1"),
-            shop_key="tme", reason="", type_id=ctype["id"],
+            invoice_id=1,
+            line_no=1,
+            quantity=1,
+            unit_price=Decimal("1"),
+            shop_key="tme",
+            reason="",
+            type_id=ctype["id"],
             parameters=[{"parameter_definition_id": definition["id"], "value": "Flat"}],
         )
     )
@@ -1737,15 +1766,22 @@ def test_types_feed_parameter_in_use_count_reflects_stored_values(
     ctype = client.post("/api/types", json={"name": "cable"}).json()
     client.post(
         f"/api/types/{ctype['id']}/parameters",
-        json={"name": "ctype", "label": "Type", "data_type": "enum",
-              "enum_values": ["Flat", "Round"]},
+        json={
+            "name": "ctype",
+            "label": "Type",
+            "data_type": "enum",
+            "enum_values": ["Flat", "Round"],
+        },
     )
     definition = client.get(f"/api/types/{ctype['id']}/parameters").json()[0]
     client.post(
         "/api/components",
-        json={"type_id": ctype["id"],
-              "parameters": [{"parameter_definition_id": definition["id"],
-                              "value": "Flat"}]},
+        json={
+            "type_id": ctype["id"],
+            "parameters": [
+                {"parameter_definition_id": definition["id"], "value": "Flat"}
+            ],
+        },
     )
 
     param = {r["name"]: r for r in client.get("/web/api/types").json()["data"]}[
@@ -1794,3 +1830,29 @@ def test_locations_page_offers_printing_only_with_a_printer(
     assert "loc-print" in wired
     assert 'id="label-print-dialog"' in wired
     assert "label_print.js" in wired
+
+
+def test_labels_page_offers_the_label_printer_with_its_own_csrf_token(
+    client: TestClient, monkeypatch  # type: ignore[no-untyped-def]
+) -> None:
+    """This page is standalone — no base.html — so the token a print needs has
+    to be put there by hand, or the button 403s and looks broken."""
+    from app import config
+
+    location = client.post(
+        "/api/locations", json={"type": "drawer", "name": "D1"}
+    ).json()
+
+    monkeypatch.setattr(config, "LABEL_DEVICE", "/dev/usb/lp0")
+    html = client.get(f"/labels/locations?root={location['id']}").text
+    assert 'id="labels-print-device"' in html
+    assert f'data-ids="{location["id"]}"' in html  # exactly what is on screen
+    assert 'name="csrf-token"' in html
+    assert "label_print.js" in html
+    assert 'id="label-print-dialog"' in html
+
+    monkeypatch.setattr(config, "LABEL_DEVICE", "")
+    plain = client.get(f"/labels/locations?root={location['id']}").text
+    assert 'id="labels-print-device"' not in plain
+    # The browser print button is unconditional: it needs no printer at all.
+    assert "window.print()" in plain

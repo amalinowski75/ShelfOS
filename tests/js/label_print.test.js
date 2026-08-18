@@ -173,3 +173,72 @@ describe("label_print.js", () => {
     expect(fetchMock.mock.calls.at(-1)[0]).toBe("/api/labels/locations/print");
   });
 });
+
+describe("printing right after creating a location", () => {
+  const DIALOG = `
+    <dialog id="location-dialog">
+      <form id="location-form">
+        <select name="type"><option value="drawer">drawer</option></select>
+        <input name="name" />
+        <select name="parent_id"><option value="">None</option></select>
+        <label class="check"><input type="checkbox" id="location-print-label" /></label>
+        <p id="location-error" hidden></p>
+        <button type="submit" id="location-submit">Create</button>
+      </form>
+    </dialog>`;
+
+  function created(printImpl) {
+    return (url, opts) => {
+      if (url === "/api/locations") return ok({ id: 7, name: "D1" });
+      if (url === "/api/labels/locations/print") return printImpl(url, opts);
+      return ok({});
+    };
+  }
+
+  async function submit(fetchImpl) {
+    const page = loadPage(DIALOG, ["shared.js", "location_dialog.js"], { fetchImpl });
+    page.window.openLocationDialog(() => {});
+    page.document.querySelector('[name="name"]').value = "D1";
+    page.document.getElementById("location-print-label").checked = true;
+    page.document.getElementById("location-form").dispatchEvent(
+      new page.document.defaultView.Event("submit", { cancelable: true, bubbles: true }),
+    );
+    await tick();
+    await tick();
+    return page;
+  }
+
+  it("prints the new location's label and says so after the reload", async () => {
+    const { window, fetchMock } = await submit(
+      created(() => ok({ sent: 1, confirmed: true, tape: "62red" })),
+    );
+
+    const [url, opts] = fetchMock.mock.calls.at(-1);
+    expect(url).toBe("/api/labels/locations/print");
+    // No tape named: whatever roll is loaded is the right one here, and asking
+    // belongs to the print dialog, not to creating a shelf.
+    expect(JSON.parse(opts.body)).toEqual({ ids: [7] });
+    // The page reloads immediately, so the message has to outlive it.
+    const pending = JSON.parse(window.sessionStorage.getItem("shelfos:pending-toast"));
+    expect(pending.message).toContain("Label printed");
+  });
+
+  it("keeps a failed print from making a saved location look unsaved", async () => {
+    const { document, window } = await submit(
+      created(() =>
+        Promise.resolve({
+          ok: false,
+          status: 503,
+          json: () => Promise.resolve({ detail: "the printer is not there" }),
+        }),
+      ),
+    );
+
+    // The dialog closed and no error is shown on the form: the location saved.
+    expect(document.getElementById("location-error").hidden).toBe(true);
+    expect(document.getElementById("location-dialog").close).toHaveBeenCalled();
+    const pending = JSON.parse(window.sessionStorage.getItem("shelfos:pending-toast"));
+    expect(pending.message).toContain("was created, but its label did not print");
+    expect(pending.message).toContain("the printer is not there");
+  });
+});

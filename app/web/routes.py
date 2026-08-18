@@ -300,6 +300,7 @@ def location_labels_page(
         "labels.html",
         {
             "labels": labels,
+            "label_printing": config.label_printing_configured(),
             "w": min(max(w, 20.0), 200.0),
             "h": min(max(h, 10.0), 200.0),
             "sheet": sheet,
