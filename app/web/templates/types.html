@@ -59,6 +59,29 @@
   </article>
 </dialog>
 
+{# One parameter's matchers: list + inline edit/delete, plus a quick-add row that
+   stays open so aliases (esp. an enum's many values) go in one after another. #}
+<dialog id="param-matchers-dialog">
+  <article>
+    <header>
+      <strong>Matchers — <span id="param-matchers-title"></span></strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <ul id="param-matchers-list" class="pm-list"></ul>
+    <p id="param-matchers-empty" class="muted" hidden>No matchers for this parameter yet.</p>
+    <div class="pm-add">
+      <input id="pm-add-alias" class="control" placeholder="alias seen in shop/invoice data" />
+      <span class="pm-arrow muted">→</span>
+      <select id="pm-add-target" class="control"></select>
+      <button type="button" class="btn btn-primary" id="pm-add-btn">Add</button>
+    </div>
+    <p id="param-matchers-error" class="error" hidden></p>
+    <footer>
+      <button type="button" class="btn btn-ghost" data-close>Close</button>
+    </footer>
+  </article>
+</dialog>
+
 {# Edit one parameter definition (data_type is fixed) #}
 <dialog id="param-edit-dialog">
   <article>
@@ -159,6 +182,7 @@
 
 {% block scripts %}
 <script src="/static/match_rule_dialog.js?v={{ static_version() }}"></script>
+<script src="/static/param_matchers.js?v={{ static_version() }}"></script>
 <script src="/static/type_dialog.js?v={{ static_version() }}"></script>
 <script src="/static/types_admin.js?v={{ static_version() }}"></script>
 {% endblock %}

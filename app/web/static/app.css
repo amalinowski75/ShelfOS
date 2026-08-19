@@ -543,6 +543,33 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 .check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
 .check input { accent-color: var(--accent); }
 
+/* ---------- per-parameter matchers panel ---------- */
+.pm-list {
+  list-style: none; margin: 0; padding: 2px 0;
+  max-height: min(50vh, 380px); overflow-y: auto;
+}
+.pm-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 20px; border-top: 1px solid var(--border);
+}
+.pm-row:first-child { border-top: none; }
+.pm-alias { flex: 1; min-width: 0; }
+.pm-arrow { flex: none; }
+.pm-target { flex: none; min-width: 120px; }
+.pm-del { flex: none; }
+#param-matchers-empty { padding: 14px 20px; margin: 0; }
+.pm-add {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 20px; border-top: 1px solid var(--border);
+}
+.pm-add #pm-add-alias { flex: 1; min-width: 0; }
+.pm-add #pm-add-target { flex: none; min-width: 120px; }
+.pm-add #pm-add-target[hidden] { display: none; }
+#param-matchers-error { padding: 0 20px 4px; margin: 0; }
+#param-matchers-dialog footer {
+  padding: 12px 20px; margin: 0; border-top: 1px solid var(--border);
+}
+
 /* ---------- login ---------- */
 .login { max-width: 380px; margin: 8vh auto 0; }
 .login .card-pad { padding: 30px 28px; display: flex; flex-direction: column; gap: 18px; }

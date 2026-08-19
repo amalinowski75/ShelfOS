@@ -265,6 +265,17 @@ export function typesAdminPageFixture() {
       <p id="param-add-error" hidden></p>
       <button type="submit"></button>
     </form></dialog>
+    <dialog id="param-matchers-dialog">
+      <span id="param-matchers-title"></span>
+      <ul id="param-matchers-list"></ul>
+      <p id="param-matchers-empty" hidden></p>
+      <div class="pm-add">
+        <input id="pm-add-alias" />
+        <select id="pm-add-target"></select>
+        <button type="button" id="pm-add-btn"></button>
+      </div>
+      <p id="param-matchers-error" hidden></p>
+    </dialog>
     ${_typeBuilderMarkup("")}`;
 }
 
