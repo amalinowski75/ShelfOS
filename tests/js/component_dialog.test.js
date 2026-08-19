@@ -203,3 +203,94 @@ describe("component_dialog.js — applying the engine's proposal", () => {
     expect(mounting(page)).toBe("SMT");
   });
 });
+
+describe("component_dialog.js — showing what an import left unfilled", () => {
+  const tinted = (page) =>
+    [...page.document.querySelectorAll("#component-form .is-unfilled")]
+      .map(
+        (el) =>
+          el.name ||
+          (el.dataset.definitionId && `param:${el.dataset.definitionId}`) ||
+          el.id,
+      )
+      .sort();
+
+  // A type with one parameter the engine fills and one it doesn't.
+  const withParams = (lookup) => (url) => {
+    if (url === "/api/shops/lookup") return ok(lookup);
+    if (url.endsWith("/parameters")) {
+      return ok([
+        { id: 10, label: "Resistance", data_type: "number", enum_values: [] },
+        { id: 11, label: "Tolerance", data_type: "number", enum_values: [] },
+      ]);
+    }
+    return ok({});
+  };
+
+  it("tints only the fields the import had nothing for", async () => {
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: withParams({
+        mpn: "MR04X1201FTL",
+        manufacturer: "Walsin",
+        description: "Resistor: thick film",
+        package: null, // the shop said nothing about the case
+        proposal: {
+          type_id: 1,
+          mounting_type: "SMT",
+          package: null,
+          parameters: [{ parameter_definition_id: 10, value: "1.2k" }],
+        },
+      }),
+    });
+    page.document
+      .getElementById("component-type")
+      .appendChild(new page.window.Option("resistor", "1"));
+    open(page, () => {}, null, { importCode: "MR04X1201FTL" });
+    await tick();
+    await tick();
+
+    // Filled by the import: mpn, manufacturer, notes, type, mounting, Resistance.
+    // Left over: the package the shop didn't state, and the Tolerance parameter.
+    expect(tinted(page)).toEqual(["package", "param:11"]);
+    // The import box itself is a tool, not a field of the component — and it is
+    // empty on exactly the successful imports this is meant to annotate.
+    const importBox = page.document.getElementById("shop-import-url");
+    expect(importBox.classList.contains("is-unfilled")).toBe(false);
+  });
+
+  it("clears a field's tint as soon as it is filled or picked", async () => {
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: withParams({ mpn: "X", proposal: null }),
+    });
+    open(page, () => {}, null, { importCode: "X" });
+    await tick();
+
+    const pkg = page.document.querySelector('[name="package"]');
+    const mounting = page.document.querySelector('[name="mounting_type"]');
+    expect(pkg.classList.contains("is-unfilled")).toBe(true);
+    // "Other" is the mounting select's untouched state, so it counts as unfilled.
+    expect(mounting.classList.contains("is-unfilled")).toBe(true);
+
+    pkg.value = "0402";
+    pkg.dispatchEvent(new page.window.Event("input", { bubbles: true }));
+    mounting.value = "SMT";
+    mounting.dispatchEvent(new page.window.Event("change", { bubbles: true }));
+
+    expect(pkg.classList.contains("is-unfilled")).toBe(false);
+    expect(mounting.classList.contains("is-unfilled")).toBe(false);
+
+    // And emptying it again says so again — nothing is blocked either way.
+    pkg.value = "";
+    pkg.dispatchEvent(new page.window.Event("input", { bubbles: true }));
+    expect(pkg.classList.contains("is-unfilled")).toBe(true);
+  });
+
+  it("leaves a blank manual create untinted", async () => {
+    // Nothing has tried to fill this form, so it has no gaps to point at — every
+    // field being red would be noise, not information.
+    const page = loadPage(dialogFixture(), SCRIPTS);
+    open(page, () => {});
+    await tick();
+    expect(tinted(page)).toEqual([]);
+  });
+});
