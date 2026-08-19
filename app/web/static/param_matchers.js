@@ -135,7 +135,7 @@
     );
     options.push(
       `<option data-domain="${PARAM_NAME}" value="${esc(param.name)}">` +
-        `↳ as parameter name (${esc(param.name)})</option>`,
+        `↳ as parameter name</option>`,
     );
     addTarget.innerHTML = options.join("");
     addTarget.selectedIndex = 0;
