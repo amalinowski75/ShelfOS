@@ -193,15 +193,23 @@ def _symbol_candidates(url: str) -> list[str]:
 # down and end as "the shop lookup failed".
 _SLUG_SLASH = "_"
 
-# A conservative sketch of what TME accepts in a symbol: letters, digits and the
-# separators seen in real symbols. One rejected symbol fails the WHOLE batched
-# request — losing the valid candidates in it — so anything outside this set (a
+# What TME accepts inside a symbol. One REJECTED symbol fails the WHOLE batched
+# request — losing the valid candidates beside it — so anything outside this set (a
 # comma-suffixed MPN like "PESD5V0S1BA,115", prose, whitespace) is dropped up front.
 # "_" is outside it too, and that guard is for the INVOICE path: the URL path
 # translates every underscore away before it gets here, but a number lifted off an
 # invoice arrives as it was printed, and TME answers one of those with "Input data is
 # not valid" for the whole batch.
-_SYMBOL_CHARS = re.compile(r"[A-Z0-9./+-]+")
+#
+# The set is EMPIRICAL, and it is a filter with two different costs, so it is worth
+# knowing which way to lean when a new character turns up. Too narrow silently kills
+# a lookup that would have worked ("SMD0402-91K-1%" is a real symbol, and its "%" was
+# missing here); too broad only risks the batch failing, which is the same visible
+# outcome the user already gets. What settles a candidate character is one question,
+# asked of the API: does a NON-EXISTENT symbol containing it get quietly ignored
+# (accepted, and safe to allow) or does it fail the request (rejected, and it must
+# stay out)? Measured for "%": ignored, so it cannot poison a batch.
+_SYMBOL_CHARS = re.compile(r"[A-Z0-9./+%-]+")
 
 
 def _usable_symbols(raw: Iterable[str]) -> list[str]:
