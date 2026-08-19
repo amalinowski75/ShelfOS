@@ -196,8 +196,11 @@ _SLUG_SLASH = "_"
 # A conservative sketch of what TME accepts in a symbol: letters, digits and the
 # separators seen in real symbols. One rejected symbol fails the WHOLE batched
 # request — losing the valid candidates in it — so anything outside this set (a
-# comma-suffixed MPN like "PESD5V0S1BA,115", an untranslated slug underscore, prose,
-# whitespace) is dropped up front.
+# comma-suffixed MPN like "PESD5V0S1BA,115", prose, whitespace) is dropped up front.
+# "_" is outside it too, and that guard is for the INVOICE path: the URL path
+# translates every underscore away before it gets here, but a number lifted off an
+# invoice arrives as it was printed, and TME answers one of those with "Input data is
+# not valid" for the whole batch.
 _SYMBOL_CHARS = re.compile(r"[A-Z0-9./+-]+")
 
 

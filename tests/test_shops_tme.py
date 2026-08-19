@@ -780,6 +780,20 @@ def test_fetch_by_symbols_drops_a_comma_bearing_candidate() -> None:
     assert "PESD5V0S1BA" not in url
 
 
+def test_fetch_by_symbols_drops_an_underscore_bearing_candidate() -> None:
+    # Same guard as the comma above, for the path that can still deliver an
+    # underscore: an invoice number arrives as printed, with no URL slug to
+    # translate. TME calls it "Input data is not valid" and fails the whole batch,
+    # so it must not travel beside a symbol that would otherwise have resolved.
+    seen: dict[str, httpx.Request] = {}
+    TmeProvider().fetch_by_symbols(
+        ["B3X8_BN11252", "MR04X1201FTL"], transport=_transport(seen=seen)
+    )
+    url = str(seen["/products"].url)
+    assert "MR04X1201FTL" in url
+    assert "B3X8_BN11252" not in url
+
+
 def test_fetch_by_index_does_not_take_the_shop_symbol_as_the_mpn() -> None:
     # The invoice path has an accurate parsed MPN; when the API's product carries no
     # manufacturer symbol, ProductData.mpn must stay None so the orchestrator's
