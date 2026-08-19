@@ -24,11 +24,12 @@ class MatchRule(SQLModel, table=True):
     domain: MatchDomain = Field(sa_column=enum_column(MatchDomain, index=True))
     # The free-text token to look for (stored as entered; matched case-insensitively).
     alias: str
-    # The ShelfOS value it resolves to: a type name, a MountingType value, a parameter
-    # definition's name, or one of that definition's allowed enum values.
+    # The ShelfOS value it resolves to: a type name, a MountingType value, the package
+    # text to store, a parameter definition's name, or one of that definition's
+    # allowed enum values.
     canonical: str
-    # NULL for the global domains (type, mounting); the owning definition for the
-    # per-parameter domains (param_name, enum_value).
+    # NULL for the global domains (type, mounting, package); the owning definition for
+    # the per-parameter domains (param_name, enum_value).
     parameter_definition_id: int | None = Field(
         default=None, foreign_key="parameter_definitions.id"
     )

@@ -347,9 +347,10 @@ def _find_duplicate(
     parameter_definition_id: int | None,
 ) -> MatchRule | None:
     # Two aliases collide when the ENGINE would key them the same way — otherwise the
-    # loser sits in the admin table looking healthy but never fires. type/mounting are
-    # keyed by .lower(); the scoped domains by normalize() (which folds accents and
-    # punctuation), so there "wstążkowy" and "wstazkowy" are one alias, not two.
+    # loser sits in the admin table looking healthy but never fires. The global
+    # domains (type, mounting, package) are keyed by .lower(); the scoped ones by
+    # normalize() (which folds accents and punctuation), so there "wstążkowy" and
+    # "wstazkowy" are one alias, not two.
     scoped = domain in (MatchDomain.PARAM_NAME, MatchDomain.ENUM_VALUE)
     fold = normalize if scoped else str.lower
     target = fold(alias)

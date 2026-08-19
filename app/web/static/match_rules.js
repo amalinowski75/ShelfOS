@@ -106,7 +106,7 @@ function ruleColumns() {
       title: "Target",
       field: "canonical",
       // A list of the domain's valid values (mounting enum / existing types), or
-      // free text for a parameter rule — chosen per row by targetEditorParams.
+      // free text for a param_name or package rule — chosen by targetEditorParams.
       editor: "list",
       editorParams: targetEditorParams,
       cellEdited: (cell) => saveCellEdit(cell, "canonical"),
@@ -125,12 +125,12 @@ function ruleColumns() {
       sorter: "number",
       editor: "number",
       // The engine takes the first matching alias, so lower wins when several aliases
-      // that could match the same text share a scope — type/mounting globally, and an
-      // enum_value parameter's aliases within that parameter.
+      // that could match the same text share a scope — type/mounting/package
+      // globally, and an enum_value parameter's aliases within that parameter.
       headerTooltip:
         "Lower wins when several aliases that could match the same text share a " +
-        "scope — e.g. 'led' before 'diode' for types, or two aliases of the same " +
-        "enum parameter.",
+        "scope — e.g. 'led' before 'diode' for types, 'SOT-23' before 'SOT-23-3' " +
+        "for packages, or two aliases of the same enum parameter.",
       cellEdited: (cell) => saveCellEdit(cell, "sort_order"),
     }),
     {

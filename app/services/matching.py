@@ -236,12 +236,28 @@ def _resolve_package(given: str | None, blob: str, rules: RuleSet) -> str | None
     A shop that names the package outright wins over anything read out of the text —
     but its wording still goes through the rules first, which is half of what a
     PACKAGE rule is for: "SOT-23-3" and "SOT23" both land as the one "SOT-23" the
-    shelf already uses. With no rule for it, the shop's text is kept as it came.
+    shelf already uses. With no rule for it, the shop's text is kept as it came. That
+    match is against the WHOLE field, not a word inside it: a shop's package field is
+    the value itself, so a partial hit ("SOT23" inside "SOT23 (3-pin)") is a reason to
+    leave a stated value alone rather than to rewrite it.
 
-    Otherwise the description is scanned for an alias the same whole-word way mounting
-    is, and only if nothing matches does the built-in EIA size pattern have its say —
-    those two-to-four digit chip codes are a numeric pattern rather than vocabulary,
-    so they stay here instead of needing a rule per size.
+    Otherwise the description is scanned for an alias, whole-word the same way
+    mounting is — and unlike the type scan, the RIGHT boundary stays. A type alias
+    drops it to follow Polish inflection ("rezystor" catching "Rezystory"); a package
+    name is a token, not a word that inflects, and what sits past its end is usually a
+    different case ("TO-220" against "TO-220AB", "SOT-23" against "SOT-235"). So an
+    alias fires only on the exact name, and a family is folded by SAYING so — a
+    "TO-220AB -> TO-220" rule of its own — rather than by a regex deciding for the
+    admin. An unfilled package the user completes beats a confidently wrong one
+    prefilled into the dialog.
+
+    Ordering still decides where aliases genuinely overlap, which a separator makes
+    common enough: in "SOT-23-3" both "SOT-23" and "SOT-23-3" match, and the lower
+    sort_order wins.
+
+    Only if nothing matches does the built-in EIA size pattern have its say — those
+    two-to-four digit chip codes are a numeric pattern rather than vocabulary, so they
+    stay here instead of needing a rule per size.
     """
     if given and given.strip():
         text = given.strip()
