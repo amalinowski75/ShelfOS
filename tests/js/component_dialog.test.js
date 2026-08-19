@@ -70,11 +70,11 @@ describe("component_dialog.js — Open in shop button", () => {
     expect(btn.disabled).toBe(false);
 
     btn.click();
-    // Sizing/popup features (not a bare "_blank") make it a standalone window.
+    // A stable window name reuses one tab, so repeat opens land in the same place
+    // (e.g. the pane the user dragged it to) instead of spawning new windows.
     expect(openWindow).toHaveBeenCalledWith(
       "https://www.tme.eu/en/details/SYM1/",
-      "_blank",
-      "popup,noopener,noreferrer,width=1100,height=850",
+      "shelfos-shop",
     );
   });
 
@@ -97,8 +97,7 @@ describe("component_dialog.js — Open in shop button", () => {
     btn.click();
     expect(openWindow).toHaveBeenCalledWith(
       "https://www.mouser.com/c/?q=X",
-      "_blank",
-      "popup,noopener,noreferrer,width=1100,height=850",
+      "shelfos-shop",
     );
   });
 
