@@ -297,3 +297,33 @@ def test_mounting_words_including_polish(
     _resistor(session)
     product = ProductData(category="resistor", description=text)
     assert build_proposal(session, product).mounting_type is expected
+
+
+def test_mounting_from_a_structured_attribute_only(session: Session) -> None:
+    # Mouser states mounting only as a structured attribute ("Mounting Style:
+    # SMD/SMT"), never in the free text. The mounting scan must reach the attribute
+    # value too, or nothing sets the field. (The seeded "SMD"->SMT rule fires on the
+    # "SMD" inside "SMD/SMT"; the point is that SMT is resolved at all.)
+    _resistor(session)
+    product = ProductData(
+        category="resistor",
+        description="TMUXHS4412 High-Bandwidth Multiplexer",
+        parameters=[("Mounting Style", "SMD/SMT")],
+    )
+    assert build_proposal(session, product).mounting_type is MountingType.SMT
+
+
+def test_description_mounting_beats_an_incidental_attribute_word(
+    session: Session,
+) -> None:
+    # The description is the higher-confidence source. A stray "SMD" in some attribute
+    # value must not outrank an explicit "through-hole" in the text — attributes are a
+    # fallback, not a rival. (_resolve_mounting returns the first matching RULE, and
+    # SMD sorts before THT, so a single merged blob would wrongly resolve SMT here.)
+    _resistor(session)
+    product = ProductData(
+        category="resistor",
+        description="Through-hole axial resistor, 1/4W",
+        parameters=[("Alternative package", "also available as SMD")],
+    )
+    assert build_proposal(session, product).mounting_type is MountingType.THT

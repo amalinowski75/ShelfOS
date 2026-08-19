@@ -423,6 +423,24 @@
     if (prefill.datasheetUrl) pendingDatasheetUrl = prefill.datasheetUrl;
 
     const proposal = prefill.proposal || null;
+    // Package and mounting are type-independent, so apply them up front — before the
+    // "no type resolved" early return below. The engine still works them out for a
+    // part whose category doesn't map to one of our types (e.g. an IC the shop
+    // labels "SMD/SMT"), and the user shouldn't lose that guess just because they
+    // have to pick the type by hand. Parameter values need the type's fields and are
+    // applied further down, once loaded.
+    if (proposal) applyProposalFields(proposal);
+    // A staged review row carries a mounting the engine already inferred. Apply it up
+    // front too, before the type gate: an invoice line whose type didn't resolve
+    // arrives with typeId "" (styled is-incomplete), and would otherwise hit the
+    // early return below and lose its mounting — the same bug, one field over. Applied
+    // after applyProposalFields, so a staged mounting still wins over the proposal's.
+    if (prefill.mountingType) {
+      const mounting = form.querySelector('[name="mounting_type"]');
+      if (mounting && [...mounting.options].some((o) => o.value === prefill.mountingType)) {
+        mounting.value = prefill.mountingType;
+      }
+    }
     // The type is known by: a staged line's id, else the engine's proposal, else a
     // BOM prefill's category name.
     const typeId =
@@ -439,24 +457,19 @@
     await loadParams(typeId); // render the type's parameter fields
     // Only fill parameters if the user hasn't changed the type while we loaded.
     if (typeSelect.value !== typeId) return;
-    // A staged review row carries a mounting the engine already inferred.
-    if (prefill.mountingType) {
-      const mounting = form.querySelector('[name="mounting_type"]');
-      if (mounting && [...mounting.options].some((o) => o.value === prefill.mountingType)) {
-        mounting.value = prefill.mountingType;
-      }
-    }
     if (prefill.value) setValueParam(prefill.value); // BOM: single value param
     if (proposal) applyProposal(proposal); // shop: the engine's field guesses
     // Values the user already entered in a prior review edit win over the guesses.
     if (prefill.paramValues) setParamsById(prefill.paramValues);
   }
 
-  // Apply the engine's proposal to the form: package, mounting, and parameter values
-  // (by definition id). Never overwrites a package or mounting the user already set —
-  // switching type re-runs the engine, and mounting is type-independent, so a manual
-  // correction must survive the re-fetch. "Other" is the default/untouched sentinel.
-  function applyProposal(proposal) {
+  // The type-independent half of a proposal: package and mounting. Never overwrites
+  // a package or mounting the user already set — switching type re-runs the engine,
+  // and mounting is type-independent, so a manual correction must survive the
+  // re-fetch. "Other" is the default/untouched sentinel. Idempotent: re-applying
+  // finds the field already filled and leaves it, so callers may run it more than
+  // once (applyPrefill applies it early, then applyProposal again after the type).
+  function applyProposalFields(proposal) {
     if (proposal.package) {
       const pkg = form.querySelector('[name="package"]');
       if (pkg && !pkg.value) pkg.value = proposal.package;
@@ -469,6 +482,12 @@
         [...mounting.options].some((o) => o.value === proposal.mounting_type);
       if (ok) mounting.value = proposal.mounting_type;
     }
+  }
+
+  // Apply the engine's proposal to the form: package, mounting, and parameter values
+  // (by definition id). The parameter half needs the type's fields already rendered.
+  function applyProposal(proposal) {
+    applyProposalFields(proposal);
     if (proposal.parameters) setParamsById(proposal.parameters);
   }
 

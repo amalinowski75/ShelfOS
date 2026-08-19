@@ -170,8 +170,18 @@ def build_proposal(
         definitions = cs.get_effective_parameter_definitions(session, proposal.type_id)
         _fill_parameters(session, product, scan_text, definitions, rules, proposal)
 
-    # 4. Mounting.
-    proposal.mounting_type = _resolve_mounting(blob, rules)
+    # 4. Mounting. A shop often states it only as a structured attribute (TME's
+    # "Mounting" parameter) that never reaches the free-text blob, so scan the
+    # attribute values too — but as a FALLBACK, not an equal contributor. The
+    # description is the higher-confidence source, and _resolve_mounting returns the
+    # first matching RULE (not the first match in the text), so merging the two into
+    # one blob would let an incidental "SMD" in some attribute outrank an explicit
+    # "through-hole" in the description. Resolve the text first, params only if it
+    # names no mounting.
+    param_text = " ".join(str(value) for _, value in product.parameters if value)
+    proposal.mounting_type = _resolve_mounting(blob, rules) or _resolve_mounting(
+        param_text, rules
+    )
 
     # 5. Package.
     if product.package:
