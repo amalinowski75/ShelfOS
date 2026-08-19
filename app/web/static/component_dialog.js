@@ -40,13 +40,18 @@
     pendingShopUrl = url || null;
     if (shopOpenBtn) shopOpenBtn.disabled = !pendingShopUrl;
   }
-  // Open in a real separate WINDOW, not a tab: giving window.open sizing/popup
-  // features makes the browser spawn a standalone window (a bare "_blank" opens a
-  // tab in most browsers).
-  const SHOP_WINDOW_FEATURES = "popup,noopener,noreferrer,width=1100,height=850";
+  // "Open in shop" reuses ONE named tab ("shelfos-shop") rather than spawning a
+  // fresh window each time: the first click opens a normal tab, which the user can
+  // drag into their second window / split-view pane once, and every later click
+  // navigates THAT same tab in place — so the shop page keeps landing where they put
+  // it. Named-target reuse only works while the context stays script-reachable, so
+  // no noopener/noreferrer (noreferrer implies noopener); the trade-off is the shop
+  // page gets a window.opener handle, fine for distributor product links. A plain
+  // name (no sizing/popup features) opens a real tab, not the stripped popup window.
+  const SHOP_WINDOW_NAME = "shelfos-shop";
   if (shopOpenBtn) {
     shopOpenBtn.addEventListener("click", () => {
-      if (pendingShopUrl) window.open(pendingShopUrl, "_blank", SHOP_WINDOW_FEATURES);
+      if (pendingShopUrl) window.open(pendingShopUrl, SHOP_WINDOW_NAME);
     });
   }
   // The last shop-imported product, kept so switching type can re-run the engine.
