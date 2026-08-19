@@ -4,9 +4,6 @@
 // the parameter they apply to. Writes go through /api/admin/match-rules… (admin +
 // CSRF). `csrfToken`, `esc`, `errorMessage` and `frameTable` come from shared.js.
 
-// The two domains that attach a rule to a single parameter definition.
-const SCOPED_DOMAINS = new Set(["param_name", "enum_value"]);
-
 // Existing type names, cached for the in-place Target editor of a type rule (the
 // list is fetched once at load; the create dialog refreshes it when it opens).
 let cachedTypeNames = [];
@@ -199,168 +196,11 @@ function deleteRule(row) {
   });
 }
 
-// --- create ---
-const newRuleBtn = document.getElementById("rule-new-btn");
-if (newRuleBtn) {
-  const dialog = document.getElementById("rule-new-dialog");
-  const form = document.getElementById("rule-new-form");
-  const error = document.getElementById("rule-new-error");
-  const typeField = document.getElementById("rule-scope-type");
-  const paramField = document.getElementById("rule-scope-param");
-  const typeSelect = form.elements.type;
-  const paramSelect = form.elements.parameter;
-  // The four possible "Target" controls; only the one matching the domain shows.
-  const targetTypeSelect = form.elements.canonical_type; // type rule → a type name
-  const targetMountingSelect = form.elements.canonical_mounting; // mounting → enum
-  const targetEnumSelect = form.elements.canonical_enum; // enum_value → allowed value
-  const targetTextInput = form.elements.canonical_text; // param_name → free text
-  // The selected type's parameter definitions (with data_type + enum_values), cached
-  // so the parameter picker and the enum-target dropdown can be built without refetch.
-  let dialogParams = [];
-
-  function isScoped() {
-    return SCOPED_DOMAINS.has(form.elements.domain.value);
-  }
-
-  // Reflect the chosen domain: show its scope pickers (param/enum only) and the one
-  // Target control that fits — an existing-type list, the mounting enum, the chosen
-  // parameter's allowed values, or free text — so a bad target can't be entered.
-  async function syncFields() {
-    const domain = form.elements.domain.value;
-    const scoped = isScoped();
-    typeField.hidden = !scoped;
-    paramField.hidden = !scoped;
-    targetTypeSelect.hidden = domain !== "type";
-    targetMountingSelect.hidden = domain !== "mounting";
-    targetEnumSelect.hidden = domain !== "enum_value";
-    targetTextInput.hidden = domain !== "param_name";
-    // Refetch the type list (and, for a scoped domain, its parameters) every time this
-    // runs — on dialog reopen `form.reset()` snaps Type back to its first option WITHOUT
-    // firing `change`, so without a reload the parameter picker would still hold the
-    // previous type's params and the rule would bind to the wrong parameter. Reloading
-    // also surfaces a type added since the page loaded.
-    if (scoped || domain === "type") {
-      await loadTypes(); // ends by calling loadParams -> populateParams for scoped
-    }
-  }
-
-  async function loadTypes() {
-    try {
-      const types = await fetch("/api/types").then((r) => r.json());
-      // Scope picker keys by id (which parameter's owner); the target select stores
-      // the type NAME, which is what a type rule's canonical is matched against.
-      typeSelect.innerHTML = types
-        .map((t) => `<option value="${t.id}">${esc(t.name)}</option>`)
-        .join("");
-      targetTypeSelect.innerHTML = types
-        .map((t) => `<option value="${esc(t.name)}">${esc(t.name)}</option>`)
-        .join("");
-      cachedTypeNames = types.map((t) => t.name); // keep the inline editor in sync
-      await loadParams();
-    } catch {
-      error.textContent = "Could not load types.";
-      error.hidden = false;
-    }
-  }
-
-  async function loadParams() {
-    const typeId = typeSelect.value;
-    try {
-      dialogParams = typeId
-        ? await fetch(`/api/types/${typeId}/parameters`).then((r) => r.json())
-        : [];
-    } catch {
-      dialogParams = [];
-    }
-    populateParams();
-  }
-
-  // Fill the parameter picker; an enum_value rule only makes sense for an enum
-  // parameter, so those are all it offers.
-  function populateParams() {
-    const enumOnly = form.elements.domain.value === "enum_value";
-    const choices = enumOnly
-      ? dialogParams.filter((p) => p.data_type === "enum")
-      : dialogParams;
-    paramSelect.innerHTML = choices
-      .map((p) => `<option value="${p.id}">${esc(p.label)}</option>`)
-      .join("");
-    populateEnumTarget();
-  }
-
-  // For an enum_value rule, the Target is the chosen parameter's allowed values —
-  // the tokens defined when the type was built — so it can't be free-typed wrong.
-  function populateEnumTarget() {
-    if (form.elements.domain.value !== "enum_value") return;
-    const chosen = dialogParams.find((p) => String(p.id) === paramSelect.value);
-    targetEnumSelect.innerHTML = (chosen?.enum_values || [])
-      .map((v) => `<option value="${esc(v)}">${esc(v)}</option>`)
-      .join("");
-  }
-
-  // The target value comes from whichever control the domain exposes.
-  function currentTarget() {
-    const domain = form.elements.domain.value;
-    if (domain === "type") return targetTypeSelect.value;
-    if (domain === "mounting") return targetMountingSelect.value;
-    if (domain === "enum_value") return targetEnumSelect.value;
-    return targetTextInput.value.trim(); // param_name
-  }
-
-  form.elements.domain.addEventListener("change", syncFields);
-  typeSelect.addEventListener("change", loadParams);
-  paramSelect.addEventListener("change", populateEnumTarget);
-
-  newRuleBtn.addEventListener("click", async () => {
-    form.reset();
-    error.hidden = true;
-    await syncFields();
-    dialog.showModal();
-  });
-
-  const guardNew = makeGuard();
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    guardNew(async () => {
-      const scoped = isScoped();
-      const payload = {
-        domain: form.elements.domain.value,
-        alias: form.elements.alias.value.trim(),
-        canonical: currentTarget(),
-        sort_order: Number(form.elements.sort_order.value) || 0,
-        parameter_definition_id:
-          scoped && paramSelect.value ? Number(paramSelect.value) : null,
-      };
-      if (scoped && payload.parameter_definition_id === null) {
-        error.textContent = "Pick the parameter this rule applies to.";
-        error.hidden = false;
-        return;
-      }
-      if (!payload.canonical) {
-        error.textContent = "Pick or enter a target.";
-        error.hidden = false;
-        return;
-      }
-      try {
-        const resp = await sendRuleWrite(
-          "/api/admin/match-rules",
-          "POST",
-          payload,
-        );
-        if (resp.ok) {
-          dialog.close();
-          await loadRules();
-        } else {
-          error.textContent = await errorMessage(resp);
-          error.hidden = false;
-        }
-      } catch {
-        error.textContent = "Could not reach the server.";
-        error.hidden = false;
-      }
-    });
-  });
-}
+// The create dialog lives in match_rule_dialog.js (shared so the type builder and a
+// type's parameter list can open it too); wire the admin "New rule" button to it.
+document.getElementById("rule-new-btn")?.addEventListener("click", () => {
+  window.openMatcherDialog?.(loadRules);
+});
 
 rulesTable.on("tableBuilt", loadRules);
 loadTypeNames(); // ready the type list for the inline Target editor

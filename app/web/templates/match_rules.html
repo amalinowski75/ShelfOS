@@ -1,9 +1,6 @@
 {% extends "base.html" %}
+{% from "_match_rule_dialog.html" import match_rule_dialog %}
 {% block title %}Match rules — ShelfOS{% endblock %}
-
-{% macro domain_options(selected="") -%}
-  {% for domain in domains %}<option value="{{ domain }}"{% if domain == selected %} selected{% endif %}>{{ domain }}</option>{% endfor %}
-{%- endmacro %}
 
 {% block content %}
 <div class="head">
@@ -19,59 +16,10 @@
 
 <div id="rules-table"></div>
 
-<dialog id="rule-new-dialog">
-  <article>
-    <header>
-      <strong>New match rule</strong>
-      <button class="close" aria-label="Close" data-close></button>
-    </header>
-    <form id="rule-new-form">
-      <div class="field">
-        <label>Domain</label>
-        <!-- type/mounting are global; param_name/enum_value attach to one parameter. -->
-        <select class="control" name="domain">{{ domain_options() }}</select>
-      </div>
-      <!-- Shown only for the scoped domains (param_name, enum_value): pick which
-           parameter the rule applies to. -->
-      <div class="field" id="rule-scope-type" hidden>
-        <label>Type</label>
-        <select class="control" name="type"></select>
-      </div>
-      <div class="field" id="rule-scope-param" hidden>
-        <label>Parameter</label>
-        <select class="control" name="parameter"></select>
-      </div>
-      <div class="field">
-        <label>Alias <span class="muted">— text seen in the shop/invoice data</span></label>
-        <input class="control" name="alias" required placeholder="e.g. przewlekany" />
-      </div>
-      <div class="field">
-        <label>Target <span class="muted">— how ShelfOS stores it</span></label>
-        <!-- The target's shape depends on the domain: an existing type for a type
-             rule, a mounting value for a mounting rule, free text otherwise. Only the
-             one matching the chosen domain is shown (toggled in match_rules.js). -->
-        <select class="control" name="canonical_type" hidden></select>
-        <select class="control" name="canonical_mounting" hidden>
-          {% for mt in mounting_types %}<option value="{{ mt }}">{{ mt }}</option>{% endfor %}
-        </select>
-        <!-- enum_value: the chosen parameter's allowed values, filled in JS. -->
-        <select class="control" name="canonical_enum" hidden></select>
-        <input class="control" name="canonical_text" hidden placeholder="e.g. resistance" />
-      </div>
-      <div class="field">
-        <label>Order <span class="muted">— lower wins when several aliases match</span></label>
-        <input class="control" type="number" name="sort_order" value="0" step="1" />
-      </div>
-      <p id="rule-new-error" class="error" hidden></p>
-      <footer>
-        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
-        <button type="submit" class="btn btn-primary">Create</button>
-      </footer>
-    </form>
-  </article>
-</dialog>
+{{ match_rule_dialog(domains, mounting_types) }}
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/match_rule_dialog.js?v={{ static_version() }}"></script>
 <script src="/static/match_rules.js?v={{ static_version() }}"></script>
 {% endblock %}

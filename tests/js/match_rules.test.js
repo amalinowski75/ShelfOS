@@ -1,7 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import { loadPage, tick, CSRF, matchRulesPageFixture } from "./harness.js";
 
-const SCRIPTS = ["shared.js", "match_rules.js"];
+// The create dialog moved to match_rule_dialog.js (shared so the type builder can open
+// it too); match_rules.js keeps the table + inline editing and wires the "New rule"
+// button to window.openMatcherDialog. Load both, dialog script first.
+const SCRIPTS = ["shared.js", "match_rule_dialog.js", "match_rules.js"];
 
 // A minimal Tabulator cell double: the value being edited + its row's data, plus a
 // spy for the revert the code calls when the server rejects an edit.
@@ -455,5 +458,76 @@ describe("match_rules.js — create", () => {
       fetchMock.mock.calls.some((c) => c[0] === "/api/admin/match-rules"),
     ).toBe(false);
     expect(document.getElementById("rule-new-error").hidden).toBe(false);
+  });
+});
+
+describe("match_rule_dialog.js — openMatcherDialog(prefill)", () => {
+  // A caller (the type builder / a type's parameter list) opens the dialog already
+  // pointed at one parameter, so nothing has to be re-picked.
+  function scopedFetch() {
+    return (url) => {
+      if (url === "/api/types") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [
+            { id: 1, name: "resistor" },
+            { id: 2, name: "cable" },
+          ],
+        });
+      }
+      if (url === "/api/types/1/parameters") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [
+            { id: 10, name: "resistance", label: "Resistance", data_type: "number", enum_values: [] },
+            { id: 11, name: "tolerance", label: "Tolerance", data_type: "number", enum_values: [] },
+          ],
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    };
+  }
+
+  it("pre-scopes domain, type and parameter, and defaults the target to the param name", async () => {
+    const { window, document } = loadPage(matchRulesPageFixture(), SCRIPTS, {
+      fetchImpl: scopedFetch(),
+    });
+    await window.openMatcherDialog(null, {
+      domain: "param_name",
+      typeId: 1,
+      parameterDefinitionId: 11,
+    });
+    await tick();
+    const form = document.getElementById("rule-new-form");
+    expect(form.elements.domain.value).toBe("param_name");
+    expect(form.elements.type.value).toBe("1");
+    expect(form.elements.parameter.value).toBe("11");
+    // param_name maps a label onto the parameter's own (technical) name.
+    expect(form.elements.canonical_text.value).toBe("tolerance");
+  });
+
+  it("submitting the pre-scoped rule POSTs that parameter id and fires onCreated", async () => {
+    const created = [];
+    const { window, document, fetchMock } = loadPage(matchRulesPageFixture(), SCRIPTS, {
+      fetchImpl: scopedFetch(),
+    });
+    await window.openMatcherDialog((c) => created.push(c), {
+      domain: "param_name",
+      typeId: 1,
+      parameterDefinitionId: 10,
+    });
+    await tick();
+    const form = document.getElementById("rule-new-form");
+    form.elements.alias.value = "Rezystancja";
+    submit(document, "rule-new-form");
+    await tick();
+    const post = fetchMock.mock.calls.find((c) => c[0] === "/api/admin/match-rules");
+    expect(JSON.parse(post[1].body)).toMatchObject({
+      domain: "param_name",
+      alias: "Rezystancja",
+      canonical: "resistance",
+      parameter_definition_id: 10,
+    });
+    expect(created.length).toBe(1); // onCreated ran
   });
 });
