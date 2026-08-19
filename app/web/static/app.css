@@ -485,6 +485,13 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 #shop-import-status { margin: 6px 0 0; font-size: 13px; }
 #shop-import-status.error { color: var(--danger); }
 
+/* A field an import left unfilled (component_dialog.js). Advisory only: nothing here
+   is required and nothing is blocked — the tint just shows which fields the shop or
+   the invoice had nothing to say about, and it clears as soon as one is given a
+   value. background-COLOR, not the shorthand: a select's chevron is a
+   background-image and the shorthand would wipe it. */
+.control.is-unfilled { background-color: var(--danger-soft); }
+
 /* ---------- new-type dialog (§13) ---------- */
 /* Widen the dialog itself (the base rule caps it at 440px); it holds a
    two-column parameter builder plus an inherited-parameters side panel. */

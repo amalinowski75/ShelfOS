@@ -62,6 +62,58 @@
   // next scanned code out of ever being looked up. Its stale response is discarded
   // by the openToken check, so releasing the lock loses nothing.
   let importing = false;
+  // Whether the "what didn't get filled" tint is showing. On only once something has
+  // been prefilled — an import that fills six fields out of nine is what the tint is
+  // for; a blank form the user opened themselves is not a form full of gaps.
+  let showingGaps = false;
+
+  // Every control the component itself is made of — selected as form elements rather
+  // than by the .control class, so a field is covered whether or not it is styled
+  // like one. The import box is excluded: it is the tool that fills the form, not a
+  // field of the part, and it sits EMPTY exactly when an import has just filled
+  // everything from a scanned code.
+  function isComponentField(control) {
+    return (
+      control.id !== "shop-import-url" &&
+      ["INPUT", "SELECT", "TEXTAREA"].includes(control.tagName)
+    );
+  }
+
+  function componentControls() {
+    return [...form.querySelectorAll("input, select, textarea")].filter(
+      isComponentField,
+    );
+  }
+
+  // Whether a control still has nothing in it. Selects say so with an empty value —
+  // the type picker's "Select a type…", a parameter's "—" — except mounting, whose
+  // untouched state is the "Other" the markup preselects (the same sentinel
+  // applyProposalFields treats as "nobody has set this").
+  function isUnfilled(control) {
+    if (control.name === "mounting_type") return control.value === "Other";
+    return !control.value;
+  }
+
+  // Tint every field left unfilled, and untint the rest. Advisory only — nothing is
+  // required and nothing is blocked; the point is that a prefilled form shows its
+  // gaps at a glance instead of hiding them among the values that did arrive.
+  function refreshGaps() {
+    for (const control of componentControls()) {
+      control.classList.toggle("is-unfilled", showingGaps && isUnfilled(control));
+    }
+  }
+
+  // A field the user has just typed in or picked from stops being a gap immediately,
+  // rather than at some later refresh. Delegated, because a type's parameter fields
+  // are built after this runs — and listening for both events covers a select
+  // (change) and text typed a character at a time (input).
+  for (const event of ["input", "change"]) {
+    form.addEventListener(event, (e) => {
+      const control = e.target;
+      if (!control.tagName || !isComponentField(control)) return;
+      control.classList.toggle("is-unfilled", showingGaps && isUnfilled(control));
+    });
+  }
 
   // Build a value input for one effective parameter definition, keyed by its id
   // and data type so the payload can be assembled without another lookup.
@@ -100,7 +152,19 @@
     return field;
   }
 
+  // Wrapped for the same reason applyPrefill is: the tint has to be right however
+  // this returns, and there are four ways out — no type, a failed fetch, a type with
+  // no parameters, a newer selection overtaking this one. Hanging the refresh off
+  // the one exit that renders fields left the other three able to miss it.
   async function loadParams(typeId) {
+    try {
+      return await loadParamsFields(typeId);
+    } finally {
+      refreshGaps();
+    }
+  }
+
+  async function loadParamsFields(typeId) {
     const requestId = ++paramsRequestId;
     paramsBox.replaceChildren();
     currentDefinitions = [];
@@ -404,6 +468,19 @@
   // dialog no longer guesses). Runs async (loads the type's parameters); fired after
   // the dialog is shown or when Import completes.
   async function applyPrefill(prefill) {
+    // The tint belongs to prefilled forms only, and it is refreshed however the
+    // inner function returns — several of its paths give up early (no type matched,
+    // the type changed while its parameters loaded), and each of those leaves
+    // exactly the gaps worth pointing at.
+    showingGaps = !!prefill;
+    try {
+      await applyPrefillFields(prefill);
+    } finally {
+      refreshGaps();
+    }
+  }
+
+  async function applyPrefillFields(prefill) {
     pendingDatasheetUrl = null;
     // An invoice line's prefill carries a prebuilt shop URL; a BOM/blank one has
     // none. A later shop lookup (runImport) overrides this with its source_url.
@@ -489,6 +566,9 @@
   function applyProposal(proposal) {
     applyProposalFields(proposal);
     if (proposal.parameters) setParamsById(proposal.parameters);
+    // Setting .value in script fires no input event, so the tint is refreshed by
+    // hand — this is the call that clears it off everything the engine did fill.
+    refreshGaps();
   }
 
   // Re-run the engine server-side for a chosen type over the last imported product,
@@ -656,6 +736,13 @@
     // fires from a closed dialog.)
     const reopening = dialog.open;
     onCreated = callback || null;
+    // Off until something is prefilled, and repainted on the spot — clearing the
+    // flag alone would leave the previous session's tint sitting on the form. That
+    // is the reopen case (a bag scanned while the previous one is still up): the
+    // form is reset below and bag B's lookup takes a moment, and bag A's gaps
+    // marked against bag B's number read as information, which is worse than noise.
+    showingGaps = false;
+    refreshGaps();
     openToken += 1; // invalidate any in-flight shop lookup from a prior open
     importing = false; // …and release its lock so the new code is looked up
     errorEl.hidden = true;
