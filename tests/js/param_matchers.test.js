@@ -175,5 +175,22 @@ describe("param_matchers.js", () => {
     await tick();
     expect(document.getElementById("pm-value-alias").value).toBe("NP0"); // not cleared
     expect(document.getElementById("param-matchers-error").hidden).toBe(false);
+    // A failed write must NOT claim it saved.
+    expect(document.getElementById("param-matchers-status").textContent).not.toMatch(/Saved/);
+  });
+
+  it("confirms each successful write with a 'Saved' status (autosave)", async () => {
+    const { window, document } = loadPage(typesAdminPageFixture(), SCRIPTS, {
+      fetchImpl: makeFetch(),
+    });
+    await window.openParamMatchers(ENUM_PARAM);
+    await tick();
+    // On open, the panel states the save model up front.
+    expect(document.getElementById("param-matchers-status").textContent).toMatch(/automatically/i);
+
+    document.getElementById("pm-name-alias").value = "Dielectric material";
+    document.getElementById("pm-name-add").click();
+    await tick();
+    expect(document.getElementById("param-matchers-status").textContent).toMatch(/Saved/);
   });
 });
