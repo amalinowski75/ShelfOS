@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { loadPage, tick, typesAdminPageFixture } from "./harness.js";
 
 const SCRIPTS = ["shared.js", "param_matchers.js"];
@@ -19,7 +19,8 @@ const NUMBER_PARAM = {
   enum_values: [],
 };
 
-// The admin rules feed: a couple scoped to param 9, one to another param.
+// The admin rules feed: one value rule + one name rule scoped to param 9, one for
+// another parameter (must be excluded).
 function feed() {
   return {
     data: [
@@ -30,8 +31,6 @@ function feed() {
   };
 }
 
-// A fetch double: the feed on GET, and ok+echo for the admin writes (POST returns the
-// body with an id so the panel can append the new row).
 function makeFetch(overrides = {}) {
   let nextId = 100;
   return (url, opts) => {
@@ -49,79 +48,78 @@ function makeFetch(overrides = {}) {
   };
 }
 
-const rows = (document) => [...document.querySelectorAll("#param-matchers-list li")];
+const valueRows = (d) => [...d.querySelectorAll("#pm-value-list li")];
+const nameRows = (d) => [...d.querySelectorAll("#pm-name-list li")];
 const writeCall = (fetchMock, method) =>
   fetchMock.mock.calls.find((c) => c[1]?.method === method);
 
 describe("param_matchers.js", () => {
-  it("lists only the rules scoped to this parameter", async () => {
+  it("splits a parameter's rules into value and name sections (others excluded)", async () => {
     const { window, document } = loadPage(typesAdminPageFixture(), SCRIPTS, {
       fetchImpl: makeFetch(),
     });
-    await window.openParamMatchers(ENUM_PARAM, 3);
+    await window.openParamMatchers(ENUM_PARAM);
     await tick();
-    // Two of the three feed rows belong to param 9; the param-99 one is excluded.
-    expect(rows(document).length).toBe(2);
+    expect(valueRows(document).length).toBe(1); // rule 1 (NP0 → C0G)
+    expect(nameRows(document).length).toBe(1); // rule 2 (Dielektryk)
     expect(document.getElementById("param-matchers-title").textContent).toBe("Dielectric");
+    expect(document.getElementById("pm-value-section").hidden).toBe(false);
   });
 
-  it("rapid-adds an enum_value rule: POSTs the value + param id, then clears", async () => {
+  it("rapid-adds a value alias: POSTs enum_value with the chosen value, then clears", async () => {
     const { window, document, fetchMock } = loadPage(typesAdminPageFixture(), SCRIPTS, {
       fetchImpl: makeFetch(),
     });
-    await window.openParamMatchers(ENUM_PARAM, 3);
+    await window.openParamMatchers(ENUM_PARAM);
     await tick();
-    const before = rows(document).length;
+    const before = valueRows(document).length;
 
-    const target = document.getElementById("pm-add-target");
-    target.value = "X7R"; // an enum value → an enum_value rule
-    document.getElementById("pm-add-alias").value = "COG-ish";
-    document.getElementById("pm-add-btn").click();
+    document.getElementById("pm-value-target").value = "X7R";
+    document.getElementById("pm-value-alias").value = "COG-ish";
+    document.getElementById("pm-value-add").click();
     await tick();
 
-    const post = writeCall(fetchMock, "POST");
-    expect(JSON.parse(post[1].body)).toEqual({
+    expect(JSON.parse(writeCall(fetchMock, "POST")[1].body)).toEqual({
       domain: "enum_value",
       alias: "COG-ish",
       canonical: "X7R",
       parameter_definition_id: 9,
       sort_order: 0,
     });
-    // Appended, and the alias cleared for the next one (no modal, no reload).
-    expect(rows(document).length).toBe(before + 1);
-    expect(document.getElementById("pm-add-alias").value).toBe("");
+    expect(valueRows(document).length).toBe(before + 1);
+    expect(document.getElementById("pm-value-alias").value).toBe(""); // cleared
   });
 
-  it("adds a param_name rule via the 'as parameter name' option", async () => {
+  it("rapid-adds a name alias: POSTs param_name with the parameter's own name", async () => {
     const { window, document, fetchMock } = loadPage(typesAdminPageFixture(), SCRIPTS, {
       fetchImpl: makeFetch(),
     });
-    await window.openParamMatchers(ENUM_PARAM, 3);
+    await window.openParamMatchers(ENUM_PARAM);
     await tick();
+    const before = nameRows(document).length;
 
-    const target = document.getElementById("pm-add-target");
-    target.selectedIndex = target.options.length - 1; // the param_name option (last)
-    document.getElementById("pm-add-alias").value = "Dielectric material";
-    document.getElementById("pm-add-btn").click();
+    document.getElementById("pm-name-alias").value = "Dielectric material";
+    document.getElementById("pm-name-add").click();
     await tick();
 
     expect(JSON.parse(writeCall(fetchMock, "POST")[1].body)).toMatchObject({
       domain: "param_name",
-      canonical: "dielectric", // the parameter's own name
+      canonical: "dielectric",
       parameter_definition_id: 9,
     });
+    expect(nameRows(document).length).toBe(before + 1);
   });
 
-  it("for a non-enum parameter, hides the value picker and adds a param_name rule", async () => {
+  it("hides the value section for a non-enum parameter (name aliases only)", async () => {
     const { window, document, fetchMock } = loadPage(typesAdminPageFixture(), SCRIPTS, {
       fetchImpl: makeFetch(),
     });
-    await window.openParamMatchers(NUMBER_PARAM, 3);
+    await window.openParamMatchers(NUMBER_PARAM);
     await tick();
-    expect(document.getElementById("pm-add-target").hidden).toBe(true);
+    expect(document.getElementById("pm-value-section").hidden).toBe(true);
 
-    document.getElementById("pm-add-alias").value = "Rezystancja";
-    document.getElementById("pm-add-btn").click();
+    document.getElementById("pm-name-alias").value = "Rezystancja";
+    document.getElementById("pm-name-add").click();
     await tick();
     expect(JSON.parse(writeCall(fetchMock, "POST")[1].body)).toMatchObject({
       domain: "param_name",
@@ -130,16 +128,15 @@ describe("param_matchers.js", () => {
     });
   });
 
-  it("edits an alias inline (PATCH) and a value inline (PATCH)", async () => {
+  it("edits a value rule's alias and target inline (PATCH)", async () => {
     const { window, document, fetchMock } = loadPage(typesAdminPageFixture(), SCRIPTS, {
       fetchImpl: makeFetch(),
     });
-    await window.openParamMatchers(ENUM_PARAM, 3);
+    await window.openParamMatchers(ENUM_PARAM);
     await tick();
 
-    // First row is rule 1 (enum_value NP0 → C0G): rename its alias.
-    const first = rows(document)[0];
-    const alias = first.querySelector("input");
+    const row = valueRows(document)[0]; // rule 1 (NP0 → C0G)
+    const alias = row.querySelector("input");
     alias.value = "NPO";
     alias.dispatchEvent(new document.defaultView.Event("change", { bubbles: true }));
     await tick();
@@ -147,8 +144,7 @@ describe("param_matchers.js", () => {
     expect(patch[0]).toBe("/api/admin/match-rules/1");
     expect(JSON.parse(patch[1].body)).toEqual({ alias: "NPO" });
 
-    // …and change its target value.
-    const select = first.querySelector("select");
+    const select = row.querySelector("select");
     select.value = "X7R";
     select.dispatchEvent(new document.defaultView.Event("change", { bubbles: true }));
     await tick();
@@ -160,25 +156,24 @@ describe("param_matchers.js", () => {
     const { window, document, fetchMock } = loadPage(typesAdminPageFixture(), SCRIPTS, {
       fetchImpl: makeFetch(),
     });
-    await window.openParamMatchers(ENUM_PARAM, 3);
+    await window.openParamMatchers(ENUM_PARAM);
     await tick();
-    const before = rows(document).length;
-    rows(document)[0].querySelector(".pm-del").click();
+    nameRows(document)[0].querySelector(".pm-del").click();
     await tick();
-    expect(writeCall(fetchMock, "DELETE")[0]).toBe("/api/admin/match-rules/1");
-    expect(rows(document).length).toBe(before - 1);
+    expect(writeCall(fetchMock, "DELETE")[0]).toBe("/api/admin/match-rules/2");
+    expect(nameRows(document).length).toBe(0);
   });
 
   it("keeps the alias on a failed add and shows the error", async () => {
     const { window, document } = loadPage(typesAdminPageFixture(), SCRIPTS, {
       fetchImpl: makeFetch({ writeFails: true }),
     });
-    await window.openParamMatchers(ENUM_PARAM, 3);
+    await window.openParamMatchers(ENUM_PARAM);
     await tick();
-    document.getElementById("pm-add-alias").value = "NP0";
-    document.getElementById("pm-add-btn").click();
+    document.getElementById("pm-value-alias").value = "NP0";
+    document.getElementById("pm-value-add").click();
     await tick();
-    expect(document.getElementById("pm-add-alias").value).toBe("NP0"); // not cleared
+    expect(document.getElementById("pm-value-alias").value).toBe("NP0"); // not cleared
     expect(document.getElementById("param-matchers-error").hidden).toBe(false);
   });
 });
