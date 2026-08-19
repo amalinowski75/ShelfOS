@@ -272,6 +272,7 @@ export function matchRulesPageFixture() {
   const domainOptions = `
     <option value="type" selected>type</option>
     <option value="mounting">mounting</option>
+    <option value="package">package</option>
     <option value="param_name">param_name</option>
     <option value="enum_value">enum_value</option>`;
   return `

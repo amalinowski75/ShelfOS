@@ -239,6 +239,49 @@ def test_update_rule_rejects_an_enum_value_target_that_is_not_a_member(
     assert session.get(type(rule), rule.id).canonical == "Flat"
 
 
+def test_package_rules_are_global_and_keep_their_target_verbatim(
+    session: Session,
+) -> None:
+    # A package has no fixed vocabulary — the target is the case name as the shelf
+    # writes it, so unlike mounting/enum_value it is stored exactly as typed.
+    rule = mrs.create_rule(
+        session, domain=MatchDomain.PACKAGE, alias="SOT23", canonical="SOT-23"
+    )
+    assert rule.canonical == "SOT-23"
+    assert rule.parameter_definition_id is None
+    # Global, like type and mounting: naming a parameter is an error.
+    with pytest.raises(ValidationError, match="global"):
+        mrs.create_rule(
+            session, domain=MatchDomain.PACKAGE, alias="TO220",
+            canonical="TO-220", parameter_definition_id=1,
+        )
+
+
+def test_package_rules_load_in_order_and_reject_a_duplicate_alias(
+    session: Session,
+) -> None:
+    mrs.create_rule(
+        session, domain=MatchDomain.PACKAGE, alias="SOT-23-3",
+        canonical="SOT-23", sort_order=0,
+    )
+    mrs.create_rule(
+        session, domain=MatchDomain.PACKAGE, alias="SOT", canonical="SOT-23",
+        sort_order=5,
+    )
+    # Lowest sort_order first, aliases lowercased — the engine takes the first match,
+    # so the more specific "sot-23-3" must come before the bare "sot".
+    assert mrs.load_rules(session).packages == [
+        ("sot-23-3", "SOT-23"),
+        ("sot", "SOT-23"),
+    ]
+    # The engine keys a package alias by .lower() (as for type/mounting), so a
+    # differently-cased repeat is the same alias.
+    with pytest.raises(ValidationError, match="already exists"):
+        mrs.create_rule(
+            session, domain=MatchDomain.PACKAGE, alias="sot-23-3", canonical="SOT-23"
+        )
+
+
 def test_normalize_folds_polish_accents() -> None:
     # An accent must fold to its base letter, not vanish — otherwise "wstążkowy" and
     # the un-accented "wstazkowy" a shop often writes would key differently.

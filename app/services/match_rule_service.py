@@ -53,14 +53,15 @@ _AUDIT_ENTITY = "match_rule"
 class RuleSet:
     """All matching rules, grouped and normalized for the engine to consult.
 
-    ``types`` and ``mountings`` are ordered lowest-``sort_order``-first so the more
-    specific alias wins (led before diode). ``param_aliases`` and ``enum_aliases`` are
-    keyed by the parameter definition the rule is scoped to.
+    ``types``, ``mountings`` and ``packages`` are ordered lowest-``sort_order``-first
+    so the more specific alias wins (led before diode). ``param_aliases`` and
+    ``enum_aliases`` are keyed by the parameter definition the rule is scoped to.
     """
 
     # (alias_lower, canonical) pairs, most-specific first:
     types: list[tuple[str, str]] = field(default_factory=list)
     mountings: list[tuple[str, str]] = field(default_factory=list)
+    packages: list[tuple[str, str]] = field(default_factory=list)
     # definition id -> set of normalized aliases that mean this definition
     param_aliases: dict[int, set[str]] = field(default_factory=dict)
     # definition id -> {normalized alias -> canonical allowed enum value}
@@ -81,6 +82,8 @@ def load_rules(session: Session) -> RuleSet:
             result.types.append((rule.alias.lower(), rule.canonical))
         elif rule.domain is MatchDomain.MOUNTING:
             result.mountings.append((rule.alias.lower(), rule.canonical))
+        elif rule.domain is MatchDomain.PACKAGE:
+            result.packages.append((rule.alias.lower(), rule.canonical))
         elif rule.parameter_definition_id is None:
             continue  # a scoped rule with no definition is unusable; skip defensively
         elif rule.domain is MatchDomain.PARAM_NAME:
@@ -128,8 +131,9 @@ def _canonical_target(
     case-sensitively (``canonical in allowed``) and a wrong case would make the rule
     silently do nothing — the very "looks alive in the table but can never fire"
     failure this guards against. A TYPE target is resolved case-insensitively by the
-    engine, and a PARAM_NAME target is a free-text definition name, so both are kept
-    verbatim.
+    engine; a PARAM_NAME target is a free-text definition name; and a PACKAGE target is
+    the package text as it should be stored ("SOT-23"), which has no fixed vocabulary
+    at all — so those three are kept verbatim.
     """
     if domain is MatchDomain.MOUNTING:
         for member in MountingType:
@@ -185,7 +189,7 @@ def create_rule(
     """Add a rule, rejecting blanks and exact duplicates.
 
     The scoped domains (param_name, enum_value) require a definition; the global ones
-    (type, mounting) must not carry one.
+    (type, mounting, package) must not carry one.
 
     Audited when a ``user_id`` is given (§19): a rule changes how every later
     import is read, and the rule row keeps no history of its own. ``None`` is
@@ -343,9 +347,10 @@ def _find_duplicate(
     parameter_definition_id: int | None,
 ) -> MatchRule | None:
     # Two aliases collide when the ENGINE would key them the same way — otherwise the
-    # loser sits in the admin table looking healthy but never fires. type/mounting are
-    # keyed by .lower(); the scoped domains by normalize() (which folds accents and
-    # punctuation), so there "wstążkowy" and "wstazkowy" are one alias, not two.
+    # loser sits in the admin table looking healthy but never fires. The global
+    # domains (type, mounting, package) are keyed by .lower(); the scoped ones by
+    # normalize() (which folds accents and punctuation), so there "wstążkowy" and
+    # "wstazkowy" are one alias, not two.
     scoped = domain in (MatchDomain.PARAM_NAME, MatchDomain.ENUM_VALUE)
     fold = normalize if scoped else str.lower
     target = fold(alias)

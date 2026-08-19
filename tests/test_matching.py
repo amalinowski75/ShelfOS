@@ -327,3 +327,84 @@ def test_description_mounting_beats_an_incidental_attribute_word(
         parameters=[("Alternative package", "also available as SMD")],
     )
     assert build_proposal(session, product).mounting_type is MountingType.THT
+def test_package_rule_reads_a_case_out_of_the_description(session: Session) -> None:
+    # The EIA pattern only knows chip sizes; a named case ("obudowa SOT-23") needs a
+    # rule, which is what the package domain is for.
+    _resistor(session)
+    mrs.create_rule(
+        session, domain=MatchDomain.PACKAGE, alias="SOT-23", canonical="SOT-23"
+    )
+    product = ProductData(
+        category="resistor", description="Tranzystor w obudowie SOT-23, 100 mA"
+    )
+    assert build_proposal(session, product).package == "SOT-23"
+
+
+def test_package_rule_normalizes_the_shop_s_own_package_field(
+    session: Session,
+) -> None:
+    # A shop's own package field still wins over the description — but it is spelled
+    # the shop's way, so the rule folds it to the one name the shelf uses.
+    _resistor(session)
+    mrs.create_rule(
+        session, domain=MatchDomain.PACKAGE, alias="SOT23-3", canonical="SOT-23"
+    )
+    product = ProductData(category="resistor", description="0402", package="sot23-3")
+    assert build_proposal(session, product).package == "SOT-23"
+    # No rule for it: the shop's wording is kept as it came, not dropped.
+    unknown = ProductData(category="resistor", description="0402", package="DPAK")
+    assert build_proposal(session, unknown).package == "DPAK"
+
+
+@pytest.mark.parametrize(
+    "broad_order,specific_order,expected",
+    [(0, 1, "SOT-23"), (1, 0, "SOT-23-3")],
+)
+def test_two_overlapping_package_aliases_are_settled_by_order(
+    session: Session, broad_order: int, specific_order: int, expected: str
+) -> None:
+    # Aliases that BOTH match the same text, which a separator makes ordinary:
+    # "SOT-23-3" contains "SOT-23", and a hyphen is a word boundary, so each one
+    # fires on its own. Swapping the orders swaps the answer — otherwise this would
+    # be measuring the regex rather than the ordering it claims to test.
+    _resistor(session)
+    mrs.create_rule(
+        session, domain=MatchDomain.PACKAGE, alias="SOT-23", canonical="SOT-23",
+        sort_order=broad_order,
+    )
+    mrs.create_rule(
+        session, domain=MatchDomain.PACKAGE, alias="SOT-23-3",
+        canonical="SOT-23-3", sort_order=specific_order,
+    )
+    product = ProductData(category="resistor", description="Tranzystor SOT-23-3")
+    assert build_proposal(session, product).package == expected
+
+
+def test_a_package_alias_does_not_fire_on_a_longer_case_name(
+    session: Session,
+) -> None:
+    # "TO-220AB" is a different case from "TO-220", so a TO-220 rule leaves it
+    # alone: the dialog shows an empty package the user fills in, rather than a
+    # confidently wrong one. Folding a family is said outright, as its own rule.
+    _resistor(session)
+    mrs.create_rule(
+        session, domain=MatchDomain.PACKAGE, alias="TO-220", canonical="TO-220"
+    )
+    product = ProductData(category="resistor", description="Radiator TO-220AB")
+    assert build_proposal(session, product).package is None
+    mrs.create_rule(
+        session, domain=MatchDomain.PACKAGE, alias="TO-220AB", canonical="TO-220"
+    )
+    assert build_proposal(session, product).package == "TO-220"
+
+
+def test_the_eia_pattern_still_backs_the_package_rules(session: Session) -> None:
+    _resistor(session)
+    mrs.create_rule(
+        session, domain=MatchDomain.PACKAGE, alias="TO-220", canonical="TO-220"
+    )
+    # No alias matched: the built-in chip-size pattern still fills the package in.
+    eia = ProductData(category="resistor", description="Thick Film Resistor 0805")
+    assert build_proposal(session, eia).package == "0805"
+    # Nothing at all to go on.
+    assert build_proposal(session, ProductData(category="resistor")).package is None
