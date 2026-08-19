@@ -20,7 +20,11 @@ function dialogFixture() {
       <input name="manufacturer" />
       <input name="mpn" />
       <input name="package" />
-      <select name="mounting_type"><option value="Other" selected>Other</option></select>
+      <select name="mounting_type">
+        <option value="Other" selected>Other</option>
+        <option value="SMT">SMT</option>
+        <option value="THT">THT</option>
+      </select>
       <input name="notes" />
       <p id="component-params-hint"></p>
       <div id="component-params"></div>
@@ -157,5 +161,35 @@ describe("component_dialog.js — Open in shop button", () => {
     expect(field("manufacturer")).toBe("");
     expect(field("package")).toBe("");
     expect(field("notes")).toBe("");
+  });
+});
+
+describe("component_dialog.js — applying the engine's proposal", () => {
+  const mounting = (page) =>
+    page.document.querySelector('[name="mounting_type"]').value;
+
+  it("applies mounting even when no component type resolves", async () => {
+    // A Mouser IC states mounting as "SMD/SMT", which the engine resolves to SMT,
+    // but its category may map to no ShelfOS type. Mounting is type-independent, so
+    // it must land on the form regardless — it used to be dropped with the rest of
+    // the proposal when applyPrefill returned early on an unresolved type.
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: (url) =>
+        url === "/api/shops/lookup"
+          ? ok({
+              mpn: "TMUXHS4412RUAR",
+              category: "Multiplexer Switch ICs", // matches no type option
+              proposal: {
+                type_id: null,
+                mounting_type: "SMT",
+                package: null,
+                parameters: [],
+              },
+            })
+          : ok({}),
+    });
+    open(page, () => {}, null, { importCode: "TMUXHS4412RUAR" });
+    await tick();
+    expect(mounting(page)).toBe("SMT");
   });
 });
