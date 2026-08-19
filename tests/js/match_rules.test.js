@@ -108,6 +108,14 @@ describe("match_rules.js — columns", () => {
       freetext: true,
       listOnEmpty: true,
     });
+    // package → free text too: a case name ("SOT-23") is whatever the shelf calls it,
+    // so there is no list to pick from.
+    expect(paramsFor({ domain: "package" })).toEqual({
+      values: [],
+      autocomplete: true,
+      freetext: true,
+      listOnEmpty: true,
+    });
   });
 });
 
@@ -223,6 +231,41 @@ describe("match_rules.js — create", () => {
       alias: "przewlekany", // trimmed
       canonical: "THT",
       sort_order: 2,
+      parameter_definition_id: null,
+    });
+  });
+
+  it("takes a free-text target for a package rule, with no parameter scope", async () => {
+    const { document, fetchMock } = loadPage(matchRulesPageFixture(), SCRIPTS, {
+      fetchImpl: withTypes([{ id: 1, name: "resistor" }]),
+    });
+    document.getElementById("rule-new-btn").click();
+    await tick();
+    const form = document.getElementById("rule-new-form");
+    form.elements.domain.value = "package";
+    fire(form.elements.domain, "change");
+    await tick();
+
+    // A package is global (no parameter to scope it to) and its target is free text —
+    // the placeholder says so, since the same input also serves param_name.
+    expect(document.getElementById("rule-scope-type").hidden).toBe(true);
+    expect(document.getElementById("rule-scope-param").hidden).toBe(true);
+    expect(form.elements.canonical_text.hidden).toBe(false);
+    expect(form.elements.canonical_type.hidden).toBe(true);
+    expect(form.elements.canonical_mounting.hidden).toBe(true);
+    expect(form.elements.canonical_text.placeholder).toMatch(/SOT-23/);
+
+    form.elements.alias.value = "  obudowa SOT23  ";
+    form.elements.canonical_text.value = "SOT-23";
+    submit(document, "rule-new-form");
+    await tick();
+
+    const post = fetchMock.mock.calls.find((c) => c[0] === "/api/admin/match-rules");
+    expect(JSON.parse(post[1].body)).toEqual({
+      domain: "package",
+      alias: "obudowa SOT23", // trimmed
+      canonical: "SOT-23",
+      sort_order: 0,
       parameter_definition_id: null,
     });
   });

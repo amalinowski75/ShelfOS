@@ -29,11 +29,12 @@ async function loadTypeNames() {
 
 // The in-place Target editor's options for a given row: a fixed list for the three
 // domains with a vocabulary (mounting enum, existing types, an enum parameter's
-// allowed values — shipped on the row), free text only for a param_name target.
+// allowed values — shipped on the row), free text for a param_name or package target.
 // This mirrors the create dialog, so a mistyped mounting/enum can't slip in through
-// inline editing either. NB: Tabulator's list editor only accepts typed text when
-// `autocomplete` is on — a bare `freetext` is silently ignored and the cell becomes
-// un-editable, so param_name sets both.
+// inline editing either. A package target has no vocabulary to constrain it — the
+// shelf's own case names ("SOT-23", "DIP-8") are whatever the admin writes. NB:
+// Tabulator's list editor only accepts typed text when `autocomplete` is on — a bare
+// `freetext` is silently ignored and the cell becomes un-editable, so both are set.
 function targetEditorParams(cell) {
   const row = cell.getRow().getData();
   if (row.domain === "mounting") return { values: mountingValues() };
@@ -209,11 +210,12 @@ if (newRuleBtn) {
   const paramField = document.getElementById("rule-scope-param");
   const typeSelect = form.elements.type;
   const paramSelect = form.elements.parameter;
-  // The four possible "Target" controls; only the one matching the domain shows.
+  // The four possible "Target" controls; only the one matching the domain shows
+  // (the free-text one serves both param_name and package).
   const targetTypeSelect = form.elements.canonical_type; // type rule → a type name
   const targetMountingSelect = form.elements.canonical_mounting; // mounting → enum
   const targetEnumSelect = form.elements.canonical_enum; // enum_value → allowed value
-  const targetTextInput = form.elements.canonical_text; // param_name → free text
+  const targetTextInput = form.elements.canonical_text; // param_name/package → text
   // The selected type's parameter definitions (with data_type + enum_values), cached
   // so the parameter picker and the enum-target dropdown can be built without refetch.
   let dialogParams = [];
@@ -233,7 +235,10 @@ if (newRuleBtn) {
     targetTypeSelect.hidden = domain !== "type";
     targetMountingSelect.hidden = domain !== "mounting";
     targetEnumSelect.hidden = domain !== "enum_value";
-    targetTextInput.hidden = domain !== "param_name";
+    targetTextInput.hidden = domain !== "param_name" && domain !== "package";
+    // Same input, two very different things to type into it — say which.
+    targetTextInput.placeholder =
+      domain === "package" ? "e.g. SOT-23" : "e.g. resistance";
     // Refetch the type list (and, for a scoped domain, its parameters) every time this
     // runs — on dialog reopen `form.reset()` snaps Type back to its first option WITHOUT
     // firing `change`, so without a reload the parameter picker would still hold the
@@ -304,7 +309,7 @@ if (newRuleBtn) {
     if (domain === "type") return targetTypeSelect.value;
     if (domain === "mounting") return targetMountingSelect.value;
     if (domain === "enum_value") return targetEnumSelect.value;
-    return targetTextInput.value.trim(); // param_name
+    return targetTextInput.value.trim(); // param_name, package
   }
 
   form.elements.domain.addEventListener("change", syncFields);

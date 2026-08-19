@@ -327,3 +327,51 @@ def test_description_mounting_beats_an_incidental_attribute_word(
         parameters=[("Alternative package", "also available as SMD")],
     )
     assert build_proposal(session, product).mounting_type is MountingType.THT
+def test_package_rule_reads_a_case_out_of_the_description(session: Session) -> None:
+    # The EIA pattern only knows chip sizes; a named case ("obudowa SOT-23") needs a
+    # rule, which is what the package domain is for.
+    _resistor(session)
+    mrs.create_rule(
+        session, domain=MatchDomain.PACKAGE, alias="SOT-23", canonical="SOT-23"
+    )
+    product = ProductData(
+        category="resistor", description="Tranzystor w obudowie SOT-23, 100 mA"
+    )
+    assert build_proposal(session, product).package == "SOT-23"
+
+
+def test_package_rule_normalizes_the_shop_s_own_package_field(
+    session: Session,
+) -> None:
+    # A shop's own package field still wins over the description — but it is spelled
+    # the shop's way, so the rule folds it to the one name the shelf uses.
+    _resistor(session)
+    mrs.create_rule(
+        session, domain=MatchDomain.PACKAGE, alias="SOT23-3", canonical="SOT-23"
+    )
+    product = ProductData(category="resistor", description="0402", package="sot23-3")
+    assert build_proposal(session, product).package == "SOT-23"
+    # No rule for it: the shop's wording is kept as it came, not dropped.
+    unknown = ProductData(category="resistor", description="0402", package="DPAK")
+    assert build_proposal(session, unknown).package == "DPAK"
+
+
+def test_package_rules_are_tried_in_order_and_the_eia_pattern_still_backs_them(
+    session: Session,
+) -> None:
+    _resistor(session)
+    mrs.create_rule(
+        session, domain=MatchDomain.PACKAGE, alias="TO-220AB",
+        canonical="TO-220AB", sort_order=0,
+    )
+    mrs.create_rule(
+        session, domain=MatchDomain.PACKAGE, alias="TO-220", canonical="TO-220",
+        sort_order=1,
+    )
+    specific = ProductData(category="resistor", description="Radiator TO-220AB")
+    assert build_proposal(session, specific).package == "TO-220AB"  # lower order wins
+    # Nothing matched: the built-in chip-size pattern still fills the package in.
+    eia = ProductData(category="resistor", description="Thick Film Resistor 0805")
+    assert build_proposal(session, eia).package == "0805"
+    # Nothing at all to go on.
+    assert build_proposal(session, ProductData(category="resistor")).package is None

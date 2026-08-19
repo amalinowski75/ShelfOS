@@ -10,7 +10,8 @@
   <div>
     <h1>Match rules</h1>
     <p>The vocabulary the import engine uses to recognise a component's type,
-       mounting and parameters. "When you see this alias, treat it as this target."</p>
+       mounting, package and parameters. "When you see this alias, treat it as this
+       target."</p>
   </div>
   <div class="head-actions">
     <button type="button" class="btn btn-secondary" id="rule-new-btn">New rule</button>
@@ -28,7 +29,8 @@
     <form id="rule-new-form">
       <div class="field">
         <label>Domain</label>
-        <!-- type/mounting are global; param_name/enum_value attach to one parameter. -->
+        <!-- type/mounting/package are global; param_name/enum_value attach to one
+             parameter. -->
         <select class="control" name="domain">{{ domain_options() }}</select>
       </div>
       <!-- Shown only for the scoped domains (param_name, enum_value): pick which
@@ -48,14 +50,17 @@
       <div class="field">
         <label>Target <span class="muted">— how ShelfOS stores it</span></label>
         <!-- The target's shape depends on the domain: an existing type for a type
-             rule, a mounting value for a mounting rule, free text otherwise. Only the
-             one matching the chosen domain is shown (toggled in match_rules.js). -->
+             rule, a mounting value for a mounting rule, one of the parameter's allowed
+             values for an enum_value rule, free text for param_name and package. Only
+             the one matching the chosen domain is shown (toggled in match_rules.js). -->
         <select class="control" name="canonical_type" hidden></select>
         <select class="control" name="canonical_mounting" hidden>
           {% for mt in mounting_types %}<option value="{{ mt }}">{{ mt }}</option>{% endfor %}
         </select>
         <!-- enum_value: the chosen parameter's allowed values, filled in JS. -->
         <select class="control" name="canonical_enum" hidden></select>
+        <!-- param_name (a definition's name) and package (the case text to store);
+             match_rules.js swaps the placeholder to suit. -->
         <input class="control" name="canonical_text" hidden placeholder="e.g. resistance" />
       </div>
       <div class="field">

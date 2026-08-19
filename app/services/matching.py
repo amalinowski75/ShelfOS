@@ -7,10 +7,10 @@ can fill in for the user to review: the component **type**, its **mounting**, th
 attributes and from free-text descriptions.
 
 What it recognises is not hardcoded — it consults the editable rules in
-``match_rule_service`` (type/mounting/parameter-name/enum-value synonyms), so the
-vocabulary grows without touching this file. The logic here used to live in the browser
-(``component_dialog.js``); it now runs on the server so the URL-dialog and invoice
-imports share exactly one implementation.
+``match_rule_service`` (type/mounting/package/parameter-name/enum-value synonyms), so
+the vocabulary grows without touching this file. The logic here used to live in the
+browser (``component_dialog.js``); it now runs on the server so the URL-dialog and
+invoice imports share exactly one implementation.
 
 The engine only *proposes* values and gates them (a value it emits is guaranteed to be
 accepted by ``create_component_with_values``); the user still reviews before anything is
@@ -184,12 +184,7 @@ def build_proposal(
     )
 
     # 5. Package.
-    if product.package:
-        proposal.package = product.package
-    else:
-        eia = _EIA_PACKAGE.search(blob)
-        if eia:
-            proposal.package = eia.group(1)
+    proposal.package = _resolve_package(product.package, blob, rules)
 
     return proposal
 
@@ -233,6 +228,36 @@ def _resolve_mounting(blob: str, rules: RuleSet) -> MountingType | None:
             except ValueError:
                 continue  # a rule pointing at a non-existent mounting value; skip
     return None
+
+
+def _resolve_package(given: str | None, blob: str, rules: RuleSet) -> str | None:
+    """The package to store: the shop's own field, a PACKAGE alias, or an EIA size.
+
+    A shop that names the package outright wins over anything read out of the text —
+    but its wording still goes through the rules first, which is half of what a
+    PACKAGE rule is for: "SOT-23-3" and "SOT23" both land as the one "SOT-23" the
+    shelf already uses. With no rule for it, the shop's text is kept as it came.
+
+    Otherwise the description is scanned for an alias the same whole-word way mounting
+    is, and only if nothing matches does the built-in EIA size pattern have its say —
+    those two-to-four digit chip codes are a numeric pattern rather than vocabulary,
+    so they stay here instead of needing a rule per size.
+    """
+    if given and given.strip():
+        text = given.strip()
+        lowered = text.lower()
+        for alias, canonical in rules.packages:
+            if alias and alias == lowered:
+                return canonical
+        return text
+    lowered = blob.lower()
+    for alias, canonical in rules.packages:
+        if not alias:
+            continue
+        if re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", lowered):
+            return canonical
+    eia = _EIA_PACKAGE.search(blob)
+    return eia.group(1) if eia else None
 
 
 def _fill_parameters(
