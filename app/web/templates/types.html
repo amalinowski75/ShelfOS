@@ -76,7 +76,9 @@
         <ul id="pm-value-list" class="pm-list"></ul>
         <p id="pm-value-empty" class="muted pm-sub" hidden>No value aliases yet.</p>
         <div class="pm-add">
-          <input id="pm-value-alias" class="control pm-alias" placeholder="alias (e.g. NP0)" />
+          <!-- Commas separate several aliases for the same value ("NP0, C0G, COG"). -->
+          <input id="pm-value-alias" class="control pm-alias"
+                 placeholder="aliases, comma-separated (e.g. NP0, C0G)" />
           <span class="pm-arrow muted">→</span>
           <select id="pm-value-target" class="control pm-target"></select>
           <button type="button" class="btn btn-primary" id="pm-value-add">Add</button>
@@ -88,7 +90,8 @@
         <ul id="pm-name-list" class="pm-list"></ul>
         <p id="pm-name-empty" class="muted pm-sub" hidden>No name aliases yet.</p>
         <div class="pm-add">
-          <input id="pm-name-alias" class="control pm-alias" placeholder="alias (e.g. Dielektryk)" />
+          <input id="pm-name-alias" class="control pm-alias"
+                 placeholder="aliases, comma-separated (e.g. Dielektryk, Dielectric)" />
           <button type="button" class="btn btn-primary" id="pm-name-add">Add</button>
         </div>
       </section>

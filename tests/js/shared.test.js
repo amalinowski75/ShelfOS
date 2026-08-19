@@ -101,3 +101,81 @@ describe("shared.js", () => {
     expect(dialog.close).toHaveBeenCalled();
   });
 });
+
+describe("shared.js — match-rule alias lists", () => {
+  // One rule per alias is still what the engine holds; these helpers only turn a
+  // target's rules into one comma-separated field and back.
+  const load = () => loadPage("<div></div>", ["shared.js"]).window;
+
+  it("splits a list, dropping blanks and keeping a repeat once", () => {
+    const window = load();
+    expect(window.splitAliases(" biały, czarny ,, biały , BIAŁY ")).toEqual([
+      "biały",
+      "czarny",
+    ]);
+    // The first spelling is the one kept — it is what the user actually typed.
+    expect(window.splitAliases("")).toEqual([]);
+    expect(window.splitAliases(null)).toEqual([]);
+  });
+
+  it("groups rules by domain + target + scope, lowest order winning", () => {
+    const window = load();
+    const grouped = window.groupRulesByTarget([
+      { id: 1, domain: "enum_value", alias: "biały", canonical: "Kolor", parameter_definition_id: 9, sort_order: 4 },
+      { id: 2, domain: "enum_value", alias: "czarny", canonical: "Kolor", parameter_definition_id: 9, sort_order: 1 },
+      // Same target text, different parameter — a different rule entirely.
+      { id: 3, domain: "enum_value", alias: "biały", canonical: "Kolor", parameter_definition_id: 8, sort_order: 0 },
+      // Same target text, different domain — likewise.
+      { id: 4, domain: "param_name", alias: "kolor", canonical: "Kolor", parameter_definition_id: null, sort_order: 0 },
+    ]);
+    expect(grouped.map((g) => [g.alias, g.parameter_definition_id, g.domain])).toEqual([
+      ["biały, czarny", 9, "enum_value"],
+      ["biały", 8, "enum_value"],
+      ["kolor", null, "param_name"],
+    ]);
+    // The engine takes the first matching rule in sort order, so the group's
+    // precedence is its lowest — not the first row's.
+    expect(grouped[0].sort_order).toBe(1);
+    expect(grouped[0].rules.map((r) => r.id)).toEqual([1, 2]);
+  });
+
+  it("turns an edited list into renames, removals and additions", () => {
+    const window = load();
+    const group = {
+      domain: "enum_value",
+      canonical: "Kolor",
+      parameter_definition_id: 9,
+      sort_order: 3,
+      rules: [
+        { id: 1, alias: "biały" },
+        { id: 2, alias: "czarny" },
+      ],
+    };
+    // One word swapped for another: a rename in place, so the audit entry reads as
+    // an edit and a case-only fix can't collide with the rule it replaces.
+    expect(window.aliasListWrites(group, "biały, szary")).toEqual([
+      { method: "PATCH", id: 2, body: { alias: "szary" } },
+    ]);
+    // Fewer than before: the leftover rule goes.
+    expect(window.aliasListWrites(group, "biały")).toEqual([
+      { method: "DELETE", id: 2 },
+    ]);
+    // More than before: a new rule onto the same target, at the group's order.
+    expect(window.aliasListWrites(group, "biały, czarny, różowy")).toEqual([
+      {
+        method: "POST",
+        body: {
+          domain: "enum_value",
+          alias: "różowy",
+          canonical: "Kolor",
+          parameter_definition_id: 9,
+          sort_order: 3,
+        },
+      },
+    ]);
+    // Nothing changed is nothing written, whatever the spacing.
+    expect(window.aliasListWrites(group, " czarny ,biały ")).toEqual([]);
+    // An empty list is refused: clearing the field is not how a target is removed.
+    expect(window.aliasListWrites(group, " , ")).toBeNull();
+  });
+});

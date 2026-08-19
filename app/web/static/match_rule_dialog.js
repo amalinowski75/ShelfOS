@@ -170,35 +170,61 @@
     (async () => {
       try {
         const scoped = isScoped();
-        const payload = {
+        const base = {
           domain: form.elements.domain.value,
-          alias: form.elements.alias.value.trim(),
           canonical: currentTarget(),
           sort_order: Number(form.elements.sort_order.value) || 0,
           parameter_definition_id:
             scoped && paramSelect.value ? Number(paramSelect.value) : null,
         };
-        if (scoped && payload.parameter_definition_id === null) {
+        if (scoped && base.parameter_definition_id === null) {
           error.textContent = "Pick the parameter this rule applies to.";
           error.hidden = false;
           return;
         }
-        if (!payload.canonical) {
+        if (!base.canonical) {
           error.textContent = "Pick or enter a target.";
           error.hidden = false;
           return;
         }
-        const resp = await sendRuleWrite("/api/admin/match-rules", "POST", payload);
-        if (resp.ok) {
-          const created = await resp.json().catch(() => null);
-          dialog.close();
-          const callback = pendingOnCreated;
-          pendingOnCreated = null; // consume, so it can't fire against a later open
-          if (callback) await callback(created);
-        } else {
-          error.textContent = await errorMessage(resp);
+        // One field, a whole vocabulary: "biały, czarny, różowy" onto one target is a
+        // rule each, so a set of synonyms goes in without reopening the dialog per
+        // word. A single alias is just a list of one.
+        const aliases = splitAliases(form.elements.alias.value);
+        if (!aliases.length) {
+          error.textContent = "Enter at least one alias.";
           error.hidden = false;
+          return;
         }
+        let created = null;
+        let landed = 0;
+        let refused = null;
+        for (const alias of aliases) {
+          const resp = await sendRuleWrite("/api/admin/match-rules", "POST", {
+            ...base,
+            alias,
+          });
+          if (!resp.ok) {
+            refused = await errorMessage(resp);
+            break;
+          }
+          created = await resp.json().catch(() => null);
+          landed += 1;
+        }
+        if (refused) {
+          // Stopping partway leaves the earlier aliases created, so leave only what
+          // still has to go in — resubmitting retries exactly the remainder, and the
+          // list behind is refreshed so the ones that did land are visible.
+          error.textContent = refused;
+          error.hidden = false;
+          form.elements.alias.value = aliases.slice(landed).join(ALIAS_SEPARATOR);
+          if (landed && pendingOnCreated) await pendingOnCreated(created);
+          return;
+        }
+        dialog.close();
+        const callback = pendingOnCreated;
+        pendingOnCreated = null; // consume, so it can't fire against a later open
+        if (callback) await callback(created);
       } catch {
         error.textContent = "Could not reach the server.";
         error.hidden = false;

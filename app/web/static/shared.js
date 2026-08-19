@@ -196,3 +196,126 @@ function showToast(message, { tone = "warn", timeout = 5000 } = {}) {
 }
 
 drainPendingToast();
+
+// --- match-rule aliases (match_rules.js, match_rule_dialog.js, param_matchers.js) ---
+//
+// The engine still holds ONE RULE PER ALIAS — that is what keeps the duplicate guard,
+// the sort order and the audit trail per alias. These helpers only change how a
+// target's aliases are written and read: as one comma-separated list ("biały, czarny,
+// różowy" → "Kolor"), so a target's whole vocabulary sits in one field instead of one
+// row each. Adding a separate rule for a target that already has some is still fine —
+// it simply joins the list it belongs to.
+const ALIAS_SEPARATOR = ", ";
+
+// "biały, czarny ,, biały" -> ["biały", "czarny"]. A repeat within one list is kept
+// once: the server rejects the second copy as a duplicate, which would be a confusing
+// error to raise against text the user wrote in a single breath. Folded with
+// toLowerCase, which is how the engine keys a global domain's aliases — a scoped
+// domain folds harder still (accents, punctuation), so its true duplicates are caught
+// by the server rather than here.
+function splitAliases(text) {
+  const seen = new Map();
+  for (const part of String(text ?? "").split(",")) {
+    const alias = part.trim();
+    if (alias && !seen.has(alias.toLowerCase())) seen.set(alias.toLowerCase(), alias);
+  }
+  return [...seen.values()];
+}
+
+// Group a flat rule feed into one row per target — same domain, same target, same
+// scope. The row carries its own `rules` so an edit knows which ids to write to, and
+// `alias` is the joined list the field shows.
+//
+// `sort_order` is the group's LOWEST: the engine takes the first matching rule in sort
+// order, so the lowest is the one that actually decides the group's precedence.
+function groupRulesByTarget(rules) {
+  const groups = new Map();
+  for (const rule of rules || []) {
+    const key = JSON.stringify([
+      rule.domain,
+      rule.canonical,
+      rule.parameter_definition_id ?? null,
+    ]);
+    const group = groups.get(key);
+    if (group) {
+      group.rules.push(rule);
+      group.sort_order = Math.min(group.sort_order, rule.sort_order);
+    } else {
+      // The group's id is its first rule's — unique across groups, which is what
+      // Tabulator indexes rows by.
+      groups.set(key, { ...rule, rules: [rule] });
+    }
+  }
+  return [...groups.values()].map((group) => ({
+    ...group,
+    alias: group.rules.map((r) => r.alias).join(ALIAS_SEPARATOR),
+  }));
+}
+
+// The writes that make a group's rules match an edited alias list, or null if the list
+// is empty (removing a target is what the Delete button is for — silently deleting
+// every rule because a field was cleared is not an edit anyone asked for).
+//
+// A rename is PATCHed in place rather than deleted and recreated: it keeps the audit
+// entry as "alias changed" instead of a delete plus an unrelated create, and it is the
+// only shape that survives a case-only fix, where a create would race the duplicate
+// guard against the very rule being replaced.
+function aliasListWrites(group, text) {
+  const wanted = splitAliases(text);
+  if (!wanted.length) return null;
+  const folded = (value) => value.toLowerCase();
+  const keep = new Set(wanted.map(folded));
+  const held = new Set(group.rules.map((r) => folded(r.alias)));
+  const stale = group.rules.filter((r) => !keep.has(folded(r.alias)));
+  const fresh = wanted.filter((alias) => !held.has(folded(alias)));
+  const writes = [];
+  const renames = Math.min(stale.length, fresh.length);
+  for (let i = 0; i < renames; i += 1) {
+    writes.push({ method: "PATCH", id: stale[i].id, body: { alias: fresh[i] } });
+  }
+  for (const rule of stale.slice(renames)) {
+    writes.push({ method: "DELETE", id: rule.id });
+  }
+  for (const alias of fresh.slice(renames)) {
+    writes.push({
+      method: "POST",
+      body: {
+        domain: group.domain,
+        alias,
+        canonical: group.canonical,
+        parameter_definition_id: group.parameter_definition_id ?? null,
+        sort_order: group.sort_order,
+      },
+    });
+  }
+  return writes;
+}
+
+// Every rule write goes through here: admin + CSRF, same as the endpoints demand.
+async function sendMatchRuleWrite(url, method, payload) {
+  return fetch(url, {
+    method,
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+    body: payload === undefined ? undefined : JSON.stringify(payload),
+  });
+}
+
+// Run a group's writes in order, stopping at the first refusal and returning its
+// message (null when they all land). Several requests stand behind one edit, so a
+// caller must reload rather than trust the text that was typed — a stop halfway
+// through leaves the earlier writes done, and the list has to show that.
+async function runMatchRuleWrites(writes) {
+  for (const write of writes) {
+    const url = write.id
+      ? `/api/admin/match-rules/${write.id}`
+      : "/api/admin/match-rules";
+    let resp;
+    try {
+      resp = await sendMatchRuleWrite(url, write.method, write.body);
+    } catch {
+      return "Could not reach the server.";
+    }
+    if (!resp.ok) return await errorMessage(resp);
+  }
+  return null;
+}

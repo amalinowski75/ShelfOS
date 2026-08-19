@@ -8,6 +8,12 @@
 // an enum with many values). Reuses the admin feed (/web/api/match-rules, filtered by
 // parameter) and the admin write endpoints. Exposes window.openParamMatchers(param).
 // esc/csrfToken/errorMessage come from shared.js.
+//
+// ONE ROW PER TARGET, as in the admin table: a target's aliases are one
+// comma-separated field ("biały, czarny, różowy" → "Kolor"), which is what an enum
+// whose values each answer to a handful of spellings actually looks like.
+// groupRulesByTarget/aliasListWrites in shared.js do the grouping and turn an edited
+// list back into the rule writes that make it true.
 
 (function () {
   const dialog = document.getElementById("param-matchers-dialog");
@@ -33,14 +39,6 @@
   const ENUM_VALUE = "enum_value";
 
   let param = null; // the parameter this panel is managing
-
-  async function write(url, method, payload) {
-    return fetch(url, {
-      method,
-      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-      body: payload === undefined ? undefined : JSON.stringify(payload),
-    });
-  }
 
   function setError(text) {
     errorEl.textContent = text || "";
@@ -70,138 +68,114 @@
     return select;
   }
 
-  function aliasInput(rule) {
+  // The target's whole vocabulary in one field: what is typed here IS the set, so
+  // dropping a word from the list deletes its rule.
+  function aliasInput(group) {
     const input = document.createElement("input");
     input.className = "control pm-alias";
-    input.value = rule.alias;
-    input.addEventListener("change", () =>
-      patchRule(rule, { alias: input.value.trim() }, input, rule.alias),
-    );
+    input.value = group.alias;
+    input.addEventListener("change", () => {
+      const writes = aliasListWrites(group, input.value);
+      if (!writes) {
+        input.value = group.alias; // an empty list is ✕'s job, not an edit
+        setError("A target needs at least one alias — use ✕ to remove it entirely.");
+        return;
+      }
+      runWrites(writes);
+    });
     return input;
   }
 
-  function deleteButton(rule, li, list, empty) {
+  function deleteButton(group) {
     const del = document.createElement("button");
     del.type = "button";
     del.className = "btn btn-ghost btn-sm pm-del";
     del.textContent = "✕";
-    del.setAttribute("aria-label", `Delete matcher "${rule.alias}"`);
-    del.addEventListener("click", () => deleteRule(rule, li, list, empty));
+    del.setAttribute("aria-label", `Delete matchers "${group.alias}"`);
+    del.addEventListener("click", () =>
+      runWrites(group.rules.map((rule) => ({ method: "DELETE", id: rule.id }))),
+    );
     return del;
   }
 
-  // Value rule row: alias + a value dropdown (both editable) + delete.
-  function valueRow(rule) {
+  // Value row: every alias for one value + that value's dropdown + delete.
+  function valueRow(group) {
     const li = document.createElement("li");
     li.className = "pm-row";
     const target = valueSelect();
-    target.value = rule.canonical;
+    target.value = group.canonical;
+    // The value belongs to the row, not to one of its spellings, so it moves them
+    // all — and moving onto a value that already has aliases merges the two rows.
     target.addEventListener("change", () =>
-      patchRule(rule, { canonical: target.value }, target, rule.canonical),
+      runWrites(
+        group.rules.map((rule) => ({
+          method: "PATCH",
+          id: rule.id,
+          body: { canonical: target.value },
+        })),
+      ),
     );
     const arrow = document.createElement("span");
     arrow.className = "pm-arrow muted";
     arrow.textContent = "→";
-    li.append(aliasInput(rule), arrow, target, deleteButton(rule, li, valueList, valueEmpty));
+    li.append(aliasInput(group), arrow, target, deleteButton(group));
     return li;
   }
 
-  // Name rule row: just the alias (its target is fixed — the parameter's name) + delete.
-  function nameRow(rule) {
+  // Name row: just the aliases (their target is fixed — the parameter's name) + delete.
+  function nameRow(group) {
     const li = document.createElement("li");
     li.className = "pm-row";
-    li.append(aliasInput(rule), deleteButton(rule, li, nameList, nameEmpty));
+    li.append(aliasInput(group), deleteButton(group));
     return li;
   }
 
-  async function patchRule(rule, patch, control, previous) {
+  // A row stands for several rules now, so a write is a batch and the lists reload
+  // after it: a batch that stops at a refusal leaves the earlier writes done, and the
+  // panel has to show that rather than whatever was typed. Returns the refusal, if any.
+  async function runWrites(writes) {
     setError("");
     setStatus("Saving…");
-    try {
-      const resp = await write(`/api/admin/match-rules/${rule.id}`, "PATCH", patch);
-      if (resp.ok) {
-        Object.assign(rule, patch);
-        setStatus("Saved ✓", "ok");
-      } else {
-        control.value = previous; // revert to the last good value
-        setError(await errorMessage(resp));
-        setStatus(SAVE_HINT);
-      }
-    } catch {
-      control.value = previous;
-      setError("Could not reach the server.");
+    const failure = await runMatchRuleWrites(writes);
+    await loadLists();
+    if (failure) {
+      setError(failure);
       setStatus(SAVE_HINT);
-    }
-  }
-
-  async function deleteRule(rule, li, list, empty) {
-    setError("");
-    setStatus("Saving…");
-    try {
-      const resp = await write(`/api/admin/match-rules/${rule.id}`, "DELETE");
-      if (resp.ok) {
-        li.remove();
-        refreshEmpty(list, empty);
-        setStatus("Saved ✓", "ok");
-      } else {
-        setError(await errorMessage(resp));
-        setStatus(SAVE_HINT);
-      }
-    } catch {
-      setError("Could not reach the server.");
-      setStatus(SAVE_HINT);
-    }
-  }
-
-  async function createRule(domain, alias, canonical) {
-    setError("");
-    setStatus("Saving…");
-    try {
-      const resp = await write("/api/admin/match-rules", "POST", {
-        domain,
-        alias,
-        canonical,
-        parameter_definition_id: param.id,
-        sort_order: 0,
-      });
-      if (!resp.ok) {
-        setError(await errorMessage(resp)); // e.g. a duplicate alias — keep the text
-        setStatus(SAVE_HINT);
-        return null;
-      }
+    } else {
       setStatus("Saved ✓", "ok");
-      return await resp.json();
-    } catch {
-      setError("Could not reach the server.");
-      setStatus(SAVE_HINT);
-      return null;
     }
+    return failure;
   }
 
-  // Add-and-stay: append the new row, clear the alias, keep focus — a run of aliases
-  // goes in one after another with no modal, no reload.
-  async function addValue() {
-    const alias = valueAlias.value.trim();
-    if (!alias) return valueAlias.focus();
-    const created = await createRule(ENUM_VALUE, alias, valueTarget.value);
-    if (!created) return;
-    valueList.appendChild(valueRow(created));
-    refreshEmpty(valueList, valueEmpty);
-    valueAlias.value = "";
-    valueAlias.focus();
+  // One alias, or a comma-separated run of them onto the same target — the whole
+  // point for an enum whose values each answer to a handful of spellings.
+  async function addAliases(input, domain, canonical) {
+    const aliases = splitAliases(input.value);
+    if (!aliases.length) return input.focus();
+    const failure = await runWrites(
+      aliases.map((alias) => ({
+        method: "POST",
+        body: {
+          domain,
+          alias,
+          canonical,
+          parameter_definition_id: param.id,
+          sort_order: 0,
+        },
+      })),
+    );
+    // Keep the text on a refusal so it can be fixed; focus never leaves either way,
+    // so a run of aliases still goes in one after another.
+    if (!failure) input.value = "";
+    input.focus();
   }
 
-  async function addName() {
-    const alias = nameAlias.value.trim();
-    if (!alias) return nameAlias.focus();
-    // A name alias maps onto the parameter's own name.
-    const created = await createRule(PARAM_NAME, alias, param.name);
-    if (!created) return;
-    nameList.appendChild(nameRow(created));
-    refreshEmpty(nameList, nameEmpty);
-    nameAlias.value = "";
-    nameAlias.focus();
-  }
+  // Add-and-stay: the lists reload (a new alias for a value already listed belongs in
+  // that row, not in one of its own) but focus never moves, so a run of aliases goes
+  // in one after another with no modal.
+  const addValue = () => addAliases(valueAlias, ENUM_VALUE, valueTarget.value);
+  // A name alias maps onto the parameter's own name.
+  const addName = () => addAliases(nameAlias, PARAM_NAME, param.name);
 
   async function loadLists() {
     valueList.replaceChildren();
@@ -215,9 +189,11 @@
     } catch {
       setError("Could not load matchers.");
     }
-    for (const rule of rows) {
-      if (rule.domain === ENUM_VALUE) valueList.appendChild(valueRow(rule));
-      else nameList.appendChild(nameRow(rule));
+    // The domain is part of the grouping key, so a value group and a name group never
+    // merge into each other however their targets read.
+    for (const group of groupRulesByTarget(rows)) {
+      if (group.domain === ENUM_VALUE) valueList.appendChild(valueRow(group));
+      else nameList.appendChild(nameRow(group));
     }
     refreshEmpty(valueList, valueEmpty);
     refreshEmpty(nameList, nameEmpty);

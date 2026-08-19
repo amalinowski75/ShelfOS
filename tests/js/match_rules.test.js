@@ -7,12 +7,28 @@ import { loadPage, tick, CSRF, matchRulesPageFixture } from "./harness.js";
 const SCRIPTS = ["shared.js", "match_rule_dialog.js", "match_rules.js"];
 
 // A minimal Tabulator cell double: the value being edited + its row's data, plus a
-// spy for the revert the code calls when the server rejects an edit.
-function editCell(value, row = { id: 7 }) {
+// spy for the revert the code calls when it will not send an edit at all.
+//
+// A row is a TARGET, not a rule: it carries the rules its alias list stands for, which
+// is what an edit writes to. `groupRow` builds one the way groupRulesByTarget does.
+function editCell(value, row = groupRow([{ id: 7, alias: "x" }])) {
   return {
     getValue: () => value,
     getRow: () => ({ getData: () => row }),
     restoreOldValue: vi.fn(),
+  };
+}
+
+function groupRow(rules, extra = {}) {
+  return {
+    id: rules[0].id,
+    domain: "type",
+    canonical: "resistor",
+    parameter_definition_id: null,
+    sort_order: 0,
+    ...extra,
+    rules,
+    alias: rules.map((r) => r.alias).join(", "),
   };
 }
 
@@ -115,10 +131,12 @@ describe("match_rules.js — columns", () => {
 });
 
 describe("match_rules.js — inline edit", () => {
-  it("PATCHes a single field when a cell is edited", async () => {
+  it("renames an alias in place when the list swaps one word", async () => {
     const { window, fetchMock } = loadPage(matchRulesPageFixture(), SCRIPTS);
     const alias = window.ruleColumns().find((c) => c.field === "alias");
-    await alias.cellEdited(editCell("opornik", { id: 42 }));
+    await alias.cellEdited(
+      editCell("opornik", groupRow([{ id: 42, alias: "rezystor" }])),
+    );
 
     const patch = writeCall(fetchMock, "PATCH");
     expect(patch[0]).toBe("/api/admin/match-rules/42");
@@ -126,37 +144,63 @@ describe("match_rules.js — inline edit", () => {
     expect(JSON.parse(patch[1].body)).toEqual({ alias: "opornik" });
   });
 
-  it("sends the order as a number", async () => {
+  it("sends the order as a number, to every rule under the target", async () => {
     const { window, fetchMock } = loadPage(matchRulesPageFixture(), SCRIPTS);
     const order = window.ruleColumns().find((c) => c.field === "sort_order");
-    await order.cellEdited(editCell("5", { id: 3 }));
-    expect(JSON.parse(writeCall(fetchMock, "PATCH")[1].body)).toEqual({
-      sort_order: 5,
-    });
+    await order.cellEdited(
+      editCell("5", groupRow([{ id: 3, alias: "a" }, { id: 4, alias: "b" }])),
+    );
+    const patches = fetchMock.mock.calls.filter((c) => c[1]?.method === "PATCH");
+    // Order belongs to the target, not to one of its spellings, so both move.
+    expect(patches.map((c) => c[0])).toEqual([
+      "/api/admin/match-rules/3",
+      "/api/admin/match-rules/4",
+    ]);
+    expect(JSON.parse(patches[0][1].body)).toEqual({ sort_order: 5 });
   });
 
-  it("reverts the cell and alerts when the server rejects the edit", async () => {
+  it("alerts when the server rejects the edit", async () => {
     // The duplicate-alias guard the admin asked for surfaces here.
-    const fetchImpl = () =>
-      Promise.resolve({
-        ok: false,
-        json: async () => ({ detail: "an identical rule already exists" }),
-      });
+    const fetchImpl = (url) =>
+      url === "/web/api/match-rules"
+        ? Promise.resolve({ ok: true, json: async () => ({ data: [] }) })
+        : Promise.resolve({
+            ok: false,
+            json: async () => ({ detail: "an identical rule already exists" }),
+          });
     const { window } = loadPage(matchRulesPageFixture(), SCRIPTS, { fetchImpl });
     window.alert = vi.fn();
-    const cell = editCell("smd", { id: 9 });
+    const alias = window.ruleColumns().find((c) => c.field === "alias");
+    await alias.cellEdited(editCell("smd", groupRow([{ id: 9, alias: "smt" }])));
+
+    expect(window.alert).toHaveBeenCalledWith("an identical rule already exists");
+  });
+
+  it("will not let the list be emptied — that is what Delete is for", async () => {
+    const { window, fetchMock } = loadPage(matchRulesPageFixture(), SCRIPTS);
+    window.alert = vi.fn();
+    const cell = editCell(" , ", groupRow([{ id: 9, alias: "smt" }]));
     const alias = window.ruleColumns().find((c) => c.field === "alias");
     await alias.cellEdited(cell);
 
-    expect(window.alert).toHaveBeenCalledWith("an identical rule already exists");
+    // Nothing written, and the cell put back rather than the target wiped out.
+    expect(writeCall(fetchMock, "DELETE")).toBeUndefined();
+    expect(writeCall(fetchMock, "PATCH")).toBeUndefined();
     expect(cell.restoreOldValue).toHaveBeenCalled();
+    expect(window.alert).toHaveBeenCalledWith(expect.stringContaining("at least one"));
   });
 });
 
 describe("match_rules.js — loading & delete", () => {
-  it("fetches the feed and sets the data", async () => {
+  it("fetches the feed and shows one row per target", async () => {
+    // Three rules, two targets: the two type aliases are one row, and the rule
+    // scoped to a parameter stays its own however its target reads.
     const feed = {
-      data: [{ id: 1, domain: "type", alias: "rezystor", canonical: "resistor" }],
+      data: [
+        { id: 1, domain: "type", alias: "rezystor", canonical: "resistor", parameter_definition_id: null, sort_order: 5 },
+        { id: 2, domain: "type", alias: "opornik", canonical: "resistor", parameter_definition_id: null, sort_order: 2 },
+        { id: 3, domain: "enum_value", alias: "NP0", canonical: "C0G", parameter_definition_id: 9, sort_order: 0 },
+      ],
     };
     const fetchImpl = () => Promise.resolve({ ok: true, json: async () => feed });
     const { window } = loadPage(matchRulesPageFixture(), SCRIPTS, { fetchImpl });
@@ -165,23 +209,39 @@ describe("match_rules.js — loading & delete", () => {
     await window.loadRules();
     await tick();
 
-    expect(setData).toHaveBeenCalledWith(feed.data);
+    const shown = setData.mock.calls[0][0];
+    expect(shown.map((r) => [r.alias, r.canonical])).toEqual([
+      ["rezystor, opornik", "resistor"],
+      ["NP0", "C0G"],
+    ]);
+    // The row keeps the rules it stands for, and takes the LOWEST order of them —
+    // the engine stops at the first match, so that is the one that decides.
+    expect(shown[0].rules.map((r) => r.id)).toEqual([1, 2]);
+    expect(shown[0].sort_order).toBe(2);
   });
 
-  it("deletes only after confirmation", async () => {
+  it("deletes only after confirmation, and takes every alias with it", async () => {
     const { window, fetchMock } = loadPage(matchRulesPageFixture(), SCRIPTS);
+    const row = groupRow([{ id: 5, alias: "x" }, { id: 6, alias: "y" }], {
+      canonical: "ic",
+    });
 
     window.confirm = vi.fn(() => false);
-    window.deleteRule({ id: 5, alias: "x", canonical: "ic" });
+    window.deleteRule(row);
     await tick();
     // Declining the confirm sends no DELETE (the startup /api/types fetch aside).
     expect(writeCall(fetchMock, "DELETE")).toBeUndefined();
 
     window.confirm = vi.fn(() => true);
-    window.deleteRule({ id: 5, alias: "x", canonical: "ic" });
+    window.deleteRule(row);
     await tick();
-    const del = writeCall(fetchMock, "DELETE");
-    expect(del[0]).toBe("/api/admin/match-rules/5");
+    await tick();
+    // The prompt counts the aliases, because the row shows a list and the button
+    // gives no other hint of how much it removes.
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("all 2 aliases"));
+    expect(
+      fetchMock.mock.calls.filter((c) => c[1]?.method === "DELETE").map((c) => c[0]),
+    ).toEqual(["/api/admin/match-rules/5", "/api/admin/match-rules/6"]);
   });
 });
 
@@ -529,5 +589,73 @@ describe("match_rule_dialog.js — openMatcherDialog(prefill)", () => {
       parameter_definition_id: 10,
     });
     expect(created.length).toBe(1); // onCreated ran
+  });
+});
+
+describe("match_rules.js — creating a whole vocabulary at once", () => {
+  // The dialog needs the type list even for its default (type) domain.
+  const serve = (onPost) => (url, opts) => {
+    if (url === "/api/types") {
+      return Promise.resolve({ ok: true, json: async () => [{ id: 1, name: "resistor" }] });
+    }
+    if (url === "/api/admin/match-rules" && opts?.method === "POST") {
+      return onPost(JSON.parse(opts.body));
+    }
+    return Promise.resolve({ ok: true, json: async () => ({}) });
+  };
+  const okResp = () => Promise.resolve({ ok: true, json: async () => ({ id: 1 }) });
+
+  const openWith = async (document, aliasText, fetchExtras = {}) => {
+    document.getElementById("rule-new-btn").click();
+    await tick();
+    const form = document.getElementById("rule-new-form");
+    form.elements.domain.value = "mounting";
+    fire(form.elements.domain, "change");
+    await tick();
+    form.elements.alias.value = aliasText;
+    form.elements.canonical_mounting.value = "THT";
+    submit(document, "rule-new-form");
+    await tick();
+    await tick();
+    return form;
+  };
+
+  it("posts a rule per comma-separated alias, all onto the one target", async () => {
+    const { document, fetchMock } = loadPage(matchRulesPageFixture(), SCRIPTS, {
+      fetchImpl: serve(okResp),
+    });
+    await openWith(document, " przewlekany , THT ,, przewlekany ");
+
+    const posted = fetchMock.mock.calls
+      .filter((c) => c[1]?.method === "POST")
+      .map((c) => JSON.parse(c[1].body));
+    // Blanks dropped, the repeat kept once, every one trimmed and onto "THT".
+    expect(posted.map((p) => p.alias)).toEqual(["przewlekany", "THT"]);
+    expect(posted.every((p) => p.canonical === "THT" && p.domain === "mounting")).toBe(true);
+    expect(document.getElementById("rule-new-dialog").close).toHaveBeenCalled();
+  });
+
+  it("stops at a refused alias and leaves only what still has to go in", async () => {
+    // The second alias is already used elsewhere; the first has already landed by
+    // then, so the field must not offer to create it a second time.
+    const { document } = loadPage(matchRulesPageFixture(), SCRIPTS, {
+      fetchImpl: serve((body) =>
+        body.alias === "THT"
+          ? Promise.resolve({
+              ok: false,
+              json: async () => ({ detail: "the alias 'THT' already exists in this domain" }),
+            })
+          : okResp(),
+      ),
+    });
+    const form = await openWith(document, "przewlekany, THT, drutowy");
+
+    const error = document.getElementById("rule-new-error");
+    expect(error.hidden).toBe(false);
+    expect(error.textContent).toContain("already exists");
+    // Still open, holding the refused alias and the ones never tried — resubmitting
+    // retries exactly the remainder.
+    expect(document.getElementById("rule-new-dialog").close).not.toHaveBeenCalled();
+    expect(form.elements.alias.value).toBe("THT, drutowy");
   });
 });

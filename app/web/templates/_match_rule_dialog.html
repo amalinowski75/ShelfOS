@@ -29,8 +29,12 @@
         <select class="control" name="parameter"></select>
       </div>
       <div class="field">
-        <label>Alias <span class="muted">— text seen in the shop/invoice data</span></label>
-        <input class="control" name="alias" required placeholder="e.g. przewlekany" />
+        <label>Aliases <span class="muted">— text seen in the shop/invoice data;
+               separate several with commas</span></label>
+        <!-- A comma-separated list is a rule each onto the same target ("biały,
+             czarny, różowy" → "Kolor"), so a set of synonyms goes in at once. -->
+        <input class="control" name="alias" required
+               placeholder="e.g. przewlekany, THT" />
       </div>
       <div class="field">
         <label>Target <span class="muted">— how ShelfOS stores it</span></label>
