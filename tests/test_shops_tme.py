@@ -186,6 +186,48 @@ def test_fetch_offers_every_url_segment_upper_cased_as_a_symbol() -> None:
     assert seen["/products/parameters"].url.params["symbols[]"] == "MR04X1201FTL"
 
 
+def test_a_slug_underscore_is_asked_about_as_the_slash_it_stands_for() -> None:
+    # A real bag: TME's own QR for symbol "B3X8/BN11252" is
+    # https://www.tme.eu/details/B3X8%5FBN11252 — a path segment cannot hold a
+    # slash, so their URLs write it "_". Sent as "_" the API answers "Input data is
+    # not valid" for the WHOLE request, so the scan used to dead-end at "the shop
+    # lookup failed" even though the page and the symbol were both perfectly alive.
+    product = {
+        "status": "OK",
+        "data": {
+            "elements": [
+                {
+                    "symbol": "B3X8/BN11252",
+                    "manufacturer_symbols": ["2041979"],
+                    "manufacturer": {"name": "BOSSARD"},
+                    "description": "Screw; M3; M3x8; with flange",
+                    "category": {"name": "Bolts"},
+                }
+            ]
+        },
+    }
+    seen: dict[str, httpx.Request] = {}
+    imported = TmeProvider().fetch(
+        "https://www.tme.eu/details/B3X8%5FBN11252",
+        transport=_transport(product=product, seen=seen),
+    )
+    query = str(seen["/products"].url)
+    assert "symbols%5B%5D=B3X8%2FBN11252" in query
+    # And the underscore form is not offered beside it: it is not a second guess,
+    # it is the one value that would fail the request for everything else too.
+    assert "B3X8_BN11252" not in query
+    assert imported.mpn == "2041979"
+
+
+def test_product_url_writes_a_symbol_s_slash_the_way_tme_does() -> None:
+    # Percent-encoding the slash names no product; "_" is what TME's own URLs use,
+    # so a component created from an invoice line gets a shop link that opens.
+    assert (
+        TmeProvider().product_url("B3X8/BN11252")
+        == "https://www.tme.eu/en/details/B3X8_BN11252/"
+    )
+
+
 def test_fetch_drops_segments_outside_tmes_symbol_length_limits() -> None:
     seen: dict[str, httpx.Request] = {}
     TmeProvider().fetch(

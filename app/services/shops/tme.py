@@ -160,6 +160,9 @@ def _symbol_candidates(url: str) -> list[str]:
 
     Note the symbol is TME's own, not the manufacturer's part number — the URL's
     last segment is often the MPN and is deliberately not treated as a symbol.
+
+    A slash in a symbol is written ``_`` in the URL (see :data:`_SLUG_SLASH`) and is
+    put back before the API is asked.
     """
     try:
         path = urlsplit(url).path
@@ -174,17 +177,28 @@ def _symbol_candidates(url: str) -> list[str]:
     except ValueError:
         raise ValidationError("could not read a product symbol from the URL") from None
 
-    candidates = _usable_symbols(unquote(s) for s in segments[index + 1 :])
+    candidates = _usable_symbols(
+        unquote(s).replace(_SLUG_SLASH, "/") for s in segments[index + 1 :]
+    )
     if not candidates:
         raise ValidationError("could not read a product symbol from the URL")
     return candidates
 
 
+# A path segment cannot hold a slash, so TME writes a symbol's "/" as "_" in its
+# product URLs: the bag labelled "PN:B3X8/BN11252" carries the QR
+# https://www.tme.eu/details/B3X8%5FBN11252. Translating it back is not cosmetic —
+# the API rejects "_" outright ("Input data is not valid"), and that verdict is on
+# the WHOLE request, so a URL like this one used to take every other candidate in it
+# down and end as "the shop lookup failed".
+_SLUG_SLASH = "_"
+
 # A conservative sketch of what TME accepts in a symbol: letters, digits and the
 # separators seen in real symbols. One rejected symbol fails the WHOLE batched
 # request — losing the valid candidates in it — so anything outside this set (a
-# comma-suffixed MPN like "PESD5V0S1BA,115", prose, whitespace) is dropped up front.
-_SYMBOL_CHARS = re.compile(r"[A-Z0-9._/+-]+")
+# comma-suffixed MPN like "PESD5V0S1BA,115", an untranslated slug underscore, prose,
+# whitespace) is dropped up front.
+_SYMBOL_CHARS = re.compile(r"[A-Z0-9./+-]+")
 
 
 def _usable_symbols(raw: Iterable[str]) -> list[str]:
@@ -349,8 +363,11 @@ class TmeProvider:
 
     def product_url(self, part_number: str) -> str:
         # The invoice's supplier-part-number for TME IS the TME symbol, so it maps
-        # straight to the storefront's product page (case-insensitive there).
-        return f"https://www.tme.eu/en/details/{quote(part_number, safe='')}/"
+        # straight to the storefront's product page (case-insensitive there) — with
+        # a slash written the way TME's own URLs write it, as "_", rather than
+        # percent-encoded into a path that names no product.
+        slug = part_number.replace("/", _SLUG_SLASH)
+        return f"https://www.tme.eu/en/details/{quote(slug, safe='')}/"
 
     def fetch(
         self, url: str, *, transport: httpx.BaseTransport | None = None

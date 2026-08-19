@@ -358,9 +358,11 @@ def test_product_url_builds_a_distributor_link_per_shop() -> None:
 def test_product_url_percent_encodes_the_part_number() -> None:
     # A part number with URL-significant characters must not break the path/query.
     # The two encodings differ ON PURPOSE: TME puts the symbol in a PATH segment
-    # (safe=''), so a slash must be escaped; the search shops put it in a QUERY
+    # (safe=''), where a space must be escaped — and a slash is not escaped but
+    # TRANSLATED to "_", which is how TME's own product URLs spell it (a percent-
+    # encoded slash names no product). The search shops put the number in a QUERY
     # value (default safe='/'), where a slash is fine but a space still isn't.
-    assert shops.product_url("tme", "A/B C") == "https://www.tme.eu/en/details/A%2FB%20C/"
+    assert shops.product_url("tme", "A/B C") == "https://www.tme.eu/en/details/A_B%20C/"
     assert (
         shops.product_url("digikey", "A/B C")
         == "https://www.digikey.com/en/products/result?keywords=A/B%20C"
