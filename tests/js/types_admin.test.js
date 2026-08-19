@@ -342,30 +342,26 @@ describe("types_admin.js — parameter writes", () => {
     expect(document.querySelectorAll("#type-params-list li").length).toBe(2);
   });
 
-  it("opens the matcher dialog pre-scoped to a parameter, when it's available", async () => {
+  it("opens the matchers panel scoped to a parameter, when it's available", () => {
     const { window, document } = loadPage(typesAdminPageFixture(), SCRIPTS);
-    // The matcher dialog is only present for admins; stub its opener before render.
-    window.openMatcherDialog = vi.fn();
+    // The matchers panel is only present for admins; stub its opener before render.
+    window.openParamMatchers = vi.fn();
     window.openParamsDialog(RESISTOR); // renders DIELECTRIC (id 9), type id 3
     const matcher = [
       ...document.querySelectorAll("#type-params-list li button"),
-    ].find((b) => b.textContent === "Matcher");
+    ].find((b) => b.textContent === "Matchers");
     expect(matcher).toBeTruthy();
     matcher.click();
-    expect(window.openMatcherDialog).toHaveBeenCalledWith(null, {
-      domain: "param_name",
-      typeId: 3,
-      parameterDefinitionId: 9,
-    });
+    expect(window.openParamMatchers).toHaveBeenCalledWith(RESISTOR.parameters[0], 3);
   });
 
-  it("omits the matcher button when the dialog isn't on the page", () => {
+  it("omits the matchers button when the panel isn't on the page", () => {
     const { window, document } = loadPage(typesAdminPageFixture(), SCRIPTS);
-    // No window.openMatcherDialog (non-admin) → no button.
+    // No window.openParamMatchers (non-admin) → no button.
     window.openParamsDialog(RESISTOR);
     const labels = [
       ...document.querySelectorAll("#type-params-list li button"),
     ].map((b) => b.textContent);
-    expect(labels).not.toContain("Matcher");
+    expect(labels).not.toContain("Matchers");
   });
 });
