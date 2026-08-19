@@ -59,23 +59,41 @@
   </article>
 </dialog>
 
-{# One parameter's matchers: list + inline edit/delete, plus a quick-add row that
-   stays open so aliases (esp. an enum's many values) go in one after another. #}
+{# One parameter's matchers, in two sections — value aliases (a shop's word for an
+   allowed value) and parameter-name aliases (a shop's label for the parameter
+   itself). Each lists its rules with inline edit/delete plus a quick-add row that
+   stays open, so aliases (esp. an enum's many values) go in one after another. #}
 <dialog id="param-matchers-dialog">
   <article>
     <header>
       <strong>Matchers — <span id="param-matchers-title"></span></strong>
       <button class="close" aria-label="Close" data-close></button>
     </header>
-    <ul id="param-matchers-list" class="pm-list"></ul>
-    <p id="param-matchers-empty" class="muted" hidden>No matchers for this parameter yet.</p>
-    <div class="pm-add">
-      <input id="pm-add-alias" class="control" placeholder="alias seen in shop/invoice data" />
-      <span class="pm-arrow muted">→</span>
-      <select id="pm-add-target" class="control"></select>
-      <button type="button" class="btn btn-primary" id="pm-add-btn">Add</button>
+    <div class="pm-body">
+      <section id="pm-value-section" class="pm-section" hidden>
+        <h4 class="pm-heading">Value aliases
+          <span class="muted">— a shop's word for one of the allowed values</span></h4>
+        <ul id="pm-value-list" class="pm-list"></ul>
+        <p id="pm-value-empty" class="muted pm-sub" hidden>No value aliases yet.</p>
+        <div class="pm-add">
+          <input id="pm-value-alias" class="control pm-alias" placeholder="alias (e.g. NP0)" />
+          <span class="pm-arrow muted">→</span>
+          <select id="pm-value-target" class="control pm-target"></select>
+          <button type="button" class="btn btn-primary" id="pm-value-add">Add</button>
+        </div>
+      </section>
+      <section id="pm-name-section" class="pm-section">
+        <h4 class="pm-heading">Parameter-name aliases
+          <span class="muted">— a shop's label for this parameter itself</span></h4>
+        <ul id="pm-name-list" class="pm-list"></ul>
+        <p id="pm-name-empty" class="muted pm-sub" hidden>No name aliases yet.</p>
+        <div class="pm-add">
+          <input id="pm-name-alias" class="control pm-alias" placeholder="alias (e.g. Dielektryk)" />
+          <button type="button" class="btn btn-primary" id="pm-name-add">Add</button>
+        </div>
+      </section>
+      <p id="param-matchers-error" class="error" hidden></p>
     </div>
-    <p id="param-matchers-error" class="error" hidden></p>
     <footer>
       <button type="button" class="btn btn-ghost" data-close>Close</button>
     </footer>

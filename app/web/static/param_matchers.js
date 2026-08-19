@@ -1,22 +1,32 @@
 // Per-parameter matcher management (admin, /types). Opened from a parameter row in
-// the "Parameters" dialog, it lists the match rules already attached to that
-// parameter, edits alias/target inline, deletes, and — the point — RAPID-ADDS aliases
-// without a modal per value (the chore for an enum with many allowed values). Reuses
-// the admin feed (/web/api/match-rules, filtered by parameter) and the admin write
-// endpoints. Exposes window.openParamMatchers(param, typeId). esc/csrfToken/
-// errorMessage come from shared.js.
+// the "Parameters" dialog, it manages the two kinds of rule a parameter can have, in
+// two clearly separated sections:
+//   - Value aliases (enum_value): a shop's word for one of the allowed values.
+//   - Parameter-name aliases (param_name): a shop's label for the parameter itself.
+// Each section lists its rules (alias — and, for a value rule, the target value —
+// editable inline), deletes, and RAPID-ADDS without a modal per entry (the chore for
+// an enum with many values). Reuses the admin feed (/web/api/match-rules, filtered by
+// parameter) and the admin write endpoints. Exposes window.openParamMatchers(param).
+// esc/csrfToken/errorMessage come from shared.js.
 
 (function () {
   const dialog = document.getElementById("param-matchers-dialog");
   if (!dialog) return; // not the types admin page
 
   const titleEl = document.getElementById("param-matchers-title");
-  const listEl = document.getElementById("param-matchers-list");
-  const emptyEl = document.getElementById("param-matchers-empty");
   const errorEl = document.getElementById("param-matchers-error");
-  const addAlias = document.getElementById("pm-add-alias");
-  const addTarget = document.getElementById("pm-add-target");
-  const addBtn = document.getElementById("pm-add-btn");
+
+  const valueSection = document.getElementById("pm-value-section");
+  const valueList = document.getElementById("pm-value-list");
+  const valueEmpty = document.getElementById("pm-value-empty");
+  const valueAlias = document.getElementById("pm-value-alias");
+  const valueTarget = document.getElementById("pm-value-target");
+  const valueAdd = document.getElementById("pm-value-add");
+
+  const nameList = document.getElementById("pm-name-list");
+  const nameEmpty = document.getElementById("pm-name-empty");
+  const nameAlias = document.getElementById("pm-name-alias");
+  const nameAdd = document.getElementById("pm-name-add");
 
   const PARAM_NAME = "param_name";
   const ENUM_VALUE = "enum_value";
@@ -36,62 +46,62 @@
     errorEl.hidden = !text;
   }
 
-  function refreshEmpty() {
-    emptyEl.hidden = listEl.children.length > 0;
-  }
-
-  // One rule row: an editable alias, its target, and a delete button. The target is a
-  // value dropdown for an enum_value rule (edit in place) and static text for a
-  // param_name rule (its canonical must equal the parameter's name, so it's fixed).
-  function buildRow(rule) {
-    const li = document.createElement("li");
-    li.className = "pm-row";
-    li.dataset.ruleId = rule.id;
-
-    const alias = document.createElement("input");
-    alias.className = "control pm-alias";
-    alias.value = rule.alias;
-    alias.addEventListener("change", () =>
-      patchRule(rule, { alias: alias.value.trim() }, alias, rule.alias),
-    );
-
-    const arrow = document.createElement("span");
-    arrow.className = "pm-arrow muted";
-    arrow.textContent = "→";
-
-    let target;
-    if (rule.domain === ENUM_VALUE) {
-      target = valueSelect();
-      target.value = rule.canonical;
-      target.addEventListener("change", () =>
-        patchRule(rule, { canonical: target.value }, target, rule.canonical),
-      );
-    } else {
-      target = document.createElement("span");
-      target.className = "pm-target-static muted";
-      target.textContent = "(parameter name)";
-    }
-    target.classList.add("pm-target");
-
-    const del = document.createElement("button");
-    del.type = "button";
-    del.className = "btn btn-ghost btn-sm pm-del";
-    del.textContent = "✕";
-    del.setAttribute("aria-label", `Delete matcher "${rule.alias}"`);
-    del.addEventListener("click", () => deleteRule(rule, li));
-
-    li.append(alias, arrow, target, del);
-    return li;
+  function refreshEmpty(list, empty) {
+    empty.hidden = list.children.length > 0;
   }
 
   // A <select> of the parameter's allowed enum values.
   function valueSelect() {
     const select = document.createElement("select");
-    select.className = "control";
+    select.className = "control pm-target";
     select.innerHTML = (param.enum_values || [])
       .map((v) => `<option value="${esc(v)}">${esc(v)}</option>`)
       .join("");
     return select;
+  }
+
+  function aliasInput(rule) {
+    const input = document.createElement("input");
+    input.className = "control pm-alias";
+    input.value = rule.alias;
+    input.addEventListener("change", () =>
+      patchRule(rule, { alias: input.value.trim() }, input, rule.alias),
+    );
+    return input;
+  }
+
+  function deleteButton(rule, li, list, empty) {
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "btn btn-ghost btn-sm pm-del";
+    del.textContent = "✕";
+    del.setAttribute("aria-label", `Delete matcher "${rule.alias}"`);
+    del.addEventListener("click", () => deleteRule(rule, li, list, empty));
+    return del;
+  }
+
+  // Value rule row: alias + a value dropdown (both editable) + delete.
+  function valueRow(rule) {
+    const li = document.createElement("li");
+    li.className = "pm-row";
+    const target = valueSelect();
+    target.value = rule.canonical;
+    target.addEventListener("change", () =>
+      patchRule(rule, { canonical: target.value }, target, rule.canonical),
+    );
+    const arrow = document.createElement("span");
+    arrow.className = "pm-arrow muted";
+    arrow.textContent = "→";
+    li.append(aliasInput(rule), arrow, target, deleteButton(rule, li, valueList, valueEmpty));
+    return li;
+  }
+
+  // Name rule row: just the alias (its target is fixed — the parameter's name) + delete.
+  function nameRow(rule) {
+    const li = document.createElement("li");
+    li.className = "pm-row";
+    li.append(aliasInput(rule), deleteButton(rule, li, nameList, nameEmpty));
+    return li;
   }
 
   async function patchRule(rule, patch, control, previous) {
@@ -101,7 +111,7 @@
       if (resp.ok) {
         Object.assign(rule, patch);
       } else {
-        control.value = previous; // revert the field to the last good value
+        control.value = previous; // revert to the last good value
         setError(await errorMessage(resp));
       }
     } catch {
@@ -110,13 +120,13 @@
     }
   }
 
-  async function deleteRule(rule, li) {
+  async function deleteRule(rule, li, list, empty) {
     setError("");
     try {
       const resp = await write(`/api/admin/match-rules/${rule.id}`, "DELETE");
       if (resp.ok) {
         li.remove();
-        refreshEmpty();
+        refreshEmpty(list, empty);
       } else {
         setError(await errorMessage(resp));
       }
@@ -125,59 +135,55 @@
     }
   }
 
-  // The quick-add target: each enum value (an enum_value rule) plus an "as the
-  // parameter name" option (a param_name rule — canonical must be the param's name).
-  // A non-enum parameter has no values, so only the name option remains and the
-  // select is hidden — the alias alone makes the rule.
-  function buildAddTarget() {
-    const options = (param.enum_values || []).map(
-      (v) => `<option data-domain="${ENUM_VALUE}" value="${esc(v)}">${esc(v)}</option>`,
-    );
-    options.push(
-      `<option data-domain="${PARAM_NAME}" value="${esc(param.name)}">` +
-        `↳ as parameter name</option>`,
-    );
-    addTarget.innerHTML = options.join("");
-    addTarget.selectedIndex = 0;
-    addTarget.hidden = (param.enum_values || []).length === 0;
-  }
-
-  async function addRule() {
-    const alias = addAlias.value.trim();
-    if (!alias) {
-      addAlias.focus();
-      return;
-    }
-    const option = addTarget.options[addTarget.selectedIndex];
+  async function createRule(domain, alias, canonical) {
     setError("");
-    let created;
     try {
       const resp = await write("/api/admin/match-rules", "POST", {
-        domain: option.dataset.domain,
+        domain,
         alias,
-        canonical: option.value,
+        canonical,
         parameter_definition_id: param.id,
         sort_order: 0,
       });
       if (!resp.ok) {
         setError(await errorMessage(resp)); // e.g. a duplicate alias — keep the text
-        return;
+        return null;
       }
-      created = await resp.json();
+      return await resp.json();
     } catch {
       setError("Could not reach the server.");
-      return;
+      return null;
     }
-    // Append and clear for the next one — no modal, no reload, focus stays put so a
-    // run of aliases goes in one after another.
-    listEl.appendChild(buildRow(created));
-    refreshEmpty();
-    addAlias.value = "";
-    addAlias.focus();
   }
 
-  async function loadList() {
-    listEl.replaceChildren();
+  // Add-and-stay: append the new row, clear the alias, keep focus — a run of aliases
+  // goes in one after another with no modal, no reload.
+  async function addValue() {
+    const alias = valueAlias.value.trim();
+    if (!alias) return valueAlias.focus();
+    const created = await createRule(ENUM_VALUE, alias, valueTarget.value);
+    if (!created) return;
+    valueList.appendChild(valueRow(created));
+    refreshEmpty(valueList, valueEmpty);
+    valueAlias.value = "";
+    valueAlias.focus();
+  }
+
+  async function addName() {
+    const alias = nameAlias.value.trim();
+    if (!alias) return nameAlias.focus();
+    // A name alias maps onto the parameter's own name.
+    const created = await createRule(PARAM_NAME, alias, param.name);
+    if (!created) return;
+    nameList.appendChild(nameRow(created));
+    refreshEmpty(nameList, nameEmpty);
+    nameAlias.value = "";
+    nameAlias.focus();
+  }
+
+  async function loadLists() {
+    valueList.replaceChildren();
+    nameList.replaceChildren();
     let rows = [];
     try {
       const payload = await fetch("/web/api/match-rules").then((r) => r.json());
@@ -187,28 +193,44 @@
     } catch {
       setError("Could not load matchers.");
     }
-    for (const rule of rows) listEl.appendChild(buildRow(rule));
-    refreshEmpty();
+    for (const rule of rows) {
+      if (rule.domain === ENUM_VALUE) valueList.appendChild(valueRow(rule));
+      else nameList.appendChild(nameRow(rule));
+    }
+    refreshEmpty(valueList, valueEmpty);
+    refreshEmpty(nameList, nameEmpty);
   }
 
-  async function openParamMatchers(p, _typeId) {
+  async function openParamMatchers(p) {
     if (dialog.open) return;
     param = p;
     titleEl.textContent = param.label;
     setError("");
-    addAlias.value = "";
-    buildAddTarget();
-    await loadList();
+    valueAlias.value = "";
+    nameAlias.value = "";
+    // The value section only applies to an enum parameter (one with allowed values).
+    const isEnum = (param.enum_values || []).length > 0;
+    valueSection.hidden = !isEnum;
+    if (isEnum) {
+      valueTarget.innerHTML = (param.enum_values || [])
+        .map((v) => `<option value="${esc(v)}">${esc(v)}</option>`)
+        .join("");
+    }
+    await loadLists();
     dialog.showModal();
-    addAlias.focus();
+    (isEnum ? valueAlias : nameAlias).focus();
   }
   window.openParamMatchers = openParamMatchers;
 
-  addBtn.addEventListener("click", addRule);
-  // Enter in the alias field adds too (rapid-fire), never submitting a form.
-  addAlias.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter") return;
-    event.preventDefault();
-    addRule();
-  });
+  function addOnEnter(input, add) {
+    input.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      add();
+    });
+  }
+  valueAdd.addEventListener("click", addValue);
+  nameAdd.addEventListener("click", addName);
+  addOnEnter(valueAlias, addValue);
+  addOnEnter(nameAlias, addName);
 })();
