@@ -285,6 +285,52 @@ describe("component_dialog.js — showing what an import left unfilled", () => {
     expect(pkg.classList.contains("is-unfilled")).toBe(true);
   });
 
+  it("drops the previous bag's tint the moment the dialog is reopened", async () => {
+    // A bag scanned while the previous one is still up reopens the dialog and looks
+    // the new code up. Until that answers, the form holds nothing — so bag A's gaps
+    // must not still be marked against bag B's number, which would read as
+    // information about a part nobody has looked up yet.
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: withParams({ mpn: "BAG-A", proposal: null }),
+    });
+    const el = syncOpen(page);
+    open(page, () => {}, null, { importCode: "BAG-A" });
+    await tick();
+    await tick();
+    expect(tinted(page).length).toBeGreaterThan(0); // bag A's gaps are marked
+    expect(el.open).toBe(true); // so the next open takes the reopen path
+
+    open(page, () => {}, null, { importCode: "BAG-B" });
+    expect(tinted(page)).toEqual([]);
+  });
+
+  it("untints Type when a new type is created for a part that resolved none", async () => {
+    // The flow the tint invites: an import that resolved no type is what makes Type
+    // a gap, so "+ New type" is the natural next click. The button sets the select
+    // in script (no change event) and loads a type whose parameter list may be
+    // empty — an early return that used to skip the repaint.
+    const page = loadPage(
+      dialogFixture() + `<dialog id="type-dialog"></dialog>`,
+      SCRIPTS,
+      { fetchImpl: (url) => (url.endsWith("/parameters") ? ok([]) : ok({})) },
+    );
+    let onTypeCreated = null;
+    page.window.openTypeDialog = (cb) => {
+      onTypeCreated = cb;
+    };
+    open(page, () => {}, { mpn: "X" }); // a prefill with no type: Type is a gap
+    await tick();
+    const typeSelect = page.document.getElementById("component-type");
+    expect(typeSelect.classList.contains("is-unfilled")).toBe(true);
+
+    page.document.getElementById("component-new-type").click();
+    onTypeCreated({ id: 7, name: "screw" });
+    await tick();
+
+    expect(typeSelect.value).toBe("7");
+    expect(typeSelect.classList.contains("is-unfilled")).toBe(false);
+  });
+
   it("leaves a blank manual create untinted", async () => {
     // Nothing has tried to fill this form, so it has no gaps to point at — every
     // field being red would be noise, not information.

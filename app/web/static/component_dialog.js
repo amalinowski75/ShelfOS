@@ -152,7 +152,19 @@
     return field;
   }
 
+  // Wrapped for the same reason applyPrefill is: the tint has to be right however
+  // this returns, and there are four ways out — no type, a failed fetch, a type with
+  // no parameters, a newer selection overtaking this one. Hanging the refresh off
+  // the one exit that renders fields left the other three able to miss it.
   async function loadParams(typeId) {
+    try {
+      return await loadParamsFields(typeId);
+    } finally {
+      refreshGaps();
+    }
+  }
+
+  async function loadParamsFields(typeId) {
     const requestId = ++paramsRequestId;
     paramsBox.replaceChildren();
     currentDefinitions = [];
@@ -187,7 +199,6 @@
     for (const definition of definitions) {
       paramsBox.appendChild(buildParamField(definition));
     }
-    refreshGaps(); // the new type's fields start empty; say which ones stay that way
   }
 
   // Collect only the filled fields; a bool select maps to a real boolean, and a
@@ -725,11 +736,13 @@
     // fires from a closed dialog.)
     const reopening = dialog.open;
     onCreated = callback || null;
-    // Off until something is prefilled. Matters most on a reopen (a bag scanned
-    // while the previous one is still up): the form is reset below and the new
-    // lookup takes a moment, and an all-red form in the meantime would be pointing
-    // at gaps that nothing has tried to fill yet.
+    // Off until something is prefilled, and repainted on the spot — clearing the
+    // flag alone would leave the previous session's tint sitting on the form. That
+    // is the reopen case (a bag scanned while the previous one is still up): the
+    // form is reset below and bag B's lookup takes a moment, and bag A's gaps
+    // marked against bag B's number read as information, which is worse than noise.
     showingGaps = false;
+    refreshGaps();
     openToken += 1; // invalidate any in-flight shop lookup from a prior open
     importing = false; // …and release its lock so the new code is looked up
     errorEl.hidden = true;
