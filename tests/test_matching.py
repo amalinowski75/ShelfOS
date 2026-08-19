@@ -297,3 +297,17 @@ def test_mounting_words_including_polish(
     _resistor(session)
     product = ProductData(category="resistor", description=text)
     assert build_proposal(session, product).mounting_type is expected
+
+
+def test_mounting_from_a_structured_attribute_only(session: Session) -> None:
+    # Mouser states mounting only as a structured attribute ("Mounting Style:
+    # SMD/SMT"), never in the free text. The mounting scan must reach the attribute
+    # value too, or nothing sets the field. (The seeded "SMD"->SMT rule fires on the
+    # "SMD" inside "SMD/SMT"; the point is that SMT is resolved at all.)
+    _resistor(session)
+    product = ProductData(
+        category="resistor",
+        description="TMUXHS4412 High-Bandwidth Multiplexer",
+        parameters=[("Mounting Style", "SMD/SMT")],
+    )
+    assert build_proposal(session, product).mounting_type is MountingType.SMT

@@ -170,8 +170,13 @@ def build_proposal(
         definitions = cs.get_effective_parameter_definitions(session, proposal.type_id)
         _fill_parameters(session, product, scan_text, definitions, rules, proposal)
 
-    # 4. Mounting.
-    proposal.mounting_type = _resolve_mounting(blob, rules)
+    # 4. Mounting. A shop often states it only as a structured attribute
+    # ("Mounting Style: SMD/SMT") that never reaches the free-text blob, so scan the
+    # attribute values too — but only here, not in the type/package scans, where a
+    # stray parameter word could mis-resolve.
+    param_text = " ".join(str(value) for _, value in product.parameters if value)
+    mounting_blob = " ".join(t for t in (blob, param_text) if t)
+    proposal.mounting_type = _resolve_mounting(mounting_blob, rules)
 
     # 5. Package.
     if product.package:
