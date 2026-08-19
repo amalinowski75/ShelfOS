@@ -219,6 +219,43 @@ def test_a_slug_underscore_is_asked_about_as_the_slash_it_stands_for() -> None:
     assert imported.mpn == "2041979"
 
 
+def test_a_percent_in_a_symbol_survives_the_candidate_filter() -> None:
+    # Another real bag: symbol "SMD0402-91K-1%", whose QR is
+    # https://www.tme.eu/details/SMD0402-91K-1%25. The "%" is part of the symbol —
+    # TME resolves it and quietly ignores a non-existent symbol carrying one, so it
+    # cannot fail the batch — but it used to be filtered out as unusable, leaving the
+    # URL with no candidate at all and the scan reporting a failed lookup.
+    product = {
+        "status": "OK",
+        "data": {
+            "elements": [
+                {
+                    "symbol": "SMD0402-91K-1%",
+                    "manufacturer_symbols": ["0402WGF9102TCE"],
+                    "manufacturer": {"name": "ROYALOHM"},
+                    "description": "Resistor: thick film; 91kΩ; SMD; 0402; ±1%",
+                    "category": {"name": "Resistors SMD 0402"},
+                }
+            ]
+        },
+    }
+    seen: dict[str, httpx.Request] = {}
+    imported = TmeProvider().fetch(
+        "https://www.tme.eu/details/SMD0402-91K-1%25",
+        transport=_transport(product=product, seen=seen),
+    )
+    # The symbol reaches the API percent-encoded, which is how it left the QR.
+    assert "symbols%5B%5D=SMD0402-91K-1%25" in str(seen["/products"].url)
+    assert imported.mpn == "0402WGF9102TCE"
+
+
+def test_a_symbol_survives_the_round_trip_through_product_url() -> None:
+    # The two halves of the URL convention must agree, or a link we build cannot be
+    # scanned back into the symbol it names. Both real symbols, both awkward.
+    for symbol in ("B3X8/BN11252", "SMD0402-91K-1%"):
+        assert tme.url_symbols(TmeProvider().product_url(symbol)) == [symbol]
+
+
 def test_product_url_writes_a_symbol_s_slash_the_way_tme_does() -> None:
     # Percent-encoding the slash names no product; "_" is what TME's own URLs use,
     # so a component created from an invoice line gets a shop link that opens.
@@ -778,6 +815,21 @@ def test_fetch_by_symbols_drops_a_comma_bearing_candidate() -> None:
     url = str(seen["/products"].url)
     assert "MR04X1201FTL" in url
     assert "PESD5V0S1BA" not in url
+
+
+def test_fetch_by_symbols_offers_a_percent_bearing_candidate() -> None:
+    # The mirror of the comma and underscore cases, for the opposite verdict: "%" is
+    # part of real symbols, and the API quietly ignores a non-existent one carrying
+    # it rather than rejecting the request — so it rides in the batch beside the
+    # others instead of being filtered out. This is the half of the charset that the
+    # URL tests cannot reach, and the half where a wrong answer costs the most.
+    seen: dict[str, httpx.Request] = {}
+    TmeProvider().fetch_by_symbols(
+        ["NOSUCH-1%", "MR04X1201FTL"], transport=_transport(seen=seen)
+    )
+    url = str(seen["/products"].url)
+    assert "NOSUCH-1%25" in url  # percent-encoded on the wire
+    assert "MR04X1201FTL" in url
 
 
 def test_fetch_by_symbols_drops_an_underscore_bearing_candidate() -> None:
