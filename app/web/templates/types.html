@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_type_dialog.html" import type_dialog %}
+{% from "_match_rule_dialog.html" import match_rule_dialog %}
 {% block title %}Types — ShelfOS{% endblock %}
 
 {% macro data_type_options() -%}
@@ -151,9 +152,13 @@
 </dialog>
 {# The New Type builder (shared with the components + invoice flows). #}
 {{ type_dialog(types, data_types) }}
+{# Inline "Create matcher" for a parameter, reachable from the param list and the
+   type builder (admin page). #}
+{{ match_rule_dialog(domains, mounting_types) }}
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/match_rule_dialog.js?v={{ static_version() }}"></script>
 <script src="/static/type_dialog.js?v={{ static_version() }}"></script>
 <script src="/static/types_admin.js?v={{ static_version() }}"></script>
 {% endblock %}
