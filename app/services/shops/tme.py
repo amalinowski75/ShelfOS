@@ -201,14 +201,17 @@ _SLUG_SLASH = "_"
 # invoice arrives as it was printed, and TME answers one of those with "Input data is
 # not valid" for the whole batch.
 #
-# The set is EMPIRICAL, and it is a filter with two different costs, so it is worth
-# knowing which way to lean when a new character turns up. Too narrow silently kills
-# a lookup that would have worked ("SMD0402-91K-1%" is a real symbol, and its "%" was
-# missing here); too broad only risks the batch failing, which is the same visible
-# outcome the user already gets. What settles a candidate character is one question,
-# asked of the API: does a NON-EXISTENT symbol containing it get quietly ignored
-# (accepted, and safe to allow) or does it fail the request (rejected, and it must
-# stay out)? Measured for "%": ignored, so it cannot poison a batch.
+# The set is EMPIRICAL, and its two costs land on DIFFERENT paths, which is worth
+# knowing when a new character turns up. Too narrow hurts the URL path, where a
+# dropped segment can leave nothing at all to look up — that is how "SMD0402-91K-1%"
+# was lost, its "%" filtered out of a URL carrying one segment. Too broad hurts the
+# invoice path, where several candidates ride in one batch and a rejected entry takes
+# the rest down with it. So the question that settles a candidate character is asked
+# of the API: does a NON-EXISTENT symbol containing it get quietly ignored (accepted,
+# and safe to allow) or does it fail the request (rejected, and it must stay out)?
+# Measured for "%": ignored, so it cannot poison a batch. Lean towards allowing —
+# a wrongly-excluded character kills a lookup silently, a wrongly-included one at
+# worst produces the failure the user is already seeing.
 _SYMBOL_CHARS = re.compile(r"[A-Z0-9./+%-]+")
 
 

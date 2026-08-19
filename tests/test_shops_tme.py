@@ -817,6 +817,21 @@ def test_fetch_by_symbols_drops_a_comma_bearing_candidate() -> None:
     assert "PESD5V0S1BA" not in url
 
 
+def test_fetch_by_symbols_offers_a_percent_bearing_candidate() -> None:
+    # The mirror of the comma and underscore cases, for the opposite verdict: "%" is
+    # part of real symbols, and the API quietly ignores a non-existent one carrying
+    # it rather than rejecting the request — so it rides in the batch beside the
+    # others instead of being filtered out. This is the half of the charset that the
+    # URL tests cannot reach, and the half where a wrong answer costs the most.
+    seen: dict[str, httpx.Request] = {}
+    TmeProvider().fetch_by_symbols(
+        ["NOSUCH-1%", "MR04X1201FTL"], transport=_transport(seen=seen)
+    )
+    url = str(seen["/products"].url)
+    assert "NOSUCH-1%25" in url  # percent-encoded on the wire
+    assert "MR04X1201FTL" in url
+
+
 def test_fetch_by_symbols_drops_an_underscore_bearing_candidate() -> None:
     # Same guard as the comma above, for the path that can still deliver an
     # underscore: an invoice number arrives as printed, with no URL slug to
