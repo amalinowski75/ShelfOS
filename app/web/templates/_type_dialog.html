@@ -80,6 +80,12 @@
     <div class="param-flags">
       <label class="check"><input type="checkbox" name="p-table" /> Table column</label>
       <label class="check"><input type="checkbox" name="p-filter" /> Filterable</label>
+      <!-- Unhidden by type_dialog.js only when the matcher dialog is on the page
+           (admin). Creating a matcher needs the parameter to exist, so the click
+           saves the type first, then opens the matcher scoped to this parameter. -->
+      <button type="button" class="btn btn-secondary btn-sm param-create-matcher" hidden>
+        Create matcher
+      </button>
       <button type="button" class="btn btn-danger btn-sm param-remove">Remove</button>
     </div>
   </div>

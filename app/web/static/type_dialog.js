@@ -34,6 +34,14 @@
       row.remove();
       refreshEmptyHint();
     });
+    // "Create matcher" is only wired when the matcher dialog is on the page (admin);
+    // it stays hidden otherwise. Clicking it saves the type first (a matcher needs a
+    // persisted parameter), then opens the matcher scoped to this row's parameter.
+    const matcherBtn = row.querySelector(".param-create-matcher");
+    if (matcherBtn && typeof window.openMatcherDialog === "function") {
+      matcherBtn.hidden = false;
+      matcherBtn.addEventListener("click", () => createMatcherForRow(row));
+    }
     paramsBox.appendChild(row);
     refreshEmptyHint();
     row.querySelector('[name="p-name"]').focus();
@@ -151,6 +159,48 @@
     .querySelector('[name="parent-id"]')
     .addEventListener("change", (event) => loadInheritedParams(event.target.value));
 
+  // POST the current form as a new type; returns the created type — whose parameters
+  // now carry persisted ids — or null on failure, having shown #type-error. Shared by
+  // the normal submit and the per-parameter "Create matcher" button (which needs the
+  // ids). Also registers the new type as a valid parent for the next one this session.
+  async function createType() {
+    const el = document.getElementById("type-error");
+    const parentValue = typeForm.querySelector('[name="parent-id"]').value;
+    let resp;
+    try {
+      resp = await fetch("/api/types", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body: JSON.stringify({
+          name: typeForm.querySelector('[name="type-name"]').value.trim(),
+          parent_id: parentValue ? Number(parentValue) : null,
+          parameters: collectParameters(),
+        }),
+      });
+    } catch {
+      el.textContent = "Could not reach the server. Please try again.";
+      el.hidden = false;
+      return null;
+    }
+    if (!resp.ok) {
+      el.textContent = await errorMessage(resp);
+      el.hidden = false;
+      return null;
+    }
+    const created = await resp.json();
+    upsertTypeOption(typeForm.querySelector('[name="parent-id"]'), created, false);
+    return created;
+  }
+
+  // Close the dialog and hand the created type to the caller's onCreated (filter+reload,
+  // or select in the component dialog). Consumes the callback so it can't fire twice.
+  async function finishCreate(created) {
+    typeDialog.close();
+    const callback = onTypeCreated;
+    onTypeCreated = null;
+    if (callback) await callback(created);
+  }
+
   let submitting = false;
   typeForm.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -158,40 +208,46 @@
     submitting = true;
     (async () => {
       try {
-        const parentValue = typeForm.querySelector('[name="parent-id"]').value;
-        const resp = await fetch("/api/types", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-          body: JSON.stringify({
-            name: typeForm.querySelector('[name="type-name"]').value.trim(),
-            parent_id: parentValue ? Number(parentValue) : null,
-            parameters: collectParameters(),
-          }),
-        });
-        if (resp.ok) {
-          const created = await resp.json();
-          // Always a valid parent for the next type created this session; the
-          // caller's onCreated handles the rest (filter+reload, or select in the
-          // component dialog).
-          upsertTypeOption(
-            typeForm.querySelector('[name="parent-id"]'), created, false,
-          );
-          typeDialog.close();
-          const callback = onTypeCreated;
-          onTypeCreated = null; // consume it, so it can't fire against a later open
-          if (callback) await callback(created);
-        } else {
-          const el = document.getElementById("type-error");
-          el.textContent = await errorMessage(resp);
-          el.hidden = false;
-        }
-      } catch {
-        const el = document.getElementById("type-error");
-        el.textContent = "Could not reach the server. Please try again.";
-        el.hidden = false;
+        const created = await createType();
+        if (created) await finishCreate(created);
       } finally {
         submitting = false;
       }
     })();
   });
+
+  // "Create matcher" on a parameter row: a matcher must bind to a persisted parameter,
+  // so commit the type first, then open the shared matcher dialog pre-scoped to this
+  // row's parameter (found by name in the create response). The type is created at this
+  // click — which is the dialog's whole purpose — and the page updates as on a normal
+  // save, with the matcher dialog on top.
+  async function createMatcherForRow(row) {
+    if (submitting || typeof window.openMatcherDialog !== "function") return;
+    const nameInput = row.querySelector('[name="p-name"]');
+    const rowName = nameInput.value.trim();
+    if (!rowName) {
+      const el = document.getElementById("type-error");
+      el.textContent = "Name this parameter before creating a matcher for it.";
+      el.hidden = false;
+      nameInput.focus();
+      return;
+    }
+    submitting = true;
+    let created;
+    try {
+      created = await createType();
+    } finally {
+      submitting = false;
+    }
+    if (!created) return;
+    const param = (created.parameters || []).find((p) => p.name === rowName);
+    await finishCreate(created);
+    if (param) {
+      await window.openMatcherDialog(null, {
+        domain: "param_name",
+        typeId: created.id,
+        parameterDefinitionId: param.id,
+      });
+    }
+  }
 })();

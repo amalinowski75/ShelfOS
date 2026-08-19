@@ -2,10 +2,12 @@
 {% from "_location_picker.html" import location_picker %}
 {% from "_attachments.html" import attachments_card %}
 {% from "_type_dialog.html" import type_dialog %}
+{% from "_match_rule_dialog.html" import match_rule_dialog %}
 {% from "_putaway.html" import putaway_panel, putaway_dialog %}
 {% block title %}{{ invoice.invoice_number }} — ShelfOS{% endblock %}
 
 {% set can_edit = current_user.role.value != "read-only" and not invoice.is_finalized %}
+{% set is_admin = current_user.role.value == "admin" %}
 
 {% macro state_badge(finalized) -%}
   {% if finalized %}
@@ -278,6 +280,11 @@
 {# The New Type builder, so "+ New type" in the component dialog works here too. #}
 {{ type_dialog(types, data_types) }}
 
+{# Inline "Create matcher" on a type builder's parameter rows (admin only). #}
+{% if is_admin %}
+{{ match_rule_dialog(domains, mounting_types) }}
+{% endif %}
+
 {# The shared "New location" dialog, reachable inline from the line picker. #}
 {% include "_location_dialog.html" %}
 
@@ -309,6 +316,9 @@
 {% endblock %}
 
 {% block scripts %}
+{% if is_admin %}
+<script src="/static/match_rule_dialog.js?v={{ static_version() }}"></script>
+{% endif %}
 <script src="/static/type_dialog.js?v={{ static_version() }}"></script>
 <script src="/static/invoices.js?v={{ static_version() }}"></script>
 <script src="/static/scan_putaway.js?v={{ static_version() }}"></script>

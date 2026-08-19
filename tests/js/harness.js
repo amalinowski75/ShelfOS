@@ -607,6 +607,7 @@ function _typeBuilderMarkup(options) {
         <div class="param-enum" hidden><input name="p-enum" /></div>
         <label><input type="checkbox" name="p-table" /></label>
         <label><input type="checkbox" name="p-filter" /></label>
+        <button type="button" class="param-create-matcher" hidden></button>
         <button type="button" class="param-remove"></button>
       </div>
     </template>`;
@@ -694,6 +695,7 @@ export function typePageFixture(types = [{ id: 1, name: "resistor" }]) {
         <div class="param-enum" hidden><input name="p-enum" /></div>
         <label><input type="checkbox" name="p-table" /></label>
         <label><input type="checkbox" name="p-filter" /></label>
+        <button type="button" class="param-create-matcher" hidden></button>
         <button type="button" class="param-remove"></button>
       </div>
     </template>`;

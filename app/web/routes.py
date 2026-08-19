@@ -192,6 +192,9 @@ def index(
             "location_options": _location_options(tree),
             "data_types": [dt.value for dt in ParameterDataType],
             "mounting_types": [mt.value for mt in MountingType],
+            # For the inline "Create matcher" dialog (admin only) on a type builder's
+            # parameter rows.
+            "domains": [d.value for d in MatchDomain],
             "current_user": user,
         },
     )
@@ -558,6 +561,9 @@ def types_page(
             "current_user": user,
             "types": cs.list_types(session),
             "data_types": [dt.value for dt in ParameterDataType],
+            # For the inline "Create matcher" dialog on a parameter (admin page).
+            "mounting_types": [mt.value for mt in MountingType],
+            "domains": [d.value for d in MatchDomain],
         },
     )
 
@@ -676,6 +682,9 @@ def invoice_detail(
             # For the New Type builder reachable via "+ New type" in the component
             # dialog on this page.
             "data_types": [dt.value for dt in ParameterDataType] if can_edit else [],
+            # For the inline "Create matcher" dialog (admin only) on a type builder's
+            # parameter rows.
+            "domains": [d.value for d in MatchDomain],
             "attachment_kinds": [k.value for k in AttachmentKind],
             "current_user": user,
         },

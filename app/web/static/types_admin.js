@@ -235,6 +235,22 @@ function renderParams(row) {
     meta.append(label, detail);
     const actions = document.createElement("span");
     actions.className = "param-list-actions";
+    // "Create matcher" without leaving for the match-rules page: open the shared
+    // dialog pre-scoped to this parameter (its type + id). Present only when the
+    // dialog is on the page (admin), so it self-hides for non-admins.
+    if (typeof window.openMatcherDialog === "function") {
+      const matcher = document.createElement("button");
+      matcher.className = "btn btn-secondary btn-sm";
+      matcher.textContent = "Matcher";
+      matcher.addEventListener("click", () =>
+        window.openMatcherDialog(null, {
+          domain: "param_name",
+          typeId: openParamsTypeId,
+          parameterDefinitionId: param.id,
+        }),
+      );
+      actions.append(matcher);
+    }
     const edit = document.createElement("button");
     edit.className = "btn btn-secondary btn-sm";
     edit.textContent = "Edit";
