@@ -25,6 +25,10 @@
   --warn: #b45309;    --warn-soft: #fbeccb;
   --danger: #b91c1c;  --danger-soft: #fbe0e0;
   --neutral: #475569; --neutral-soft: #e8edf3;
+  /* The unfilled-field tint, and the one soft fill that must be OPAQUE — it lands
+     on a <select>, whose dropdown list inherits it with nothing behind it to
+     composite against. Here that is --danger-soft itself; see the dark block. */
+  --unfilled-tint: #fbe0e0;
 
   --ring: rgba(13, 148, 136, .32);
   --shadow-sm: 0 1px 2px rgba(16, 24, 38, .06);
@@ -58,6 +62,11 @@
     --warn: #fbbf24;    --warn-soft: rgba(251, 191, 36, .14);
     --danger: #f87171;  --danger-soft: rgba(248, 113, 113, .14);
     --neutral: #a7b6cc; --neutral-soft: rgba(167, 182, 204, .14);
+    /* What --danger-soft already LOOKS like on a dialog: the same rgba flattened
+       onto --surface. Opaque because a dropdown list draws it over the popup's own
+       light ground, where 14% of anything comes out near-white and the light --text
+       on it is unreadable. */
+    --unfilled-tint: #312737;
 
     --ring: rgba(45, 212, 191, .38);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, .4);
@@ -488,9 +497,13 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 /* A field an import left unfilled (component_dialog.js). Advisory only: nothing here
    is required and nothing is blocked — the tint just shows which fields the shop or
    the invoice had nothing to say about, and it clears as soon as one is given a
-   value. background-COLOR, not the shorthand: a select's chevron is a
-   background-image and the shorthand would wipe it. */
-.control.is-unfilled { background-color: var(--danger-soft); }
+   value.
+
+   background-COLOR, not the shorthand: a select's chevron is a background-image and
+   the shorthand would wipe it. And --unfilled-tint rather than --danger-soft, which
+   it matches on screen: a select hands this colour to its dropdown list too, and a
+   translucent one has nothing to composite against there. */
+.control.is-unfilled { background-color: var(--unfilled-tint); }
 
 /* ---------- new-type dialog (§13) ---------- */
 /* Widen the dialog itself (the base rule caps it at 440px); it holds a
