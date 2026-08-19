@@ -575,7 +575,10 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 #param-matchers-error { padding: 10px 20px 0; margin: 0; }
 #param-matchers-dialog footer {
   padding: 12px 20px; margin: 0; border-top: 1px solid var(--border); flex: none;
+  justify-content: space-between; align-items: center;
 }
+.pm-status { margin: 0; font-size: 13px; }
+.pm-status-ok { color: var(--accent); }
 
 /* ---------- login ---------- */
 .login { max-width: 380px; margin: 8vh auto 0; }

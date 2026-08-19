@@ -285,6 +285,7 @@ export function typesAdminPageFixture() {
         </div>
       </section>
       <p id="param-matchers-error" hidden></p>
+      <p id="param-matchers-status"></p>
     </dialog>
     ${_typeBuilderMarkup("")}`;
 }

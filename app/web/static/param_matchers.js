@@ -15,6 +15,7 @@
 
   const titleEl = document.getElementById("param-matchers-title");
   const errorEl = document.getElementById("param-matchers-error");
+  const statusEl = document.getElementById("param-matchers-status");
 
   const valueSection = document.getElementById("pm-value-section");
   const valueList = document.getElementById("pm-value-list");
@@ -44,6 +45,15 @@
   function setError(text) {
     errorEl.textContent = text || "";
     errorEl.hidden = !text;
+  }
+
+  // Persistent, honest signal of the save model: edits write immediately, so the
+  // footer says so — and each successful write flashes "Saved ✓" — so it's always
+  // clear the window is safe to close. No Save/Cancel: there is nothing pending.
+  const SAVE_HINT = "Changes save automatically.";
+  function setStatus(text, kind) {
+    statusEl.textContent = text;
+    statusEl.className = kind === "ok" ? "pm-status pm-status-ok" : "pm-status muted";
   }
 
   function refreshEmpty(list, empty) {
@@ -106,37 +116,46 @@
 
   async function patchRule(rule, patch, control, previous) {
     setError("");
+    setStatus("Saving…");
     try {
       const resp = await write(`/api/admin/match-rules/${rule.id}`, "PATCH", patch);
       if (resp.ok) {
         Object.assign(rule, patch);
+        setStatus("Saved ✓", "ok");
       } else {
         control.value = previous; // revert to the last good value
         setError(await errorMessage(resp));
+        setStatus(SAVE_HINT);
       }
     } catch {
       control.value = previous;
       setError("Could not reach the server.");
+      setStatus(SAVE_HINT);
     }
   }
 
   async function deleteRule(rule, li, list, empty) {
     setError("");
+    setStatus("Saving…");
     try {
       const resp = await write(`/api/admin/match-rules/${rule.id}`, "DELETE");
       if (resp.ok) {
         li.remove();
         refreshEmpty(list, empty);
+        setStatus("Saved ✓", "ok");
       } else {
         setError(await errorMessage(resp));
+        setStatus(SAVE_HINT);
       }
     } catch {
       setError("Could not reach the server.");
+      setStatus(SAVE_HINT);
     }
   }
 
   async function createRule(domain, alias, canonical) {
     setError("");
+    setStatus("Saving…");
     try {
       const resp = await write("/api/admin/match-rules", "POST", {
         domain,
@@ -147,11 +166,14 @@
       });
       if (!resp.ok) {
         setError(await errorMessage(resp)); // e.g. a duplicate alias — keep the text
+        setStatus(SAVE_HINT);
         return null;
       }
+      setStatus("Saved ✓", "ok");
       return await resp.json();
     } catch {
       setError("Could not reach the server.");
+      setStatus(SAVE_HINT);
       return null;
     }
   }
@@ -206,6 +228,7 @@
     param = p;
     titleEl.textContent = param.label;
     setError("");
+    setStatus(SAVE_HINT);
     valueAlias.value = "";
     nameAlias.value = "";
     // The value section only applies to an enum parameter (one with allowed values).
