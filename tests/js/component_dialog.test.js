@@ -192,4 +192,14 @@ describe("component_dialog.js — applying the engine's proposal", () => {
     await tick();
     expect(mounting(page)).toBe("SMT");
   });
+
+  it("keeps a staged line's mounting when its type didn't resolve", async () => {
+    // An invoice import line the engine couldn't type arrives with typeId "" but a
+    // mounting it did infer. That mounting must survive the "no type" early return —
+    // the same drop as above, one field over.
+    const page = loadPage(dialogFixture(), SCRIPTS);
+    open(page, () => {}, { typeId: "", mountingType: "SMT" });
+    await tick();
+    expect(mounting(page)).toBe("SMT");
+  });
 });

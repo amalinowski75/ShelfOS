@@ -430,6 +430,17 @@
     // have to pick the type by hand. Parameter values need the type's fields and are
     // applied further down, once loaded.
     if (proposal) applyProposalFields(proposal);
+    // A staged review row carries a mounting the engine already inferred. Apply it up
+    // front too, before the type gate: an invoice line whose type didn't resolve
+    // arrives with typeId "" (styled is-incomplete), and would otherwise hit the
+    // early return below and lose its mounting — the same bug, one field over. Applied
+    // after applyProposalFields, so a staged mounting still wins over the proposal's.
+    if (prefill.mountingType) {
+      const mounting = form.querySelector('[name="mounting_type"]');
+      if (mounting && [...mounting.options].some((o) => o.value === prefill.mountingType)) {
+        mounting.value = prefill.mountingType;
+      }
+    }
     // The type is known by: a staged line's id, else the engine's proposal, else a
     // BOM prefill's category name.
     const typeId =
@@ -446,13 +457,6 @@
     await loadParams(typeId); // render the type's parameter fields
     // Only fill parameters if the user hasn't changed the type while we loaded.
     if (typeSelect.value !== typeId) return;
-    // A staged review row carries a mounting the engine already inferred.
-    if (prefill.mountingType) {
-      const mounting = form.querySelector('[name="mounting_type"]');
-      if (mounting && [...mounting.options].some((o) => o.value === prefill.mountingType)) {
-        mounting.value = prefill.mountingType;
-      }
-    }
     if (prefill.value) setValueParam(prefill.value); // BOM: single value param
     if (proposal) applyProposal(proposal); // shop: the engine's field guesses
     // Values the user already entered in a prior review edit win over the guesses.
