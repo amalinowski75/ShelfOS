@@ -153,6 +153,20 @@ def test_parse_reads_the_symbol_from_a_url_only_tme_qr(client: TestClient) -> No
     assert all(len(s) <= 18 for s in data["url_symbols"])
 
 
+def test_parse_restores_the_slash_a_tme_url_writes_as_an_underscore(
+    client: TestClient,
+) -> None:
+    # Scan putaway matches a bag by these symbols against an invoice line's
+    # supplier_part_number, which carries the slash — so the underscore form would
+    # match nothing at all.
+    resp = client.post(
+        "/api/shops/parse",
+        json={"code": "https://www.tme.eu/details/B3X8%5FBN11252"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["url_symbols"] == ["B3X8/BN11252"]
+
+
 def test_parse_reports_no_symbols_for_a_non_tme_url(client: TestClient) -> None:
     resp = client.post(
         "/api/shops/parse",
