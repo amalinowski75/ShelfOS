@@ -123,12 +123,19 @@ describe("bom_pick.js — opening the picker", () => {
     await tick();
 
     const fields = page.window.Tabulator.columns.map((c) => c.field);
-    // Identity/description columns are the left panel's job, not the picker's.
-    for (const hidden of ["type", "manufacturer", "mpn", "notes"]) {
+    // The left panel's job, or the picker's own filter, or too long to scan.
+    for (const hidden of ["type", "manufacturer", "notes"]) {
       expect(fields).not.toContain(hidden);
     }
+    // MPN stays: it is what names the part, and naming the part IS the task here.
     expect(fields).toEqual(
-      expect.arrayContaining(["package", "mounting_type", "quantity", "param_7"]),
+      expect.arrayContaining([
+        "mpn",
+        "package",
+        "mounting_type",
+        "quantity",
+        "param_7",
+      ]),
     );
     // Details is a link, so it opens in a new tab rather than losing the picker.
     const details = page.window.Tabulator.columns.find((c) => c.field === "_details");
@@ -177,7 +184,7 @@ describe("bom_pick.js — choosing and confirming", () => {
 
     page.window.Tabulator.handlers.rowClick(clickEvent, fakeRow(FEED.data[0], page));
     expect(confirm.disabled).toBe(false);
-    // The MPN column is hidden, so the echo is where the part is actually named.
+    // The echo names the choice next to the button that commits it.
     expect(page.document.getElementById("bom-pick-selected").textContent).toContain(
       "GRM188R71H104K",
     );
