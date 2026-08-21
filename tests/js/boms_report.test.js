@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { loadPage, bomReportFixture } from "./harness.js";
+import { loadPage, CSRF, bomReportFixture } from "./harness.js";
 
 const SCRIPTS = ["shared.js", "boms_report.js"];
 
@@ -46,6 +46,15 @@ describe("boms_report.js — rendering", () => {
     const { window } = loadPage(bomReportFixture(), SCRIPTS);
     expect(window.bomStockFormatter(fakeCell(0, { mpn: null }))).toBe("—");
     expect(window.bomStockFormatter(fakeCell(12, { mpn: "R-1" }))).toBe("12");
+  });
+
+  it("shows a real stock figure for an assigned line, MPN or not", () => {
+    // The dash means "nothing was looked up"; an assignment IS the lookup, so its
+    // stock is a number — including a genuine 0.
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const assigned = { component_id: 8, mpn: "GRM188" };
+    expect(window.bomStockFormatter(fakeCell(900, { mpn: null, assigned }))).toBe("900");
+    expect(window.bomStockFormatter(fakeCell(0, { mpn: null, assigned }))).toBe("0");
   });
 
   it("links each substitute (single line) to its component", () => {
@@ -158,6 +167,90 @@ describe("boms_report.js — add to inventory", () => {
     expect(
       window.bomAddPrefill({ category: "ic", value: "STM32", mpn: "STM32", manufacturer: "ST" }),
     ).toEqual({ category: "ic", value: null, mpn: "STM32", manufacturer: "ST" });
+  });
+});
+
+describe("boms_report.js — assigned component", () => {
+  it("shows the assigned part, linked, and a dash when there is none", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    expect(window.bomAssignedFormatter(fakeCell(null))).toContain("—");
+
+    const html = window.bomAssignedFormatter(
+      fakeCell({ component_id: 8, mpn: "GRM188", deleted: false }),
+    );
+    expect(html).toContain('href="/components/8"');
+    expect(html).toContain("GRM188");
+    expect(html).not.toContain("not in use");
+  });
+
+  it("flags an assignment whose part was taken out of use", () => {
+    // Dropping it silently would leave the line looking untouched.
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const html = window.bomAssignedFormatter(
+      fakeCell({ component_id: 8, mpn: "GRM188", deleted: true }),
+    );
+    expect(html).toContain("not in use");
+  });
+
+  it("escapes an assigned MPN (it can come from an uploaded CSV's part)", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const html = window.bomAssignedFormatter(
+      fakeCell({ component_id: 8, mpn: "<img src=x>", deleted: false }),
+    );
+    expect(html).not.toContain("<img src=x>");
+    expect(html).toContain("&lt;img");
+  });
+
+  it("offers Assign on every line, and Change/Remove once one is assigned", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    // A line that already matches its MPN can still be built from something else.
+    const ok = window.bomActionButtons({ status: "ok", assigned: null });
+    expect(ok).toContain('data-act="assign-component"');
+    expect(ok).toContain("Assign");
+    expect(ok).not.toContain("add-component"); // nothing missing to add
+    expect(ok).not.toContain("unassign-component");
+
+    const missing = window.bomActionButtons({ status: "missing", assigned: null });
+    expect(missing).toContain('data-act="add-component"');
+
+    const assigned = window.bomActionButtons({
+      status: "ok",
+      assigned: { component_id: 8, mpn: "X" },
+    });
+    expect(assigned).toContain("Change");
+    expect(assigned).toContain('data-act="unassign-component"');
+    // "Add to inventory" would be beside the point once a part is chosen.
+    expect(assigned).not.toContain("add-component");
+  });
+
+  it("keeps the actions visible rather than hiding them behind a hover", () => {
+    // `.row-actions` is hover-only in app.css; Assign is the point of the row.
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const html = window.bomActionButtons({ status: "ok", assigned: null });
+    expect(html).toContain("bom-row-actions");
+    expect(html).not.toContain('class="row-actions"');
+  });
+
+  it("DELETEs the assignment and refreshes on Remove", async () => {
+    const onDone = vi.fn();
+    const { window, fetchMock } = loadPage(bomReportFixture(), SCRIPTS);
+    await window.bomUnassign("7", 42, onDone);
+
+    const [url, opts] = fetchMock.mock.calls.at(-1);
+    expect(url).toBe("/api/boms/7/lines/42/component");
+    expect(opts.method).toBe("DELETE");
+    expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
+    expect(onDone).toHaveBeenCalled();
+  });
+
+  it("does not refresh when removing was refused", async () => {
+    const onDone = vi.fn();
+    const fetchImpl = () =>
+      Promise.resolve({ ok: false, json: async () => ({ detail: "nope" }) });
+    const { window } = loadPage(bomReportFixture(), SCRIPTS, { fetchImpl });
+    await window.bomUnassign("7", 42, onDone);
+    expect(window.alert).toHaveBeenCalledWith("nope");
+    expect(onDone).not.toHaveBeenCalled();
   });
 });
 
