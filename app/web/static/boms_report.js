@@ -34,9 +34,12 @@ function bomStatusFormatter(cell) {
   return badge;
 }
 
-// A line has no matched stock unless it has an MPN; mirror the old template's "—".
+// "—" means "nothing was looked up", not "zero": a line with no MPN has no match to
+// count. An ASSIGNED line always has one, whatever its MPN says — so it shows a
+// real number, including 0.
 function bomStockFormatter(cell) {
-  return cell.getRow().getData().mpn ? String(cell.getValue()) : "—";
+  const row = cell.getRow().getData();
+  return row.mpn || row.assigned ? String(cell.getValue()) : "—";
 }
 
 function bomMpnFormatter(cell) {
@@ -44,6 +47,21 @@ function bomMpnFormatter(cell) {
   return value
     ? `<span class="cell-mono">${esc(value)}</span>`
     : '<span class="muted">—</span>';
+}
+
+// The component someone assigned to this line, if any. Kept in its own column so
+// the CSV's MPN stays visible beside it — "what the file says" and "what we build
+// it from" are different facts, and comparing them is the point.
+function bomAssignedFormatter(cell) {
+  const assigned = cell.getValue();
+  if (!assigned) return '<span class="muted">—</span>';
+  const label = esc(assigned.mpn || `#${assigned.component_id}`);
+  const link = `<a class="cell-mono" href="/components/${Number(assigned.component_id)}">${label}</a>`;
+  // A part retired after it was assigned still shows — silently dropping the
+  // assignment would leave the line looking untouched.
+  return assigned.deleted
+    ? `${link} <span class="badge b-danger"><span class="dot"></span>not in use</span>`
+    : link;
 }
 
 // Substitutes on one line: each value links to its component; `esc()` guards the
@@ -91,7 +109,10 @@ function renderBomSummary(summary) {
   const boards = n(summary.boards) || 1;
   const of = boards > 1 ? ` of ${boards} requested` : "";
   el.innerHTML =
-    `<p><strong>${n(summary.buildable)}</strong> buildable board(s)${of} from exact MPN matches — ` +
+    // "matched and assigned", not "exact MPN matches": an assigned line feeds this
+    // number too, and it may have no MPN at all — the headline can't claim a kind of
+    // match the figure no longer comes only from.
+    `<p><strong>${n(summary.buildable)}</strong> buildable board(s)${of} from matched and assigned parts — ` +
     `${n(summary.ok)} in&nbsp;stock · ${n(summary.short)} short · ` +
     `${n(summary.out)} out · ${n(summary.missing)} not&nbsp;in&nbsp;inventory · ` +
     `${n(summary.no_mpn)} without&nbsp;MPN</p>`;
@@ -145,6 +166,12 @@ function bomReportColumns() {
       field: "mpn",
       formatter: bomMpnFormatter,
       ...bomTextFilter("MPN"),
+    },
+    {
+      title: "Assigned",
+      field: "assigned",
+      headerSort: false,
+      formatter: bomAssignedFormatter,
     },
     {
       title: "Status",
@@ -232,6 +259,48 @@ function bomCanAdd(status) {
   return status === "missing" || status === "no_mpn";
 }
 
+// The per-line actions. "Assign" is offered on EVERY line, not just an unmatched
+// one: a line that matches its MPN can still be built from something else, and
+// that's a decision the CSV has no way to carry.
+function bomActionButtons(row) {
+  const buttons = [];
+  if (bomCanAdd(row.status) && !row.assigned) {
+    buttons.push(
+      '<button class="btn btn-secondary btn-sm" data-act="add-component">Add to inventory</button>',
+    );
+  }
+  buttons.push(
+    `<button class="btn btn-secondary btn-sm" data-act="assign-component">${
+      row.assigned ? "Change" : "Assign…"
+    }</button>`,
+  );
+  if (row.assigned) {
+    buttons.push(
+      '<button class="btn btn-ghost btn-sm" data-act="unassign-component">Remove</button>',
+    );
+  }
+  // NOT `.row-actions`: that class is hover-only (app.css), which would hide the
+  // very action this feature is about until you happened to point at the row.
+  return `<div class="bom-row-actions">${buttons.join("")}</div>`;
+}
+
+async function bomUnassign(bomId, lineId, onDone) {
+  try {
+    const resp = await fetch(`/api/boms/${bomId}/lines/${lineId}/component`, {
+      method: "DELETE",
+      headers: { "X-CSRF-Token": csrfToken },
+    });
+    if (!resp.ok) {
+      alert(await errorMessage(resp));
+      return;
+    }
+  } catch {
+    alert("Could not reach the server.");
+    return;
+  }
+  if (onDone) await onDone();
+}
+
 // Seed the "New component" dialog from a BOM line. Only passives carry a numeric
 // value worth pre-filling; a part-number "value" (IC/transistor) is left out.
 // The line's footprint is intentionally NOT mapped to the Package field — a KiCad
@@ -279,28 +348,31 @@ if (bomTableEl) {
     if (url) window.location = url;
   });
 
-  // Writers get an "Add to inventory" action on unmatched lines, opening the
-  // shared New Component dialog pre-filled from the line; refresh on success so
-  // the line resolves. (Read-only users never see it; the API is writer-gated.)
+  // Writers get the per-line actions: "Add to inventory" for a line nothing in
+  // stock answers, and Assign/Change/Remove for pointing a line at a component
+  // whatever its MPN says. (Read-only users never see them; the API is
+  // writer-gated.)
   if (canWrite) {
     table.on("tableBuilt", () =>
       table.addColumn({
         title: "",
-        field: "_add",
+        field: "_actions",
         headerSort: false,
-        width: 150,
+        width: 260,
         hozAlign: "right",
-        formatter: (cell) =>
-          bomCanAdd(cell.getRow().getData().status)
-            ? '<button class="btn btn-secondary btn-sm" data-act="add-component">Add to inventory</button>'
-            : "",
+        formatter: (cell) => bomActionButtons(cell.getRow().getData()),
         cellClick: (e, cell) => {
-          if (e.target.dataset.act !== "add-component") return;
-          if (window.openComponentDialog) {
-            openComponentDialog(
-              () => loadReport(table, bomId),
-              bomAddPrefill(cell.getRow().getData()),
-            );
+          const act = e.target.dataset.act;
+          const row = cell.getRow().getData();
+          const reload = () => loadReport(table, bomId);
+          if (act === "add-component") {
+            if (window.openComponentDialog) {
+              openComponentDialog(reload, bomAddPrefill(row));
+            }
+          } else if (act === "assign-component") {
+            window.openBomPicker?.(row, bomId, reload);
+          } else if (act === "unassign-component") {
+            bomUnassign(bomId, row.id, reload);
           }
         },
       }),

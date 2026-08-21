@@ -41,9 +41,51 @@
 {% if can_write %}
 {# "Add to inventory" on a missing line opens this shared dialog, pre-filled. #}
 {% include "_component_dialog.html" %}
+
+{# "Assign…" on a line opens this picker: the BOM line's facts on the left, the
+   inventory (pre-filtered to the line's type) on the right. Confirming stores
+   "this line is built from that component". #}
+<dialog id="bom-pick-dialog">
+  <article>
+    <header>
+      <strong>Assign a component — <span id="bom-pick-refs"></span></strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <div class="bom-pick-bar">
+      <p class="muted" id="bom-pick-selected">Select a component below.</p>
+      {# Both actions sit with the selection they act on, not a scroll away. #}
+      <div class="bom-pick-actions">
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="button" class="btn btn-primary" id="bom-pick-confirm" disabled>
+          Use this component
+        </button>
+      </div>
+    </div>
+    <div class="bom-pick-body">
+      <aside class="bom-pick-line">
+        <h4>BOM line</h4>
+        <dl id="bom-pick-facts"></dl>
+      </aside>
+      <div class="bom-pick-inventory">
+        <label class="field">
+          <span>Type</span>
+          <select class="control" id="bom-pick-type">
+            <option value="">All types</option>
+            {% for t in types %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}
+          </select>
+        </label>
+        <div id="bom-pick-table"></div>
+      </div>
+    </div>
+    <p id="bom-pick-error" class="error" hidden></p>
+  </article>
+</dialog>
 {% endif %}
 {% endblock %}
 
 {% block scripts %}
+{% if can_write %}
+<script src="/static/bom_pick.js?v={{ static_version() }}"></script>
+{% endif %}
 <script src="/static/boms_report.js?v={{ static_version() }}"></script>
 {% endblock %}

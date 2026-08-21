@@ -11,7 +11,7 @@ from app.services import bom_service as bs
 from app.services import component_service as cs
 from app.services import location_service as ls
 from app.services import stock_service as ss
-from app.services.errors import ValidationError
+from app.services.errors import NotFoundError, ValidationError
 from sqlmodel import Session
 
 _FIXTURE = (Path(__file__).parent / "fixtures" / "kicad_bom.csv").read_bytes()
@@ -364,6 +364,229 @@ def test_reimport_keeps_the_lines_when_the_csv_no_longer_parses(
     with pytest.raises(ValidationError):
         bs.reimport_bom(session, bom.id)
     assert [ln.references for ln in bs.get_bom_lines(session, bom.id)] == before
+
+
+# --- assigning a component to a line ---------------------------------------
+
+
+def _assignable(session: Session):  # type: ignore[no-untyped-def]
+    """A one-line BOM (no MPN), a stocked component to assign, and the factory."""
+    resistor = _inventory(session)
+    resistor("SOME-OTHER-PART", 1000, 40)
+    other = cs.find_components_by_mpn(session, "SOME-OTHER-PART")[0]
+    data = b"Reference,Qty,Value,MPN\nR1,10,1k,\n"  # no MPN at all
+    bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+    return bom, bs.get_bom_lines(session, bom.id)[0], other, resistor
+
+
+def test_assignment_stands_in_for_the_mpn_lookup(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    bom, line, other, resistor = _assignable(session)
+    # Without an assignment the line has nothing to match on.
+    before = bs.build_bom_report(session, bom.id)["lines"][0]
+    assert before["status"] == "no_mpn" and before["stock"] == 0
+
+    bs.assign_component(
+        session, bom.id, line.id, component_id=other.id, user_id=1
+    )
+
+    after = bs.build_bom_report(session, bom.id)["lines"][0]
+    assert after["status"] == "ok"  # 40 in stock covers the 10 it needs
+    assert after["stock"] == 40  # …read from the assigned component
+    assert after["assigned"]["component_id"] == other.id
+    assert after["assigned"]["mpn"] == "SOME-OTHER-PART"
+    assert after["substitutes"] == []  # the question is already answered
+
+
+def test_assigning_again_replaces_the_choice(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    bom, line, other, resistor = _assignable(session)
+    resistor("SECOND-CHOICE", 2000, 7)
+    second = cs.find_components_by_mpn(session, "SECOND-CHOICE")[0]
+
+    bs.assign_component(session, bom.id, line.id, component_id=other.id, user_id=1)
+    bs.assign_component(session, bom.id, line.id, component_id=second.id, user_id=1)
+
+    assert len(bs.list_assignments(session, bom.id)) == 1  # one per line, not two
+    line_report = bs.build_bom_report(session, bom.id)["lines"][0]
+    assert line_report["assigned"]["component_id"] == second.id
+    assert line_report["stock"] == 7
+
+
+def test_assignment_overrides_even_a_line_that_already_matches(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """Unconditional by design: what we build from isn't always what the CSV says."""
+    resistor = _inventory(session)
+    resistor("RES-1K", 1000, 5)
+    resistor("RES-1K-ALT", 1000, 500)
+    alt = cs.find_components_by_mpn(session, "RES-1K-ALT")[0]
+    data = b"Reference,Qty,Value,MPN\nR1,10,1k,RES-1K\n"
+    bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+    line = bs.get_bom_lines(session, bom.id)[0]
+
+    bs.assign_component(session, bom.id, line.id, component_id=alt.id, user_id=1)
+
+    report = bs.build_bom_report(session, bom.id)["lines"][0]
+    assert report["stock"] == 500  # the alternative's stock, not RES-1K's 5
+    assert report["mpn"] == "RES-1K"  # the CSV's own MPN is left alone
+
+
+def test_an_assigned_line_stops_being_offered_substitutes(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """Substitutes answer "what else could go here?" — already answered by hand."""
+    resistor = _inventory(session)
+    resistor("RES-1K", 1000, 0)  # the 1k the line wants, but out of stock
+    resistor("RES-1K1", 1050, 30)  # a near-value alternative that IS stocked
+    alt = cs.find_components_by_mpn(session, "RES-1K1")[0]
+    data = b"Reference,Qty,Value,MPN\nR1,10,1k,\n"
+    bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+    line = bs.get_bom_lines(session, bom.id)[0]
+    assert bs.build_bom_report(session, bom.id)["lines"][0]["substitutes"]  # offered
+
+    bs.assign_component(session, bom.id, line.id, component_id=alt.id, user_id=1)
+    assert bs.build_bom_report(session, bom.id)["lines"][0]["substitutes"] == []
+
+
+def test_substitutes_stay_suppressed_when_the_assigned_part_is_retired(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """The line reports `missing`, but the choice stands until someone changes it.
+
+    This is the case where suppression is least obviously right, so pin it: the way
+    out is Change/Remove on the row, not a suggestion the assignment overrode.
+    """
+    resistor = _inventory(session)
+    resistor("RES-1K1", 1050, 30)  # a stocked near-value that would be suggested
+    resistor("PICKED", 1000, 0)  # what gets assigned, and then retired
+    picked = cs.find_components_by_mpn(session, "PICKED")[0]
+    data = b"Reference,Qty,Value,MPN\nR1,10,1k,\n"
+    bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+    line = bs.get_bom_lines(session, bom.id)[0]
+
+    bs.assign_component(session, bom.id, line.id, component_id=picked.id, user_id=1)
+    cs.soft_delete_component(session, picked.id, user_id=1)
+
+    report = bs.build_bom_report(session, bom.id)["lines"][0]
+    assert report["status"] == "missing" and report["assigned"]["deleted"] is True
+    assert report["substitutes"] == []
+
+
+def test_unassign_returns_the_line_to_mpn_matching(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    bom, line, other, resistor = _assignable(session)
+    bs.assign_component(session, bom.id, line.id, component_id=other.id, user_id=1)
+    bs.unassign_component(session, bom.id, line.id)
+
+    report = bs.build_bom_report(session, bom.id)["lines"][0]
+    assert report["assigned"] is None and report["status"] == "no_mpn"
+    with pytest.raises(NotFoundError):  # nothing left to remove
+        bs.unassign_component(session, bom.id, line.id)
+
+
+def test_a_line_from_another_bom_cannot_be_assigned(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    bom, line, other, resistor = _assignable(session)
+    elsewhere = bs.create_bom(
+        session, name="other", filename="o.csv", data=_FIXTURE, user_id=1
+    )
+    with pytest.raises(NotFoundError):
+        bs.assign_component(
+            session, elsewhere.id, line.id, component_id=other.id, user_id=1
+        )
+
+
+def test_a_component_taken_out_of_use_cannot_be_assigned(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    bom, line, other, resistor = _assignable(session)
+    resistor("RETIRED", 3300, 0)  # never stocked, so it can be taken out of use
+    retired = cs.find_components_by_mpn(session, "RETIRED")[0]
+    cs.soft_delete_component(session, retired.id, user_id=1)
+
+    with pytest.raises(ValidationError):
+        bs.assign_component(
+            session, bom.id, line.id, component_id=retired.id, user_id=1
+        )
+
+
+def test_a_component_retired_after_assignment_still_shows_but_holds_no_stock(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """The assignment stays visible so it can be seen and changed, not silently lost."""
+    bom, line, other, resistor = _assignable(session)
+    bs.assign_component(session, bom.id, line.id, component_id=other.id, user_id=1)
+    # Taking a part out of use means emptying the drawer first (the service refuses
+    # while it still holds stock), which is the real order of events.
+    held = ss.list_component_locations(session, other.id)[0]
+    ss.remove_stock(
+        session,
+        component_id=other.id,
+        location_id=held.location_id,
+        quantity=held.quantity,
+        user_id=1,
+    )
+    cs.soft_delete_component(session, other.id, user_id=1)
+
+    report = bs.build_bom_report(session, bom.id)["lines"][0]
+    assert report["assigned"]["component_id"] == other.id
+    assert report["assigned"]["deleted"] is True
+    assert report["status"] == "missing" and report["stock"] == 0
+
+
+def test_assignments_survive_a_reimport_that_keeps_the_designators(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """Keyed by designator group, so re-parsing the same file leaves them alone."""
+    bom, line, other, resistor = _assignable(session)
+    bs.assign_component(session, bom.id, line.id, component_id=other.id, user_id=1)
+
+    bs.reimport_bom(session, bom.id)  # deletes and recreates every line
+
+    report = bs.build_bom_report(session, bom.id)["lines"][0]
+    assert report["assigned"]["component_id"] == other.id
+
+
+def test_a_reimport_drops_assignments_whose_designators_are_gone(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """Otherwise the row that could remove them no longer exists."""
+    from app.services import attachment_service as ats
+
+    bom, line, other, resistor = _assignable(session)
+    bs.assign_component(session, bom.id, line.id, component_id=other.id, user_id=1)
+    attachment = ats.list_attachments(session, entity_type="bom", entity_id=bom.id)[0]
+    ats.stored_file_path(attachment).write_bytes(
+        b"Reference,Qty,Value,MPN\nR7,10,1k,\n"  # R1 is gone; R7 is new
+    )
+
+    bs.reimport_bom(session, bom.id)
+
+    assert bs.list_assignments(session, bom.id) == []
+    assert bs.build_bom_report(session, bom.id)["lines"][0]["assigned"] is None
+
+
+def test_deleting_a_bom_takes_its_assignments(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    from app.models.bom import BomLineAssignment
+    from sqlmodel import select
+
+    bom, line, other, resistor = _assignable(session)
+    bs.assign_component(session, bom.id, line.id, component_id=other.id, user_id=1)
+    bom_id = bom.id
+
+    bs.delete_bom(session, bom_id)
+
+    remaining = session.exec(
+        select(BomLineAssignment).where(BomLineAssignment.bom_id == bom_id)
+    ).all()
+    assert remaining == []
 
 
 # --- building several boards -----------------------------------------------

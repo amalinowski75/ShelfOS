@@ -606,3 +606,19 @@ class BomRead(BaseModel):
 
 class BomDetailRead(BomRead):
     lines: list[BomLineRead]
+
+
+class BomAssignmentWrite(BaseModel):
+    """Which component a BOM line is built from."""
+
+    component_id: int
+
+
+class BomAssignmentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    bom_id: int
+    references: str
+    component_id: int
+    created_at: datetime

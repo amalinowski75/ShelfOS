@@ -13,9 +13,15 @@ from sqlmodel import Session
 
 from app import config
 from app.api.deps import get_session
-from app.api.schemas import BomDetailRead, BomLineRead, BomRead
+from app.api.schemas import (
+    BomAssignmentRead,
+    BomAssignmentWrite,
+    BomDetailRead,
+    BomLineRead,
+    BomRead,
+)
 from app.auth.deps import current_user_id
-from app.models.bom import Bom
+from app.models.bom import Bom, BomLineAssignment
 from app.services import bom_service as svc
 from app.services.errors import ValidationError
 
@@ -96,3 +102,35 @@ def bom_report(
 def delete_bom(bom_id: int, session: Session = Depends(get_session)) -> None:
     """Delete a BOM, its lines and its stored CSV (writers)."""
     svc.delete_bom(session, bom_id)
+
+
+@router.put("/{bom_id}/lines/{line_id}/component", response_model=BomAssignmentRead)
+def assign_line_component(
+    bom_id: int,
+    line_id: int,
+    payload: BomAssignmentWrite,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> BomLineAssignment:
+    """Say which component this line is built from (writers).
+
+    Allowed on any line, not just an unmatched one: the BOM's own text can't always
+    express what actually goes on the board.
+    """
+    return svc.assign_component(
+        session,
+        bom_id,
+        line_id,
+        component_id=payload.component_id,
+        user_id=user_id,
+    )
+
+
+@router.delete(
+    "/{bom_id}/lines/{line_id}/component", status_code=status.HTTP_204_NO_CONTENT
+)
+def unassign_line_component(
+    bom_id: int, line_id: int, session: Session = Depends(get_session)
+) -> None:
+    """Drop a line's assigned component, back to plain MPN matching (writers)."""
+    svc.unassign_component(session, bom_id, line_id)

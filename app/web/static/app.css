@@ -20,6 +20,11 @@
   --accent-ink: #0b4f47;
   --on-accent: #ffffff;
   --row-hover: #eef6f4;
+  /* The picked row in a chooser. Opaque on purpose: a translucent tint
+     composites against whatever is behind the row, which is unpredictable
+     inside a dialog. Clearly stronger than --row-hover, and still a
+     background the ordinary --text reads against. */
+  --row-picked: #c7ece3;
 
   --ok: #15803d;      --ok-soft: #dcf5e3;
   --warn: #b45309;    --warn-soft: #fbeccb;
@@ -57,6 +62,7 @@
     --accent-ink: #7ff0e2;
     --on-accent: #04231f;
     --row-hover: #182a40;
+    --row-picked: #1e3a52;
 
     --ok: #4ade80;      --ok-soft: rgba(74, 222, 128, .14);
     --warn: #fbbf24;    --warn-soft: rgba(251, 191, 36, .14);
@@ -79,7 +85,7 @@
   --bg: #f6f7f9; --surface: #ffffff; --surface-2: #f1f4f8;
   --border: #e4e9f0; --border-strong: #cdd6e2;
   --text: #101826; --muted: #64748b; --faint: #94a3b8;
-  --accent: #0d9488; --accent-strong: #0f766e; --accent-soft: #d5f4ee; --accent-ink: #0b4f47; --on-accent: #ffffff; --row-hover: #eef6f4;
+  --accent: #0d9488; --accent-strong: #0f766e; --accent-soft: #d5f4ee; --accent-ink: #0b4f47; --on-accent: #ffffff; --row-hover: #eef6f4; --row-picked: #c7ece3;
   --ok: #15803d; --ok-soft: #dcf5e3; --warn: #b45309; --warn-soft: #fbeccb;
   --danger: #b91c1c; --danger-soft: #fbe0e0; --neutral: #475569; --neutral-soft: #e8edf3;
   --ring: rgba(13, 148, 136, .32);
@@ -89,7 +95,7 @@
   --bg: #0a1120; --surface: #111b2e; --surface-2: #17233a;
   --border: #22314b; --border-strong: #334564;
   --text: #e7edf6; --muted: #9fb0c9; --faint: #6b7d99;
-  --accent: #2dd4bf; --accent-strong: #5eead4; --accent-soft: rgba(45, 212, 191, .14); --accent-ink: #7ff0e2; --on-accent: #04231f; --row-hover: #182a40;
+  --accent: #2dd4bf; --accent-strong: #5eead4; --accent-soft: rgba(45, 212, 191, .14); --accent-ink: #7ff0e2; --on-accent: #04231f; --row-hover: #182a40; --row-picked: #1e3a52;
   --ok: #4ade80; --ok-soft: rgba(74, 222, 128, .14); --warn: #fbbf24; --warn-soft: rgba(251, 191, 36, .14);
   --danger: #f87171; --danger-soft: rgba(248, 113, 113, .14); --neutral: #a7b6cc; --neutral-soft: rgba(167, 182, 204, .14);
   --ring: rgba(45, 212, 191, .38);
@@ -748,6 +754,76 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, .82); }
 
 /* ---------- BOM report (§21) ---------- */
 .bom-summary { margin-bottom: 20px; }
+/* Per-line actions on the BOM report. Deliberately always visible, unlike the
+   hover-only `.row-actions` on the components table: "Assign…" is the point of
+   the row, not a shortcut for something reachable elsewhere. */
+.bom-row-actions { display: inline-flex; gap: 6px; }
+
+/* ---------- assign-a-component picker ---------- */
+/* A table needs far more room than the 440px default dialog (same reasoning as
+   #stock-dialog above), and the body scrolls while the confirm bar stays put. */
+/* `overflow: hidden` on the dialog itself: a <dialog> defaults to `auto`, so if its
+   content ever measured a pixel over the cap it would grow a scrollbar of its own —
+   a second one beside the table's, and the one that can't be the answer, since the
+   table is the only part with anything to scroll. */
+#bom-pick-dialog {
+  width: min(1280px, calc(100vw - 32px)); max-height: calc(100vh - 48px);
+  overflow: hidden;
+}
+/* While the picker is open the page behind it can't be reached, so its scrollbar is
+   nothing but a second bar next to the table's. Standard modal scroll-lock. */
+html.bom-pick-open, html.bom-pick-open body { overflow: hidden; }
+#bom-pick-dialog > article {
+  display: flex; flex-direction: column; max-height: calc(100vh - 48px); min-height: 0;
+}
+#bom-pick-dialog article > header { flex: none; }
+.bom-pick-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 12px 20px; border-bottom: 1px solid var(--border); flex: none;
+}
+.bom-pick-bar p { margin: 0; font-size: 13px; }
+.bom-pick-actions { display: flex; gap: 10px; flex: none; }
+/* `overflow: hidden`, NOT auto: the table sizes itself to this box (see fitTable in
+   bom_pick.js) and scrolls internally, so a scrollbar here would be a second one
+   wrapped around a table that already has its own — and a dead one, since there is
+   nothing left to scroll. */
+.bom-pick-body {
+  display: flex; gap: 20px; padding: 16px 20px;
+  overflow: hidden; flex: 1 1 auto; min-height: 0;
+}
+.bom-pick-line { flex: 0 0 210px; }
+.bom-pick-line h4 { margin: 0 0 8px; font-size: 13px; }
+.bom-pick-line dl {
+  margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 13px;
+}
+.bom-pick-line dt { color: var(--muted); }
+.bom-pick-line dd { margin: 0; overflow-wrap: anywhere; }
+/* A column, so the table takes the height left over below the type picker rather
+   than pushing the box taller. */
+.bom-pick-inventory {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; flex-direction: column; min-height: 0;
+}
+.bom-pick-inventory .field { margin-bottom: 10px; max-width: 240px; flex: none; }
+/* Rows here are picked, not read: double-click confirms a choice, and without this
+   it would also drag a text selection across the row. */
+#bom-pick-table { min-height: 0; user-select: none; }
+/* The chosen row has to read as chosen from across the dialog. */
+/* The picked row has to read as picked from across the dialog, and stay readable
+   under the cursor — so it takes the accent tint the active nav item uses (a
+   different HUE from the grey hover, not just a shade of it) plus an accent edge.
+   `!important` because the hover rule above is itself `!important`; without it,
+   pointing at the picked row would erase the only sign of what is about to be
+   committed. */
+#bom-pick-table .tabulator-row.is-picked,
+#bom-pick-table .tabulator-row.is-picked:hover {
+  background: var(--row-picked) !important;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+/* The cells keep the ordinary text colour: this is a row of data being compared
+   against other rows, so tinting it would cost legibility to say something the
+   background and the edge already say. */
+#bom-pick-error { padding: 0 20px 10px; margin: 0; flex: none; }
 /* "Boards" sits among the head actions: a small count box, labelled above like a
    .field, not a full-width control stretching the header. Its input borrows the
    .btn-sm metrics (30px, not the 38px of a full .control) so it lines up with the
