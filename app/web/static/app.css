@@ -799,10 +799,24 @@ html.bom-pick-open, html.bom-pick-open body { overflow: hidden; }
   display: flex; flex-direction: column; min-height: 0;
 }
 .bom-pick-inventory .field { margin-bottom: 10px; max-width: 240px; flex: none; }
-#bom-pick-table { min-height: 0; }
+/* Rows here are picked, not read: double-click confirms a choice, and without this
+   it would also drag a text selection across the row. */
+#bom-pick-table { min-height: 0; user-select: none; }
 /* The chosen row has to read as chosen from across the dialog. */
-#bom-pick-table .tabulator-row.tabulator-selected { background: var(--surface-2); }
-#bom-pick-table .tabulator-row.tabulator-selected .tabulator-cell { color: var(--text); }
+/* The picked row has to read as picked from across the dialog, and stay readable
+   under the cursor — so it takes the accent tint the active nav item uses (a
+   different HUE from the grey hover, not just a shade of it) plus an accent edge.
+   `!important` because the hover rule above is itself `!important`; without it,
+   pointing at the picked row would erase the only sign of what is about to be
+   committed. */
+#bom-pick-table .tabulator-row.is-picked,
+#bom-pick-table .tabulator-row.is-picked:hover {
+  background: var(--accent-soft) !important;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+/* The cells keep the ordinary text colour: this is a row of data being compared
+   against other rows, so tinting it would cost legibility to say something the
+   background and the edge already say. */
 #bom-pick-error { padding: 0 20px 10px; margin: 0; flex: none; }
 /* "Boards" sits among the head actions: a small count box, labelled above like a
    .field, not a full-width control stretching the header. Its input borrows the

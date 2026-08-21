@@ -54,6 +54,19 @@
       : "Select a component below.";
   }
 
+  // The picked row is marked by hand rather than through Tabulator's own row
+  // selection, which selects whatever was clicked — including a click on the
+  // Details link, whose whole point is to leave the choice alone. That moved the
+  // highlight onto a row the dialog was not going to commit, so what you saw and
+  // what you'd get disagreed.
+  function pick(row) {
+    for (const el of mount.querySelectorAll(".tabulator-row.is-picked")) {
+      el.classList.remove("is-picked");
+    }
+    if (row) row.getElement().classList.add("is-picked");
+    setSelected(row ? row.getData() : null);
+  }
+
   // The BOM line's own facts, so the choice is made against them without leaving.
   function renderFacts() {
     const rows = [
@@ -135,7 +148,7 @@
       setError("Could not load the inventory.");
       return;
     }
-    setSelected(null);
+    pick(null); // also drops any mark left from the previous list
     const columns = pickerColumns(payload.columns);
     if (!table) {
       // Columns AND rows go in at construction: a table built empty and filled a
@@ -143,21 +156,18 @@
       table = new Tabulator(mount, {
         layout: "fitDataFill",
         placeholder: "No components",
-        selectableRows: 1,
         columns,
         data: payload.data,
       });
       table.on("rowClick", (event, row) => {
         if (event.target.closest("a")) return; // the Details link acts on its own
-        row.select(); // selectableRows:1 deselects the previous row for us
-        setSelected(row.getData());
+        pick(row);
       });
       // A double-click is the shortcut for "this one" — same as picking it and
       // pressing the button.
       table.on("rowDblClick", (event, row) => {
         if (event.target.closest("a")) return;
-        row.select();
-        setSelected(row.getData());
+        pick(row);
         confirm();
       });
     } else {
@@ -210,7 +220,7 @@
     refsEl.textContent = reportLine.references || "";
     renderFacts();
     setError("");
-    setSelected(null);
+    pick(null); // also drops any mark left from the previous list
     // Start on the line's own category when it names a type we have — the common
     // case — but leave it changeable: the whole point is picking something else.
     const wanted = (reportLine.category || "").trim().toLowerCase();

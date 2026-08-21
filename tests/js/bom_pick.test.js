@@ -38,11 +38,19 @@ function open(page, line = LINE, onDone) {
   return page.window.openBomPicker(line, 7, onDone);
 }
 
-// Drive a Tabulator row handler the way the real library would.
-function fakeRow(data) {
-  return { select: vi.fn(), getData: () => data };
+// Drive a Tabulator row handler the way the real library would. The element is
+// real, so the picked-row marking can be asserted on it.
+function fakeRow(data, page) {
+  const el = page ? page.document.createElement("div") : null;
+  if (el) {
+    el.className = "tabulator-row";
+    page.document.getElementById("bom-pick-table").appendChild(el);
+  }
+  return { select: vi.fn(), getData: () => data, getElement: () => el };
 }
 const clickEvent = { target: { closest: () => null } };
+// A click that landed on the Details link inside the row.
+const linkClickEvent = { target: { closest: (sel) => (sel === "a" ? {} : null) } };
 
 const feedFetch = (url, opts) => {
   if (String(url).startsWith("/web/api/components")) {
@@ -118,7 +126,7 @@ describe("bom_pick.js — choosing and confirming", () => {
     const confirm = page.document.getElementById("bom-pick-confirm");
     expect(confirm.disabled).toBe(true);
 
-    page.window.Tabulator.handlers.rowClick(clickEvent, fakeRow(FEED.data[0]));
+    page.window.Tabulator.handlers.rowClick(clickEvent, fakeRow(FEED.data[0], page));
     expect(confirm.disabled).toBe(false);
     // The MPN column is hidden, so the echo is where the part is actually named.
     expect(page.document.getElementById("bom-pick-selected").textContent).toContain(
@@ -132,7 +140,7 @@ describe("bom_pick.js — choosing and confirming", () => {
     await open(page, LINE, onDone);
     await tick();
 
-    page.window.Tabulator.handlers.rowClick(clickEvent, fakeRow(FEED.data[1]));
+    page.window.Tabulator.handlers.rowClick(clickEvent, fakeRow(FEED.data[1], page));
     page.document.getElementById("bom-pick-confirm").click();
     await tick();
 
@@ -149,7 +157,7 @@ describe("bom_pick.js — choosing and confirming", () => {
     await open(page);
     await tick();
 
-    page.window.Tabulator.handlers.rowDblClick(clickEvent, fakeRow(FEED.data[0]));
+    page.window.Tabulator.handlers.rowDblClick(clickEvent, fakeRow(FEED.data[0], page));
     await tick();
 
     const [url, opts] = page.fetchMock.mock.calls.at(-1);
@@ -162,9 +170,37 @@ describe("bom_pick.js — choosing and confirming", () => {
     await open(page);
     await tick();
 
-    const onLink = { target: { closest: (sel) => (sel === "a" ? {} : null) } };
-    page.window.Tabulator.handlers.rowClick(onLink, fakeRow(FEED.data[0]));
+    page.window.Tabulator.handlers.rowClick(linkClickEvent, fakeRow(FEED.data[0], page));
     expect(page.document.getElementById("bom-pick-confirm").disabled).toBe(true);
+  });
+
+  it("marks exactly the picked row, and Details on another leaves it alone", async () => {
+    // The marking is the picker's own, not Tabulator's row selection: that selects
+    // whatever was clicked, so opening Details on a different row moved the
+    // highlight off the row that was actually going to be committed.
+    const page = loadPage(bomPickFixture(), SCRIPTS, { fetchImpl: feedFetch });
+    await open(page);
+    await tick();
+    const marked = () =>
+      [...page.document.querySelectorAll("#bom-pick-table .is-picked")].length;
+
+    const chosen = fakeRow(FEED.data[0], page);
+    const other = fakeRow(FEED.data[1], page);
+    page.window.Tabulator.handlers.rowClick(clickEvent, chosen);
+    expect(chosen.getElement().classList.contains("is-picked")).toBe(true);
+
+    // Details on the OTHER row: the mark and the echo both stay put.
+    page.window.Tabulator.handlers.rowClick(linkClickEvent, other);
+    expect(other.getElement().classList.contains("is-picked")).toBe(false);
+    expect(chosen.getElement().classList.contains("is-picked")).toBe(true);
+    expect(page.document.getElementById("bom-pick-selected").textContent).toContain(
+      "GRM188R71H104K",
+    );
+
+    // Picking the other row moves the mark rather than adding a second one.
+    page.window.Tabulator.handlers.rowClick(clickEvent, other);
+    expect(marked()).toBe(1);
+    expect(other.getElement().classList.contains("is-picked")).toBe(true);
   });
 
   it("surfaces a refusal and lets the user try again", async () => {
@@ -182,7 +218,7 @@ describe("bom_pick.js — choosing and confirming", () => {
     await open(page);
     await tick();
 
-    page.window.Tabulator.handlers.rowClick(clickEvent, fakeRow(FEED.data[0]));
+    page.window.Tabulator.handlers.rowClick(clickEvent, fakeRow(FEED.data[0], page));
     page.document.getElementById("bom-pick-confirm").click();
     await tick();
 
@@ -232,7 +268,7 @@ describe("bom_pick.js — the page behind it", () => {
     // …and so does a successful assignment.
     await open(page);
     await tick();
-    page.window.Tabulator.handlers.rowClick(clickEvent, fakeRow(FEED.data[0]));
+    page.window.Tabulator.handlers.rowClick(clickEvent, fakeRow(FEED.data[0], page));
     page.document.getElementById("bom-pick-confirm").click();
     await tick();
     expect(locked(page)).toBe(false);
