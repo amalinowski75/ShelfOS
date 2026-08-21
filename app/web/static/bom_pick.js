@@ -83,6 +83,28 @@
     };
   }
 
+  // Give the TABLE a height so it owns the scrolling. Without one it renders every
+  // row at full height and the dialog body scrolls instead — a second scrollbar
+  // wrapped around a table that already has its own, and a dead one at that once
+  // the body is capped. A fixed pixel height, never vh/% (see frameTable in
+  // shared.js for the recursion that causes); the body's own height is fixed by the
+  // dialog's max-height, so this measurement doesn't chase itself.
+  function fitTable() {
+    if (!table) return;
+    const el = table.element;
+    if (!el || el.offsetParent === null) return; // closed dialog → nothing to measure
+    const holder = el.querySelector(".tabulator-tableholder");
+    if (!holder) return;
+    const header = el.querySelector(".tabulator-header");
+    const headerH = header ? header.offsetHeight : 0;
+    const full = holder.scrollHeight + headerH + 16; // wrap a short list exactly
+    const body = document.querySelector(".bom-pick-body");
+    if (!body) return;
+    const avail =
+      body.getBoundingClientRect().bottom - el.getBoundingClientRect().top - 8;
+    table.setHeight(Math.round(Math.max(headerH + 40, Math.min(avail, full))));
+  }
+
   function pickerColumns(feedColumns) {
     const columns = feedColumns
       .filter((column) => !HIDDEN_FIELDS.has(column.field))
@@ -138,6 +160,7 @@
       table.setColumns(columns);
       await table.setData(payload.data);
     }
+    fitTable();
   }
 
   async function confirm() {
@@ -192,8 +215,10 @@
     dialog.showModal();
     await loadInventory();
     // Built (or re-filled) while the dialog was closed or mid-open, a Tabulator has
-    // no width to lay out against; redraw once it's actually on screen.
+    // no width to lay out against; redraw once it's actually on screen, then size it
+    // against the dialog now that both have real dimensions.
     table?.redraw(true);
+    fitTable();
   }
   window.openBomPicker = openBomPicker;
 

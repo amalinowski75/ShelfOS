@@ -766,9 +766,14 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, .82); }
   padding: 12px 20px; border-bottom: 1px solid var(--border); flex: none;
 }
 .bom-pick-bar p { margin: 0; font-size: 13px; }
+.bom-pick-actions { display: flex; gap: 10px; flex: none; }
+/* `overflow: hidden`, NOT auto: the table sizes itself to this box (see fitTable in
+   bom_pick.js) and scrolls internally, so a scrollbar here would be a second one
+   wrapped around a table that already has its own — and a dead one, since there is
+   nothing left to scroll. */
 .bom-pick-body {
   display: flex; gap: 20px; padding: 16px 20px;
-  overflow-y: auto; flex: 1 1 auto; min-height: 0;
+  overflow: hidden; flex: 1 1 auto; min-height: 0;
 }
 .bom-pick-line { flex: 0 0 210px; }
 .bom-pick-line h4 { margin: 0 0 8px; font-size: 13px; }
@@ -777,15 +782,18 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, .82); }
 }
 .bom-pick-line dt { color: var(--muted); }
 .bom-pick-line dd { margin: 0; overflow-wrap: anywhere; }
-.bom-pick-inventory { flex: 1 1 auto; min-width: 0; }
-.bom-pick-inventory .field { margin-bottom: 10px; max-width: 240px; }
+/* A column, so the table takes the height left over below the type picker rather
+   than pushing the box taller. */
+.bom-pick-inventory {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; flex-direction: column; min-height: 0;
+}
+.bom-pick-inventory .field { margin-bottom: 10px; max-width: 240px; flex: none; }
+#bom-pick-table { min-height: 0; }
 /* The chosen row has to read as chosen from across the dialog. */
 #bom-pick-table .tabulator-row.tabulator-selected { background: var(--surface-2); }
 #bom-pick-table .tabulator-row.tabulator-selected .tabulator-cell { color: var(--text); }
-#bom-pick-error { padding: 0 20px 6px; margin: 0; flex: none; }
-#bom-pick-dialog footer {
-  padding: 12px 20px; margin: 0; border-top: 1px solid var(--border); flex: none;
-}
+#bom-pick-error { padding: 0 20px 10px; margin: 0; flex: none; }
 /* "Boards" sits among the head actions: a small count box, labelled above like a
    .field, not a full-width control stretching the header. Its input borrows the
    .btn-sm metrics (30px, not the 38px of a full .control) so it lines up with the

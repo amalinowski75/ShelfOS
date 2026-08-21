@@ -53,9 +53,13 @@
     </header>
     <div class="bom-pick-bar">
       <p class="muted" id="bom-pick-selected">Select a component below.</p>
-      <button type="button" class="btn btn-primary" id="bom-pick-confirm" disabled>
-        Use this component
-      </button>
+      {# Both actions sit with the selection they act on, not a scroll away. #}
+      <div class="bom-pick-actions">
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="button" class="btn btn-primary" id="bom-pick-confirm" disabled>
+          Use this component
+        </button>
+      </div>
     </div>
     <div class="bom-pick-body">
       <aside class="bom-pick-line">
@@ -74,9 +78,6 @@
       </div>
     </div>
     <p id="bom-pick-error" class="error" hidden></p>
-    <footer>
-      <button type="button" class="btn btn-ghost" data-close>Cancel</button>
-    </footer>
   </article>
 </dialog>
 {% endif %}
