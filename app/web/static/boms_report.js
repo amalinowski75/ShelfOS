@@ -276,8 +276,27 @@ async function loadReport(table, bomId) {
     return;
   }
   renderBomSummary(report.summary);
+  // Assigning a component, ticking Ordered off a refresh, adding to inventory — all
+  // of them reload this table, and setData scrolls it back to the top. On a BOM of
+  // any size that means hunting for the line you were just on, every single time.
+  // Put the scroll back where it was instead. Read BEFORE setData, restored after
+  // frameTable, which resizes the table and would undo it.
+  const holder = table.element?.querySelector?.(".tabulator-tableholder");
+  const scrollTop = holder ? holder.scrollTop : 0;
   await table.setData(report.lines);
   frameTable(table);
+  if (holder && scrollTop) restoreScroll(holder, scrollTop);
+}
+
+// Tabulator renders rows asynchronously, so the height the scroll needs may not
+// exist yet the moment setData resolves. Set it now for the common case, and once
+// more on the next turn for the case where it didn't take — a scrollTop set against
+// a container that is still short is silently clamped.
+function restoreScroll(holder, scrollTop) {
+  holder.scrollTop = scrollTop;
+  setTimeout(() => {
+    if (holder.scrollTop !== scrollTop) holder.scrollTop = scrollTop;
+  }, 0);
 }
 
 // A line can be turned into a new inventory component when nothing matches it:

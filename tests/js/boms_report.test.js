@@ -461,6 +461,80 @@ describe("boms_report.js — loadReport", () => {
     expect(setData).toHaveBeenCalledWith([]);
   });
 
+  it("puts the scroll back where it was instead of jumping to the top", async () => {
+    // Every per-line action reloads this table; setData scrolls it home, which on a
+    // long BOM means hunting for the line you were just on, every time.
+    const report = {
+      summary: { buildable: 1, boards: 1 },
+      lines: [{ references: "R1" }],
+    };
+    const fetchImpl = () =>
+      Promise.resolve({ ok: true, json: () => Promise.resolve(report) });
+    const { window, document } = loadPage(bomReportFixture(), SCRIPTS, { fetchImpl });
+
+    // A table whose holder is scrolled, as Tabulator lays one out.
+    const element = document.createElement("div");
+    const holder = document.createElement("div");
+    holder.className = "tabulator-tableholder";
+    element.appendChild(holder);
+    holder.scrollTop = 640;
+    const table = {
+      element,
+      setData: () => {
+        holder.scrollTop = 0; // what setData does
+        return Promise.resolve();
+      },
+      setHeight: () => {},
+    };
+
+    await window.loadReport(table, "7");
+    expect(holder.scrollTop).toBe(640);
+  });
+
+  it("restores it again once the rows exist, not just once", async () => {
+    // The immediate set is not enough on its own: until Tabulator has rendered the
+    // rows the holder is too short to hold the offset, and the browser silently
+    // clamps it to 0. This holder behaves that way, so it reaches the retry — the
+    // half written for a case the simpler fake can never produce.
+    const report = { summary: { buildable: 1, boards: 1 }, lines: [{ references: "R1" }] };
+    const fetchImpl = () =>
+      Promise.resolve({ ok: true, json: () => Promise.resolve(report) });
+    const { window, document } = loadPage(bomReportFixture(), SCRIPTS, { fetchImpl });
+
+    const element = document.createElement("div");
+    const holder = document.createElement("div");
+    holder.className = "tabulator-tableholder";
+    element.appendChild(holder);
+
+    let rendered = true;
+    let value = 0;
+    Object.defineProperty(holder, "scrollTop", {
+      get: () => value,
+      set: (v) => {
+        value = rendered ? v : 0; // short container → clamped to the top
+      },
+    });
+    holder.scrollTop = 640;
+
+    const table = {
+      element,
+      setData: () => {
+        rendered = false; // rows are gone until the render lands
+        holder.scrollTop = 0;
+        setTimeout(() => {
+          rendered = true;
+        }, 0);
+        return Promise.resolve();
+      },
+      setHeight: () => {},
+    };
+
+    await window.loadReport(table, "7");
+    expect(holder.scrollTop).toBe(0); // the immediate set was clamped away
+    await tick(); // …and the retry, once the rows are there, gets it back
+    expect(holder.scrollTop).toBe(640);
+  });
+
   it("shows an error when the request throws", async () => {
     const fetchImpl = () => Promise.reject(new Error("network"));
     const { window, document } = loadPage(bomReportFixture(), SCRIPTS, { fetchImpl });
