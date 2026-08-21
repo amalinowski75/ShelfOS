@@ -210,3 +210,123 @@ describe("boms_report.js — loadReport", () => {
     );
   });
 });
+
+describe("boms_report.js — building several boards", () => {
+  const okReport = {
+    summary: { buildable: 2, ok: 1, short: 0, out: 0, missing: 0, no_mpn: 0, boards: 1 },
+    lines: [{ references: "R1" }],
+  };
+  const okFetch = () =>
+    Promise.resolve({ ok: true, json: () => Promise.resolve(okReport) });
+
+  it("asks the feed for the board count in the box", async () => {
+    const { window, document, fetchMock } = loadPage(bomReportFixture(), SCRIPTS, {
+      fetchImpl: okFetch,
+    });
+    document.getElementById("bom-boards").value = "10";
+    await window.loadReport({ setData: vi.fn(() => Promise.resolve()) }, "7");
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/boms/7/report?boards=10");
+  });
+
+  it("falls back to one board for a blank or nonsensical count", async () => {
+    const { window, document, fetchMock } = loadPage(bomReportFixture(), SCRIPTS, {
+      fetchImpl: okFetch,
+    });
+    const input = document.getElementById("bom-boards");
+    for (const bad of ["", "0", "-3"]) {
+      input.value = bad;
+      await window.loadReport({ setData: vi.fn(() => Promise.resolve()) }, "7");
+      expect(fetchMock.mock.calls.at(-1)[0]).toBe("/api/boms/7/report?boards=1");
+    }
+  });
+
+  it("remembers the count per BOM across visits", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    window.bomBoardsRemember("7", 12);
+    expect(window.bomBoardsStored("7")).toBe(12);
+    expect(window.bomBoardsStored("9")).toBe(1); // a different BOM is unaffected
+  });
+
+  it("says how many of the requested boards are buildable", () => {
+    const { window, document } = loadPage(bomReportFixture(), SCRIPTS);
+    window.renderBomSummary({ buildable: 3, ok: 1, short: 1, boards: 10 });
+    const html = document.getElementById("bom-summary").innerHTML;
+    expect(html).toContain("<strong>3</strong>");
+    expect(html).toContain("of 10 requested");
+
+    // A single board doesn't need the qualifier.
+    window.renderBomSummary({ buildable: 3, ok: 1, boards: 1 });
+    expect(document.getElementById("bom-summary").innerHTML).not.toContain(
+      "requested",
+    );
+  });
+
+  it("tells a short line how many boards its stock covers", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const short = window.bomStatusFormatter(
+      fakeCell("short", { mpn: "RES-1K", boards_possible: 5 }),
+    );
+    expect(short).toContain("short");
+    expect(short).toContain("enough for 5");
+
+    // The other statuses need no such note: "ok" covers the run, out/missing are
+    // zero by definition, and a line with no MPN was never matched.
+    for (const status of ["ok", "out", "missing", "no_mpn"]) {
+      expect(
+        window.bomStatusFormatter(fakeCell(status, { mpn: "RES-1K", boards_possible: 0 })),
+      ).not.toContain("enough for");
+    }
+  });
+
+  it("offers both the per-board and the run total as columns", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const fields = window.bomReportColumns().map((c) => c.field);
+    expect(fields).toContain("quantity");
+    expect(fields).toContain("total_quantity");
+  });
+});
+
+describe("boms_report.js — reload from CSV", () => {
+  it("re-parses the stored CSV, then re-reads the report", async () => {
+    const calls = [];
+    const fetchImpl = (url, opts) => {
+      calls.push([url, opts?.method || "GET"]);
+      return Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({ summary: { buildable: 1, boards: 1 }, lines: [] }),
+      });
+    };
+    const { document } = loadPage(bomReportFixture(), SCRIPTS, { fetchImpl });
+    document.getElementById("bom-reload").click();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(calls[0]).toEqual(["/api/boms/7/reimport", "POST"]);
+    expect(calls[1][0]).toContain("/api/boms/7/report");
+    expect(document.getElementById("bom-reload-status").hidden).toBe(false);
+    expect(document.getElementById("bom-reload-status").textContent).toContain(
+      "rebuilt",
+    );
+  });
+
+  it("reports a refusal without touching the table", async () => {
+    const fetchImpl = (url, opts) =>
+      opts?.method === "POST"
+        ? Promise.resolve({
+            ok: false,
+            status: 422,
+            json: async () => ({ detail: "the original CSV is no longer stored" }),
+          })
+        : Promise.resolve({ ok: true, json: async () => ({ summary: {}, lines: [] }) });
+    const { document } = loadPage(bomReportFixture(), SCRIPTS, { fetchImpl });
+    document.getElementById("bom-reload").click();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    const status = document.getElementById("bom-reload-status");
+    expect(status.hidden).toBe(false);
+    expect(status.className).toBe("error");
+    expect(status.textContent).toContain("no longer stored");
+  });
+});
