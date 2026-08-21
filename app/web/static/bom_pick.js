@@ -39,6 +39,11 @@
     errorEl.hidden = !text;
   }
 
+  // Hand the page back its scrolling. Safe to call twice.
+  function unlock() {
+    document.documentElement.classList.remove("bom-pick-open");
+  }
+
   function setSelected(row) {
     selected = row;
     confirmBtn.disabled = !row;
@@ -190,6 +195,7 @@
       return;
     }
     dialog.close();
+    unlock();
     if (onAssigned) await onAssigned();
   }
 
@@ -212,6 +218,9 @@
       (option) => option.textContent.trim().toLowerCase() === wanted,
     );
     typeSelect.value = match ? match.value : "";
+    // Lock the page behind the modal: it can't be reached while this is open, so its
+    // scrollbar would just sit beside the table's own with nothing to scroll.
+    document.documentElement.classList.add("bom-pick-open");
     dialog.showModal();
     await loadInventory();
     // Built (or re-filled) while the dialog was closed or mid-open, a Tabulator has
@@ -224,4 +233,14 @@
 
   typeSelect.addEventListener("change", loadInventory);
   confirmBtn.addEventListener("click", confirm);
+  // Every way out has to unlock the page, because a page left locked is a browser
+  // that has stopped scrolling for no visible reason. `close` is the event for
+  // this and is kept — but it cannot be the only hook: a real dialog.close() was
+  // observed firing no `close` here, so the routes that close the dialog say so
+  // themselves. unlock() is idempotent, so overlapping hooks are harmless.
+  dialog.addEventListener("close", unlock);
+  dialog.addEventListener("cancel", unlock); // Escape
+  dialog.addEventListener("click", (event) => {
+    if (event.target.closest("[data-close]")) unlock(); // Cancel and the ×
+  });
 })();

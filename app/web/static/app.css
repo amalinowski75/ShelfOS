@@ -756,7 +756,17 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, .82); }
 /* ---------- assign-a-component picker ---------- */
 /* A table needs far more room than the 440px default dialog (same reasoning as
    #stock-dialog above), and the body scrolls while the confirm bar stays put. */
-#bom-pick-dialog { width: min(1080px, calc(100vw - 32px)); max-height: calc(100vh - 48px); }
+/* `overflow: hidden` on the dialog itself: a <dialog> defaults to `auto`, so if its
+   content ever measured a pixel over the cap it would grow a scrollbar of its own —
+   a second one beside the table's, and the one that can't be the answer, since the
+   table is the only part with anything to scroll. */
+#bom-pick-dialog {
+  width: min(1080px, calc(100vw - 32px)); max-height: calc(100vh - 48px);
+  overflow: hidden;
+}
+/* While the picker is open the page behind it can't be reached, so its scrollbar is
+   nothing but a second bar next to the table's. Standard modal scroll-lock. */
+html.bom-pick-open, html.bom-pick-open body { overflow: hidden; }
 #bom-pick-dialog > article {
   display: flex; flex-direction: column; max-height: calc(100vh - 48px); min-height: 0;
 }

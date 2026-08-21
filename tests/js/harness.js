@@ -54,8 +54,14 @@ export function loadPage(
   window.confirm = vi.fn(() => true);
   window.alert = vi.fn();
   // jsdom does not implement <dialog> modality; the scripts only open/close.
+  // close() fires a `close` event the way the real element does — scripts hang
+  // teardown off it (a scroll lock, clearing which row a dialog was opened for),
+  // and a stub that stays silent would let that teardown go untested.
   window.HTMLDialogElement.prototype.showModal = vi.fn();
-  window.HTMLDialogElement.prototype.close = vi.fn();
+  window.HTMLDialogElement.prototype.close = vi.fn(function closeDialog() {
+    this.open = false;
+    this.dispatchEvent(new window.Event("close"));
+  });
   // app.js constructs a Tabulator at load; stub the few methods it calls so the
   // component-table code can run without the real (CDN) library.
   window.Tabulator = class {
@@ -410,7 +416,9 @@ export function bomPickFixture(types = [{ id: 3, name: "capacitor" }]) {
   return `
     <dialog id="bom-pick-dialog">
       <span id="bom-pick-refs"></span>
+      <button class="close" data-close></button>
       <p id="bom-pick-selected"></p>
+      <button type="button" data-close>Cancel</button>
       <button type="button" id="bom-pick-confirm" disabled></button>
       <dl id="bom-pick-facts"></dl>
       <select id="bom-pick-type"><option value="">All types</option>${options}</select>

@@ -194,6 +194,51 @@ describe("bom_pick.js — choosing and confirming", () => {
   });
 });
 
+describe("bom_pick.js — the page behind it", () => {
+  const locked = (page) =>
+    page.document.documentElement.classList.contains("bom-pick-open");
+
+  it("locks the page while open so its scrollbar isn't a second one", async () => {
+    const page = loadPage(bomPickFixture(), SCRIPTS, { fetchImpl: feedFetch });
+    expect(locked(page)).toBe(false);
+    await open(page);
+    await tick();
+    expect(locked(page)).toBe(true);
+  });
+
+  it("unlocks on every way out, so the page is never left stuck", async () => {
+    const page = loadPage(bomPickFixture(), SCRIPTS, { fetchImpl: feedFetch });
+    const dialog = page.document.getElementById("bom-pick-dialog");
+
+    // The dialog's own close event.
+    await open(page);
+    await tick();
+    dialog.dispatchEvent(new page.window.Event("close"));
+    expect(locked(page)).toBe(false);
+
+    // Clicking Cancel or the ×. Not covered by the close event alone: a real
+    // dialog.close() was seen firing none, which left the page stuck.
+    await open(page);
+    await tick();
+    dialog.querySelector("[data-close]").click();
+    expect(locked(page)).toBe(false);
+
+    // Escape.
+    await open(page);
+    await tick();
+    dialog.dispatchEvent(new page.window.Event("cancel"));
+    expect(locked(page)).toBe(false);
+
+    // …and so does a successful assignment.
+    await open(page);
+    await tick();
+    page.window.Tabulator.handlers.rowClick(clickEvent, fakeRow(FEED.data[0]));
+    page.document.getElementById("bom-pick-confirm").click();
+    await tick();
+    expect(locked(page)).toBe(false);
+  });
+});
+
 describe("bom_pick.js — absent for read-only", () => {
   it("does nothing on a page without the picker markup", () => {
     const { window } = loadPage("<div></div>", SCRIPTS);
