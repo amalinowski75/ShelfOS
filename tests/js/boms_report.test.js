@@ -275,6 +275,96 @@ describe("boms_report.js — assigned component", () => {
   });
 });
 
+describe("boms_report.js — ordered", () => {
+  const orderedColumn = (window) =>
+    window.bomReportColumns().find((c) => c.field === "ordered");
+
+  it("offers the tick as a real checkbox to a writer", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const on = window.bomOrderedFormatter(fakeCell(true, { references: "R1" }));
+    expect(on).toContain("checkbox");
+    expect(on).toContain("checked");
+    const off = window.bomOrderedFormatter(fakeCell(false, { references: "R1" }));
+    expect(off).toContain("checkbox");
+    expect(off).not.toContain("checked");
+    // Named after its line, so a column of identical boxes is distinguishable.
+    expect(on).toContain('aria-label="Ordered — R1"');
+  });
+
+  it("shows a read-only account the state without a control it cannot use", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS, { role: "read-only" });
+    expect(window.bomOrderedFormatter(fakeCell(true, {}))).not.toContain("checkbox");
+    expect(window.bomOrderedFormatter(fakeCell(true, {}))).toContain("✓");
+    expect(window.bomOrderedFormatter(fakeCell(false, {}))).toContain("—");
+  });
+
+  it("escapes the designators it names the checkbox after", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const html = window.bomOrderedFormatter(
+      fakeCell(false, { references: '"><img src=x>' }),
+    );
+    expect(html).not.toContain("<img src=x>");
+  });
+
+  it("PUTs the new state for that line", async () => {
+    const { window, fetchMock } = loadPage(bomReportFixture(), SCRIPTS);
+    const saved = await window.bomSetOrdered("7", 42, true, null);
+
+    const [url, opts] = fetchMock.mock.calls.at(-1);
+    expect(url).toBe("/api/boms/7/lines/42/ordered");
+    expect(opts.method).toBe("PUT");
+    expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
+    expect(JSON.parse(opts.body)).toEqual({ ordered: true });
+    expect(saved).toBe(true);
+  });
+
+  it("puts the box back when the server refuses", async () => {
+    // Otherwise the tick shows a state that was never stored.
+    const fetchImpl = () =>
+      Promise.resolve({ ok: false, json: async () => ({ detail: "nope" }) });
+    const { window } = loadPage(bomReportFixture(), SCRIPTS, { fetchImpl });
+    const box = window.document.createElement("input");
+    box.type = "checkbox";
+    box.checked = true; // the user just ticked it
+
+    const saved = await window.bomSetOrdered("7", 42, true, box);
+    expect(saved).toBe(false);
+    expect(box.checked).toBe(false); // reverted
+    expect(window.alert).toHaveBeenCalledWith("nope");
+  });
+
+  it("ticking the box does not navigate to the component page", () => {
+    // The row click opens the matched component; a checkbox is neither a link nor
+    // a button, so without the guard ticking one would leave the report. jsdom
+    // doesn't navigate, so assert on the lookup the handler makes on its way there
+    // — that IS the branch, and it's observable.
+    const { window, document } = loadPage(bomReportFixture(), SCRIPTS);
+    const row = { getData: () => ({ matched: [{ component_id: 8 }] }) };
+    const target = window.bomRowTarget;
+    const spy = vi.fn(target);
+    window.bomRowTarget = spy;
+    try {
+      const input = document.createElement("input");
+      window.Tabulator.handlers.rowClick({ target: input }, row);
+      expect(spy).not.toHaveBeenCalled(); // guarded: the click was the checkbox's
+
+      window.Tabulator.handlers.rowClick({ target: document.createElement("td") }, row);
+      expect(spy).toHaveBeenCalled(); // …and an ordinary cell still navigates
+    } finally {
+      window.bomRowTarget = target;
+    }
+  });
+
+  it("filters the column by ticked / unticked", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const column = orderedColumn(window);
+    expect(column.headerFilter).toBe("tickCross");
+    // Tristate: the third state means "don't filter", not "unticked".
+    expect(column.headerFilterEmptyCheck(null)).toBe(true);
+    expect(column.headerFilterEmptyCheck(false)).toBe(false);
+  });
+});
+
 describe("boms_report.js — row navigation", () => {
   it("targets the first matched component's detail page, else null", () => {
     const { window } = loadPage(bomReportFixture(), SCRIPTS);

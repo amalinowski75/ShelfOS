@@ -198,6 +198,30 @@ function bomReportColumns() {
       formatter: bomStockFormatter,
     },
     {
+      // Next to Status: together they read as "where this line stands" — what the
+      // shelf says, and what has been done about it.
+      title: "Ordered",
+      field: "ordered",
+      width: 100,
+      hozAlign: "center",
+      formatter: bomOrderedFormatter,
+      headerFilter: "tickCross",
+      headerFilterParams: { tristate: true },
+      headerFilterEmptyCheck: (value) => value === null,
+      cellClick: (e, cell) => {
+        if (e.target.dataset.act !== "ordered") return;
+        // The box has already flipped itself; persist what it now shows, and hold
+        // the row's data in step so a later redraw doesn't undo it.
+        const ordered = e.target.checked;
+        const row = cell.getRow().getData();
+        bomSetOrdered(bomTableEl.dataset.bomId, row.id, ordered, e.target).then(
+          (saved) => {
+            if (saved) cell.getRow().update({ ordered });
+          },
+        );
+      },
+    },
+    {
       title: "Substitutes",
       field: "substitutes",
       headerSort: false,
@@ -284,6 +308,36 @@ function bomActionButtons(row) {
   return `<div class="bom-row-actions">${buttons.join("")}</div>`;
 }
 
+// "Ordered" is a note the user keeps, not something the report can work out, so it
+// is the one editable cell here. Read-only accounts see the state without a control
+// they can't use (the endpoint is writer-gated anyway).
+function bomOrderedFormatter(cell) {
+  const on = cell.getValue() ? " checked" : "";
+  if (!canWrite) return cell.getValue() ? "✓" : '<span class="muted">—</span>';
+  return (
+    `<input type="checkbox" data-act="ordered"${on}` +
+    ` aria-label="Ordered — ${esc(cell.getRow().getData().references || "")}">`
+  );
+}
+
+async function bomSetOrdered(bomId, lineId, ordered, checkbox) {
+  try {
+    const resp = await fetch(`/api/boms/${bomId}/lines/${lineId}/ordered`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+      body: JSON.stringify({ ordered }),
+    });
+    if (resp.ok) return true;
+    alert(await errorMessage(resp));
+  } catch {
+    alert("Could not reach the server.");
+  }
+  // Put the box back the way the server still has it, rather than leaving the tick
+  // showing a state that was never stored.
+  if (checkbox) checkbox.checked = !ordered;
+  return false;
+}
+
 async function bomUnassign(bomId, lineId, onDone) {
   try {
     const resp = await fetch(`/api/boms/${bomId}/lines/${lineId}/component`, {
@@ -341,9 +395,10 @@ if (bomTableEl) {
   });
 
   // Clicking a matched line opens its component detail page. Ignore clicks on the
-  // substitute links and the "Add to inventory" button so those still act.
+  // controls inside it — substitute links, the row's buttons, and the Ordered
+  // checkbox — so ticking a box doesn't navigate away from the report.
   table.on("rowClick", (e, row) => {
-    if (e.target.closest("a, button")) return;
+    if (e.target.closest("a, button, input")) return;
     const url = bomRowTarget(row.getData());
     if (url) window.location = url;
   });
