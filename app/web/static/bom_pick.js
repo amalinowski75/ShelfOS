@@ -23,10 +23,11 @@
   const errorEl = document.getElementById("bom-pick-error");
   const mount = document.getElementById("bom-pick-table");
 
-  // Identity columns the caller already knows (they describe the BOM line, shown on
-  // the left) or that don't help pick a substitute. What's left — package, mounting,
-  // stock and the type's own parameters — is what you actually choose on.
-  const HIDDEN_FIELDS = new Set(["type", "manufacturer", "mpn", "notes"]);
+  // Columns the left-hand panel already covers (the type is the picker's own filter)
+  // or that are too long to compare across rows. MPN stays: it is the part's name,
+  // and the whole task here is deciding WHICH part — a row of packages and values
+  // with nothing to call them by is not a shortlist you can act on.
+  const HIDDEN_FIELDS = new Set(["type", "manufacturer", "notes"]);
 
   let table = null;
   let line = null; // the BOM line being assigned
@@ -47,8 +48,9 @@
   function setSelected(row) {
     selected = row;
     confirmBtn.disabled = !row;
-    // Echo what's about to be committed. The MPN column is hidden in the table, so
-    // this is where the part is actually named.
+    // Echo what's about to be committed, by name, next to the button that commits
+    // it — so confirming doesn't depend on remembering which row is highlighted
+    // several screens down a scrolled list.
     selectedEl.textContent = row
       ? `Selected: ${row.mpn || `#${row.id}`}${row.package ? ` · ${row.package}` : ""}`
       : "Select a component below.";
