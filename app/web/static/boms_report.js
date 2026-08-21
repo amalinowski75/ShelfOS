@@ -204,6 +204,9 @@ function bomReportColumns() {
       field: "ordered",
       width: 100,
       hozAlign: "center",
+      // Marks the whole cell, not just the box: the row-click guard uses it, so a
+      // click that lands beside the checkbox doesn't navigate away from the report.
+      cssClass: "bom-ordered-cell",
       formatter: bomOrderedFormatter,
       headerFilter: "tickCross",
       headerFilterParams: { tristate: true },
@@ -320,7 +323,18 @@ function bomOrderedFormatter(cell) {
   );
 }
 
+// Lines with a tick in flight. Two fast clicks on one box would otherwise send two
+// PUTs, and since the row's data is updated per resolution, what is STORED (the
+// last to land) and what is SHOWN (the last to resolve) could disagree. Every other
+// write on this page guards; this one should too.
+const bomOrderedInFlight = new Set();
+
 async function bomSetOrdered(bomId, lineId, ordered, checkbox) {
+  if (bomOrderedInFlight.has(lineId)) {
+    if (checkbox) checkbox.checked = !ordered; // undo the click we're dropping
+    return false;
+  }
+  bomOrderedInFlight.add(lineId);
   try {
     const resp = await fetch(`/api/boms/${bomId}/lines/${lineId}/ordered`, {
       method: "PUT",
@@ -331,6 +345,10 @@ async function bomSetOrdered(bomId, lineId, ordered, checkbox) {
     alert(await errorMessage(resp));
   } catch {
     alert("Could not reach the server.");
+  } finally {
+    // Released on EVERY path, success included — a lock left set would make the
+    // box dead for the rest of the visit.
+    bomOrderedInFlight.delete(lineId);
   }
   // Put the box back the way the server still has it, rather than leaving the tick
   // showing a state that was never stored.
@@ -396,9 +414,11 @@ if (bomTableEl) {
 
   // Clicking a matched line opens its component detail page. Ignore clicks on the
   // controls inside it — substitute links, the row's buttons, and the Ordered
-  // checkbox — so ticking a box doesn't navigate away from the report.
+  // checkbox — so ticking a box doesn't navigate away from the report. The whole
+  // Ordered CELL is excluded, not just the box: that cell exists to host a control,
+  // so missing it by a pixel should cost nothing, never the page.
   table.on("rowClick", (e, row) => {
-    if (e.target.closest("a, button, input")) return;
+    if (e.target.closest("a, button, input, .bom-ordered-cell")) return;
     const url = bomRowTarget(row.getData());
     if (url) window.location = url;
   });

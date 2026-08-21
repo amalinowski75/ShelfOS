@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { loadPage, CSRF, bomReportFixture } from "./harness.js";
+import { loadPage, tick, CSRF, bomReportFixture } from "./harness.js";
 
 const SCRIPTS = ["shared.js", "boms_report.js"];
 
@@ -353,6 +353,63 @@ describe("boms_report.js — ordered", () => {
     } finally {
       window.bomRowTarget = target;
     }
+  });
+
+  it("does not navigate when the click lands beside the box, inside its cell", () => {
+    // Guarding the checkbox alone leaves the rest of the cell live: a near-miss
+    // would open the component page, which is the annoyance this column removes.
+    const { window, document } = loadPage(bomReportFixture(), SCRIPTS);
+    const row = { getData: () => ({ matched: [{ component_id: 8 }] }) };
+    const target = window.bomRowTarget;
+    const spy = vi.fn(target);
+    window.bomRowTarget = spy;
+    try {
+      const cell = document.createElement("div");
+      cell.className = "tabulator-cell bom-ordered-cell"; // the cell, not the input
+      window.Tabulator.handlers.rowClick({ target: cell }, row);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      window.bomRowTarget = target;
+    }
+  });
+
+  it("keeps the row's data in step after a tick, so a redraw can't undo it", async () => {
+    const { window, document } = loadPage(bomReportFixture(), SCRIPTS);
+    const update = vi.fn();
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.dataset.act = "ordered";
+    box.checked = true; // the browser flipped it before the handler ran
+    const cell = { getRow: () => ({ getData: () => ({ id: 42 }), update }) };
+
+    orderedColumn(window).cellClick({ target: box }, cell);
+    await tick();
+    expect(update).toHaveBeenCalledWith({ ordered: true });
+  });
+
+  it("drops a second click while the first is still in flight", async () => {
+    // Two PUTs would race: what is stored is the last to land, what is shown is the
+    // last to resolve, and those need not agree.
+    let release;
+    const held = new Promise((resolve) => (release = resolve));
+    const fetchImpl = () => held.then(() => ({ ok: true, json: async () => ({}) }));
+    const { window, document, fetchMock } = loadPage(bomReportFixture(), SCRIPTS, {
+      fetchImpl,
+    });
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = true;
+
+    const first = window.bomSetOrdered("7", 42, true, box);
+    const second = await window.bomSetOrdered("7", 42, false, box);
+    expect(second).toBe(false);
+    expect(fetchMock.mock.calls.length).toBe(1); // the second click sent nothing
+
+    release();
+    expect(await first).toBe(true);
+    // …and the lock is released, so the box still works afterwards.
+    await window.bomSetOrdered("7", 42, false, box);
+    expect(fetchMock.mock.calls.length).toBe(2);
   });
 
   it("filters the column by ticked / unticked", () => {
