@@ -1693,6 +1693,23 @@ def test_bom_report_offers_boards_and_reload(
     assert 'id="bom-reload"' not in ro
 
 
+def test_bom_report_offers_the_component_picker_to_writers_only(
+    client: TestClient, anon_client: TestClient, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    bom_id = _upload_bom(client, tmp_path, monkeypatch)
+    html = client.get(f"/boms/{bom_id}").text
+    assert 'id="bom-pick-dialog"' in html
+    assert "bom_pick.js" in html
+
+    # Assigning rewrites the BOM, so a read-only account gets neither.
+    token = _non_admin_token(client, role="read-only", username="viewer")
+    ro = anon_client.get(
+        f"/boms/{bom_id}", headers={"Authorization": f"Bearer {token}"}
+    ).text
+    assert 'id="bom-pick-dialog"' not in ro
+    assert "bom_pick.js" not in ro
+
+
 def test_bom_report_unknown_returns_404(client: TestClient) -> None:
     assert client.get("/boms/9999").status_code == 404
 

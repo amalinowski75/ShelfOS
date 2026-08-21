@@ -64,10 +64,15 @@ export function loadPage(
       // column options are configuration, but they are also the contract.
       window.Tabulator.columns = options?.columns ?? [];
     }
-    setColumns() {}
-    setData() {
+    setColumns(columns) {
+      window.Tabulator.columns = columns ?? [];
+    }
+    setData(rows) {
+      window.Tabulator.rows = rows ?? [];
       return Promise.resolve();
     }
+    // Tabulator needs a redraw when it was built while hidden (inside a dialog).
+    redraw() {}
     // Rows land on the CLASS for the same reason handlers do: the scripts keep
     // their table in a top-level const, so a test cannot reach the instance.
     replaceData(rows) {
@@ -394,6 +399,24 @@ export function bomReportFixture() {
     <p id="bom-reload-status" hidden></p>
     <div id="bom-summary"><p class="muted">Loading…</p></div>
     <div id="bom-lines-table" data-bom-id="7"></div>`;
+}
+
+// The "Assign a component" picker dialog (mirrors the markup in bom_report.html),
+// for driving openBomPicker in tests.
+export function bomPickFixture(types = [{ id: 3, name: "capacitor" }]) {
+  const options = types
+    .map((t) => `<option value="${t.id}">${t.name}</option>`)
+    .join("");
+  return `
+    <dialog id="bom-pick-dialog">
+      <span id="bom-pick-refs"></span>
+      <p id="bom-pick-selected"></p>
+      <button type="button" id="bom-pick-confirm" disabled></button>
+      <dl id="bom-pick-facts"></dl>
+      <select id="bom-pick-type"><option value="">All types</option>${options}</select>
+      <div id="bom-pick-table"></div>
+      <p id="bom-pick-error" hidden></p>
+    </dialog>`;
 }
 
 // The BOM list page shell (mirrors boms_list.html): the server-rendered rows with
