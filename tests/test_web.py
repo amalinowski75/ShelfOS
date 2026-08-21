@@ -1649,6 +1649,18 @@ def test_boms_page_has_no_upload_for_read_only(
     assert 'id="bom-upload-form"' not in html
 
 
+def test_boms_list_offers_delete_to_a_writer_only(
+    client: TestClient, anon_client: TestClient, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    _upload_bom(client, tmp_path, monkeypatch)
+    assert "data-bom-delete" in client.get("/boms").text
+
+    token = _non_admin_token(client, role="read-only", username="viewer")
+    html = anon_client.get("/boms", headers={"Authorization": f"Bearer {token}"}).text
+    assert "hiduart" in html  # the row is there…
+    assert "data-bom-delete" not in html  # …but not its delete control
+
+
 def test_bom_report_page_renders(
     client: TestClient, tmp_path, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
@@ -1662,6 +1674,23 @@ def test_bom_report_page_renders(
     assert "boms_report.js" in html
     # The original CSV is downloadable.
     assert "/api/attachments/" in html and "/download" in html
+
+
+def test_bom_report_offers_boards_and_reload(
+    client: TestClient, anon_client: TestClient, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    bom_id = _upload_bom(client, tmp_path, monkeypatch)
+    html = client.get(f"/boms/{bom_id}").text
+    assert 'id="bom-boards"' in html  # the board-count box
+    assert 'id="bom-reload"' in html  # re-parse the stored CSV
+
+    # Reloading rewrites the BOM, so a read-only account gets the count but not it.
+    token = _non_admin_token(client, role="read-only", username="viewer")
+    ro = anon_client.get(
+        f"/boms/{bom_id}", headers={"Authorization": f"Bearer {token}"}
+    ).text
+    assert 'id="bom-boards"' in ro
+    assert 'id="bom-reload"' not in ro
 
 
 def test_bom_report_unknown_returns_404(client: TestClient) -> None:

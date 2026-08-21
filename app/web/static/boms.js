@@ -1,6 +1,7 @@
-// BOM import (spec §21): upload a KiCad BOM CSV and jump to its report. The
-// report itself is server-rendered; this only wires the multipart upload (like
-// the attachment upload). `csrfToken` and `errorMessage` come from shared.js.
+// The BOM list (spec §21): upload a KiCad BOM CSV and jump to its report, and
+// delete a BOM from its row. The list itself is server-rendered; this only wires
+// the multipart upload (like the attachment upload) and the delete. `csrfToken`,
+// `errorMessage` and `showToastAfterReload` come from shared.js.
 
 const uploadBtn = document.getElementById("bom-upload-btn");
 if (uploadBtn) {
@@ -44,3 +45,34 @@ if (uploadBtn) {
     })();
   });
 }
+
+// Delete a BOM from its row. The rows are server-rendered, so the page reloads to
+// reflect the change; the confirmation names the BOM, because a delete also takes
+// the stored CSV with it and there is no undo.
+let deleting = false;
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-bom-delete]");
+  if (!button || deleting) return;
+  const id = button.dataset.bomDelete;
+  const name = button.dataset.bomName || "this BOM";
+  if (!confirm(`Delete "${name}" and its stored CSV? This cannot be undone.`)) return;
+  deleting = true;
+  (async () => {
+    try {
+      const resp = await fetch(`/api/boms/${id}`, {
+        method: "DELETE",
+        headers: { "X-CSRF-Token": csrfToken },
+      });
+      if (resp.ok) {
+        showToastAfterReload(`Deleted "${name}".`, { tone: "ok" });
+        window.location.reload();
+      } else {
+        alert(await errorMessage(resp));
+      }
+    } catch {
+      alert("Could not reach the server.");
+    } finally {
+      deleting = false;
+    }
+  })();
+});
