@@ -17,7 +17,7 @@ from typing import cast
 from sqlmodel import Session, col, select
 
 from app import config
-from app.models.bom import Bom, BomLine
+from app.models.bom import Bom, BomLine, BomLineAssignment
 from app.models.component import (
     Component,
     ComponentParameter,
@@ -29,7 +29,7 @@ from app.services import attachment_service, link_service
 from app.services import component_service as cs
 from app.services import stock_service as ss
 from app.services._common import require_entity
-from app.services.errors import ValidationError
+from app.services.errors import NotFoundError, ValidationError
 from app.units import UnitParseError, format_engineering, parse_engineering
 
 # Reference-designator prefix → component category (standard KiCad conventions).
@@ -248,6 +248,15 @@ def reimport_bom(session: Session, bom_id: int) -> Bom:
         session.delete(line)
     for line_data in parsed:
         session.add(BomLine(bom_id=bom_id, **vars(line_data)))
+    # Assignments key on the designator group, so one survives a re-parse that
+    # leaves its line alone. Drop those whose group is gone from the file: the
+    # alternative is state that still exists but has no row to show it on, and so
+    # no way to remove it — and that would silently come back if the designators
+    # ever returned.
+    kept = {line_data.references for line_data in parsed}
+    for assignment in list_assignments(session, bom_id):
+        if assignment.references not in kept:
+            session.delete(assignment)
     session.commit()
     session.refresh(bom)
     return bom
@@ -271,15 +280,91 @@ def get_bom_lines(session: Session, bom_id: int) -> list[BomLine]:
 
 
 def delete_bom(session: Session, bom_id: int) -> None:
-    """Delete a BOM, its lines and its stored CSV attachment."""
+    """Delete a BOM, its lines, its assignments and its stored CSV attachment."""
     bom = get_bom(session, bom_id)
     attachment_service.delete_attachments_for(
         session, entity_type="bom", entity_id=bom_id
     )
     link_service.delete_links_for(session, entity_type="bom", entity_id=bom_id)
+    for assignment in list_assignments(session, bom_id):
+        session.delete(assignment)
     for line in get_bom_lines(session, bom_id):
         session.delete(line)
     session.delete(bom)
+    session.commit()
+
+
+# --- assigning a component to a line ---------------------------------------
+
+
+def list_assignments(session: Session, bom_id: int) -> list[BomLineAssignment]:
+    """Every component assignment made on this BOM."""
+    return list(
+        session.exec(
+            select(BomLineAssignment)
+            .where(BomLineAssignment.bom_id == bom_id)
+            .order_by(col(BomLineAssignment.id))
+        ).all()
+    )
+
+
+def _require_line(session: Session, bom_id: int, line_id: int) -> BomLine:
+    """The line, confirmed to belong to this BOM (so ids can't be crossed)."""
+    line = require_entity(session, BomLine, line_id, "bom line")
+    if line.bom_id != bom_id:
+        raise NotFoundError(f"bom line {line_id} not found")
+    return line
+
+
+def _assignment_for(
+    session: Session, bom_id: int, references: str
+) -> BomLineAssignment | None:
+    return session.exec(
+        select(BomLineAssignment)
+        .where(BomLineAssignment.bom_id == bom_id)
+        .where(BomLineAssignment.references == references)
+    ).first()
+
+
+def assign_component(
+    session: Session, bom_id: int, line_id: int, *, component_id: int, user_id: int
+) -> BomLineAssignment:
+    """Record that this line is built from ``component_id``.
+
+    Deliberately unconditional: a line that already matches its MPN can still be
+    pointed at a different part, because "what we actually build this from" is a
+    decision the BOM's own text can't always express. One assignment per line —
+    assigning again replaces the previous choice.
+    """
+    line = _require_line(session, bom_id, line_id)
+    component = require_entity(session, Component, component_id, "component")
+    if component.deleted_at is not None:
+        raise ValidationError("that component is no longer in use")
+
+    assignment = _assignment_for(session, bom_id, line.references)
+    if assignment is None:
+        assignment = BomLineAssignment(
+            bom_id=bom_id,
+            references=line.references,
+            component_id=component_id,
+            created_by=user_id,
+        )
+    else:
+        assignment.component_id = component_id
+        assignment.created_by = user_id
+    session.add(assignment)
+    session.commit()
+    session.refresh(assignment)
+    return assignment
+
+
+def unassign_component(session: Session, bom_id: int, line_id: int) -> None:
+    """Drop this line's assignment, returning it to plain MPN matching."""
+    line = _require_line(session, bom_id, line_id)
+    assignment = _assignment_for(session, bom_id, line.references)
+    if assignment is None:
+        raise NotFoundError(f"bom line {line_id} has no assigned component")
+    session.delete(assignment)
     session.commit()
 
 
@@ -399,11 +484,14 @@ def build_bom_report(
     ``summary.buildable`` counts whole boards from **exact MPN matches** only, so a
     line with no MPN (common while designing) or one missing from inventory caps it
     at 0 — substitutes are surfaced per line but not counted toward buildability.
+    A line with an assigned component counts on the same terms: the assignment IS
+    its match, so it contributes its own stock rather than capping the total.
     """
     boards = max(1, boards)
     bom = get_bom(session, bom_id)
     lines = get_bom_lines(session, bom_id)
     stock = ss.total_quantities_by_component(session)
+    assigned_by_refs = {a.references: a for a in list_assignments(session, bom_id)}
     # Resolve each substitutable category's value parameter once (not per line).
     value_defs = _value_defs_by_category(
         session, {ln.category for ln in lines if ln.category in _VALUE_CATEGORIES}
@@ -414,12 +502,32 @@ def build_bom_report(
     report_lines: list[dict[str, object]] = []
 
     for line in lines:
-        matched = cs.find_components_by_mpn(session, line.mpn) if line.mpn else []
+        # An assignment stands in for the MPN lookup: someone has said what this
+        # line is actually built from, so "no MPN" and "not in inventory" no longer
+        # describe it — only how much of that part is on the shelf.
+        assignment = assigned_by_refs.get(line.references)
+        assigned_component = (
+            session.get(Component, assignment.component_id) if assignment else None
+        )
+        # A component soft-deleted after being assigned keeps the assignment visible
+        # (so it can be seen and changed) but contributes no stock.
+        assigned_live = (
+            assigned_component is not None and assigned_component.deleted_at is None
+        )
+
+        if assigned_live:
+            matched = [cast(Component, assigned_component)]
+        elif assignment is not None:
+            matched = []
+        else:
+            matched = cs.find_components_by_mpn(session, line.mpn) if line.mpn else []
         matched_stock = sum(stock.get(cast(int, c.id), 0) for c in matched)
         # What the whole run needs, not just one board.
         required = line.quantity * boards
 
-        if not line.mpn:
+        if assignment is not None and not assigned_live:
+            status = "missing"  # assigned to a part that is no longer in use
+        elif assignment is None and not line.mpn:
             status = "no_mpn"
         elif not matched:
             status = "missing"
@@ -439,8 +547,10 @@ def build_bom_report(
         per_line = matched_stock // line.quantity if line.quantity else 0
         buildable = per_line if buildable is None else min(buildable, per_line)
 
+        # Substitutes answer "what else could go here?" — a question already
+        # answered once a component has been assigned.
         substitutes: list[dict[str, object]] = []
-        if status != "ok":
+        if status != "ok" and assignment is None:
             substitutes = _find_substitutes(
                 line,
                 stock,
@@ -451,6 +561,7 @@ def build_bom_report(
 
         report_lines.append(
             {
+                "id": line.id,  # the UI addresses a line by id to assign to it
                 "references": line.references,
                 "reference_prefix": line.reference_prefix,
                 "category": line.category,
@@ -472,6 +583,20 @@ def build_bom_report(
                     }
                     for c in matched
                 ],
+                "assigned": (
+                    {
+                        "component_id": assignment.component_id,
+                        "mpn": (
+                            assigned_component.mpn if assigned_component else None
+                        ),
+                        "package": (
+                            assigned_component.package if assigned_component else None
+                        ),
+                        "deleted": not assigned_live,
+                    }
+                    if assignment is not None
+                    else None
+                ),
                 "substitutes": substitutes,
             }
         )

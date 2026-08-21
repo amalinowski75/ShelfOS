@@ -91,6 +91,86 @@ def test_report_scales_with_the_requested_board_count(client: TestClient) -> Non
     assert zero.status_code == 422
 
 
+def _stocked_component(client: TestClient, mpn: str = "PICK-ME") -> int:
+    """A component with stock, for assigning to a BOM line."""
+    type_id = client.post("/api/types", json={"name": f"type-{mpn}"}).json()["id"]
+    component_id = client.post(
+        "/api/components", json={"type_id": type_id, "mpn": mpn}
+    ).json()["id"]
+    location_id = client.post(
+        "/api/locations", json={"type": "drawer", "name": f"D-{mpn}"}
+    ).json()["id"]
+    client.post(
+        "/api/stock/add",
+        json={"component_id": component_id, "location_id": location_id, "quantity": 25},
+    )
+    return int(component_id)
+
+
+def test_assign_and_unassign_a_component_to_a_line(client: TestClient) -> None:
+    bom_id = _upload(client).json()["id"]
+    # A line with no MPN: nothing for the report to match on by itself.
+    line = next(
+        ln
+        for ln in client.get(f"/api/boms/{bom_id}").json()["lines"]
+        if ln["mpn"] is None
+    )
+    component_id = _stocked_component(client)
+
+    resp = client.put(
+        f"/api/boms/{bom_id}/lines/{line['id']}/component",
+        json={"component_id": component_id},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["component_id"] == component_id
+
+    row = next(
+        ln
+        for ln in client.get(f"/api/boms/{bom_id}/report").json()["lines"]
+        if ln["id"] == line["id"]
+    )
+    assert row["assigned"]["component_id"] == component_id
+    assert row["stock"] == 25  # read from the assigned component
+
+    assert (
+        client.delete(
+            f"/api/boms/{bom_id}/lines/{line['id']}/component"
+        ).status_code
+        == 204
+    )
+    row = next(
+        ln
+        for ln in client.get(f"/api/boms/{bom_id}/report").json()["lines"]
+        if ln["id"] == line["id"]
+    )
+    assert row["assigned"] is None
+
+
+def test_assigning_across_boms_or_to_nothing_is_404(client: TestClient) -> None:
+    bom_id = _upload(client).json()["id"]
+    line_id = client.get(f"/api/boms/{bom_id}").json()["lines"][0]["id"]
+    component_id = _stocked_component(client, "OTHER-PICK")
+
+    # A line id that belongs to a different BOM must not be assignable through this one.
+    other_id = _upload(client, name="second").json()["id"]
+    crossed = client.put(
+        f"/api/boms/{other_id}/lines/{line_id}/component",
+        json={"component_id": component_id},
+    )
+    assert crossed.status_code == 404
+
+    missing = client.put(
+        f"/api/boms/{bom_id}/lines/999999/component",
+        json={"component_id": component_id},
+    )
+    assert missing.status_code == 404
+    # Removing an assignment that was never made says so rather than pretending.
+    assert (
+        client.delete(f"/api/boms/{bom_id}/lines/{line_id}/component").status_code
+        == 404
+    )
+
+
 def test_list_and_delete(client: TestClient) -> None:
     bom_id = _upload(client).json()["id"]
     assert bom_id in [b["id"] for b in client.get("/api/boms").json()]
@@ -137,6 +217,17 @@ def test_read_only_can_read_but_not_write(
     assert anon_client.delete(f"/api/boms/{bom_id}", headers=headers).status_code == 403
     reimport = anon_client.post(f"/api/boms/{bom_id}/reimport", headers=headers)
     assert reimport.status_code == 403
+    line_id = client.get(f"/api/boms/{bom_id}").json()["lines"][0]["id"]
+    assign = anon_client.put(
+        f"/api/boms/{bom_id}/lines/{line_id}/component",
+        json={"component_id": 1},
+        headers=headers,
+    )
+    assert assign.status_code == 403
+    unassign = anon_client.delete(
+        f"/api/boms/{bom_id}/lines/{line_id}/component", headers=headers
+    )
+    assert unassign.status_code == 403
     # ...but reading the list, the detail and the report works.
     assert anon_client.get("/api/boms", headers=headers).status_code == 200
     assert anon_client.get(f"/api/boms/{bom_id}", headers=headers).status_code == 200
