@@ -8,7 +8,7 @@ delete).
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 from sqlmodel import Session
 
 from app import config
@@ -72,12 +72,24 @@ def get_bom(
     )
 
 
+@router.post("/{bom_id}/reimport", response_model=BomRead)
+def reimport_bom(bom_id: int, session: Session = Depends(get_session)) -> Bom:
+    """Re-parse the BOM's stored CSV, replacing its lines (writers)."""
+    return svc.reimport_bom(session, bom_id)
+
+
 @router.get("/{bom_id}/report")
 def bom_report(
-    bom_id: int, session: Session = Depends(get_session)
+    bom_id: int,
+    session: Session = Depends(get_session),
+    boards: int = Query(1, ge=1, description="How many boards are being built"),
 ) -> dict[str, object]:
-    """Live availability report: stock status + substitute suggestions (§21)."""
-    return svc.build_bom_report(session, bom_id)
+    """Live availability report: stock status + substitute suggestions (§21).
+
+    ``boards`` scales what each line needs; it is a view of the same stored BOM, so
+    it is a query parameter rather than saved state.
+    """
+    return svc.build_bom_report(session, bom_id, boards=boards)
 
 
 @router.delete("/{bom_id}", status_code=status.HTTP_204_NO_CONTENT)

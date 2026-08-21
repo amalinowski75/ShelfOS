@@ -382,12 +382,29 @@ export function bomUploadFixture() {
     </form></dialog>`;
 }
 
-// The BOM report page shell (mirrors bom_report.html): the summary placeholder
-// and the Tabulator mount carrying the bom id. Lines/summary come from the feed.
+// The BOM report page shell (mirrors bom_report.html): the summary placeholder,
+// the board-count box and "Reload from CSV" control, and the Tabulator mount
+// carrying the bom id. Lines/summary come from the feed.
 export function bomReportFixture() {
   return `
+    <label class="bom-boards">Boards
+      <input type="number" id="bom-boards" min="1" step="1" value="1" />
+    </label>
+    <button type="button" id="bom-reload"></button>
+    <p id="bom-reload-status" hidden></p>
     <div id="bom-summary"><p class="muted">Loading…</p></div>
     <div id="bom-lines-table" data-bom-id="7"></div>`;
+}
+
+// The BOM list page shell (mirrors boms_list.html): the server-rendered rows with
+// their per-row Delete button, plus the upload dialog.
+export function bomListFixture() {
+  return `
+    ${bomUploadFixture()}
+    <table class="data"><tbody>
+      <tr><td>Hiduart</td>
+        <td><button data-bom-delete="7" data-bom-name="Hiduart">Delete</button></td></tr>
+    </tbody></table>`;
 }
 
 // The global "Change password" control + dialog (mirrors base.html); present on

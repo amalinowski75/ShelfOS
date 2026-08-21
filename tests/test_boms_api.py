@@ -61,6 +61,36 @@ def test_report_has_summary_and_lines(client: TestClient) -> None:
     assert len(report["lines"]) == report["summary"]["lines"]
 
 
+def test_reimport_rebuilds_the_lines_from_the_stored_csv(client: TestClient) -> None:
+    bom_id = _upload(client).json()["id"]
+    before = client.get(f"/api/boms/{bom_id}").json()["lines"]
+
+    resp = client.post(f"/api/boms/{bom_id}/reimport")
+    assert resp.status_code == 200 and resp.json()["id"] == bom_id
+
+    after = client.get(f"/api/boms/{bom_id}").json()["lines"]
+    # Same parse of the same file: the content matches, but they are fresh rows.
+    assert [ln["references"] for ln in after] == [ln["references"] for ln in before]
+    assert {ln["id"] for ln in after}.isdisjoint({ln["id"] for ln in before})
+
+
+def test_report_scales_with_the_requested_board_count(client: TestClient) -> None:
+    bom_id = _upload(client).json()["id"]
+
+    one = client.get(f"/api/boms/{bom_id}/report").json()
+    assert one["summary"]["boards"] == 1
+
+    ten = client.get(f"/api/boms/{bom_id}/report", params={"boards": 10}).json()
+    assert ten["summary"]["boards"] == 10
+    for before, after in zip(one["lines"], ten["lines"], strict=True):
+        assert after["total_quantity"] == before["quantity"] * 10
+        assert after["quantity"] == before["quantity"]  # per-board figure is kept
+
+    # A nonsensical count is rejected rather than silently treated as one board.
+    zero = client.get(f"/api/boms/{bom_id}/report", params={"boards": 0})
+    assert zero.status_code == 422
+
+
 def test_list_and_delete(client: TestClient) -> None:
     bom_id = _upload(client).json()["id"]
     assert bom_id in [b["id"] for b in client.get("/api/boms").json()]
@@ -105,6 +135,8 @@ def test_read_only_can_read_but_not_write(
 
     assert _upload(anon_client, headers=headers).status_code == 403
     assert anon_client.delete(f"/api/boms/{bom_id}", headers=headers).status_code == 403
+    reimport = anon_client.post(f"/api/boms/{bom_id}/reimport", headers=headers)
+    assert reimport.status_code == 403
     # ...but reading the list, the detail and the report works.
     assert anon_client.get("/api/boms", headers=headers).status_code == 200
     assert anon_client.get(f"/api/boms/{bom_id}", headers=headers).status_code == 200

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% set can_write = current_user.role.value != "read-only" %}
 {% block title %}BOMs — ShelfOS{% endblock %}
 
 {% block content %}
@@ -7,7 +8,7 @@
     <h1>BOMs</h1>
     <p>Check a KiCad BOM against your inventory — what's in stock, what's missing (§21).</p>
   </div>
-  {% if current_user.role.value != "read-only" %}
+  {% if can_write %}
   <div class="head-actions">
     <button type="button" class="btn btn-secondary" id="bom-upload-btn">Import BOM</button>
   </div>
@@ -19,7 +20,8 @@
   <div class="table-wrap">
     <table class="data">
       <thead>
-        <tr><th>Name</th><th>File</th><th>Imported</th></tr>
+        <tr><th>Name</th><th>File</th><th>Imported</th>
+          {% if can_write %}<th></th>{% endif %}</tr>
       </thead>
       <tbody>
         {% for bom in boms %}
@@ -27,6 +29,12 @@
           <td><a href="/boms/{{ bom.id }}">{{ bom.name }}</a></td>
           <td class="mono">{{ bom.source_filename or "—" }}</td>
           <td class="mono">{{ bom.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+          {% if can_write %}
+          <td class="line-actions">
+            <button type="button" class="btn btn-danger btn-sm" data-bom-delete="{{ bom.id }}"
+                    data-bom-name="{{ bom.name }}">Delete</button>
+          </td>
+          {% endif %}
         </tr>
         {% endfor %}
       </tbody>
@@ -35,12 +43,12 @@
 </div>
 {% else %}
 <div class="card card-pad">
-  <p class="empty">No BOMs imported yet.{% if current_user.role.value != "read-only" %}
+  <p class="empty">No BOMs imported yet.{% if can_write %}
     Use “Import BOM” to upload a KiCad CSV export.{% endif %}</p>
 </div>
 {% endif %}
 
-{% if current_user.role.value != "read-only" %}
+{% if can_write %}
 <dialog id="bom-upload-dialog">
   <article>
     <header>

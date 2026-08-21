@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { loadPage, tick, CSRF, bomUploadFixture } from "./harness.js";
+import { loadPage, tick, CSRF, bomUploadFixture, bomListFixture } from "./harness.js";
 
 const SCRIPTS = ["shared.js", "boms.js"];
 
@@ -66,5 +66,44 @@ describe("boms.js — import", () => {
     const error = document.getElementById("bom-upload-error");
     expect(error.hidden).toBe(false);
     expect(error.textContent).toBe("Could not reach the server.");
+  });
+});
+
+describe("boms.js — delete", () => {
+  const deleteBtn = (document) => document.querySelector("[data-bom-delete]");
+
+  it("confirms, then DELETEs the BOM with the CSRF token", async () => {
+    const { window, document, fetchMock } = loadPage(bomListFixture(), SCRIPTS);
+    deleteBtn(document).click();
+    await tick();
+
+    expect(window.confirm).toHaveBeenCalled();
+    const [url, opts] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/boms/7");
+    expect(opts.method).toBe("DELETE");
+    expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
+  });
+
+  it("names the BOM in the confirmation — a delete takes the CSV with it", () => {
+    const { window, document } = loadPage(bomListFixture(), SCRIPTS);
+    deleteBtn(document).click();
+    expect(window.confirm.mock.calls[0][0]).toContain("Hiduart");
+  });
+
+  it("sends nothing when the confirmation is declined", async () => {
+    const { window, document, fetchMock } = loadPage(bomListFixture(), SCRIPTS);
+    window.confirm = () => false;
+    deleteBtn(document).click();
+    await tick();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a refusal instead of reloading", async () => {
+    const fetchImpl = () =>
+      Promise.resolve({ ok: false, json: async () => ({ detail: "nope" }) });
+    const { window, document } = loadPage(bomListFixture(), SCRIPTS, { fetchImpl });
+    deleteBtn(document).click();
+    await tick();
+    expect(window.alert).toHaveBeenCalledWith("nope");
   });
 });

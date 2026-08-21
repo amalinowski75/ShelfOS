@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% set can_write = current_user.role.value != "read-only" %}
 {% block title %}{{ bom.name }} — BOM — ShelfOS{% endblock %}
 
 {% block content %}
@@ -9,12 +10,25 @@
     <h1>{{ bom.name }}</h1>
     <p>Imported {{ bom.created_at.strftime("%Y-%m-%d %H:%M") }}</p>
   </div>
-  {% if csv_attachment %}
   <div class="head-actions">
+    {# How many copies of this board are being built: scales what every line needs.
+       A view of the same BOM, so it lives in the URL/browser, not the database. #}
+    <label class="bom-boards">Boards
+      <input class="control" type="number" id="bom-boards" min="1" step="1" value="1"
+             aria-label="Number of boards to build" />
+    </label>
+    {% if csv_attachment %}
+    {% if can_write %}
+    {# Re-runs the import-time parse over the stored CSV; stock matching is already
+       live, so this is only for the parsed fields. #}
+    <button type="button" class="btn btn-secondary btn-sm" id="bom-reload">Reload from CSV</button>
+    {% endif %}
     <a class="btn btn-ghost btn-sm" href="/api/attachments/{{ csv_attachment.id }}/download">Download CSV</a>
+    {% endif %}
   </div>
-  {% endif %}
 </div>
+
+<p id="bom-reload-status" class="muted" hidden></p>
 
 <div id="bom-summary" class="card card-pad bom-summary">
   <p class="muted">Loading…</p>
@@ -24,7 +38,7 @@
   <div id="bom-lines-table" data-bom-id="{{ bom.id }}"></div>
 </div>
 
-{% if current_user.role.value != "read-only" %}
+{% if can_write %}
 {# "Add to inventory" on a missing line opens this shared dialog, pre-filled. #}
 {% include "_component_dialog.html" %}
 {% endif %}

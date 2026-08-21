@@ -212,6 +212,47 @@ def create_bom(
     return bom
 
 
+def reimport_bom(session: Session, bom_id: int) -> Bom:
+    """Re-parse the BOM's stored CSV, replacing its lines.
+
+    Lines freeze what the parser made of the CSV (category, prefix, value, MPN,
+    quantity); stock matching is live, so only these frozen fields go stale — when
+    the parser or its rules improve, or the header mapping was read differently.
+    Re-runs exactly the import-time computation (``parse_bom``) over the original
+    file, which is why no upload is needed.
+
+    Parses BEFORE deleting anything, so an unreadable CSV leaves the existing lines
+    untouched rather than emptying the BOM.
+    """
+    bom = get_bom(session, bom_id)
+    attachments = attachment_service.list_attachments(
+        session, entity_type="bom", entity_id=bom_id
+    )
+    # Pick the BOM's OWN file by name, not whatever is attached first: the
+    # attachments API accepts (and can delete) bom attachments, and rebuilding the
+    # lines from some other file would replace them from a source that was never
+    # this BOM — a successful parse can't tell that apart from the real thing.
+    stored = next(
+        (a for a in attachments if a.filename == bom.source_filename), None
+    )
+    if stored is None:
+        raise ValidationError("the original CSV is no longer stored for this BOM")
+    path = attachment_service.stored_file_path(stored)
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise ValidationError("the stored CSV could not be read") from exc
+
+    parsed = parse_bom(data, filename=bom.source_filename or "bom.csv")
+    for line in get_bom_lines(session, bom_id):
+        session.delete(line)
+    for line_data in parsed:
+        session.add(BomLine(bom_id=bom_id, **vars(line_data)))
+    session.commit()
+    session.refresh(bom)
+    return bom
+
+
 def list_boms(session: Session) -> list[Bom]:
     """Return saved BOMs, newest first."""
     return list(session.exec(select(Bom).order_by(col(Bom.id).desc())).all())
@@ -344,13 +385,22 @@ def _short_footprint(value: str | None) -> str | None:
     return value.split(":", 1)[1] if ":" in value else value
 
 
-def build_bom_report(session: Session, bom_id: int) -> dict[str, object]:
+def build_bom_report(
+    session: Session, bom_id: int, *, boards: int = 1
+) -> dict[str, object]:
     """Live availability report for a BOM against current stock (§21).
+
+    ``boards`` is how many copies of the board are being built: it scales what each
+    line *needs* (``total_quantity``), and hence its status, but not what stock can
+    *cover* — ``boards_possible`` (per line) and ``summary.buildable`` (its minimum)
+    stay measured in whole boards, so they answer "how many boards will these parts
+    make?" whatever number was asked for.
 
     ``summary.buildable`` counts whole boards from **exact MPN matches** only, so a
     line with no MPN (common while designing) or one missing from inventory caps it
     at 0 — substitutes are surfaced per line but not counted toward buildability.
     """
+    boards = max(1, boards)
     bom = get_bom(session, bom_id)
     lines = get_bom_lines(session, bom_id)
     stock = ss.total_quantities_by_component(session)
@@ -366,12 +416,14 @@ def build_bom_report(session: Session, bom_id: int) -> dict[str, object]:
     for line in lines:
         matched = cs.find_components_by_mpn(session, line.mpn) if line.mpn else []
         matched_stock = sum(stock.get(cast(int, c.id), 0) for c in matched)
+        # What the whole run needs, not just one board.
+        required = line.quantity * boards
 
         if not line.mpn:
             status = "no_mpn"
         elif not matched:
             status = "missing"
-        elif matched_stock >= line.quantity:
+        elif matched_stock >= required:
             status = "ok"
         elif matched_stock > 0:
             status = "short"
@@ -379,9 +431,11 @@ def build_bom_report(session: Session, bom_id: int) -> dict[str, object]:
             status = "out"
         counts[status] += 1
 
-        # "Buildable boards" = the limiting line across the WHOLE BOM: a line with
-        # no matched stock (missing / no MPN) caps it at 0, so the number reflects
-        # true buildability, not just the resolved lines.
+        # Whole boards this line's stock covers — measured per BOARD, so it stays
+        # the honest "these parts are enough for N boards" answer even when the run
+        # asked for more. "Buildable boards" is then the limiting line across the
+        # WHOLE BOM: a line with no matched stock (missing / no MPN) caps it at 0,
+        # so the number reflects true buildability, not just the resolved lines.
         per_line = matched_stock // line.quantity if line.quantity else 0
         buildable = per_line if buildable is None else min(buildable, per_line)
 
@@ -404,7 +458,9 @@ def build_bom_report(session: Session, bom_id: int) -> dict[str, object]:
                 "footprint": _short_footprint(line.footprint),
                 "mpn": line.mpn,
                 "manufacturer": line.manufacturer,
-                "quantity": line.quantity,
+                "quantity": line.quantity,  # per board
+                "total_quantity": required,  # for the whole run
+                "boards_possible": per_line,  # what the stock on hand covers
                 "status": status,
                 "stock": matched_stock,
                 "matched": [
@@ -427,6 +483,11 @@ def build_bom_report(session: Session, bom_id: int) -> dict[str, object]:
             "created_at": bom.created_at.isoformat(),
             "line_count": len(lines),
         },
-        "summary": {"lines": len(lines), **counts, "buildable": buildable},
+        "summary": {
+            "lines": len(lines),
+            **counts,
+            "buildable": buildable,
+            "boards": boards,  # echoed so the UI can say "N of M requested"
+        },
         "lines": report_lines,
     }

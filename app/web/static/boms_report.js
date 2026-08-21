@@ -20,7 +20,18 @@ const BOM_STATUS = {
 
 function bomStatusFormatter(cell) {
   const [cls, label] = BOM_STATUS[cell.getValue()] || ["b-neutral", cell.getValue()];
-  return `<span class="badge ${cls}"><span class="dot"></span>${esc(label)}</span>`;
+  const badge = `<span class="badge ${cls}"><span class="dot"></span>${esc(label)}</span>`;
+  // "Short" is the one status where the count can carry news: there IS stock, just
+  // not enough for the run — so answer the next question, "how many boards WILL
+  // these make?". Only when that's a real number, though: at one board (the default
+  // view) short means the stock doesn't even cover a single one, so the count is
+  // always 0 — which says nothing the badge didn't, and worse, reads like a stock
+  // figure. Out/missing are zero by definition and no-MPN was never matched.
+  const boards = Number(cell.getRow().getData().boards_possible) || 0;
+  if (cell.getValue() === "short" && boards > 0) {
+    return `${badge} <span class="muted">enough for ${boards}</span>`;
+  }
+  return badge;
 }
 
 // A line has no matched stock unless it has an MPN; mirror the old template's "—".
@@ -75,8 +86,12 @@ function renderBomSummary(summary) {
   const el = document.getElementById("bom-summary");
   if (!el) return;
   const n = (v) => Number(v) || 0;
+  // Buildable is what the stock covers; when a longer run was asked for, say so —
+  // "3 of 10" is the answer to the question the Boards box just posed.
+  const boards = n(summary.boards) || 1;
+  const of = boards > 1 ? ` of ${boards} requested` : "";
   el.innerHTML =
-    `<p><strong>${n(summary.buildable)}</strong> buildable board(s) from exact MPN matches — ` +
+    `<p><strong>${n(summary.buildable)}</strong> buildable board(s)${of} from exact MPN matches — ` +
     `${n(summary.ok)} in&nbsp;stock · ${n(summary.short)} short · ` +
     `${n(summary.out)} out · ${n(summary.missing)} not&nbsp;in&nbsp;inventory · ` +
     `${n(summary.no_mpn)} without&nbsp;MPN</p>`;
@@ -109,7 +124,22 @@ function bomReportColumns() {
       cssClass: "cell-mono",
       ...bomTextFilter("Footprint"),
     },
-    { title: "Qty", field: "quantity", width: 80, hozAlign: "right", sorter: "number" },
+    // Two figures: what one board takes, and what the whole run takes. "Total"
+    // tracks the Boards control; with one board the two columns agree.
+    {
+      title: "Qty/board",
+      field: "quantity",
+      width: 125, // fits the header next to its sort arrow
+      hozAlign: "right",
+      sorter: "number",
+    },
+    {
+      title: "Total",
+      field: "total_quantity",
+      width: 90,
+      hozAlign: "right",
+      sorter: "number",
+    },
     {
       title: "MPN",
       field: "mpn",
@@ -151,10 +181,38 @@ function bomReportColumns() {
   ];
 }
 
+// How many boards the report is for. Kept per BOM in localStorage rather than in
+// the database: it's a view of the same stored BOM, and the number you're building
+// today shouldn't rewrite shared state.
+const BOM_BOARDS_KEY = (bomId) => `shelfos:bom-boards:${bomId}`;
+
+function bomBoardsValue(bomId) {
+  const input = document.getElementById("bom-boards");
+  const raw = input ? Number(input.value) : Number(bomBoardsStored(bomId));
+  return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 1;
+}
+
+function bomBoardsStored(bomId) {
+  try {
+    return Number(localStorage.getItem(BOM_BOARDS_KEY(bomId))) || 1;
+  } catch {
+    return 1; // private mode: just build one board
+  }
+}
+
+function bomBoardsRemember(bomId, boards) {
+  try {
+    localStorage.setItem(BOM_BOARDS_KEY(bomId), String(boards));
+  } catch {
+    /* not worth breaking the page over */
+  }
+}
+
 async function loadReport(table, bomId) {
   let report;
+  const boards = bomBoardsValue(bomId);
   try {
-    const resp = await fetch(`/api/boms/${bomId}/report`);
+    const resp = await fetch(`/api/boms/${bomId}/report?boards=${boards}`);
     if (!resp.ok) throw new Error();
     report = await resp.json();
   } catch {
@@ -247,6 +305,59 @@ if (bomTableEl) {
         },
       }),
     );
+  }
+
+  // Boards: restore the remembered count before the first load, then reload the
+  // report on every change (the multiplier is applied server-side).
+  const boardsInput = document.getElementById("bom-boards");
+  if (boardsInput) {
+    boardsInput.value = String(bomBoardsStored(bomId));
+    boardsInput.addEventListener("change", () => {
+      const boards = bomBoardsValue(bomId);
+      boardsInput.value = String(boards); // snap 0/blank/2.5 back to a real count
+      bomBoardsRemember(bomId, boards);
+      loadReport(table, bomId);
+    });
+  }
+
+  // "Reload from CSV": re-run the import-time parse over the stored file, then
+  // re-read the report. Stock matching is already live, so only the parsed fields
+  // change — which is why this says what it did rather than looking like a no-op.
+  const reloadBtn = document.getElementById("bom-reload");
+  const reloadStatus = document.getElementById("bom-reload-status");
+  if (reloadBtn) {
+    let reloading = false;
+    reloadBtn.addEventListener("click", () => {
+      if (reloading) return;
+      reloading = true;
+      reloadBtn.disabled = true;
+      const say = (text, isError) => {
+        if (!reloadStatus) return;
+        reloadStatus.textContent = text;
+        reloadStatus.className = isError ? "error" : "muted";
+        reloadStatus.hidden = false;
+      };
+      say("Re-reading the stored CSV…");
+      (async () => {
+        try {
+          const resp = await fetch(`/api/boms/${bomId}/reimport`, {
+            method: "POST",
+            headers: { "X-CSRF-Token": csrfToken },
+          });
+          if (resp.ok) {
+            await loadReport(table, bomId);
+            say("Lines rebuilt from the stored CSV.");
+          } else {
+            say(await errorMessage(resp), true);
+          }
+        } catch {
+          say("Could not reach the server.", true);
+        } finally {
+          reloading = false;
+          reloadBtn.disabled = false;
+        }
+      })();
+    });
   }
 
   table.on("tableBuilt", () => loadReport(table, bomId));
