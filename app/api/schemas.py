@@ -614,6 +614,16 @@ class BomAssignmentWrite(BaseModel):
     component_id: int
 
 
+class BomOrderedWrite(BaseModel):
+    """Whether this BOM line's parts have been ordered."""
+
+    ordered: bool
+
+
+class BomOrderedRead(BaseModel):
+    ordered: bool
+
+
 class BomAssignmentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

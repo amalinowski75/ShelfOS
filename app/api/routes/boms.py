@@ -18,6 +18,8 @@ from app.api.schemas import (
     BomAssignmentWrite,
     BomDetailRead,
     BomLineRead,
+    BomOrderedRead,
+    BomOrderedWrite,
     BomRead,
 )
 from app.auth.deps import current_user_id
@@ -124,6 +126,21 @@ def assign_line_component(
         component_id=payload.component_id,
         user_id=user_id,
     )
+
+
+@router.put("/{bom_id}/lines/{line_id}/ordered", response_model=BomOrderedRead)
+def set_line_ordered(
+    bom_id: int,
+    line_id: int,
+    payload: BomOrderedWrite,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> BomOrderedRead:
+    """Tick or clear "the parts for this line have been ordered" (writers)."""
+    ordered = svc.set_line_ordered(
+        session, bom_id, line_id, ordered=payload.ordered, user_id=user_id
+    )
+    return BomOrderedRead(ordered=ordered)
 
 
 @router.delete(

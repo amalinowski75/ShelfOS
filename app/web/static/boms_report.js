@@ -198,6 +198,33 @@ function bomReportColumns() {
       formatter: bomStockFormatter,
     },
     {
+      // Next to Status: together they read as "where this line stands" — what the
+      // shelf says, and what has been done about it.
+      title: "Ordered",
+      field: "ordered",
+      width: 100,
+      hozAlign: "center",
+      // Marks the whole cell, not just the box: the row-click guard uses it, so a
+      // click that lands beside the checkbox doesn't navigate away from the report.
+      cssClass: "bom-ordered-cell",
+      formatter: bomOrderedFormatter,
+      headerFilter: "tickCross",
+      headerFilterParams: { tristate: true },
+      headerFilterEmptyCheck: (value) => value === null,
+      cellClick: (e, cell) => {
+        if (e.target.dataset.act !== "ordered") return;
+        // The box has already flipped itself; persist what it now shows, and hold
+        // the row's data in step so a later redraw doesn't undo it.
+        const ordered = e.target.checked;
+        const row = cell.getRow().getData();
+        bomSetOrdered(bomTableEl.dataset.bomId, row.id, ordered, e.target).then(
+          (saved) => {
+            if (saved) cell.getRow().update({ ordered });
+          },
+        );
+      },
+    },
+    {
       title: "Substitutes",
       field: "substitutes",
       headerSort: false,
@@ -284,6 +311,51 @@ function bomActionButtons(row) {
   return `<div class="bom-row-actions">${buttons.join("")}</div>`;
 }
 
+// "Ordered" is a note the user keeps, not something the report can work out, so it
+// is the one editable cell here. Read-only accounts see the state without a control
+// they can't use (the endpoint is writer-gated anyway).
+function bomOrderedFormatter(cell) {
+  const on = cell.getValue() ? " checked" : "";
+  if (!canWrite) return cell.getValue() ? "✓" : '<span class="muted">—</span>';
+  return (
+    `<input type="checkbox" data-act="ordered"${on}` +
+    ` aria-label="Ordered — ${esc(cell.getRow().getData().references || "")}">`
+  );
+}
+
+// Lines with a tick in flight. Two fast clicks on one box would otherwise send two
+// PUTs, and since the row's data is updated per resolution, what is STORED (the
+// last to land) and what is SHOWN (the last to resolve) could disagree. Every other
+// write on this page guards; this one should too.
+const bomOrderedInFlight = new Set();
+
+async function bomSetOrdered(bomId, lineId, ordered, checkbox) {
+  if (bomOrderedInFlight.has(lineId)) {
+    if (checkbox) checkbox.checked = !ordered; // undo the click we're dropping
+    return false;
+  }
+  bomOrderedInFlight.add(lineId);
+  try {
+    const resp = await fetch(`/api/boms/${bomId}/lines/${lineId}/ordered`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+      body: JSON.stringify({ ordered }),
+    });
+    if (resp.ok) return true;
+    alert(await errorMessage(resp));
+  } catch {
+    alert("Could not reach the server.");
+  } finally {
+    // Released on EVERY path, success included — a lock left set would make the
+    // box dead for the rest of the visit.
+    bomOrderedInFlight.delete(lineId);
+  }
+  // Put the box back the way the server still has it, rather than leaving the tick
+  // showing a state that was never stored.
+  if (checkbox) checkbox.checked = !ordered;
+  return false;
+}
+
 async function bomUnassign(bomId, lineId, onDone) {
   try {
     const resp = await fetch(`/api/boms/${bomId}/lines/${lineId}/component`, {
@@ -341,9 +413,12 @@ if (bomTableEl) {
   });
 
   // Clicking a matched line opens its component detail page. Ignore clicks on the
-  // substitute links and the "Add to inventory" button so those still act.
+  // controls inside it — substitute links, the row's buttons, and the Ordered
+  // checkbox — so ticking a box doesn't navigate away from the report. The whole
+  // Ordered CELL is excluded, not just the box: that cell exists to host a control,
+  // so missing it by a pixel should cost nothing, never the page.
   table.on("rowClick", (e, row) => {
-    if (e.target.closest("a, button")) return;
+    if (e.target.closest("a, button, input, .bom-ordered-cell")) return;
     const url = bomRowTarget(row.getData());
     if (url) window.location = url;
   });

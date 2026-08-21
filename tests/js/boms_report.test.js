@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { loadPage, CSRF, bomReportFixture } from "./harness.js";
+import { loadPage, tick, CSRF, bomReportFixture } from "./harness.js";
 
 const SCRIPTS = ["shared.js", "boms_report.js"];
 
@@ -272,6 +272,153 @@ describe("boms_report.js — assigned component", () => {
     await window.bomUnassign("7", 42, onDone);
     expect(window.alert).toHaveBeenCalledWith("nope");
     expect(onDone).not.toHaveBeenCalled();
+  });
+});
+
+describe("boms_report.js — ordered", () => {
+  const orderedColumn = (window) =>
+    window.bomReportColumns().find((c) => c.field === "ordered");
+
+  it("offers the tick as a real checkbox to a writer", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const on = window.bomOrderedFormatter(fakeCell(true, { references: "R1" }));
+    expect(on).toContain("checkbox");
+    expect(on).toContain("checked");
+    const off = window.bomOrderedFormatter(fakeCell(false, { references: "R1" }));
+    expect(off).toContain("checkbox");
+    expect(off).not.toContain("checked");
+    // Named after its line, so a column of identical boxes is distinguishable.
+    expect(on).toContain('aria-label="Ordered — R1"');
+  });
+
+  it("shows a read-only account the state without a control it cannot use", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS, { role: "read-only" });
+    expect(window.bomOrderedFormatter(fakeCell(true, {}))).not.toContain("checkbox");
+    expect(window.bomOrderedFormatter(fakeCell(true, {}))).toContain("✓");
+    expect(window.bomOrderedFormatter(fakeCell(false, {}))).toContain("—");
+  });
+
+  it("escapes the designators it names the checkbox after", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const html = window.bomOrderedFormatter(
+      fakeCell(false, { references: '"><img src=x>' }),
+    );
+    expect(html).not.toContain("<img src=x>");
+  });
+
+  it("PUTs the new state for that line", async () => {
+    const { window, fetchMock } = loadPage(bomReportFixture(), SCRIPTS);
+    const saved = await window.bomSetOrdered("7", 42, true, null);
+
+    const [url, opts] = fetchMock.mock.calls.at(-1);
+    expect(url).toBe("/api/boms/7/lines/42/ordered");
+    expect(opts.method).toBe("PUT");
+    expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
+    expect(JSON.parse(opts.body)).toEqual({ ordered: true });
+    expect(saved).toBe(true);
+  });
+
+  it("puts the box back when the server refuses", async () => {
+    // Otherwise the tick shows a state that was never stored.
+    const fetchImpl = () =>
+      Promise.resolve({ ok: false, json: async () => ({ detail: "nope" }) });
+    const { window } = loadPage(bomReportFixture(), SCRIPTS, { fetchImpl });
+    const box = window.document.createElement("input");
+    box.type = "checkbox";
+    box.checked = true; // the user just ticked it
+
+    const saved = await window.bomSetOrdered("7", 42, true, box);
+    expect(saved).toBe(false);
+    expect(box.checked).toBe(false); // reverted
+    expect(window.alert).toHaveBeenCalledWith("nope");
+  });
+
+  it("ticking the box does not navigate to the component page", () => {
+    // The row click opens the matched component; a checkbox is neither a link nor
+    // a button, so without the guard ticking one would leave the report. jsdom
+    // doesn't navigate, so assert on the lookup the handler makes on its way there
+    // — that IS the branch, and it's observable.
+    const { window, document } = loadPage(bomReportFixture(), SCRIPTS);
+    const row = { getData: () => ({ matched: [{ component_id: 8 }] }) };
+    const target = window.bomRowTarget;
+    const spy = vi.fn(target);
+    window.bomRowTarget = spy;
+    try {
+      const input = document.createElement("input");
+      window.Tabulator.handlers.rowClick({ target: input }, row);
+      expect(spy).not.toHaveBeenCalled(); // guarded: the click was the checkbox's
+
+      window.Tabulator.handlers.rowClick({ target: document.createElement("td") }, row);
+      expect(spy).toHaveBeenCalled(); // …and an ordinary cell still navigates
+    } finally {
+      window.bomRowTarget = target;
+    }
+  });
+
+  it("does not navigate when the click lands beside the box, inside its cell", () => {
+    // Guarding the checkbox alone leaves the rest of the cell live: a near-miss
+    // would open the component page, which is the annoyance this column removes.
+    const { window, document } = loadPage(bomReportFixture(), SCRIPTS);
+    const row = { getData: () => ({ matched: [{ component_id: 8 }] }) };
+    const target = window.bomRowTarget;
+    const spy = vi.fn(target);
+    window.bomRowTarget = spy;
+    try {
+      const cell = document.createElement("div");
+      cell.className = "tabulator-cell bom-ordered-cell"; // the cell, not the input
+      window.Tabulator.handlers.rowClick({ target: cell }, row);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      window.bomRowTarget = target;
+    }
+  });
+
+  it("keeps the row's data in step after a tick, so a redraw can't undo it", async () => {
+    const { window, document } = loadPage(bomReportFixture(), SCRIPTS);
+    const update = vi.fn();
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.dataset.act = "ordered";
+    box.checked = true; // the browser flipped it before the handler ran
+    const cell = { getRow: () => ({ getData: () => ({ id: 42 }), update }) };
+
+    orderedColumn(window).cellClick({ target: box }, cell);
+    await tick();
+    expect(update).toHaveBeenCalledWith({ ordered: true });
+  });
+
+  it("drops a second click while the first is still in flight", async () => {
+    // Two PUTs would race: what is stored is the last to land, what is shown is the
+    // last to resolve, and those need not agree.
+    let release;
+    const held = new Promise((resolve) => (release = resolve));
+    const fetchImpl = () => held.then(() => ({ ok: true, json: async () => ({}) }));
+    const { window, document, fetchMock } = loadPage(bomReportFixture(), SCRIPTS, {
+      fetchImpl,
+    });
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = true;
+
+    const first = window.bomSetOrdered("7", 42, true, box);
+    const second = await window.bomSetOrdered("7", 42, false, box);
+    expect(second).toBe(false);
+    expect(fetchMock.mock.calls.length).toBe(1); // the second click sent nothing
+
+    release();
+    expect(await first).toBe(true);
+    // …and the lock is released, so the box still works afterwards.
+    await window.bomSetOrdered("7", 42, false, box);
+    expect(fetchMock.mock.calls.length).toBe(2);
+  });
+
+  it("filters the column by ticked / unticked", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const column = orderedColumn(window);
+    expect(column.headerFilter).toBe("tickCross");
+    // Tristate: the third state means "don't filter", not "unticked".
+    expect(column.headerFilterEmptyCheck(null)).toBe(true);
+    expect(column.headerFilterEmptyCheck(false)).toBe(false);
   });
 });
 
