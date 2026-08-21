@@ -68,3 +68,29 @@ class BomLineAssignment(SQLModel, table=True):
     component_id: int = Field(foreign_key="components.id")
     created_by: int = Field(foreign_key="users.id")
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class BomLineOrdered(SQLModel, table=True):
+    """"The parts for this line have been ordered" — a stored human decision.
+
+    A row IS the flag: present means ordered, absent means not. That keeps the
+    truth in one place (no row that says ``False``) and records who ticked it and
+    when for free.
+
+    A separate table rather than a column on ``BomLine`` for two reasons. The
+    schema has no migrations — ``create_all`` adds a missing TABLE to an existing
+    database but never a missing COLUMN — so a new table reaches production on a
+    restart while a new column would not. And lines are deleted and recreated by a
+    re-import, so anything kept on them would not survive "Reload from CSV";
+    keying by ``references`` (the designator group) does, exactly as
+    :class:`BomLineAssignment` does.
+    """
+
+    __tablename__ = "bom_line_ordered"
+    __table_args__ = (UniqueConstraint("bom_id", "references"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    bom_id: int = Field(foreign_key="boms.id", index=True)
+    references: str
+    marked_by: int = Field(foreign_key="users.id")
+    marked_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

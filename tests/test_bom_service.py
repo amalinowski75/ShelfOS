@@ -589,6 +589,104 @@ def test_deleting_a_bom_takes_its_assignments(
     assert remaining == []
 
 
+# --- "ordered" ---------------------------------------------------------------
+
+
+def test_ordered_is_off_until_it_is_ticked_and_can_be_cleared(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    bom, line, other, resistor = _assignable(session)
+    assert bs.build_bom_report(session, bom.id)["lines"][0]["ordered"] is False
+
+    bs.set_line_ordered(session, bom.id, line.id, ordered=True, user_id=1)
+    assert bs.build_bom_report(session, bom.id)["lines"][0]["ordered"] is True
+
+    bs.set_line_ordered(session, bom.id, line.id, ordered=False, user_id=1)
+    assert bs.build_bom_report(session, bom.id)["lines"][0]["ordered"] is False
+
+
+def test_ticking_twice_is_not_an_error_and_leaves_one_row(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """Idempotent both ways: the caller asks for a state, not for a transition."""
+    bom, line, other, resistor = _assignable(session)
+    bs.set_line_ordered(session, bom.id, line.id, ordered=True, user_id=1)
+    bs.set_line_ordered(session, bom.id, line.id, ordered=True, user_id=1)
+    assert len(bs.list_ordered(session, bom.id)) == 1
+
+    bs.set_line_ordered(session, bom.id, line.id, ordered=False, user_id=1)
+    bs.set_line_ordered(session, bom.id, line.id, ordered=False, user_id=1)
+    assert bs.list_ordered(session, bom.id) == []
+
+
+def test_ordered_says_nothing_about_stock(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """Parts on order are not parts on the shelf — the line stays short."""
+    resistor = _inventory(session)
+    resistor("RES-1K", 1000, 3)  # 3 in stock against the 10 the line needs
+    data = b"Reference,Qty,Value,MPN\nR1,10,1k,RES-1K\n"
+    bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+    line = bs.get_bom_lines(session, bom.id)[0]
+
+    bs.set_line_ordered(session, bom.id, line.id, ordered=True, user_id=1)
+
+    report = bs.build_bom_report(session, bom.id)
+    assert report["lines"][0]["ordered"] is True
+    assert report["lines"][0]["status"] == "short"  # unchanged by the tick
+    assert report["summary"]["buildable"] == 0
+
+
+def test_ordered_survives_a_reimport_but_not_a_change_of_designators(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    from app.services import attachment_service as ats
+
+    bom, line, other, resistor = _assignable(session)
+    bs.set_line_ordered(session, bom.id, line.id, ordered=True, user_id=1)
+
+    bs.reimport_bom(session, bom.id)  # deletes and recreates every line
+    assert bs.build_bom_report(session, bom.id)["lines"][0]["ordered"] is True
+
+    attachment = ats.list_attachments(session, entity_type="bom", entity_id=bom.id)[0]
+    ats.stored_file_path(attachment).write_bytes(
+        b"Reference,Qty,Value,MPN\nR7,10,1k,\n"  # R1 is gone
+    )
+    bs.reimport_bom(session, bom.id)
+    assert bs.list_ordered(session, bom.id) == []
+
+
+def test_deleting_a_bom_takes_its_ordered_marks(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    from app.models.bom import BomLineOrdered
+    from sqlmodel import select
+
+    bom, line, other, resistor = _assignable(session)
+    bs.set_line_ordered(session, bom.id, line.id, ordered=True, user_id=1)
+    bom_id = bom.id
+
+    bs.delete_bom(session, bom_id)
+
+    remaining = session.exec(
+        select(BomLineOrdered).where(BomLineOrdered.bom_id == bom_id)
+    ).all()
+    assert remaining == []
+
+
+def test_a_line_from_another_bom_cannot_be_ticked(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    bom, line, other, resistor = _assignable(session)
+    elsewhere = bs.create_bom(
+        session, name="other", filename="o.csv", data=_FIXTURE, user_id=1
+    )
+    with pytest.raises(NotFoundError):
+        bs.set_line_ordered(
+            session, elsewhere.id, line.id, ordered=True, user_id=1
+        )
+
+
 # --- building several boards -----------------------------------------------
 
 

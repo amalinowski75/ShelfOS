@@ -146,6 +146,26 @@ def test_assign_and_unassign_a_component_to_a_line(client: TestClient) -> None:
     assert row["assigned"] is None
 
 
+def test_marking_a_line_as_ordered_round_trips(client: TestClient) -> None:
+    bom_id = _upload(client).json()["id"]
+    line_id = client.get(f"/api/boms/{bom_id}").json()["lines"][0]["id"]
+    row = lambda: next(  # noqa: E731
+        ln
+        for ln in client.get(f"/api/boms/{bom_id}/report").json()["lines"]
+        if ln["id"] == line_id
+    )
+    assert row()["ordered"] is False
+
+    resp = client.put(
+        f"/api/boms/{bom_id}/lines/{line_id}/ordered", json={"ordered": True}
+    )
+    assert resp.status_code == 200 and resp.json()["ordered"] is True
+    assert row()["ordered"] is True
+
+    client.put(f"/api/boms/{bom_id}/lines/{line_id}/ordered", json={"ordered": False})
+    assert row()["ordered"] is False
+
+
 def test_assigning_across_boms_or_to_nothing_is_404(client: TestClient) -> None:
     bom_id = _upload(client).json()["id"]
     line_id = client.get(f"/api/boms/{bom_id}").json()["lines"][0]["id"]
@@ -228,6 +248,12 @@ def test_read_only_can_read_but_not_write(
         f"/api/boms/{bom_id}/lines/{line_id}/component", headers=headers
     )
     assert unassign.status_code == 403
+    ordered = anon_client.put(
+        f"/api/boms/{bom_id}/lines/{line_id}/ordered",
+        json={"ordered": True},
+        headers=headers,
+    )
+    assert ordered.status_code == 403
     # ...but reading the list, the detail and the report works.
     assert anon_client.get("/api/boms", headers=headers).status_code == 200
     assert anon_client.get(f"/api/boms/{bom_id}", headers=headers).status_code == 200

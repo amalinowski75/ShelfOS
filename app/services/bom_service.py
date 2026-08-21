@@ -17,7 +17,7 @@ from typing import cast
 from sqlmodel import Session, col, select
 
 from app import config
-from app.models.bom import Bom, BomLine, BomLineAssignment
+from app.models.bom import Bom, BomLine, BomLineAssignment, BomLineOrdered
 from app.models.component import (
     Component,
     ComponentParameter,
@@ -257,6 +257,9 @@ def reimport_bom(session: Session, bom_id: int) -> Bom:
     for assignment in list_assignments(session, bom_id):
         if assignment.references not in kept:
             session.delete(assignment)
+    for marked in list_ordered(session, bom_id):
+        if marked.references not in kept:
+            session.delete(marked)
     session.commit()
     session.refresh(bom)
     return bom
@@ -288,6 +291,8 @@ def delete_bom(session: Session, bom_id: int) -> None:
     link_service.delete_links_for(session, entity_type="bom", entity_id=bom_id)
     for assignment in list_assignments(session, bom_id):
         session.delete(assignment)
+    for marked in list_ordered(session, bom_id):
+        session.delete(marked)
     for line in get_bom_lines(session, bom_id):
         session.delete(line)
     session.delete(bom)
@@ -356,6 +361,45 @@ def assign_component(
     session.commit()
     session.refresh(assignment)
     return assignment
+
+
+def list_ordered(session: Session, bom_id: int) -> list[BomLineOrdered]:
+    """The lines on this BOM whose parts have been marked as ordered."""
+    return list(
+        session.exec(
+            select(BomLineOrdered)
+            .where(BomLineOrdered.bom_id == bom_id)
+            .order_by(col(BomLineOrdered.id))
+        ).all()
+    )
+
+
+def set_line_ordered(
+    session: Session, bom_id: int, line_id: int, *, ordered: bool, user_id: int
+) -> bool:
+    """Mark this line's parts as ordered, or clear the mark. Returns the new state.
+
+    Idempotent in both directions: ticking a line that is already ticked is not an
+    error, it is the state the caller asked for.
+    """
+    line = _require_line(session, bom_id, line_id)
+    existing = session.exec(
+        select(BomLineOrdered)
+        .where(BomLineOrdered.bom_id == bom_id)
+        .where(BomLineOrdered.references == line.references)
+    ).first()
+
+    if ordered and existing is None:
+        session.add(
+            BomLineOrdered(
+                bom_id=bom_id, references=line.references, marked_by=user_id
+            )
+        )
+        session.commit()
+    elif not ordered and existing is not None:
+        session.delete(existing)
+        session.commit()
+    return ordered
 
 
 def unassign_component(session: Session, bom_id: int, line_id: int) -> None:
@@ -506,6 +550,7 @@ def build_bom_report(
     stock = ss.total_quantities_by_component(session)
     assignments = list_assignments(session, bom_id)
     assigned_by_refs = {a.references: a for a in assignments}
+    ordered_refs = {marked.references for marked in list_ordered(session, bom_id)}
     # Resolve the assigned components in one query, like the stock totals and the
     # value definitions below — not one `session.get` per line.
     assigned_components = {
@@ -593,6 +638,9 @@ def build_bom_report(
                 "total_quantity": required,  # for the whole run
                 "boards_possible": per_line,  # what the stock on hand covers
                 "status": status,
+                # A note that something has been done about this line, not a claim
+                # about stock: an ordered line stays short until the parts land.
+                "ordered": line.references in ordered_refs,
                 "stock": matched_stock,
                 "matched": [
                     {
