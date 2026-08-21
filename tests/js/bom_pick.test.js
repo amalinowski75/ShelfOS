@@ -137,6 +137,20 @@ describe("bom_pick.js — opening the picker", () => {
     expect(html).toContain('target="_blank"');
   });
 
+  it("opens with the header filters cleared, not silently still applied", async () => {
+    // The table is reused across opens and Tabulator keeps its filter VALUES while
+    // replacing the columns draws the boxes empty — so the next component opened on
+    // a list narrowed by a filter with nothing on screen to explain it.
+    const page = loadPage(bomPickFixture(), SCRIPTS, { fetchImpl: feedFetch });
+    await open(page);
+    await tick();
+
+    page.window.Tabulator.filters = [{ field: "package", type: "like", value: "0402" }];
+    await open(page, { ...LINE, id: 43 }); // the next line, as a fresh open
+    await tick();
+    expect(page.window.Tabulator.filters).toEqual([]);
+  });
+
   it("reloads the inventory when the type is changed", async () => {
     const page = loadPage(bomPickFixture(), SCRIPTS, { fetchImpl: feedFetch });
     await open(page);
