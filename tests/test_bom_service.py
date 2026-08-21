@@ -434,6 +434,47 @@ def test_assignment_overrides_even_a_line_that_already_matches(
     assert report["mpn"] == "RES-1K"  # the CSV's own MPN is left alone
 
 
+def test_an_assigned_line_stops_being_offered_substitutes(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """Substitutes answer "what else could go here?" — already answered by hand."""
+    resistor = _inventory(session)
+    resistor("RES-1K", 1000, 0)  # the 1k the line wants, but out of stock
+    resistor("RES-1K1", 1050, 30)  # a near-value alternative that IS stocked
+    alt = cs.find_components_by_mpn(session, "RES-1K1")[0]
+    data = b"Reference,Qty,Value,MPN\nR1,10,1k,\n"
+    bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+    line = bs.get_bom_lines(session, bom.id)[0]
+    assert bs.build_bom_report(session, bom.id)["lines"][0]["substitutes"]  # offered
+
+    bs.assign_component(session, bom.id, line.id, component_id=alt.id, user_id=1)
+    assert bs.build_bom_report(session, bom.id)["lines"][0]["substitutes"] == []
+
+
+def test_substitutes_stay_suppressed_when_the_assigned_part_is_retired(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """The line reports `missing`, but the choice stands until someone changes it.
+
+    This is the case where suppression is least obviously right, so pin it: the way
+    out is Change/Remove on the row, not a suggestion the assignment overrode.
+    """
+    resistor = _inventory(session)
+    resistor("RES-1K1", 1050, 30)  # a stocked near-value that would be suggested
+    resistor("PICKED", 1000, 0)  # what gets assigned, and then retired
+    picked = cs.find_components_by_mpn(session, "PICKED")[0]
+    data = b"Reference,Qty,Value,MPN\nR1,10,1k,\n"
+    bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+    line = bs.get_bom_lines(session, bom.id)[0]
+
+    bs.assign_component(session, bom.id, line.id, component_id=picked.id, user_id=1)
+    cs.soft_delete_component(session, picked.id, user_id=1)
+
+    report = bs.build_bom_report(session, bom.id)["lines"][0]
+    assert report["status"] == "missing" and report["assigned"]["deleted"] is True
+    assert report["substitutes"] == []
+
+
 def test_unassign_returns_the_line_to_mpn_matching(
     session: Session, store
 ) -> None:  # type: ignore[no-untyped-def]

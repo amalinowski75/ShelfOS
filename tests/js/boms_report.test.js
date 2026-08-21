@@ -20,6 +20,10 @@ describe("boms_report.js — rendering", () => {
     expect(html).toContain("<strong>3</strong>");
     expect(html).toContain("buildable");
     expect(html).toContain("without");
+    // An assigned line feeds this figure too, and may carry no MPN at all, so the
+    // headline must not still claim the count comes from MPN matches.
+    expect(html).not.toContain("exact MPN matches");
+    expect(html).toContain("matched and assigned");
   });
 
   it("shows 0 buildable when the count is null (no exact matches)", () => {
@@ -221,6 +225,23 @@ describe("boms_report.js — assigned component", () => {
     expect(assigned).toContain('data-act="unassign-component"');
     // "Add to inventory" would be beside the point once a part is chosen.
     expect(assigned).not.toContain("add-component");
+  });
+
+  it("drops Add to inventory on an assigned line even when its status invites it", () => {
+    // The status that offers "Add to inventory" AND an assignment at once: an
+    // assigned part retired since, which reports `missing`. Asserting it against a
+    // status that never offers the button would prove nothing about the assignment.
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const stillOffered = window.bomActionButtons({ status: "missing", assigned: null });
+    expect(stillOffered).toContain("add-component");
+
+    const html = window.bomActionButtons({
+      status: "missing",
+      assigned: { component_id: 8, mpn: "X", deleted: true },
+    });
+    expect(html).not.toContain("add-component"); // the way out is Change / Remove
+    expect(html).toContain("Change");
+    expect(html).toContain('data-act="unassign-component"');
   });
 
   it("keeps the actions visible rather than hiding them behind a hover", () => {

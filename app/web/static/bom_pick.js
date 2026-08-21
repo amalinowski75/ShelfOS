@@ -130,7 +130,13 @@
         title: column.title,
         field: column.field,
         headerFilter: "input",
+        // Name each filter after its column: a placeholder is a weak accessible
+        // name, and without this the row reads as identical unlabelled inputs
+        // (same reasoning as columnDef in app.js).
         headerFilterPlaceholder: `Filter ${column.title}…`,
+        headerFilterParams: {
+          elementAttributes: { "aria-label": `Filter ${column.title}` },
+        },
         ...(column.numeric ? { sorter: "number" } : {}),
       }));
     columns.push(detailsColumn());

@@ -463,6 +463,20 @@ def _find_substitutes(
     return suggestions[:_MAX_SUBSTITUTES]
 
 
+def _components_by_id(session: Session, ids: set[int]) -> list[Component]:
+    """Fetch several components at once, soft-deleted ones included.
+
+    Assignments must still surface a component retired since it was chosen, so this
+    deliberately does NOT filter on ``deleted_at`` — the caller decides what a
+    retired one means.
+    """
+    if not ids:
+        return []
+    return list(
+        session.exec(select(Component).where(col(Component.id).in_(ids))).all()
+    )
+
+
 def _short_footprint(value: str | None) -> str | None:
     """KiCad stores a footprint as ``Library:Name``; show just the ``Name`` part."""
     if value is None:
@@ -481,17 +495,23 @@ def build_bom_report(
     stay measured in whole boards, so they answer "how many boards will these parts
     make?" whatever number was asked for.
 
-    ``summary.buildable`` counts whole boards from **exact MPN matches** only, so a
-    line with no MPN (common while designing) or one missing from inventory caps it
-    at 0 — substitutes are surfaced per line but not counted toward buildability.
-    A line with an assigned component counts on the same terms: the assignment IS
-    its match, so it contributes its own stock rather than capping the total.
+    ``summary.buildable`` counts whole boards from parts that are actually resolved —
+    an exact MPN match, or a component someone assigned — so a line with no MPN
+    (common while designing) and no assignment, or one missing from inventory, caps
+    it at 0. Substitutes are surfaced per line but not counted toward buildability.
     """
     boards = max(1, boards)
     bom = get_bom(session, bom_id)
     lines = get_bom_lines(session, bom_id)
     stock = ss.total_quantities_by_component(session)
-    assigned_by_refs = {a.references: a for a in list_assignments(session, bom_id)}
+    assignments = list_assignments(session, bom_id)
+    assigned_by_refs = {a.references: a for a in assignments}
+    # Resolve the assigned components in one query, like the stock totals and the
+    # value definitions below — not one `session.get` per line.
+    assigned_components = {
+        cast(int, c.id): c
+        for c in _components_by_id(session, {a.component_id for a in assignments})
+    }
     # Resolve each substitutable category's value parameter once (not per line).
     value_defs = _value_defs_by_category(
         session, {ln.category for ln in lines if ln.category in _VALUE_CATEGORIES}
@@ -507,7 +527,7 @@ def build_bom_report(
         # describe it — only how much of that part is on the shelf.
         assignment = assigned_by_refs.get(line.references)
         assigned_component = (
-            session.get(Component, assignment.component_id) if assignment else None
+            assigned_components.get(assignment.component_id) if assignment else None
         )
         # A component soft-deleted after being assigned keeps the assignment visible
         # (so it can be seen and changed) but contributes no stock.

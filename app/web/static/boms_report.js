@@ -109,7 +109,10 @@ function renderBomSummary(summary) {
   const boards = n(summary.boards) || 1;
   const of = boards > 1 ? ` of ${boards} requested` : "";
   el.innerHTML =
-    `<p><strong>${n(summary.buildable)}</strong> buildable board(s)${of} from exact MPN matches — ` +
+    // "matched and assigned", not "exact MPN matches": an assigned line feeds this
+    // number too, and it may have no MPN at all — the headline can't claim a kind of
+    // match the figure no longer comes only from.
+    `<p><strong>${n(summary.buildable)}</strong> buildable board(s)${of} from matched and assigned parts — ` +
     `${n(summary.ok)} in&nbsp;stock · ${n(summary.short)} short · ` +
     `${n(summary.out)} out · ${n(summary.missing)} not&nbsp;in&nbsp;inventory · ` +
     `${n(summary.no_mpn)} without&nbsp;MPN</p>`;
