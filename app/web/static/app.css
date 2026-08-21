@@ -749,12 +749,17 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, .82); }
 /* ---------- BOM report (§21) ---------- */
 .bom-summary { margin-bottom: 20px; }
 /* "Boards" sits among the head actions: a small count box, labelled above like a
-   .field, not a full-width control stretching the header. */
+   .field, not a full-width control stretching the header. Its input borrows the
+   .btn-sm metrics (30px, not the 38px of a full .control) so it lines up with the
+   small buttons beside it instead of standing a head taller. */
 .bom-boards {
   display: flex; flex-direction: column; gap: 5px;
   font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .01em;
 }
-.bom-boards .control { width: 88px; }
+.bom-boards .control {
+  width: 88px; min-height: 30px; padding: 4px 10px;
+  font-size: 12.5px; border-radius: 7px;
+}
 #bom-reload-status { margin: 0 0 12px; }
 /* Substitutes stay on one line (uniform row height keeps Tabulator fast); links
    are dot-separated and the cell truncates, with full detail in the tooltip. */
