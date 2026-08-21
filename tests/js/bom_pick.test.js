@@ -74,6 +74,41 @@ describe("bom_pick.js — opening the picker", () => {
     expect(page.fetchMock.mock.calls[0][0]).toBe("/web/api/components?type_id=3");
   });
 
+  it("shortens a long designator group so it can't push the table off-screen", async () => {
+    // "C1,C2,…" has no spaces to break at, so the full group stretches the header
+    // and the dialog with it until only the right-hand side of the table is visible.
+    const refs = Array.from({ length: 25 }, (_, i) => `C${i + 1}`).join(",");
+    const page = loadPage(bomPickFixture(), SCRIPTS, { fetchImpl: feedFetch });
+    await open(page, { ...LINE, references: refs });
+    await tick();
+
+    const el = page.document.getElementById("bom-pick-refs");
+    expect(el.textContent).toBe("C1,C2,C3,C4,C5,C6,C7,C8,C9,C10,…");
+    expect(el.title).toBe(refs); // nothing lost — the whole group is on hover
+  });
+
+  it("keeps the spacing the CSV wrote when it shortens", async () => {
+    // `references` is the raw list: KiCad often separates with ", ". Reproducing it
+    // rather than normalising keeps the header's break opportunities too.
+    const refs = Array.from({ length: 25 }, (_, i) => `C${i + 1}`).join(", ");
+    const page = loadPage(bomPickFixture(), SCRIPTS, { fetchImpl: feedFetch });
+    await open(page, { ...LINE, references: refs });
+    await tick();
+    expect(page.document.getElementById("bom-pick-refs").textContent).toBe(
+      "C1, C2, C3, C4, C5, C6, C7, C8, C9, C10,…",
+    );
+  });
+
+  it("leaves a short designator group exactly as it was", async () => {
+    // Spaced on purpose: a group that already had none could not show a reformat.
+    const page = loadPage(bomPickFixture(), SCRIPTS, { fetchImpl: feedFetch });
+    await open(page, { ...LINE, references: "R1, R2, R3" });
+    await tick();
+    expect(page.document.getElementById("bom-pick-refs").textContent).toBe(
+      "R1, R2, R3",
+    );
+  });
+
   it("falls back to all types when the line's category names none", async () => {
     const page = loadPage(bomPickFixture(), SCRIPTS, { fetchImpl: feedFetch });
     await open(page, { ...LINE, category: "thermionic valve" });

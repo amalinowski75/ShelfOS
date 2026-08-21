@@ -776,7 +776,10 @@ html.bom-pick-open, html.bom-pick-open body { overflow: hidden; }
 #bom-pick-dialog > article {
   display: flex; flex-direction: column; max-height: calc(100vh - 48px); min-height: 0;
 }
+/* The title carries user data (a designator group), so it must never be what
+   decides the dialog's width — it wraps and yields instead. */
 #bom-pick-dialog article > header { flex: none; }
+#bom-pick-dialog article > header strong { min-width: 0; overflow-wrap: anywhere; }
 .bom-pick-bar {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
   padding: 12px 20px; border-bottom: 1px solid var(--border); flex: none;

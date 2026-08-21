@@ -54,6 +54,24 @@
       : "Select a component below.";
   }
 
+  // A designator group can run to dozens of refs. The whole list has nowhere to
+  // break (there are no spaces in "C1,C2,C5…"), so it stretches the header, and
+  // with it the dialog, until the table is pushed off the side of the screen.
+  // Show the first few; the full list stays in the title tooltip.
+  // Splitting on the comma alone leaves each designator carrying whatever spacing
+  // the CSV wrote ("R1", " R2"), so re-joining reproduces the original text rather
+  // than a normalised version of it: `references` is the raw list, and a group that
+  // fits is handed back untouched. Keeping the spaces also keeps the places the
+  // header can break.
+  const REFS_SHOWN = 10;
+  function refsLabel(references) {
+    const text = String(references || "");
+    const refs = text.split(",");
+    return refs.length > REFS_SHOWN
+      ? `${refs.slice(0, REFS_SHOWN).join(",")},…`
+      : text;
+  }
+
   // The picked row is marked by hand rather than through Tabulator's own row
   // selection, which selects whatever was clicked — including a click on the
   // Details link, whose whole point is to leave the choice alone. That moved the
@@ -223,7 +241,8 @@
     line = reportLine;
     bomId = id;
     onAssigned = onDone || null;
-    refsEl.textContent = reportLine.references || "";
+    refsEl.textContent = refsLabel(reportLine.references);
+    refsEl.title = reportLine.references || ""; // the full group, on hover
     renderFacts();
     setError("");
     pick(null); // also drops any mark left from the previous list
