@@ -195,6 +195,12 @@
         confirm();
       });
     } else {
+      // The table outlives the dialog, and so do its header filters: Tabulator keeps
+      // the values while replacing the columns renders the boxes empty, so the next
+      // line opened on a list quietly narrowed by a filter that nothing on screen
+      // showed. Clear them — a filter typed for one component is not a statement
+      // about the next, which is usually a different type entirely.
+      table.clearHeaderFilter();
       // The type changed: its parameter columns differ, so both have to be replaced.
       table.setColumns(columns);
       await table.setData(payload.data);
