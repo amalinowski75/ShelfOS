@@ -273,3 +273,103 @@ def test_delete_bom_removes_lines_and_attachment(
         .where(Attachment.entity_id == bom_id)
     ).all()
     assert remaining == []
+
+
+# --- reimport (re-parse the stored CSV) ------------------------------------
+
+
+def test_reimport_reparses_the_stored_csv(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """Lines are rebuilt from the stored file, so hand-edited rows are refreshed."""
+    from app.models.bom import BomLine
+
+    data = b"Reference,Qty,Value,MPN\nR1,10,1k,RES-1K\n"
+    bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+    line = bs.get_bom_lines(session, bom.id)[0]
+    original_id = line.id
+    line.mpn = "STALE"  # simulate a line that drifted from the file
+    session.add(line)
+    session.commit()
+
+    bs.reimport_bom(session, bom.id)
+
+    lines = bs.get_bom_lines(session, bom.id)
+    assert [ln.mpn for ln in lines] == ["RES-1K"]  # back in step with the CSV
+    assert lines[0].id != original_id  # replaced, not patched
+    assert session.get(BomLine, original_id) is None  # and the old row is gone
+
+
+def test_reimport_without_a_stored_csv_is_refused(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    from app.services import attachment_service as ats
+
+    bom = bs.create_bom(
+        session, name="b", filename="b.csv", data=_FIXTURE, user_id=1
+    )
+    ats.delete_attachments_for(session, entity_type="bom", entity_id=bom.id)
+
+    with pytest.raises(ValidationError):
+        bs.reimport_bom(session, bom.id)
+    assert bs.get_bom_lines(session, bom.id)  # the lines survive the refusal
+
+
+def test_reimport_keeps_the_lines_when_the_csv_no_longer_parses(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """Parse first, delete second — a broken file must not empty the BOM."""
+    from app.services import attachment_service as ats
+
+    bom = bs.create_bom(
+        session, name="b", filename="b.csv", data=_FIXTURE, user_id=1
+    )
+    before = [ln.references for ln in bs.get_bom_lines(session, bom.id)]
+    attachment = ats.list_attachments(session, entity_type="bom", entity_id=bom.id)[0]
+    ats.stored_file_path(attachment).write_bytes(b"nothing,useful\n1,2\n")
+
+    with pytest.raises(ValidationError):
+        bs.reimport_bom(session, bom.id)
+    assert [ln.references for ln in bs.get_bom_lines(session, bom.id)] == before
+
+
+# --- building several boards -----------------------------------------------
+
+
+def test_boards_multiply_what_each_line_needs(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    resistor = _inventory(session)
+    resistor("RES-1K", 1000, 50)
+    data = b"Reference,Qty,Value,MPN\nR1,10,1k,RES-1K\n"
+    bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+
+    one = bs.build_bom_report(session, bom.id)["lines"][0]
+    assert one["status"] == "ok" and one["total_quantity"] == 10
+
+    # 6 boards need 60 of a part we hold 50 of — enough for 5 boards, not 6.
+    six = bs.build_bom_report(session, bom.id, boards=6)["lines"][0]
+    assert six["total_quantity"] == 60
+    assert six["status"] == "short"
+    assert six["boards_possible"] == 5  # measured per board, not per run
+    assert six["quantity"] == 10  # the per-board figure is untouched
+
+
+def test_boards_do_not_change_how_many_are_buildable(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """Asking for more boards can't change what the stock on hand covers."""
+    resistor = _inventory(session)
+    resistor("RES-1K", 1000, 50)
+    resistor("RES-2K", 2000, 12)
+    data = (
+        b"Reference,Qty,Value,MPN\n"
+        b"R1,10,1k,RES-1K\n"  # 50 // 10 = 5
+        b"R2,4,2k,RES-2K\n"  # 12 //  4 = 3 → the limiting line
+    )
+    bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+
+    for boards in (1, 3, 20):
+        summary = bs.build_bom_report(session, bom.id, boards=boards)["summary"]
+        assert summary["buildable"] == 3
+        assert summary["boards"] == boards  # echoed for the UI
