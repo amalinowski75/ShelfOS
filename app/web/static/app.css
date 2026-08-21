@@ -20,6 +20,11 @@
   --accent-ink: #0b4f47;
   --on-accent: #ffffff;
   --row-hover: #eef6f4;
+  /* The picked row in a chooser. Opaque on purpose: a translucent tint
+     composites against whatever is behind the row, which is unpredictable
+     inside a dialog. Clearly stronger than --row-hover, and still a
+     background the ordinary --text reads against. */
+  --row-picked: #c7ece3;
 
   --ok: #15803d;      --ok-soft: #dcf5e3;
   --warn: #b45309;    --warn-soft: #fbeccb;
@@ -57,6 +62,7 @@
     --accent-ink: #7ff0e2;
     --on-accent: #04231f;
     --row-hover: #182a40;
+    --row-picked: #1e3a52;
 
     --ok: #4ade80;      --ok-soft: rgba(74, 222, 128, .14);
     --warn: #fbbf24;    --warn-soft: rgba(251, 191, 36, .14);
@@ -79,7 +85,7 @@
   --bg: #f6f7f9; --surface: #ffffff; --surface-2: #f1f4f8;
   --border: #e4e9f0; --border-strong: #cdd6e2;
   --text: #101826; --muted: #64748b; --faint: #94a3b8;
-  --accent: #0d9488; --accent-strong: #0f766e; --accent-soft: #d5f4ee; --accent-ink: #0b4f47; --on-accent: #ffffff; --row-hover: #eef6f4;
+  --accent: #0d9488; --accent-strong: #0f766e; --accent-soft: #d5f4ee; --accent-ink: #0b4f47; --on-accent: #ffffff; --row-hover: #eef6f4; --row-picked: #c7ece3;
   --ok: #15803d; --ok-soft: #dcf5e3; --warn: #b45309; --warn-soft: #fbeccb;
   --danger: #b91c1c; --danger-soft: #fbe0e0; --neutral: #475569; --neutral-soft: #e8edf3;
   --ring: rgba(13, 148, 136, .32);
@@ -89,7 +95,7 @@
   --bg: #0a1120; --surface: #111b2e; --surface-2: #17233a;
   --border: #22314b; --border-strong: #334564;
   --text: #e7edf6; --muted: #9fb0c9; --faint: #6b7d99;
-  --accent: #2dd4bf; --accent-strong: #5eead4; --accent-soft: rgba(45, 212, 191, .14); --accent-ink: #7ff0e2; --on-accent: #04231f; --row-hover: #182a40;
+  --accent: #2dd4bf; --accent-strong: #5eead4; --accent-soft: rgba(45, 212, 191, .14); --accent-ink: #7ff0e2; --on-accent: #04231f; --row-hover: #182a40; --row-picked: #1e3a52;
   --ok: #4ade80; --ok-soft: rgba(74, 222, 128, .14); --warn: #fbbf24; --warn-soft: rgba(251, 191, 36, .14);
   --danger: #f87171; --danger-soft: rgba(248, 113, 113, .14); --neutral: #a7b6cc; --neutral-soft: rgba(167, 182, 204, .14);
   --ring: rgba(45, 212, 191, .38);
@@ -761,7 +767,7 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, .82); }
    a second one beside the table's, and the one that can't be the answer, since the
    table is the only part with anything to scroll. */
 #bom-pick-dialog {
-  width: min(1080px, calc(100vw - 32px)); max-height: calc(100vh - 48px);
+  width: min(1280px, calc(100vw - 32px)); max-height: calc(100vh - 48px);
   overflow: hidden;
 }
 /* While the picker is open the page behind it can't be reached, so its scrollbar is
@@ -811,7 +817,7 @@ html.bom-pick-open, html.bom-pick-open body { overflow: hidden; }
    committed. */
 #bom-pick-table .tabulator-row.is-picked,
 #bom-pick-table .tabulator-row.is-picked:hover {
-  background: var(--accent-soft) !important;
+  background: var(--row-picked) !important;
   box-shadow: inset 3px 0 0 var(--accent);
 }
 /* The cells keep the ordinary text colour: this is a row of data being compared
