@@ -228,9 +228,16 @@ def reimport_bom(session: Session, bom_id: int) -> Bom:
     attachments = attachment_service.list_attachments(
         session, entity_type="bom", entity_id=bom_id
     )
-    if not attachments:
+    # Pick the BOM's OWN file by name, not whatever is attached first: the
+    # attachments API accepts (and can delete) bom attachments, and rebuilding the
+    # lines from some other file would replace them from a source that was never
+    # this BOM — a successful parse can't tell that apart from the real thing.
+    stored = next(
+        (a for a in attachments if a.filename == bom.source_filename), None
+    )
+    if stored is None:
         raise ValidationError("the original CSV is no longer stored for this BOM")
-    path = attachment_service.stored_file_path(attachments[0])
+    path = attachment_service.stored_file_path(stored)
     try:
         data = path.read_bytes()
     except OSError as exc:

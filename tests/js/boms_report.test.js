@@ -247,6 +247,23 @@ describe("boms_report.js — building several boards", () => {
     expect(window.bomBoardsStored("9")).toBe(1); // a different BOM is unaffected
   });
 
+  it("stores the count when the box changes, and restores it on the next visit", () => {
+    // Pins the wiring, not just the pair of helpers: typing a count has to persist
+    // it, and opening the page again has to put it back in the box.
+    const page = loadPage(bomReportFixture(), SCRIPTS, { fetchImpl: okFetch });
+    const input = page.document.getElementById("bom-boards");
+    input.value = "25";
+    input.dispatchEvent(new page.window.Event("change", { bubbles: true }));
+    expect(page.window.bomBoardsStored("7")).toBe(25);
+
+    // A fresh page (same storage) opens with the remembered count in the box.
+    const again = loadPage(bomReportFixture(), SCRIPTS, {
+      fetchImpl: okFetch,
+      localStorage: { "shelfos:bom-boards:7": "25" },
+    });
+    expect(again.document.getElementById("bom-boards").value).toBe("25");
+  });
+
   it("says how many of the requested boards are buildable", () => {
     const { window, document } = loadPage(bomReportFixture(), SCRIPTS);
     window.renderBomSummary({ buildable: 3, ok: 1, short: 1, boards: 10 });
@@ -276,6 +293,16 @@ describe("boms_report.js — building several boards", () => {
         window.bomStatusFormatter(fakeCell(status, { mpn: "RES-1K", boards_possible: 0 })),
       ).not.toContain("enough for");
     }
+  });
+
+  it("drops the note when it would only say zero", () => {
+    // At one board — the default view — short means the stock doesn't cover even
+    // one, so the count is always 0: it repeats the badge and reads like a stock
+    // figure, cutting against the very thing "short" is there to say.
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    expect(
+      window.bomStatusFormatter(fakeCell("short", { mpn: "RES-1K", boards_possible: 0 })),
+    ).not.toContain("enough for");
   });
 
   it("offers both the per-board and the run total as columns", () => {

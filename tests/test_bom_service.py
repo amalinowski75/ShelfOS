@@ -315,6 +315,39 @@ def test_reimport_without_a_stored_csv_is_refused(
     assert bs.get_bom_lines(session, bom.id)  # the lines survive the refusal
 
 
+def test_reimport_uses_the_boms_own_csv_not_whatever_is_attached(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """A stray attachment must not become the source the lines are rebuilt from."""
+    from app.models.enums import AttachmentKind
+    from app.services import attachment_service as ats
+
+    data = b"Reference,Qty,Value,MPN\nR1,1,1k,RES-1K\n"
+    bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+    # Someone attaches another CSV through the attachments API and removes the
+    # original — the BOM's own file is gone, but an attachment remains.
+    ats.create_attachment(
+        session,
+        entity_type="bom",
+        entity_id=bom.id,
+        kind=AttachmentKind.OTHER,
+        filename="notes.csv",
+        data=b"Reference,Qty,Value,MPN\nR9,1,2k,OTHER-PART\n",
+    )
+    original = next(
+        a
+        for a in ats.list_attachments(session, entity_type="bom", entity_id=bom.id)
+        if a.filename == "b.csv"
+    )
+    ats.delete_attachment(session, original.id)
+
+    # Refused, rather than silently rebuilding the BOM from a file that was never
+    # its own — a successful parse can't tell the wrong file from the right one.
+    with pytest.raises(ValidationError):
+        bs.reimport_bom(session, bom.id)
+    assert [ln.mpn for ln in bs.get_bom_lines(session, bom.id)] == ["RES-1K"]
+
+
 def test_reimport_keeps_the_lines_when_the_csv_no_longer_parses(
     session: Session, store
 ) -> None:  # type: ignore[no-untyped-def]
