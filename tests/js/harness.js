@@ -34,8 +34,14 @@ export function loadPage(
   // the scripts do on success; swallow only that specific message, and surface
   // every other jsdom error (including other unimplemented APIs) so a broken
   // script fails the test loudly.
+  // jsdom cannot navigate, and it reports the attempt here rather than anywhere a
+  // test could see it. Count them, so "this click leaves the page" is something a
+  // test can assert instead of inferring from what did NOT happen. The message
+  // carries no URL, so this proves that a navigation was attempted, not where to.
+  const navigations = [];
   virtualConsole.on("jsdomError", (err) => {
     if (!/Not implemented: navigation/.test(err.message)) throw err;
+    navigations.push(err.message);
   });
 
   const dom = new JSDOM(
@@ -143,7 +149,7 @@ export function loadPage(
     el.textContent = readStatic(name);
     window.document.body.appendChild(el);
   }
-  return { window, document: window.document, fetchMock };
+  return { window, document: window.document, fetchMock, navigations };
 }
 
 function patchFormNamedAccess(document) {

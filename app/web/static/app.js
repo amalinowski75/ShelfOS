@@ -14,6 +14,22 @@ const table = new Tabulator("#components-table", {
   placeholder: "No components",
 });
 
+// The whole row opens the part it describes. The Details button stays: it is the
+// discoverable form, and the one a keyboard can reach. But on a table this wide,
+// reading a row and then crossing the screen to its far-right button was the
+// common case paying for the rare one.
+table.on("rowClick", (event, row) => {
+  // Tabulator raises rowClick for the action cell too, so a click that landed on
+  // a control belongs to that control and not to the row.
+  if (event.target.closest("button, a, input, select, label")) return;
+  // Don't navigate out from under someone dragging across an MPN to copy it. The
+  // check is for a selection that exists RIGHT NOW, so an old one left elsewhere
+  // on the page can't make rows stop working.
+  const selection = window.getSelection();
+  if (selection && !selection.isCollapsed) return;
+  window.location = `/components/${row.getData().id}`;
+});
+
 // ---- remembered column widths ---------------------------------------------
 // Tabulator columns are drag-resizable, but loadTable rebuilds them from scratch
 // on every type-filter change AND after every stock write — so without this a

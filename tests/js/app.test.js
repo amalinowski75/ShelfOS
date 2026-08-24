@@ -234,6 +234,56 @@ describe("app.js — table formatting", () => {
   });
 });
 
+describe("app.js — the row opens the part", () => {
+  // The handler the real library would call on a click, plus a row element to
+  // aim the click at. `document.body` stands in for a plain cell: it is inside no
+  // control, which is all the handler asks.
+  function rowClick(page, target) {
+    const handler = page.window.Tabulator.handlers.rowClick;
+    handler(
+      { target: target ?? page.document.body },
+      { getData: () => ({ id: 42 }) },
+    );
+  }
+
+  it("leaves for the detail page when the row itself is clicked", () => {
+    const page = loadPage(typePageFixture(), SCRIPTS);
+
+    rowClick(page);
+
+    expect(page.navigations).toHaveLength(1);
+    // Not the stock dialog — a row click is a read, not a write.
+    expect(page.window.HTMLDialogElement.prototype.showModal).not.toHaveBeenCalled();
+  });
+
+  it("leaves the row alone when the click landed on a control", () => {
+    // Tabulator raises rowClick for the action cell too, so without this guard
+    // every Add and Take would also navigate — losing the dialog it just opened.
+    const page = loadPage(typePageFixture(), SCRIPTS);
+    const button = page.document.createElement("button");
+    page.document.body.appendChild(button);
+
+    rowClick(page, button);
+
+    expect(page.navigations).toHaveLength(0);
+  });
+
+  it("does not navigate out from under a text selection", () => {
+    // Dragging across an MPN to copy it ends in a click on the row. Leaving the
+    // page then would make the table impossible to copy from.
+    const page = loadPage(typePageFixture(), SCRIPTS);
+    const text = page.document.createTextNode("GRM188R71H104K");
+    page.document.body.appendChild(text);
+    const range = page.document.createRange();
+    range.selectNodeContents(text);
+    page.window.getSelection().addRange(range);
+
+    rowClick(page);
+
+    expect(page.navigations).toHaveLength(0);
+  });
+});
+
 describe("app.js — row actions", () => {
   it("renders the three row actions and opens the stock dialog on Add", () => {
     const { window, document } = loadPage(typePageFixture(), SCRIPTS);
