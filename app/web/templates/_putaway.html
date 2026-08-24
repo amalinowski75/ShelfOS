@@ -29,12 +29,24 @@
 <dialog id="putaway-dialog">
   <article>
     <header>
-      <strong>Set location</strong>
+      {# "Set location" is the invoice flow's name for this. A target can rename it
+         for a flow that is doing something else — the components page reaches here
+         only by choosing "Move stock", and should still say so. #}
+      <strong id="putaway-title">Set location</strong>
       <button class="close" aria-label="Close" data-close></button>
     </header>
     <form id="putaway-form">
       <p class="mono" id="putaway-part"></p>
       <p class="muted small" id="putaway-desc"></p>
+      {# Where the stock is taken FROM. Only a move has a source — an invoice line
+         files a delivery, which comes from nowhere on the shelves — so the field
+         stays hidden until a target supplies one, the same way the quantity box is
+         skipped by adapters that don't count. With it, a part stocked in several
+         places is no longer a dead end: the pile is named rather than guessed. #}
+      <div class="field" id="putaway-from-field" hidden>
+        <label for="putaway-from">Take from</label>
+        <select class="control" id="putaway-from"></select>
+      </div>
       {# Prefilled with the usual answer (the whole bag / the invoiced count) so
          the scan-only flow needs no typing, but editable for the times it isn't.
          Enter leaves the field — it must not submit, and the collector has to

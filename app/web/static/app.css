@@ -914,6 +914,27 @@ html.bom-pick-open, html.bom-pick-open body { overflow: hidden; }
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+/* What-to-do-with-this-bag chooser. It has no form, so it can't lean on the
+   `dialog form` padding the other dialogs get — state it here instead. */
+.scan-choice { display: flex; flex-direction: column; gap: 14px; padding: 18px 20px; }
+/* Full-width rows rather than a button bar: these are three destinations, not a
+   confirm-or-cancel, and a stack reads as a menu at a glance. */
+.scan-choice-actions { display: flex; flex-direction: column; gap: 8px; }
+.scan-choice-actions .btn { justify-content: flex-start; gap: 10px; }
+/* The key that also does it. Sized to a fixed square so the three labels line up
+   whatever letter is in the box. */
+.scan-choice kbd {
+  font-family: var(--font-mono); font-size: 12px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 22px; padding: 2px 5px; flex: none;
+  color: var(--muted); background: var(--surface-2);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+}
+/* A disabled choice still has to be readable — it is carrying the explanation of
+   why it is disabled in the note underneath. */
+.scan-choice-actions .btn:disabled { opacity: .5; cursor: not-allowed; }
+.scan-choice-actions .btn:disabled:hover { background: var(--surface); border-color: var(--border-strong); }
+
 /* --- Label printing (§7) --------------------------------------------------- */
 /* The preview is the bitmap the printer would receive, so it is shown at the
    tape's real proportions: a checkerboard behind it makes the white label

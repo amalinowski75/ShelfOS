@@ -35,9 +35,13 @@ function componentsFixture({ withCreate = false } = {}) {
       <p id="scan-status" class="scan-status"></p>
     </div>
     <dialog id="putaway-dialog">
+      <strong id="putaway-title">Set location</strong>
       <form id="putaway-form">
         <p id="putaway-part"></p>
         <p id="putaway-desc"></p>
+        <div class="field" id="putaway-from-field" hidden>
+          <select id="putaway-from"></select>
+        </div>
         <input id="putaway-qty" type="number" />
         <p id="putaway-qty-hint"></p>
         <input id="putaway-scan" readonly />
@@ -50,7 +54,26 @@ function componentsFixture({ withCreate = false } = {}) {
         <button type="submit">Save</button>
       </form>
     </dialog>
+    ${choiceDialogMarkup()}
+    <dialog id="stock-dialog"><input /></dialog>
     ${withCreate ? createDialogMarkup() : ""}`;
+}
+
+// The what-next chooser (mirrors templates/_scan_choice.html): the three actions
+// with their key hints, and the note that explains a greyed-out one.
+function choiceDialogMarkup() {
+  return `
+    <dialog id="scan-choice-dialog">
+      <article tabindex="-1" id="scan-choice-article">
+        <button class="close" data-close></button>
+        <p id="scan-choice-part"></p>
+        <p id="scan-choice-desc"></p>
+        <button type="button" data-choice="details"><kbd>D</kbd> Component details</button>
+        <button type="button" data-choice="add"><kbd>A</kbd> Add stock</button>
+        <button type="button" data-choice="move"><kbd>M</kbd> Move stock</button>
+        <p id="scan-choice-note"></p>
+      </article>
+    </dialog>`;
 }
 
 // The New Component dialog, trimmed to what this flow touches: the import field
@@ -93,6 +116,20 @@ const MATCH = {
   ],
 };
 
+// A different component, for the "one bag queued behind another" case.
+const SECOND_BAG = {
+  identifiers: ["SECOND-1"],
+  matches: [
+    {
+      id: 77,
+      mpn: "SECOND-1",
+      manufacturer: null,
+      description: null,
+      locations: [{ id: 9, path: "Lab / Shelf 02", quantity: 5 }],
+    },
+  ],
+};
+
 function routing(scanAnswer, moveAnswer) {
   return (url) => {
     if (url === "/api/components/scan") return ok(scanAnswer);
@@ -115,44 +152,199 @@ function scan(document, code, { target } = {}) {
   press(document, "Enter", target);
 }
 
-function syncDialogOpen(document) {
-  const dialog = document.getElementById("putaway-dialog");
-  dialog.showModal.mockImplementation(() => {
+// The harness stubs showModal/close at the prototype without touching `.open`,
+// but this flow now hands the screen from one dialog to the next and the code
+// reads `.open` to decide who owns a scan. Make both of ours behave.
+function syncDialogOpen(document, id) {
+  const dialog = document.getElementById(id);
+  // OWN properties, not mockImplementation: showModal/close are stubbed on the
+  // shared prototype, so configuring them per dialog would have every dialog on
+  // the page flipping the `.open` of whichever one was configured last — and this
+  // flow has three of them handing the screen to each other.
+  dialog.showModal = vi.fn(() => {
     dialog.open = true;
   });
-  dialog.close.mockImplementation(() => {
+  dialog.close = vi.fn(() => {
+    if (!dialog.open) return; // a real <dialog> ignores close() when it is shut
     dialog.open = false;
     dialog.dispatchEvent(new document.defaultView.Event("close"));
   });
+  return dialog;
 }
 
+// Scan a bag and stop where the page now stops: at the chooser.
 async function openOn(answer, moveAnswer) {
   const page = loadPage(componentsFixture(), SCRIPTS, {
     fetchImpl: routing(answer, moveAnswer),
   });
-  syncDialogOpen(page.document);
+  syncDialogOpen(page.document, "putaway-dialog");
+  syncDialogOpen(page.document, "scan-choice-dialog");
+  // stock_dialog.js isn't loaded here (its own suite covers it); the chooser only
+  // needs to know an Add dialog exists, and tests assert what it was asked for.
+  page.openStock = vi.fn();
+  page.window.openStockDialog = page.openStock;
   scan(page.document, "QTY:100 PN:T821-1-08-S1 MPN:T821108A1S100CEU");
   await tick();
   return page;
 }
 
+// Answer the chooser by its key, the way the bench does.
+function choose(page, key) {
+  press(page.document, key, page.document.getElementById("scan-choice-article"));
+}
+
+// Scan a bag, then ask to move its stock — where a scan used to land directly.
+async function movingOn(answer, moveAnswer) {
+  const page = await openOn(answer, moveAnswer);
+  choose(page, "m");
+  return page;
+}
+
 describe("components_scan.js — resolving a bag", () => {
-  it("looks the code up server-side and shows the component with its shelf", async () => {
+  it("looks the code up server-side and asks what the bag is for", async () => {
     const { document, fetchMock } = await openOn(MATCH);
 
     const [url, opts] = fetchMock.mock.calls[0];
     expect(url).toBe("/api/components/scan");
     expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
     expect(fetchBody(fetchMock).code).toContain("MPN:T821108A1S100CEU");
-    expect(document.getElementById("putaway-dialog").open).toBe(true);
-    expect(document.getElementById("putaway-part").textContent).toBe(
+    // The chooser, not the move dialog: a scan no longer decides for the user.
+    expect(document.getElementById("scan-choice-dialog").open).toBe(true);
+    expect(document.getElementById("putaway-dialog").open).toBe(false);
+    expect(document.getElementById("scan-choice-part").textContent).toBe(
       "T821108A1S100CEU",
     );
-    expect(document.getElementById("putaway-desc").textContent).toBe(
+    expect(document.getElementById("scan-choice-desc").textContent).toBe(
       "Amphenol · IDC socket, 8 pin",
     );
-    // The manual select starts on where the stock is now.
-    expect(document.getElementById("putaway-select").value).toBe("5");
+    // All three are on offer for a component that has stock.
+    for (const choice of ["details", "add", "move"]) {
+      expect(
+        document.querySelector(`[data-choice="${choice}"]`).disabled,
+      ).toBe(false);
+    }
+  });
+
+  it("opens the Add dialog on A, asking for the scanned component", async () => {
+    const page = await openOn(MATCH);
+
+    choose(page, "a");
+
+    expect(page.openStock).toHaveBeenCalledTimes(1);
+    const [mode, componentId] = page.openStock.mock.calls[0];
+    expect(mode).toBe("add");
+    expect(componentId).toBe(42);
+    // The chooser gets out of the way — two stacked modals would trap the user.
+    expect(page.document.getElementById("scan-choice-dialog").open).toBe(false);
+    expect(page.document.getElementById("putaway-dialog").open).toBe(false);
+  });
+
+  it("refreshes the Qty column after an add, without reloading", async () => {
+    // The table's Qty is a total, so an add changes it. A full reload would also
+    // wipe the dialog's own confirmation, so the callback refreshes in place.
+    const page = await openOn(MATCH);
+    const refresh = vi.fn();
+    page.window.loadTable = refresh;
+
+    choose(page, "a");
+    await page.openStock.mock.calls[0][2](); // the onSaved the dialog would run
+
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("opens the move dialog on M, and only then", async () => {
+    const page = await openOn(MATCH);
+    expect(page.document.getElementById("putaway-dialog").open).toBe(false);
+
+    choose(page, "m");
+
+    expect(page.document.getElementById("scan-choice-dialog").open).toBe(false);
+    expect(page.document.getElementById("putaway-dialog").open).toBe(true);
+    expect(page.document.getElementById("putaway-part").textContent).toBe(
+      "T821108A1S100CEU",
+    );
+    // Named for the answer that opened it. "Set location" is the invoice flow's
+    // wording; arriving here from "Move stock" and being told something else is
+    // how a user starts doubting they pressed what they pressed.
+    expect(page.document.getElementById("putaway-title").textContent).toBe(
+      "Move stock",
+    );
+    // The destination starts EMPTY. Prefilling it with where the stock already
+    // is would be a guess that reads as an answer — and the one shelf it must
+    // not be is the one it is leaving.
+    expect(page.document.getElementById("putaway-select").value).toBe("");
+  });
+
+  it("holds a bag scanned mid-lookup until the question is answered", async () => {
+    // Two bags off the bench in quick succession: the second arrives while the
+    // first is still being looked up, so it is queued. Draining it the moment the
+    // first lookup lands would ask about bag two on top of the question about bag
+    // one — two stacked choosers, the second silently replacing the first.
+    let releaseFirst;
+    const firstHeld = new Promise((r) => (releaseFirst = r));
+    let call = 0;
+    const page = loadPage(componentsFixture(), SCRIPTS, {
+      fetchImpl: (url) => {
+        if (url !== "/api/components/scan") return ok({ id: 1 });
+        call += 1;
+        const answer = ok(call === 1 ? MATCH : SECOND_BAG);
+        return call === 1 ? firstHeld.then(() => answer) : answer;
+      },
+    });
+    syncDialogOpen(page.document, "putaway-dialog");
+    const chooser = syncDialogOpen(page.document, "scan-choice-dialog");
+    page.window.openStockDialog = vi.fn();
+
+    scan(page.document, "BAG-ONE"); // its lookup is held
+    await tick();
+    scan(page.document, "BAG-TWO"); // queued behind it
+    await tick();
+    releaseFirst();
+    await tick();
+    await tick();
+
+    // The question on screen is still about the first bag…
+    expect(chooser.showModal).toHaveBeenCalledTimes(1);
+    expect(page.document.getElementById("scan-choice-part").textContent).toBe(
+      "T821108A1S100CEU",
+    );
+
+    // …and the second bag gets its turn once that question is done with.
+    page.document.getElementById("scan-choice-dialog").close();
+    await tick();
+    await tick();
+
+    expect(chooser.showModal).toHaveBeenCalledTimes(2);
+    expect(page.document.getElementById("scan-choice-part").textContent).toBe(
+      "SECOND-1",
+    );
+  });
+
+  it("answers to the buttons as well as the keys", async () => {
+    const page = await openOn(MATCH);
+
+    page.document.querySelector('[data-choice="move"]').click();
+
+    expect(page.document.getElementById("putaway-dialog").open).toBe(true);
+  });
+
+  it("ignores the scanner's trailing Enter instead of answering with it", async () => {
+    // The chooser opens the instant a scan lands, and a wedge scanner ends its
+    // payload with Enter — arriving at whatever showModal focused. Answering the
+    // question with the terminator of the scan that asked it is the one thing
+    // this dialog must never do.
+    const page = await openOn(MATCH);
+    const article = page.document.getElementById("scan-choice-article");
+    article.focus();
+
+    const enter = press(page.document, "Enter", article);
+    const space = press(page.document, " ", article);
+
+    expect(enter.defaultPrevented).toBe(true);
+    expect(space.defaultPrevented).toBe(true);
+    expect(page.document.getElementById("scan-choice-dialog").open).toBe(true);
+    expect(page.document.getElementById("putaway-dialog").open).toBe(false);
+    expect(page.openStock).not.toHaveBeenCalled();
   });
 
   it("opens the New Component dialog for a code that matches nothing, importing it", async () => {
@@ -296,149 +488,46 @@ describe("components_scan.js — resolving a bag", () => {
       ],
     });
     expect(document.getElementById("scan-status").textContent).toBe(
-      "2 components share SHARED-1 — move it from its own page.",
+      "2 components share SHARED-1 — open one from the table.",
     );
     expect(document.getElementById("putaway-dialog").open).toBe(false);
+    expect(document.getElementById("scan-choice-dialog").open).toBe(false);
   });
 
-  it("opens the dialog with an empty current location when the component has no stock", async () => {
-    const { document } = await openOn({
-      identifiers: ["EMPTY-1"],
-      matches: [
-        {
-          id: 7,
-          mpn: "EMPTY-1",
-          manufacturer: null,
-          description: null,
-          locations: [],
-        },
-      ],
-    });
-    // Instead of dead-ending, the dialog opens so a scanned shelf can stock it:
-    // current location empty, count defaulted to 1, no upper cap.
-    expect(document.getElementById("putaway-dialog").open).toBe(true);
-    expect(document.getElementById("putaway-part").textContent).toBe("EMPTY-1");
-    expect(document.getElementById("putaway-select").value).toBe("");
-    expect(document.getElementById("putaway-qty").value).toBe("1");
-    expect(document.getElementById("putaway-qty").max).toBe("");
-    // The hint is what tells the user why the current-location box is empty —
-    // the whole difference from the ordinary move flow.
-    expect(document.getElementById("putaway-qty-hint").textContent).toBe(
-      "no stock on record — set the count, then scan a shelf",
-    );
-  });
-
-  it("adds stock at the scanned shelf when the component had none", async () => {
-    const { document, fetchMock } = await openOn({
-      identifiers: ["EMPTY-1"],
-      matches: [
-        { id: 7, mpn: "EMPTY-1", manufacturer: null, description: null, locations: [] },
-      ],
-    });
-    document.getElementById("putaway-qty").value = "12"; // the bag holds 12
-
-    scan(document, "SL9");
-    await tick();
-
-    const call = fetchMock.mock.calls.find(([u]) => u === "/api/stock/add");
-    expect(call).toBeTruthy();
-    expect(call[1].method).toBe("POST");
-    expect(JSON.parse(call[1].body)).toEqual({
-      component_id: 7,
-      location_id: 9,
-      quantity: 12,
-    });
-  });
-
-  it("confirms an add as an add, naming the count and the shelf", async () => {
-    const { document } = await openOn({
-      identifiers: ["EMPTY-1"],
-      matches: [
-        { id: 7, mpn: "EMPTY-1", manufacturer: null, description: null, locations: [] },
-      ],
-    });
-    document.getElementById("putaway-qty").value = "12";
-
-    scan(document, "SL9");
-    await tick();
-
-    // Not "EMPTY-1 → …" (which reads as a move): this scan created stock, so the
-    // toast says so in full.
-    expect(document.querySelector(".toast-ok").textContent).toBe(
-      "Added 12 × EMPTY-1 to Lab / Shelf 02",
-    );
-  });
-
-  it("refreshes the table after an add so the Qty column stays honest", async () => {
+  it("greys out Move for a component with no stock, and says why", async () => {
     const page = await openOn({
       identifiers: ["EMPTY-1"],
       matches: [
         { id: 7, mpn: "EMPTY-1", manufacturer: null, description: null, locations: [] },
       ],
     });
-    // app.js's loadTable is global on the real page; stub it here and assert the
-    // add refreshes the Qty column in place (no full reload, so the toast lives).
-    const refresh = vi.fn();
-    page.window.loadTable = refresh;
-    page.document.getElementById("putaway-qty").value = "12";
+    const { document } = page;
 
-    scan(page.document, "SL9");
-    await tick();
-
-    expect(refresh).toHaveBeenCalled();
-    // The confirmation survives — a full reload would have wiped it.
-    expect(page.document.querySelector(".toast-ok")).toBeTruthy();
-  });
-
-  it("keeps the dialog open and shows why when the add is refused", async () => {
-    // The guard between "the stock is on the shelf" and "you were told it was":
-    // a refused add must not close the dialog or fire a green toast.
-    const { document } = await openOn(
-      {
-        identifiers: ["EMPTY-1"],
-        matches: [
-          { id: 7, mpn: "EMPTY-1", manufacturer: null, description: null, locations: [] },
-        ],
-      },
-      Promise.resolve({
-        ok: false,
-        status: 404,
-        json: () => Promise.resolve({ detail: "location 9 not found" }),
-      }),
+    expect(document.getElementById("scan-choice-dialog").open).toBe(true);
+    expect(document.querySelector('[data-choice="move"]').disabled).toBe(true);
+    // Disabled with no explanation is just a dead button; the note carries the why.
+    expect(document.getElementById("scan-choice-note").textContent).toMatch(
+      /no stock on record/i,
     );
-    document.getElementById("putaway-qty").value = "12";
-
-    scan(document, "SL9");
-    await tick();
-
-    const error = document.getElementById("putaway-error");
-    expect(error.hidden).toBe(false);
-    expect(error.textContent).toContain("location 9 not found");
-    expect(document.getElementById("putaway-dialog").open).toBe(true);
-    expect(document.querySelector(".toast-ok")).toBe(null); // no false success
+    // The two that still make sense are still offered.
+    expect(document.querySelector('[data-choice="add"]').disabled).toBe(false);
+    expect(document.querySelector('[data-choice="details"]').disabled).toBe(false);
   });
 
-  it("lists the places when stock is split, instead of picking one", async () => {
-    const { document } = await openOn({
-      identifiers: ["SPLIT-1"],
+  it("does not answer M when Move is greyed out", async () => {
+    // The key has to obey the same rule as the button, or the keyboard would
+    // reach a flow the mouse cannot.
+    const page = await openOn({
+      identifiers: ["EMPTY-1"],
       matches: [
-        {
-          id: 8,
-          mpn: "SPLIT-1",
-          manufacturer: null,
-          description: null,
-          locations: [
-            { id: 5, path: "Lab / Rack A / D1", quantity: 60 },
-            { id: 9, path: "Lab / Shelf 02", quantity: 40 },
-          ],
-        },
+        { id: 7, mpn: "EMPTY-1", manufacturer: null, description: null, locations: [] },
       ],
     });
-    const status = document.getElementById("scan-status").textContent;
-    expect(status).toContain("stocked in several places");
-    expect(status).toContain("Lab / Rack A / D1 (60)");
-    expect(status).toContain("Lab / Shelf 02 (40)");
-    expect(document.getElementById("putaway-dialog").open).toBe(false);
+
+    choose(page, "m");
+
+    expect(page.document.getElementById("putaway-dialog").open).toBe(false);
+    expect(page.document.getElementById("scan-choice-dialog").open).toBe(true);
   });
 
   it("stands down while another dialog on the page is open", () => {
@@ -482,7 +571,7 @@ describe("components_scan.js — resolving a bag", () => {
 
 describe("components_scan.js — moving the stock", () => {
   it("moves the whole slot to the scanned shelf and reports where it went", async () => {
-    const { document, fetchMock } = await openOn(MATCH);
+    const { document, fetchMock } = await movingOn(MATCH);
 
     scan(document, "SL9");
     await tick();
@@ -504,7 +593,7 @@ describe("components_scan.js — moving the stock", () => {
   });
 
   it("says nothing moved when the scanned shelf is the current one", async () => {
-    const { document, fetchMock } = await openOn(MATCH);
+    const { document, fetchMock } = await movingOn(MATCH);
 
     scan(document, "SL5"); // where it already is
     await tick();
@@ -519,7 +608,7 @@ describe("components_scan.js — moving the stock", () => {
   });
 
   it("refuses the current shelf outright when a count was typed", async () => {
-    const { document, fetchMock } = await openOn(MATCH);
+    const { document, fetchMock } = await movingOn(MATCH);
     document.getElementById("putaway-qty").value = "30";
 
     scan(document, "SL5");
@@ -535,7 +624,7 @@ describe("components_scan.js — moving the stock", () => {
   it("hands the scan out of the quantity box on its first letter", async () => {
     // The natural sequence: click the count, type it, scan the shelf. The
     // number input would silently drop "SL" and append "9" to the count.
-    const { document, fetchMock } = await openOn(MATCH);
+    const { document, fetchMock } = await movingOn(MATCH);
     const qty = document.getElementById("putaway-qty");
     qty.focus();
     qty.value = "30";
@@ -553,7 +642,7 @@ describe("components_scan.js — moving the stock", () => {
   });
 
   it("keeps the dialog open and shows why when the move is refused", async () => {
-    const { document } = await openOn(
+    const { document } = await movingOn(
       MATCH,
       Promise.resolve({
         ok: false,
@@ -572,7 +661,7 @@ describe("components_scan.js — moving the stock", () => {
   });
 
   it("refuses a location code this ShelfOS doesn't know", async () => {
-    const { document, fetchMock } = await openOn(MATCH);
+    const { document, fetchMock } = await movingOn(MATCH);
 
     scan(document, "SL404");
     await tick();
@@ -582,7 +671,7 @@ describe("components_scan.js — moving the stock", () => {
   });
 
   it("moves to the manually picked shelf when a label is unreadable", async () => {
-    const { document, fetchMock } = await openOn(MATCH);
+    const { document, fetchMock } = await movingOn(MATCH);
 
     document.getElementById("putaway-select").value = "9";
     document
@@ -601,7 +690,7 @@ describe("components_scan.js — moving the stock", () => {
   });
 
   it("prefills the whole slot but moves only what the user typed", async () => {
-    const { document, fetchMock } = await openOn(MATCH);
+    const { document, fetchMock } = await movingOn(MATCH);
     const qty = document.getElementById("putaway-qty");
     expect(qty.value).toBe("100"); // the usual answer, ready for a scan-only flow
     expect(document.getElementById("putaway-qty-hint").textContent).toBe(
@@ -616,7 +705,7 @@ describe("components_scan.js — moving the stock", () => {
   });
 
   it("refuses a quantity beyond what the source holds, before asking the server", async () => {
-    const { document, fetchMock } = await openOn(MATCH);
+    const { document, fetchMock } = await movingOn(MATCH);
     document.getElementById("putaway-qty").value = "101";
 
     scan(document, "SL9");
@@ -630,7 +719,7 @@ describe("components_scan.js — moving the stock", () => {
   });
 
   it("refuses a blank or zero quantity", async () => {
-    const { document, fetchMock } = await openOn(MATCH);
+    const { document, fetchMock } = await movingOn(MATCH);
     for (const value of ["", "0", "2.5", "-3"]) {
       document.getElementById("putaway-qty").value = value;
       scan(document, "SL9");
@@ -657,5 +746,122 @@ describe("components_scan.js — moving the stock", () => {
     const enter = press(document, "Enter", qty);
     expect(enter.defaultPrevented).toBe(true);
     expect(document.activeElement).not.toBe(qty);
+  });
+});
+
+// Stock split across two shelves. Before, a scan refused this outright ("move it
+// from its own page"); the source picker is what turns it into an ordinary move.
+const SPLIT = {
+  identifiers: ["SPLIT-1"],
+  matches: [
+    {
+      id: 8,
+      mpn: "SPLIT-1",
+      manufacturer: null,
+      description: null,
+      locations: [
+        { id: 5, path: "Lab / Rack A / D1", quantity: 60 },
+        { id: 9, path: "Lab / Shelf 02", quantity: 40 },
+      ],
+    },
+  ],
+};
+
+describe("components_scan.js — where the stock comes from", () => {
+  it("preselects the only pile there is, and still shows which", async () => {
+    const { document } = await movingOn(MATCH);
+    const from = document.getElementById("putaway-from");
+
+    // Shown even with nothing to decide: the point of the field is that you can
+    // read where the stock is leaving from before committing to a move. With one
+    // pile there is simply no empty option to pick past.
+    expect(document.getElementById("putaway-from-field").hidden).toBe(false);
+    expect([...from.options].map((o) => o.textContent)).toEqual([
+      "Lab / Rack A / D1 (100)",
+    ]);
+    expect(from.value).toBe("5");
+    expect(document.getElementById("putaway-qty").value).toBe("100");
+  });
+
+  it("offers every pile, with its count, and picks none of them", async () => {
+    const { document } = await movingOn(SPLIT);
+    const from = document.getElementById("putaway-from");
+
+    expect(document.getElementById("putaway-from-field").hidden).toBe(false);
+    expect([...from.options].map((o) => o.textContent)).toEqual([
+      "— choose a source —",
+      "Lab / Rack A / D1 (60)",
+      "Lab / Shelf 02 (40)",
+    ]);
+    expect(from.value).toBe("");
+    // "How many" has no meaning before "out of which", so the box stays empty
+    // and says what it is waiting for.
+    expect(document.getElementById("putaway-qty").value).toBe("");
+    expect(document.getElementById("putaway-qty-hint").textContent).toMatch(
+      /pick where the stock comes from/i,
+    );
+  });
+
+  it("fills the count from whichever pile is picked, and caps it there", async () => {
+    const { document } = await movingOn(SPLIT);
+    const from = document.getElementById("putaway-from");
+
+    from.value = "9";
+    from.dispatchEvent(new document.defaultView.Event("change", { bubbles: true }));
+
+    const qty = document.getElementById("putaway-qty");
+    expect(qty.value).toBe("40"); // the whole of THAT pile, not the other one
+    expect(qty.max).toBe("40");
+    expect(document.getElementById("putaway-qty-hint").textContent).toBe(
+      "of 40 in Lab / Shelf 02",
+    );
+  });
+
+  it("moves out of the picked pile, not the first one on the list", async () => {
+    const { document, fetchMock } = await movingOn(SPLIT);
+    const from = document.getElementById("putaway-from");
+    from.value = "9";
+    from.dispatchEvent(new document.defaultView.Event("change", { bubbles: true }));
+
+    scan(document, "SL5");
+    await tick();
+
+    expect(fetchBody(fetchMock, 1)).toEqual({
+      component_id: 8,
+      from_location_id: 9,
+      to_location_id: 5,
+      quantity: 40,
+    });
+  });
+
+  it("asks which pile before moving anything", async () => {
+    const { document, fetchMock } = await movingOn(SPLIT);
+
+    scan(document, "SL5"); // a destination, but no source chosen yet
+    await tick();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1); // the lookup only
+    expect(document.getElementById("putaway-error").textContent).toBe(
+      "Choose where the stock comes from.",
+    );
+    expect(document.getElementById("putaway-dialog").open).toBe(true);
+  });
+
+  it("holds the count to the picked pile, not the biggest one", async () => {
+    // 60 is on the shelf next door, and the server would refuse it — but the
+    // dialog knows enough to say so first.
+    const { document, fetchMock } = await movingOn(SPLIT);
+    const from = document.getElementById("putaway-from");
+    from.value = "9";
+    from.dispatchEvent(new document.defaultView.Event("change", { bubbles: true }));
+    document.getElementById("putaway-qty").value = "60";
+
+    scan(document, "SL5");
+    await tick();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(document.getElementById("putaway-error").textContent).toBe(
+      "Only 40 available — cannot file 60.",
+    );
   });
 });

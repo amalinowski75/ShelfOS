@@ -1,0 +1,45 @@
+{# What to do with a bag that scanned to a component we already have.
+
+   A scan used to mean exactly one thing — move this stock somewhere — which is
+   only ever right when the bag is being put away. The same bag in hand is just as
+   often one you want to read about, or top up. So the scan asks first, and the
+   three answers each sit on a single key (A/D/M): at the bench one hand holds the
+   scanner and the other the bag, and neither is free for a mouse.
+
+   Behaviour lives in app/web/static/components_scan.js. Components page only —
+   an invoice line has nothing to choose between. #}
+
+{% macro scan_choice_dialog() %}
+<dialog id="scan-choice-dialog">
+  {# tabindex so components_scan.js can park focus HERE on open. showModal would
+     otherwise focus the close button, and this dialog opens the instant a scan
+     lands — a scanner's trailing Enter (or a space inside the payload) would
+     "click" whatever holds focus and the dialog would vanish unread. Focus on a
+     plain container has nothing to activate, and Tab still reaches every button,
+     so Enter and Space keep working for anyone driving this by keyboard. #}
+  <article tabindex="-1" id="scan-choice-article">
+    <header>
+      <strong>Scanned a bag &mdash; what now?</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <div class="scan-choice">
+      <p class="mono" id="scan-choice-part"></p>
+      <p class="muted small" id="scan-choice-desc"></p>
+      <div class="scan-choice-actions">
+        <button type="button" class="btn btn-secondary" data-choice="details">
+          <kbd>D</kbd> Component details
+        </button>
+        <button type="button" class="btn btn-secondary" data-choice="add">
+          <kbd>A</kbd> Add stock
+        </button>
+        <button type="button" class="btn btn-secondary" data-choice="move">
+          <kbd>M</kbd> Move stock
+        </button>
+      </div>
+      {# Why "Move stock" is greyed out, when it is. Always in flow so choosing
+         doesn't shift the buttons under a finger already on its way to one. #}
+      <p class="muted small" id="scan-choice-note"></p>
+    </div>
+  </article>
+</dialog>
+{% endmacro %}
