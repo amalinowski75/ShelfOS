@@ -584,6 +584,9 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 /* ---------- Tabulator skin ----------
  * Overrides the CDN theme (loaded before this file) with our tokens. */
 #components-table { margin-top: 2px; }
+/* The row opens the part (app.js rowClick), so it has to look like it does. Only
+   this table: the other Tabulators are lists you read or edit in place. */
+#components-table .tabulator-row { cursor: pointer; }
 .tabulator {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); box-shadow: var(--shadow-sm);
