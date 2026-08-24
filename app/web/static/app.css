@@ -636,7 +636,10 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 /* Tabulator can also tint the individual cell on hover — keep it transparent
    so only the row-level --row-hover shows. */
 .tabulator .tabulator-row:hover .tabulator-cell { background: transparent; }
-.tabulator .tabulator-row .tabulator-cell { border-right: none; padding: 11px 12px; }
+/* The vertical padding is what sets the row height: it wraps the tallest thing a
+   cell holds, a 28px .btn, and shared.js's TABLE_DEFAULTS.rowHeight has to be at
+   least the sum. Change one and change the other. */
+.tabulator .tabulator-row .tabulator-cell { border-right: none; padding: 6px 12px; }
 .tabulator .tabulator-row:last-child { box-shadow: none; }
 .tabulator .tabulator-tableholder .tabulator-placeholder-contents { color: var(--muted); font-size: 14px; }
 

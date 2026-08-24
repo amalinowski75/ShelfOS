@@ -79,10 +79,10 @@ describe("table defaults", () => {
 
   it("rowHeight leaves room for the tallest thing a row can hold", () => {
     const { window } = loadPage("<div></div>", ["shared.js"]);
-    const css = window.eval("TABLE_DEFAULTS.rowHeight");
-    // A cell is 11px of padding above and below its content, the row adds a 1px
-    // border, and app.css pins every in-table .btn — the tallest cell content
-    // there is — to 28px. Anything less than that sum clips the buttons.
-    expect(css).toBeGreaterThanOrEqual(11 + 28 + 11 + 1);
+    const rowHeight = window.eval("TABLE_DEFAULTS.rowHeight");
+    // app.css gives a cell 6px of padding above and below its content and pins
+    // every in-table .btn — the tallest cell content there is — to 28px. A
+    // rowHeight below that sum clips the buttons.
+    expect(rowHeight).toBeGreaterThanOrEqual(6 + 28 + 6);
   });
 });

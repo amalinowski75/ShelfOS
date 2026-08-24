@@ -86,13 +86,13 @@ function esc(value) {
 // `rowHeight` earns its place under "basic": told a row's height up front the library
 // skips measuring each one (Row.calcHeight returns early), which is what you want
 // when it is laying out all of them, and it keeps frameTable's measurement exact.
-// 52 is a row's real height — a cell's 11px of padding above and below a 28px
-// `.btn`, with a pixel to spare. app.css pins every in-table button to that 28px and
-// draws the row separator as an inset shadow so it costs no height, because a row
-// that is really taller than the number here would have its content clipped.
+// 42 is a row's real height — a cell's 6px of padding above and below a 28px `.btn`,
+// with a couple to spare. app.css pins every in-table button to that 28px and draws
+// the row separator as an inset shadow so it costs no height, because a row that is
+// really taller than the number here would have its content clipped.
 const TABLE_DEFAULTS = {
   renderVertical: "basic",
-  rowHeight: 52,
+  rowHeight: 42,
 };
 
 // Frame a Tabulator table: fill it from its top down to the bottom of the viewport
