@@ -39,9 +39,16 @@ function scanFixture({ pendingLocation = "" } = {}) {
       </tr>
     </tbody></table>
     <dialog id="putaway-dialog">
+      <strong id="putaway-title">Set location</strong>
       <form id="putaway-form">
         <p id="putaway-part"></p>
         <p id="putaway-desc"></p>
+        <!-- The shared macro renders this; it stays hidden here, because an
+             invoiced delivery comes from outside the building and so has no
+             source pile to pick. -->
+        <div class="field" id="putaway-from-field" hidden>
+          <select id="putaway-from"></select>
+        </div>
         <input id="putaway-qty" type="number" />
         <p id="putaway-qty-hint"></p>
         <input id="putaway-scan" readonly />

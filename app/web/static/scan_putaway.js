@@ -1,10 +1,12 @@
 // Scan putaway: scan a thing → its "Set location" dialog opens; scan an SL<id>
 // location label → the location is saved, the dialog closes, ready for the next
 // one. Shared by the draft invoice (file a bag against its line) and the
-// components page (relocate a bag's stock); each page supplies an ADAPTER
-// saying what a scanned code resolves to and what saving means, via
-// window.initScanPutaway(). Markup comes from templates/_putaway.html; helpers
-// (csrfToken, errorMessage, showToast) from shared.js.
+// components page (move a bag's stock); each page supplies an ADAPTER saying what
+// a scanned code resolves to and what saving means, via window.initScanPutaway(),
+// which hands back {fileTarget, resume} for adapters that put a step of their own
+// in front (the components page asks what the bag is for). Markup comes from
+// templates/_putaway.html; helpers (csrfToken, errorMessage, showToast) from
+// shared.js.
 //
 // The wedge scanner is a keyboard, but this deliberately does NOT type into a
 // focused input. Keystrokes are collected in a document-level capture-phase
@@ -54,12 +56,15 @@ window.initScanPutaway = function (adapter) {
   const statusEl = document.getElementById("scan-status");
   const dialog = document.getElementById("putaway-dialog");
   const form = document.getElementById("putaway-form");
+  const titleEl = document.getElementById("putaway-title");
   const partEl = document.getElementById("putaway-part");
   const descEl = document.getElementById("putaway-desc");
   const locationInput = document.getElementById("putaway-scan");
   const locationSelect = document.getElementById("putaway-select");
   const qtyInput = document.getElementById("putaway-qty");
   const qtyHint = document.getElementById("putaway-qty-hint");
+  const fromField = document.getElementById("putaway-from-field");
+  const fromSelect = document.getElementById("putaway-from");
   const errorEl = document.getElementById("putaway-error");
 
   // id → human path, for showing where the part just went. The server
@@ -204,8 +209,18 @@ window.initScanPutaway = function (adapter) {
     }, IDLE_RESET_MS);
   }
 
+  // Is the ADAPTER busy with a screen of its own? Optional, and deliberately the
+  // adapter's call rather than "any other dialog is open": some of its dialogs
+  // WANT the next scan (the New Component dialog swaps the new code into its
+  // import field), while others must not be interrupted (the components page's
+  // what-next chooser would be asked twice about two different bags). The adapter
+  // says when it is done by calling resume().
+  function adapterBusy() {
+    return adapter.blocked?.() === true;
+  }
+
   function drainQueue() {
-    if (queued && !busy && !dialog.open) {
+    if (queued && !busy && !dialog.open && !adapterBusy()) {
       const code = queued;
       queued = null;
       handleThingScan(code);
@@ -214,7 +229,7 @@ window.initScanPutaway = function (adapter) {
 
   async function handleThingScan(code) {
     if (!code) return;
-    if (busy || dialog.open) {
+    if (busy || dialog.open || adapterBusy()) {
       // NEVER drop a scan silently — hold the latest one and run it as soon
       // as the current work (a lookup, or a dialog mid-close) is done.
       queued = code;
@@ -235,19 +250,7 @@ window.initScanPutaway = function (adapter) {
       // matches nothing yet) — so there is nothing to file here, and no miss to
       // report. resolve() otherwise returns a target or throws ScanMiss.
       if (!resolved) return;
-      target = resolved;
-      partEl.textContent = resolved.label;
-      descEl.textContent = resolved.description || "";
-      descEl.hidden = !descEl.textContent;
-      locationSelect.value =
-        resolved.locationId == null ? "" : String(resolved.locationId);
-      qtyInput.value = resolved.quantity == null ? "" : String(resolved.quantity);
-      qtyInput.max = resolved.maxQuantity == null ? "" : String(resolved.maxQuantity);
-      qtyHint.textContent = resolved.quantityHint || "";
-      setDialogError("");
-      buffer = "";
-      dialog.showModal();
-      render(); // no focus() — see the header comment
+      showTarget(resolved);
     } catch (error) {
       scanError(
         error instanceof ScanMiss ? error.message : "Could not reach the server.",
@@ -257,6 +260,76 @@ window.initScanPutaway = function (adapter) {
       drainQueue();
     }
   }
+
+  // Fill the dialog from a target and raise it. Split out of handleThingScan
+  // because a scan is no longer the only way here: an adapter can resolve a scan
+  // to a question of its own (the components page asks what the bag is for) and
+  // hand a target over later, through the API this returns.
+  function showTarget(resolved) {
+    target = resolved;
+    titleEl.textContent = resolved.title || "Set location";
+    partEl.textContent = resolved.label;
+    descEl.textContent = resolved.description || "";
+    descEl.hidden = !descEl.textContent;
+    locationSelect.value =
+      resolved.locationId == null ? "" : String(resolved.locationId);
+    qtyInput.value = resolved.quantity == null ? "" : String(resolved.quantity);
+    qtyInput.max = resolved.maxQuantity == null ? "" : String(resolved.maxQuantity);
+    qtyHint.textContent = resolved.quantityHint || "";
+    // After the quantity, not before: with sources the chosen pile is what sets
+    // the count and its ceiling, and it must have the last word.
+    setSources(resolved.sources);
+    setDialogError("");
+    buffer = "";
+    dialog.showModal();
+    render(); // no focus() — see the header comment
+  }
+
+  // The pile the stock is taken out of. A flow without sources (an invoice
+  // delivery comes from outside the building) leaves the field hidden and the
+  // select empty, and nothing below ever asks about it.
+  function setSources(sources) {
+    const list = sources || [];
+    fromSelect.replaceChildren();
+    fromField.hidden = list.length === 0;
+    if (!list.length) return;
+    // One pile is an answer, not a question — preselect it. Several make the
+    // choice the user's, and until they make it there is no count to prefill:
+    // "how many" has no meaning before "out of which".
+    if (list.length > 1) fromSelect.append(new Option("— choose a source —", ""));
+    for (const source of list) {
+      fromSelect.append(
+        new Option(`${source.path} (${source.quantity})`, String(source.id)),
+      );
+    }
+    fromSelect.value = list.length === 1 ? String(list[0].id) : "";
+    syncQuantityToSource(list);
+  }
+
+  // The selected pile, or null while the choice is still open.
+  function sourceOf(sources) {
+    return (sources || []).find((s) => String(s.id) === fromSelect.value) || null;
+  }
+
+  // A pile holds what it holds: picking one prefills the whole of it (a bag
+  // usually moves whole) and caps the box at it.
+  function syncQuantityToSource(sources) {
+    const chosen = sourceOf(sources);
+    if (!chosen) {
+      qtyInput.value = "";
+      qtyInput.max = "";
+      qtyHint.textContent = "pick where the stock comes from first";
+      return;
+    }
+    qtyInput.value = String(chosen.quantity);
+    qtyInput.max = String(chosen.quantity);
+    qtyHint.textContent = `of ${chosen.quantity} in ${chosen.path}`;
+  }
+
+  fromSelect.addEventListener("change", () => {
+    syncQuantityToSource(target?.sources);
+    setDialogError("");
+  });
 
   function handleLocationScan(code) {
     if (busy) {
@@ -274,21 +347,41 @@ window.initScanPutaway = function (adapter) {
     saveLocation(id);
   }
 
+  // Does this flow count at all? A prefilled quantity says yes; so does having
+  // sources, where the count is the chosen pile's rather than the target's.
+  function usesQuantity(saving) {
+    return saving.quantity != null || (saving.sources || []).length > 0;
+  }
+
   // The quantity to file, or null after explaining what's wrong with the box.
-  // An adapter that doesn't use quantities (no prefill) gets undefined back and
-  // never sees the field.
+  // An adapter that doesn't count gets undefined back and never sees the field.
   function readQuantity(saving) {
-    if (saving.quantity == null) return undefined;
+    if (!usesQuantity(saving)) return undefined;
     const value = Number(qtyInput.value);
     if (!Number.isInteger(value) || value < 1) {
       setDialogError("Quantity must be a whole number, 1 or more.");
       return null;
     }
-    if (saving.maxQuantity != null && value > saving.maxQuantity) {
-      setDialogError(`Only ${saving.maxQuantity} available — cannot file ${value}.`);
+    // The chosen pile is the real ceiling when there is one — it is what the
+    // stock is coming out of, and it may hold less than the target's own cap.
+    const cap = sourceOf(saving.sources)?.quantity ?? saving.maxQuantity;
+    if (cap != null && value > cap) {
+      setDialogError(`Only ${cap} available — cannot file ${value}.`);
       return null;
     }
     return value;
+  }
+
+  // The id of the pile to take from: undefined when the flow has no sources,
+  // null after saying that one of several has to be named.
+  function readSource(saving) {
+    if (!(saving.sources || []).length) return undefined;
+    const chosen = sourceOf(saving.sources);
+    if (!chosen) {
+      setDialogError("Choose where the stock comes from.");
+      return null;
+    }
+    return chosen.id;
   }
 
   async function saveLocation(locationId) {
@@ -303,21 +396,20 @@ window.initScanPutaway = function (adapter) {
       setDialogError(`Unknown location code SL${locationId} — reprint the label?`);
       return;
     }
+    // Source first: it is the earlier question. "How many" has no meaning until
+    // "out of which" is settled, and answering the wrong one first would tell a
+    // user staring at an empty count box to fill it in, when what is actually
+    // missing is the pile that would have filled it.
+    const fromId = readSource(saving);
+    if (fromId === null) return; // readSource explained why
     const quantity = readQuantity(saving);
     if (quantity === null) return; // readQuantity explained why
     busy = true;
     try {
-      await saving.save(locationId, path, quantity);
+      await saving.save(locationId, path, quantity, fromId);
       if (target === saving) target = null;
       dialog.close(); // a no-op if the user already closed it
-      // Most saves are a move ("X → shelf"); a target may override the wording
-      // for a save that isn't (the components add says "Added N × X to …").
-      showToast(
-        saving.successToast
-          ? saving.successToast(path, quantity)
-          : `${saving.label} → ${path}`,
-        { tone: "ok" },
-      );
+      showToast(`${saving.label} → ${path}`, { tone: "ok" });
     } catch (error) {
       setDialogError(
         error instanceof ScanMiss ? error.message : "Could not reach the server.",
@@ -475,4 +567,17 @@ window.initScanPutaway = function (adapter) {
   });
 
   render(); // arm the item field from the start
+
+  // What an adapter gets back. Both exist for the same reason: a scan no longer
+  // has to end in this dialog. The components page answers a scan with a question
+  // of its own, so resolve() returns nothing there and the flow comes back here
+  // only if the user asks for a move.
+  return {
+    // File a target the adapter produced out of band, exactly as a resolved scan
+    // would have been filed.
+    fileTarget: showTarget,
+    // A scan queued behind the adapter's own dialog gets its turn now. Only the
+    // adapter knows when that dialog is done with the screen.
+    resume: drainQueue,
+  };
 };

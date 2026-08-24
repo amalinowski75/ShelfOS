@@ -2,6 +2,7 @@
 {% from "_stock_dialog.html" import stock_dialog %}
 {% from "_type_dialog.html" import type_dialog %}
 {% from "_putaway.html" import putaway_panel, putaway_dialog %}
+{% from "_scan_choice.html" import scan_choice_dialog %}
 {% set can_write = current_user.role.value != "read-only" %}
 {% block title %}Components — ShelfOS{% endblock %}
 
@@ -29,12 +30,14 @@
 
 <div id="components-table"></div>
 
-{# Scan putaway: scan any bag → its component's "Set location" dialog opens;
-   scan an SL<id> label → the stock moves to that shelf. Same two steps as on a
-   draft invoice, so it shares the markup and the collector. #}
+{# Scan putaway: scan any bag → it asks what to do with that component (details,
+   add stock, move stock); choose Move and it is the same two steps as on a draft
+   invoice — scan an SL<id> label and the stock goes there — so the markup and the
+   collector are shared. #}
 {% if can_write %}
-{{ putaway_panel(location_options, "a bag", "Scan a bag's barcode to find its component, then scan a location label (SL…) to move its stock there — just scan, no clicking needed.") }}
+{{ putaway_panel(location_options, "a bag", "Scan a bag's barcode to find its component, then choose what to do with it — open its details, add stock, or move stock to a shelf you scan.") }}
 {{ putaway_dialog(location_options) }}
+{{ scan_choice_dialog() }}
 {% endif %}
 
 {# Add/Take stock. Gated on the same role as the row actions that open it, so the
