@@ -38,17 +38,19 @@
   // A missing entry means that answer isn't available for this component (no
   // stock → nothing to move), which is also what greys the button out.
   let choices = null;
-  // Set while an answer is being carried out, so the close it triggers isn't
-  // mistaken for the user walking away — see the close handler.
-  let answering = false;
+  // Raised when an answer is given, and lowered by the close handler that answer
+  // triggers. A LATCH rather than a flag held across dialog.close(), because
+  // close() does not fire `close` synchronously — the spec queues a task for it.
+  // Held across that gap, the handler sees the answer whenever it actually
+  // arrives, and the flow does not depend on which side of run() that lands.
+  let answered = false;
 
   function choose(name) {
     const run = choices?.[name];
     if (!run) return; // not offered for this component
     choices = null; // one answer per scan
-    answering = true;
+    answered = true;
     dialog.close();
-    answering = false;
     run();
   }
 
@@ -75,11 +77,19 @@
     choose(name);
   });
 
-  // Dismissed without answering: the bag is dropped, and a scan that arrived
-  // while this was up gets its turn.
   dialog?.addEventListener("close", () => {
-    if (answering) return;
     choices = null;
+    if (answered) {
+      // An answer owns what happens next, and says for itself when it is done:
+      // Add and Move release the queue when their own dialog closes, and Details
+      // never does — it is leaving the page, and draining a second bag into a
+      // lookup (and another chooser) in the moment before it goes is exactly the
+      // flicker this guard exists to prevent.
+      answered = false;
+      return;
+    }
+    // Dismissed without answering: the bag is dropped, and a scan that arrived
+    // while the question was up gets its turn.
     scan.resume();
   });
 
@@ -164,10 +174,16 @@
   const stockDialog = document.getElementById("stock-dialog");
 
   const scan = window.initScanPutaway({
-    // While one of these has the screen, a scan waits: resolving it would ask
-    // what to do with a second bag on top of the question about the first, or
-    // raise the chooser over a half-filled Add. The New Component dialog is
-    // deliberately NOT here — that one wants the next code, and swaps it in.
+    // While one of these has the screen, a scan waits rather than resolving into
+    // a second question on top of the first. The chooser is the half that does the
+    // work: a bag scanned during the previous lookup is queued, and the queue
+    // drains the moment that lookup lands — with the chooser already up. The Add
+    // dialog is belt-and-braces, and no test pins it: nothing reaches drainQueue
+    // while it is open (the answer's latch holds the queue, and the collector
+    // stands down for a foreign modal, so no fresh scan is even taken). It stays
+    // because `resume()` is wired to that dialog's close, and the pair should
+    // agree. The New Component dialog is deliberately NOT here — that one wants
+    // the next code, and swaps it into its import field.
     blocked: () => Boolean(dialog?.open || stockDialog?.open),
 
     async resolve(code) {

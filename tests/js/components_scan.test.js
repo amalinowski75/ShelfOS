@@ -164,10 +164,18 @@ function syncDialogOpen(document, id) {
   dialog.showModal = vi.fn(() => {
     dialog.open = true;
   });
+  // `close` is fired from a QUEUED TASK, not inline. The shared stub in harness.js
+  // dispatches it synchronously, which is a fine simplification until a script
+  // sequences work around it — this one does: it closes the chooser and then opens
+  // the next dialog, and whether the close handler runs before or after that is
+  // the whole question. The spec says after, so say after here.
   dialog.close = vi.fn(() => {
     if (!dialog.open) return; // a real <dialog> ignores close() when it is shut
     dialog.open = false;
-    dialog.dispatchEvent(new document.defaultView.Event("close"));
+    setTimeout(
+      () => dialog.dispatchEvent(new document.defaultView.Event("close")),
+      0,
+    );
   });
   return dialog;
 }
@@ -318,6 +326,76 @@ describe("components_scan.js — resolving a bag", () => {
     expect(page.document.getElementById("scan-choice-part").textContent).toBe(
       "SECOND-1",
     );
+  });
+
+  // Build a page with the first lookup held, so a second bag can be queued behind
+  // the chooser the way it happens at the bench.
+  async function queuedBehindChooser() {
+    let releaseFirst;
+    const firstHeld = new Promise((r) => (releaseFirst = r));
+    let call = 0;
+    const page = loadPage(componentsFixture(), SCRIPTS, {
+      fetchImpl: (url) => {
+        if (url !== "/api/components/scan") return ok({ id: 1 });
+        call += 1;
+        const answer = ok(call === 1 ? MATCH : SECOND_BAG);
+        return call === 1 ? firstHeld.then(() => answer) : answer;
+      },
+    });
+    syncDialogOpen(page.document, "putaway-dialog");
+    syncDialogOpen(page.document, "scan-choice-dialog");
+    const stock = syncDialogOpen(page.document, "stock-dialog");
+    // Open it for real, the way the dialog it stands in for would.
+    page.openStock = vi.fn(() => stock.showModal());
+    page.window.openStockDialog = page.openStock;
+    page.stock = stock;
+    page.lookups = () =>
+      page.fetchMock.mock.calls.filter(([u]) => u === "/api/components/scan").length;
+
+    scan(page.document, "BAG-ONE");
+    await tick();
+    scan(page.document, "BAG-TWO"); // queued
+    await tick();
+    releaseFirst();
+    await tick();
+    await tick();
+    return page;
+  }
+
+  it("holds the queued bag while the answer's own dialog is up", async () => {
+    // Answering does not release the queue — the answer does, when it is done.
+    // Draining on the chooser's close would resolve bag two into a lookup (and a
+    // second chooser) behind the Add dialog the user is standing in.
+    const page = await queuedBehindChooser();
+    expect(page.lookups()).toBe(1);
+
+    choose(page, "a");
+    await tick();
+
+    expect(page.openStock).toHaveBeenCalledTimes(1);
+    expect(page.lookups()).toBe(1); // bag two still waiting
+
+    page.stock.close(); // the Add dialog is done with the screen
+    await tick();
+    await tick();
+
+    expect(page.lookups()).toBe(2);
+    expect(page.document.getElementById("scan-choice-part").textContent).toBe(
+      "SECOND-1",
+    );
+  });
+
+  it("drops the queued bag when the answer is leaving the page", async () => {
+    // Details navigates away. Nothing will close after it, so there is no "done"
+    // to wait for — and resolving bag two in the moment before the page goes buys
+    // a lookup and a flash of a second chooser that nobody will ever act on.
+    const page = await queuedBehindChooser();
+
+    choose(page, "d");
+    await tick();
+    await tick();
+
+    expect(page.lookups()).toBe(1);
   });
 
   it("answers to the buttons as well as the keys", async () => {
