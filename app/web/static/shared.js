@@ -92,7 +92,7 @@ function esc(value) {
 // really taller than the number here would have its content clipped.
 const TABLE_DEFAULTS = {
   renderVertical: "basic",
-  rowHeight: 42,
+  rowHeight: 40,
 };
 
 // Frame a Tabulator table: fill it from its top down to the bottom of the viewport
