@@ -622,15 +622,25 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
      the CDN theme's own near-white header hover (same as the row rule below). */
   background: var(--border-strong) !important;
 }
-.tabulator .tabulator-row { background: var(--surface); border-bottom: 1px solid var(--border); color: var(--text); }
+/* The separator is an inset shadow, not a border, because a shadow takes up no
+   space. shared.js hands the library a fixed rowHeight and it applies that height
+   to the CELL, so a 1px border on the row would sit outside it and make the row
+   taller than the number the table was told. Drawn rather than laid out, it can't. */
+.tabulator .tabulator-row {
+  background: var(--surface); color: var(--text);
+  box-shadow: inset 0 -1px 0 var(--border);
+}
 .tabulator .tabulator-row.tabulator-row-even { background: var(--surface); }
 .tabulator .tabulator-row.tabulator-selectable:hover,
 .tabulator .tabulator-row:hover { background: var(--row-hover) !important; }
 /* Tabulator can also tint the individual cell on hover — keep it transparent
    so only the row-level --row-hover shows. */
 .tabulator .tabulator-row:hover .tabulator-cell { background: transparent; }
-.tabulator .tabulator-row .tabulator-cell { border-right: none; padding: 11px 12px; }
-.tabulator .tabulator-row:last-child { border-bottom: none; }
+/* The vertical padding is what sets the row height: it wraps the tallest thing a
+   cell holds, a 28px .btn, and shared.js's TABLE_DEFAULTS.rowHeight has to be at
+   least the sum. Change one and change the other. */
+.tabulator .tabulator-row .tabulator-cell { border-right: none; padding: 6px 12px; }
+.tabulator .tabulator-row:last-child { box-shadow: none; }
 .tabulator .tabulator-tableholder .tabulator-placeholder-contents { color: var(--muted); font-size: 14px; }
 
 /* Tabulator's hover tooltip (BOM substitutes, References): the CDN default is a
@@ -665,7 +675,11 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 /* row actions: quiet until the row is hovered (spec §15) */
 .row-actions { display: inline-flex; gap: 4px; opacity: 0; transition: opacity .12s; }
 .tabulator-row:hover .row-actions { opacity: 1; }
-.row-actions .btn { min-height: 28px; }
+/* Every button inside a table row is this tall — not just the ones in .row-actions.
+   The tallest thing in a cell decides how tall the row wants to be, and a row that
+   wants a different height than shared.js's TABLE_DEFAULTS.rowHeight either clips
+   its own content or leaves a gap. One height here means one rowHeight there. */
+.tabulator .tabulator-row .btn { min-height: 28px; }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }

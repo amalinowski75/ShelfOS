@@ -9,6 +9,7 @@ let typesData = []; // the last feed, so an open params dialog can re-render on 
 let openParamsTypeId = null; // the type whose parameters dialog is showing, if any
 
 const typesTable = new Tabulator("#types-table", {
+  ...TABLE_DEFAULTS,
   layout: "fitDataFill",
   placeholder: "No types",
   columns: typeColumns(),

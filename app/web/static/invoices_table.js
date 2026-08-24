@@ -98,6 +98,7 @@ async function loadInvoices(table, hint) {
 const invoicesContainer = document.getElementById("invoices-table");
 if (invoicesContainer) {
   const invoicesTable = new Tabulator("#invoices-table", {
+    ...TABLE_DEFAULTS,
     layout: "fitDataFill", // natural widths + horizontal scroll; framed by frameTable
     placeholder: "No invoices",
     columns: invoiceColumns(),

@@ -6,6 +6,7 @@
 const typeFilter = document.getElementById("type-filter");
 
 const table = new Tabulator("#components-table", {
+  ...TABLE_DEFAULTS,
   // fitDataFill: columns take their natural widths (horizontal scrollbar when they
   // overflow); when narrower than the container the row background fills the slack
   // rather than stretching a column. frameTable adds the sticky-header scroll box.

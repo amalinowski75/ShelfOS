@@ -5,6 +5,7 @@
 // `csrfToken`, `esc` and `errorMessage` come from shared.js.
 
 const usersTable = new Tabulator("#users-table", {
+  ...TABLE_DEFAULTS,
   layout: "fitDataFill", // natural widths + horizontal scroll; framed by frameTable
   placeholder: "No users",
   columns: userColumns(), // static columns; only the data reloads (below)
