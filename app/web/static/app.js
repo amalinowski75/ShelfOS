@@ -14,6 +14,13 @@ const table = new Tabulator("#components-table", {
   placeholder: "No components",
 });
 
+// Where a row leads. Pulled out of the handler so the destination is something a
+// test can name: jsdom cannot navigate, and reports only THAT an attempt was made,
+// never to where. (Same reason boms_report.js keeps bomRowTarget separate.)
+function componentRowTarget(row) {
+  return `/components/${row.id}`;
+}
+
 // The whole row opens the part it describes. The Details button stays: it is the
 // discoverable form, and the one a keyboard can reach. But on a table this wide,
 // reading a row and then crossing the screen to its far-right button was the
@@ -22,12 +29,16 @@ table.on("rowClick", (event, row) => {
   // Tabulator raises rowClick for the action cell too, so a click that landed on
   // a control belongs to that control and not to the row.
   if (event.target.closest("button, a, input, select, label")) return;
-  // Don't navigate out from under someone dragging across an MPN to copy it. The
-  // check is for a selection that exists RIGHT NOW, so an old one left elsewhere
-  // on the page can't make rows stop working.
+  // A drag across an MPN ends in a click on the row, and leaving the page then
+  // would make the table impossible to copy out of — so the row stands down while
+  // a selection is live. A selection left elsewhere does NOT wedge this, but not
+  // because of the check: the browser collapses it on mousedown, long before any
+  // click. The one click this really swallows is one landing INSIDE an existing
+  // selection, which some browsers hold through mousedown for drag-and-drop —
+  // and swallowing is the safe direction there.
   const selection = window.getSelection();
   if (selection && !selection.isCollapsed) return;
-  window.location = `/components/${row.getData().id}`;
+  window.location = componentRowTarget(row.getData());
 });
 
 // ---- remembered column widths ---------------------------------------------
@@ -206,7 +217,9 @@ function actionColumn() {
       if (!act) return;
       const row = cell.getRow().getData();
       if (act === "details") {
-        window.location = `/components/${row.id}`;
+        // Same destination as clicking the row, from the same place — the button
+        // and the row must never be able to disagree about where a part lives.
+        window.location = componentRowTarget(row);
       } else {
         // This page HAS a JSON feed, so it re-pulls the table instead of reloading.
         openStockDialog(act, row.id, loadTable);

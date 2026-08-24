@@ -256,6 +256,35 @@ describe("app.js — the row opens the part", () => {
     expect(page.window.HTMLDialogElement.prototype.showModal).not.toHaveBeenCalled();
   });
 
+  it("sends the row to the part it describes", () => {
+    // `navigations` can only say a navigation was attempted, never to where, so
+    // the destination is asserted on the function that decides it — and the
+    // handler is shown to route through that function rather than build its own.
+    const page = loadPage(typePageFixture(), SCRIPTS);
+    expect(page.window.componentRowTarget({ id: 42 })).toBe("/components/42");
+
+    const spy = vi.fn(page.window.componentRowTarget);
+    page.window.componentRowTarget = spy;
+    rowClick(page);
+
+    expect(spy).toHaveBeenCalledWith({ id: 42 });
+    expect(spy.mock.results[0].value).toBe("/components/42");
+  });
+
+  it("sends the Details button to the same place as the row", () => {
+    // Two ways to the same page is fine; two ideas of where that page is, is not.
+    const page = loadPage(typePageFixture(), SCRIPTS);
+    const spy = vi.fn(page.window.componentRowTarget);
+    page.window.componentRowTarget = spy;
+
+    page.window.actionColumn().cellClick(
+      { target: { dataset: { act: "details" } } },
+      { getRow: () => ({ getData: () => ({ id: 42 }) }) },
+    );
+
+    expect(spy.mock.results[0].value).toBe("/components/42");
+  });
+
   it("leaves the row alone when the click landed on a control", () => {
     // Tabulator raises rowClick for the action cell too, so without this guard
     // every Add and Take would also navigate — losing the dialog it just opened.
