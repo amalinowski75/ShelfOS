@@ -419,6 +419,7 @@ const bomTableEl = document.getElementById("bom-lines-table");
 if (bomTableEl) {
   const bomId = bomTableEl.dataset.bomId;
   const table = new Tabulator("#bom-lines-table", {
+    ...TABLE_DEFAULTS,
     // Natural column widths + a horizontal scrollbar when they overflow; framed to
     // a sticky-header scroll box by frameTable (fixed px height — never vh/maxHeight,
     // which freeze Tabulator on resize; see shared.js frameTable).

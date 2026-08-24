@@ -69,6 +69,11 @@ export function loadPage(
       // Kept so a test can check the deal a table struck with the library —
       // column options are configuration, but they are also the contract.
       window.Tabulator.columns = options?.columns ?? [];
+      // The rest of the deal, for the same reason. rowHeight in particular is not
+      // decoration: without it the library estimates its own scroll height and
+      // revises it mid-drag, which is what pulls the scrollbar thumb away from the
+      // pointer (see TABLE_DEFAULTS in shared.js).
+      window.Tabulator.options = options ?? {};
     }
     setColumns(columns) {
       window.Tabulator.columns = columns ?? [];

@@ -151,6 +151,7 @@ function ruleColumns() {
 }
 
 const rulesTable = new Tabulator("#rules-table", {
+  ...TABLE_DEFAULTS,
   layout: "fitDataFill",
   placeholder: "No match rules",
   columns: ruleColumns(),

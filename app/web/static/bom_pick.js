@@ -180,6 +180,7 @@
       // Columns AND rows go in at construction: a table built empty and filled a
       // tick later has nothing to size itself against inside a dialog.
       table = new Tabulator(mount, {
+        ...TABLE_DEFAULTS,
         layout: "fitDataFill",
         placeholder: "No components",
         columns,

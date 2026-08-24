@@ -56,6 +56,45 @@ function esc(value) {
   );
 }
 
+// Options every table is built with. Spread these into `new Tabulator(...)`.
+//
+// `renderVertical: "basic"` is the one that matters: it puts every row in the DOM
+// instead of a window of them. That is not a performance preference, it is what
+// keeps the scrollbar usable.
+//
+// frameTable gives each table a pixel height, and a Tabulator with a height defaults
+// to its virtual DOM: a window of rows, with padding standing in for the rest. On a
+// big scroll — which is what dragging the thumb is — it refills that window and
+// recomputes the padding from the current scroll position:
+//
+//     vDomTopPad    = scrollTop - topPadHeight
+//     vDomBottomPad = Math.max(vDomScrollHeight - vDomTopPad - rowsHeight - …, 0)
+//
+// While that Math.max is positive the two cancel and the content height is constant.
+// Once you are far enough down that it clamps to zero — a bit past the middle, and
+// sooner the taller the rendered window — the height becomes `scrollTop + rendered
+// rows`, which GROWS as you drag further. The browser draws the thumb purely from
+// scrollTop/scrollHeight, so a content height that grows under the drag slides the
+// thumb out from under the pointer and leaves it there. It reads exactly like the
+// first half of the table being fine and the rest coming apart, because it is.
+//
+// Rendering every row removes the padding, the estimate and the arithmetic with it,
+// so the scroll height is just the sum of the real rows and cannot move. Our tables
+// are hundreds of rows, not tens of thousands; that is well within what a browser
+// lays out without complaint, and it is worth more than the virtual DOM saves.
+//
+// `rowHeight` earns its place under "basic": told a row's height up front the library
+// skips measuring each one (Row.calcHeight returns early), which is what you want
+// when it is laying out all of them, and it keeps frameTable's measurement exact.
+// 52 is a row's real height — a cell's 11px of padding above and below a 28px
+// `.btn`, with a pixel to spare. app.css pins every in-table button to that 28px and
+// draws the row separator as an inset shadow so it costs no height, because a row
+// that is really taller than the number here would have its content clipped.
+const TABLE_DEFAULTS = {
+  renderVertical: "basic",
+  rowHeight: 52,
+};
+
 // Frame a Tabulator table: fill it from its top down to the bottom of the viewport
 // (a sticky header + internal scroll), wrapping shorter tables exactly so there's
 // no empty frame. Uses a FIXED pixel height — never `height`/`maxHeight` set to a
@@ -73,7 +112,9 @@ function frameTable(table) {
     const header = el.querySelector(".tabulator-header");
     const headerH = header ? header.offsetHeight : 0;
     // scrollHeight reflects the FULL content (all rows) even when a height is
-    // already applied, so this measurement stays stable across re-fits. The +16
+    // already applied, so this measurement stays stable across re-fits — and since
+    // TABLE_DEFAULTS renders every row it is the real total, not an estimate the
+    // library would revise later. The +16
     // leaves room for a horizontal scrollbar so a short-but-wide table doesn't get
     // a spurious vertical one.
     const full = holder.scrollHeight + headerH + 16;

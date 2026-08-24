@@ -140,6 +140,7 @@
   }
 
   const table = new Tabulator(mount, {
+    ...TABLE_DEFAULTS,
     layout: "fitDataFill",
     placeholder: "Nothing recorded yet",
     columns: auditColumns(),
