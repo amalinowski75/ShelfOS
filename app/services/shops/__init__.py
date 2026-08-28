@@ -71,10 +71,15 @@ _BY_MPN: dict[str, MpnProvider] = {
 }
 
 # Invoice-import enrichment, keyed by the shop's own catalogue index (the invoice
-# always carries it in the item row itself). ALL of them — including TME, whose
-# symbol is exactly that index, giving it API enrichment the MPN path never could.
-# This map is also what `product_url` dispatches on, so a shop missing here has a
-# permanently greyed "open in shop" button.
+# always carries it in the item row itself). Including TME, whose symbol is exactly
+# that index, giving it API enrichment the MPN path never could. This map is also
+# what `product_url` dispatches on, so a shop missing here has a permanently greyed
+# "open in shop" button.
+#
+# Farnell's entry, like its _BY_MPN one, is not reachable yet: both keys come from
+# something that names the shop, and nothing does — there is no Farnell invoice
+# parser, so `shop_key` is never "farnell". Registered anyway so that adding the
+# parser is one file rather than one file plus a lookup someone has to remember.
 _BY_INDEX: dict[str, IndexProvider] = {
     "mouser": _mouser,
     "digikey": _digikey,

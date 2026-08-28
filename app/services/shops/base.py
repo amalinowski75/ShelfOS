@@ -68,8 +68,11 @@ class ShopProvider(Protocol):
         an invoice line can still link back to where it came from. The registry's
         ``product_url`` strips and rejects a blank number before calling this, so
         implementations take a clean value and always return a URL. The browser
-        opens the result, so hosts are fixed constants (no server-side fetch, no
-        SSRF surface).
+        opens the result and the server never fetches it, so there is no SSRF
+        surface here: the host is a fixed constant for every provider but Farnell,
+        whose store is an operator-set environment variable — still not user input,
+        and pointing someone at a store they have no account with is the worse
+        failure.
         """
         ...
 

@@ -394,10 +394,17 @@ def test_reads_the_case_out_of_the_attributes_into_package() -> None:
         ("IC Case / Package", "WDFN-EP"),
         ("Resistor Case Style", "WDFN-EP"),  # element14 names it per category
         ("Capacitor Case Style", "WDFN-EP"),
+        ("Transistor Case", "WDFN-EP"),
         # The reel or tape the part SHIPS on, which is not its body.
         ("Packaging", None),
+        ("Packaging Type", None),
         # A dimension of the case, not the case.
         ("Case Height - Max", None),
+        # Labels that merely CONTAIN the word: a quantity or a base number silently
+        # becoming the component's case is the failure the anchored match prevents.
+        ("Package Type", None),
+        ("Package Quantity", None),
+        ("Base Package Number", None),
         ("Operating Temperature Max", None),
     ],
 )
@@ -486,9 +493,35 @@ def test_a_non_json_body_is_a_clean_failure() -> None:
         FarnellProvider().fetch(_URL, transport=_transport("<html>nope</html>"))
 
 
-def test_an_unexpected_envelope_is_a_clean_failure() -> None:
-    with pytest.raises(ValidationError, match="could not read"):
+def test_a_body_that_is_not_a_search_result_is_an_error_not_a_miss() -> None:
+    # The distinction is load-bearing, not cosmetic: ShopLookupMiss is the ONE
+    # exception fetch_first_match retries on, so a body like this coming back as a
+    # miss would burn a round trip per candidate and then report "no product
+    # found" for what is a configuration problem.
+    #
+    # The dict-shaped value is the point. A root whose value is a plain string
+    # would be caught by any shape check; a root that is a dict, but not a search
+    # result, is the one that used to slip through — and it is what a rejected key
+    # answered with HTTP 200 looks like.
+    fault = {"fault": {"faultstring": "Invalid ApiKey", "detail": {"errorcode": "x"}}}
+    with pytest.raises(ValidationError, match="did not answer with a product search"):
+        FarnellProvider().fetch(_URL, transport=_transport(fault))
+
+    with pytest.raises(ValidationError, match="did not answer with a product search"):
         FarnellProvider().fetch(_URL, transport=_transport({"fault": "nope"}))
+
+
+def test_the_envelope_is_found_even_beside_another_root_key() -> None:
+    # Taken by shape rather than by position, so a key ahead of it does not turn a
+    # perfectly good answer into "no product found".
+    padded = {
+        "someOtherThing": {"a": 1},
+        "premierFarnellPartNumberReturn": _FARNELL_BY_ID[
+            "premierFarnellPartNumberReturn"
+        ],
+    }
+    product = FarnellProvider().fetch(_URL, transport=_transport(padded))
+    assert product.mpn == "NCP730BMT330TBG"
 
 
 # ---- registry --------------------------------------------------------------

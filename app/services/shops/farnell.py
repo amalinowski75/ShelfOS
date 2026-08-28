@@ -143,6 +143,17 @@ def _attribute(product: dict[str, Any], label: str) -> str:
     return ""
 
 
+def _specifications(
+    attributes: list[tuple[str, str, str]],
+) -> list[tuple[str, str, str]]:
+    """The attributes that describe the PART, with the API's bookkeeping removed.
+
+    Everything that reads attributes goes through here, so the parameters and the
+    package can never disagree about which of them are real.
+    """
+    return [row for row in attributes if row[0].casefold() not in _INTERNAL_ATTRIBUTES]
+
+
 def _parameters(attributes: list[tuple[str, str, str]]) -> list[tuple[str, str]]:
     """Attributes as ``(label, value)`` for the matching engine.
 
@@ -153,12 +164,10 @@ def _parameters(attributes: list[tuple[str, str, str]]) -> list[tuple[str, str]]
     beside "Output Voltage Nom" = 3.3 V); keeping both is harmless, since the engine
     fills a definition from the first label that names it and skips it thereafter.
     """
-    rows: list[tuple[str, str]] = []
-    for label, value, unit in attributes:
-        if label.casefold() in _INTERNAL_ATTRIBUTES:
-            continue
-        rows.append((label, f"{value} {unit}" if unit else value))
-    return rows
+    return [
+        (label, f"{value} {unit}" if unit else value)
+        for label, value, unit in attributes
+    ]
 
 
 def _package(attributes: list[tuple[str, str, str]]) -> str | None:
@@ -169,15 +178,21 @@ def _package(attributes: list[tuple[str, str, str]]) -> str | None:
     description, and never from the attributes — so "IC Case / Package: WDFN-EP"
     would otherwise be dropped for a part whose description doesn't repeat it.
 
-    element14 labels it per category ("IC Case / Package", "Resistor Case Style"),
-    hence the two shapes. Neither matches "Packaging" — the reel or tape the part
-    ships on, which is not its body — and no guard is needed for that: "package" is
-    not a substring of "packaging" (they part company at the seventh letter). Nor
-    does either match "Case Height", which is a dimension of the case.
+    element14 labels it per category, and the label always ENDS in the thing it
+    names: "IC Case / Package", "Resistor Case Style", "Transistor Case". So the
+    match is anchored at the end rather than looking for the word anywhere, which
+    would also take "Package Type", "Package Quantity" and "Base Package Number" —
+    a quantity or a base number silently becoming the component's case, and
+    whichever came first in element14's own attribute order winning.
+
+    "Packaging" — the reel or tape the part ships on, not its body — needs no guard
+    of its own either way: "package" is not a substring of "packaging" (they part
+    company at the seventh letter). "Case Height" is a dimension of the case and
+    ends in neither shape.
     """
     for label, value, _unit in attributes:
         low = label.casefold()
-        if "package" in low or "case style" in low:
+        if low.endswith(("package", "case")) or "case style" in low:
             return value
     return None
 
@@ -396,11 +411,30 @@ class FarnellProvider:
             # The envelope is named after the SEARCH that was run, not after the
             # endpoint: `manufacturerPartNumberSearchReturn` for manuPartNum: and
             # `premierFarnellPartNumberReturn` for id: (both confirmed against the
-            # live API). So read the single value it wraps rather than a pair of
-            # hard-coded keys that the next search type would break.
-            envelope = next(iter(payload.values()), None)
-            if not isinstance(envelope, dict):
-                raise ValueError("unexpected response shape")
+            # live API). So find it by SHAPE rather than by a pair of hard-coded
+            # keys that the next search type would break.
+            #
+            # By shape and not just "the first value", because the difference
+            # matters: a body that is not a search result at all — what a rejected
+            # key looks like when it arrives with HTTP 200 — would otherwise pass
+            # for an envelope holding no products, and come back as a
+            # ShopLookupMiss. That is the one exception fetch_first_match retries
+            # on, so a configuration problem would burn a round trip per candidate
+            # and then report "no product found".
+            envelope = next(
+                (
+                    value
+                    for value in payload.values()
+                    if isinstance(value, dict)
+                    and ("products" in value or "numberOfResults" in value)
+                ),
+                None,
+            )
+            if envelope is None:
+                raise ValidationError(
+                    "element14 did not answer with a product search "
+                    "(a rejected API key can arrive this way, with HTTP 200)"
+                )
             products = _as_list(envelope.get("products"))
         except (httpx.HTTPError, ValueError, AttributeError):
             raise ValidationError("could not read the element14 response") from None
@@ -440,7 +474,7 @@ def _pick(
 
 
 def _product_data(product: dict[str, Any]) -> ProductData:
-    attributes = _attributes(product)
+    attributes = _specifications(_attributes(product))
     brand = _text(product.get("brandName")) or _text(product.get("vendorName"))
     mpn = _text(product.get("translatedManufacturerPartNumber"))
     description = _description(_text(product.get("displayName")), brand, mpn)

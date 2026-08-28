@@ -108,11 +108,11 @@ export SHELFOS_FARNELL_API_KEY="..."
 export SHELFOS_FARNELL_STORE="uk.farnell.com"
 ```
 
-TME and Farnell return structured parameters, so their imports are the richest;
-Mouser exposes specs only inside the free-text description, which the dialog parses
-best-effort. Farnell is the one that also states the component's case and how it
-mounts, so those two fields fill themselves. Whatever a shop returns is pre-filled
-for review — nothing is saved until you confirm the dialog.
+All but Mouser return structured parameters; Mouser exposes specs only inside the
+free-text description, which the dialog parses best-effort. Farnell is the one that
+also states the component's case and how it mounts, so those two fields fill
+themselves. Whatever a shop returns is pre-filled for review — nothing is saved until
+you confirm the dialog.
 
 A Farnell product URL ends in the order code (`…/dp/3367839`), which is element14's
 own unique key, so pasting a link never has to guess between two makers sharing a

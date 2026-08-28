@@ -7,7 +7,9 @@ shop's structured attributes and free-text descriptions, all driven by editable 
 
 from __future__ import annotations
 
+import httpx
 import pytest
+from app import config
 from app.models.enums import MatchDomain, MountingType
 from app.models.enums import ParameterDataType as DT
 from app.models.match_rule import MatchRule
@@ -15,6 +17,7 @@ from app.services import component_service as cs
 from app.services import match_rule_service as mrs
 from app.services.matching import build_proposal
 from app.services.shops.base import ProductData
+from app.services.shops.farnell import FarnellProvider
 from sqlmodel import Session
 
 
@@ -313,7 +316,9 @@ def test_mounting_from_a_structured_attribute_only(session: Session) -> None:
     assert build_proposal(session, product).mounting_type is MountingType.SMT
 
 
-def test_farnell_states_the_case_and_the_mounting_outright(session: Session) -> None:
+def test_farnell_states_the_case_and_the_mounting_outright(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The two fields Farnell fills that no other shop's API does.
 
     Package: element14 states it as an attribute, which this engine never reads —
@@ -321,17 +326,44 @@ def test_farnell_states_the_case_and_the_mounting_outright(session: Session) -> 
     "the shop stated it outright" branch. Mounting: "Surface Mount" is an attribute
     VALUE, and the seeded rule finds it there.
 
-    Asserted end to end because it is a chain of three parts — the provider, the
-    seeded rules, and this engine — and if any link moves the only symptom is a
-    dialog quietly showing "Other" and an empty Package.
+    The ``ProductData`` comes out of the PROVIDER rather than being written here,
+    because the join is the thing worth pinning: both ends are already covered by
+    their own tests, and if the provider's label or value drifted, each of those
+    would keep passing on its own fixture while the dialog quietly showed "Other"
+    and an empty Package.
     """
     _resistor(session)
-    product = ProductData(
-        category="resistor",
-        description="LDO, FIXED, 3.3V, 0.15A, -40 TO 125DEG C",
-        package="WDFN-EP",
-        parameters=[("IC Mounting", "Surface Mount"), ("IC Case / Package", "WDFN-EP")],
+    monkeypatch.setattr(config, "FARNELL_API_KEY", "key")
+    body = {
+        "premierFarnellPartNumberReturn": {
+            "numberOfResults": 1,
+            "products": [
+                {
+                    "sku": "3367839",
+                    "translatedManufacturerPartNumber": "NCP730BMT330TBG",
+                    "brandName": "ONSEMI",
+                    "displayName": (
+                        "ONSEMI - NCP730BMT330TBG - LDO, FIXED, 3.3V, 0.15A"
+                    ),
+                    "attributes": [
+                        {
+                            "attributeLabel": "IC Mounting",
+                            "attributeValue": "Surface Mount",
+                        },
+                        {
+                            "attributeLabel": "IC Case / Package",
+                            "attributeValue": "WDFN-EP",
+                        },
+                    ],
+                }
+            ],
+        }
+    }
+    product = FarnellProvider().fetch(
+        "https://uk.farnell.com/onsemi/x/dp/3367839",
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json=body)),
     )
+
     proposal = build_proposal(session, product)
     assert proposal.mounting_type is MountingType.SMT
     assert proposal.package == "WDFN-EP"
