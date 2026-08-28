@@ -116,6 +116,14 @@ TME_COUNTRY = os.environ.get("SHELFOS_TME_COUNTRY", "PL")
 # dropped (the same trap Digi-Key's locale language has).
 TME_LANGUAGE = os.environ.get("SHELFOS_TME_LANGUAGE", "en")
 
+# element14 (Farnell / Newark / CPC): one API key as a query parameter, like Mouser.
+# The store decides currency, stock — and the LANGUAGE OF THE ATTRIBUTE LABELS, which
+# is why the default is a UK one rather than the nearest. A localised label
+# ("Montaż" for "IC Mounting") no longer names any ShelfOS parameter definition and
+# is silently dropped, exactly the trap TME_LANGUAGE above is pinned against.
+FARNELL_API_KEY = os.environ.get("SHELFOS_FARNELL_API_KEY", "").strip()
+FARNELL_STORE = os.environ.get("SHELFOS_FARNELL_STORE", "uk.farnell.com").strip()
+
 # A visible field separator some barcode scanners emit in place of the ISO 15434
 # group separator (GS, 0x1D). The scan parser always accepts GS/RS; set this if your
 # scanner is configured to send a printable one (e.g. "|") instead.

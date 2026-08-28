@@ -353,6 +353,13 @@ def test_product_url_builds_a_distributor_link_per_shop() -> None:
         shops.product_url("mouser", "71-CRCW04024K70")
         == "https://www.mouser.com/c/?q=71-CRCW04024K70"
     )
+    # Farnell's host is the configured store rather than a constant, so this also
+    # pins the default: someone changing it changes where every existing
+    # Farnell-sourced component's "open in shop" button leads.
+    assert (
+        shops.product_url("farnell", "3367839")
+        == "https://uk.farnell.com/search?st=3367839"
+    )
 
 
 def test_product_url_percent_encodes_the_part_number() -> None:
@@ -368,10 +375,14 @@ def test_product_url_percent_encodes_the_part_number() -> None:
         == "https://www.digikey.com/en/products/result?keywords=A/B%20C"
     )
     assert shops.product_url("mouser", "A/B C") == "https://www.mouser.com/c/?q=A/B%20C"
+    assert (
+        shops.product_url("farnell", "A/B C")
+        == "https://uk.farnell.com/search?st=A/B%20C"
+    )
 
 
 def test_product_url_is_none_for_an_unknown_shop_or_blank_number() -> None:
-    assert shops.product_url("farnell", "X") is None  # no provider for this shop
+    assert shops.product_url("rs", "X") is None  # no provider for this shop
     assert shops.product_url("tme", "") is None
     assert shops.product_url("tme", "   ") is None
     assert shops.product_url(None, "X") is None

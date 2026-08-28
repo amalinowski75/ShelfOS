@@ -313,6 +313,30 @@ def test_mounting_from_a_structured_attribute_only(session: Session) -> None:
     assert build_proposal(session, product).mounting_type is MountingType.SMT
 
 
+def test_farnell_states_the_case_and_the_mounting_outright(session: Session) -> None:
+    """The two fields Farnell fills that no other shop's API does.
+
+    Package: element14 states it as an attribute, which this engine never reads —
+    so the provider lifts it into ``ProductData.package`` and it arrives through the
+    "the shop stated it outright" branch. Mounting: "Surface Mount" is an attribute
+    VALUE, and the seeded rule finds it there.
+
+    Asserted end to end because it is a chain of three parts — the provider, the
+    seeded rules, and this engine — and if any link moves the only symptom is a
+    dialog quietly showing "Other" and an empty Package.
+    """
+    _resistor(session)
+    product = ProductData(
+        category="resistor",
+        description="LDO, FIXED, 3.3V, 0.15A, -40 TO 125DEG C",
+        package="WDFN-EP",
+        parameters=[("IC Mounting", "Surface Mount"), ("IC Case / Package", "WDFN-EP")],
+    )
+    proposal = build_proposal(session, product)
+    assert proposal.mounting_type is MountingType.SMT
+    assert proposal.package == "WDFN-EP"
+
+
 def test_description_mounting_beats_an_incidental_attribute_word(
     session: Session,
 ) -> None:
