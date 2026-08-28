@@ -86,7 +86,22 @@ export function loadPage(
     }
     setData(rows) {
       window.Tabulator.rows = rows ?? [];
+      // The real library re-runs its header filters as part of setData and fires
+      // dataFiltered BEFORE this promise resolves (verified against Tabulator
+      // 6.3.0) — a filter survives setColumns + setData, so a script that reads
+      // rows after the await is looking at an already-filtered table. Tests say
+      // which rows survived by setting Tabulator.activeRows; the default is all
+      // of them, which is the no-filter case.
+      window.Tabulator.handlers.dataFiltered?.(
+        window.Tabulator.filters,
+        window.Tabulator.activeData().map((row) => ({ getData: () => row })),
+      );
       return Promise.resolve();
+    }
+    getData(scope) {
+      return scope === "active"
+        ? window.Tabulator.activeData()
+        : window.Tabulator.rows;
     }
     // Tabulator needs a redraw when it was built while hidden (inside a dialog).
     redraw() {}
@@ -125,6 +140,11 @@ export function loadPage(
     static filters = [];
     static refilters = 0;
     static columns = [];
+    // What survives the header filters. null = no filter, so everything does.
+    static activeRows = null;
+    static activeData() {
+      return window.Tabulator.activeRows ?? window.Tabulator.rows;
+    }
   };
 
   // Browsers expose form controls as named properties on the form
@@ -697,15 +717,29 @@ export function componentDialogFixture(types = [{ id: 1, name: "resistor" }]) {
 }
 
 // The components page essentials app.js needs at load: type filter, table mount,
-// the New Type dialog (+ its param-row <template>) and New Type / New Component
-// buttons. Mirrors index.html closely enough to drive the type-builder flow.
+// the header stats strip, the New Type dialog (+ its param-row <template>) and
+// New Type / New Component buttons. Mirrors index.html closely enough to drive
+// the type-builder flow.
 export function typePageFixture(types = [{ id: 1, name: "resistor" }]) {
   const options = types
     .map((t) => `<option value="${t.id}">${t.name}</option>`)
     .join("");
   return `
-    <select id="type-filter" class="control"><option value="">All types</option>${options}</select>
-    <button id="new-component-btn"></button>
+    <div class="head">
+      <h1>Components</h1>
+      <div class="head-stats" id="component-stats">
+        <span id="stat-components">0</span>
+        <span id="stat-units">0</span>
+        <span id="stat-zero">0</span><span id="stat-zero-share"></span>
+        <span id="stat-types">0</span>
+        <span id="stat-makers">0</span>
+        <span id="stat-smt">0</span><span id="stat-tht">0</span>
+        <span class="stat-bar"><i id="stat-smt-bar" style="width: 0%"></i></span>
+        <span id="stat-top-qty">0</span><span id="stat-top-mpn"></span>
+      </div>
+      <select id="type-filter" class="control"><option value="">All types</option>${options}</select>
+      <button id="new-component-btn"></button>
+    </div>
     <div id="components-table"></div>
     <dialog id="stock-dialog">
       <strong id="stock-dialog-title"></strong>

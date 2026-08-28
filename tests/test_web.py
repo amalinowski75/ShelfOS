@@ -52,6 +52,44 @@ def test_index_page_renders(client: TestClient) -> None:
     assert "/static/app.js" in response.text
 
 
+def test_index_page_carries_the_stats_strip(client: TestClient) -> None:
+    """The header stats skeleton is server-rendered; app.js only fills it in.
+
+    Every tile the client writes to must be present, or that number silently
+    never appears.
+    """
+    html = client.get("/").text
+    assert 'id="component-stats"' in html
+    for tile in (
+        "stat-components",
+        "stat-units",
+        "stat-zero",
+        "stat-zero-share",
+        "stat-types",
+        "stat-makers",
+        "stat-smt",
+        "stat-tht",
+        "stat-smt-bar",
+        "stat-top-qty",
+        "stat-top-mpn",
+    ):
+        assert f'id="{tile}"' in html
+
+
+def test_stats_strip_shown_to_read_only_users(client: TestClient) -> None:
+    """Reading the shelf is exactly what a read-only account is for."""
+    client.post(
+        "/api/admin/users",
+        json={"username": "viewer2", "password": "pw", "role": "read-only"},
+    )
+    token = client.post(
+        "/api/auth/token", json={"username": "viewer2", "password": "pw"}
+    ).json()["access_token"]
+    html = client.get("/", headers={"Authorization": f"Bearer {token}"}).text
+    assert 'id="component-stats"' in html
+    assert 'id="stat-units"' in html
+
+
 def test_stock_dialog_uses_location_tree_picker(client: TestClient) -> None:
     """The stock dialog's location field is the expandable tree-picker (§7)."""
     room = client.post("/api/locations", json={"type": "room", "name": "Lab"}).json()

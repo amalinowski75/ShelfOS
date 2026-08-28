@@ -234,6 +234,212 @@ describe("app.js — table formatting", () => {
   });
 });
 
+describe("app.js — header stats", () => {
+  // Rows in the shape the feed sends them (presenter.build_component_table).
+  const row = (over) => ({
+    id: 1,
+    type: "resistor",
+    manufacturer: "Yageo",
+    mpn: "RC0805",
+    package: "0805",
+    mounting_type: "SMT",
+    quantity: 100,
+    ...over,
+  });
+  // The largest stock is deliberately NOT the first row, so "take the first one"
+  // is not a passing implementation.
+  const ROWS = [
+    row({ id: 1, quantity: 250, mounting_type: "THT", manufacturer: "" }),
+    row({ id: 2, quantity: 0, type: "capacitor", manufacturer: "Murata" }),
+    row({ id: 3, quantity: 1000, mpn: "RC0805-BIG" }),
+    row({ id: 4, quantity: 0, mounting_type: "Other", type: "capacitor" }),
+  ];
+
+  it("sums, counts and splits the rows it is given", () => {
+    const { window } = loadPage(typePageFixture(), SCRIPTS);
+    const stats = window.computeStats(ROWS);
+
+    expect(stats.components).toBe(4);
+    expect(stats.units).toBe(1250);
+    expect(stats.zero).toBe(2);
+    expect(stats.zeroShare).toBe(50);
+    expect(stats.types).toBe(2); // resistor, capacitor
+    // The blank manufacturer is not a distinct maker — the feed sends "" when
+    // a component has none, and one anonymous group is not a name.
+    expect(stats.makers).toBe(2); // Yageo, Murata
+    // "Other" is in neither half of the SMT/THT tile, which is what its label says.
+    expect(stats.smt).toBe(2);
+    expect(stats.tht).toBe(1);
+    expect(stats.topQty).toBe(1000);
+    expect(stats.topMpn).toBe("RC0805-BIG");
+  });
+
+  it("names the largest-stock row by type when it has no MPN", () => {
+    const { window } = loadPage(typePageFixture(), SCRIPTS);
+    expect(window.computeStats([row({ mpn: "", type: "diode" })]).topMpn).toBe("diode");
+  });
+
+  it("reports zeros for an empty table rather than dividing by it", () => {
+    const { window } = loadPage(typePageFixture(), SCRIPTS);
+    expect(window.computeStats([])).toEqual({
+      components: 0,
+      units: 0,
+      zero: 0,
+      zeroShare: 0, // not NaN: 0/0 never happens
+      types: 0,
+      makers: 0,
+      smt: 0,
+      tht: 0,
+      topQty: 0,
+      topMpn: "",
+    });
+  });
+
+  it("writes the numbers into the strip", () => {
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS);
+    window.renderStats(ROWS);
+    const text = (id) => document.getElementById(id).textContent;
+
+    expect(text("stat-components")).toBe("4");
+    expect(text("stat-units")).toBe((1250).toLocaleString()); // thousands separated
+    expect(text("stat-zero")).toBe("2");
+    expect(text("stat-zero-share")).toBe("50% of shown");
+    expect(text("stat-types")).toBe("2");
+    expect(text("stat-makers")).toBe("2");
+    expect(text("stat-smt")).toBe("2");
+    expect(text("stat-tht")).toBe("1");
+    expect(text("stat-top-qty")).toBe((1000).toLocaleString());
+    expect(text("stat-top-mpn")).toBe("RC0805-BIG");
+    // 2 SMT of 3 mounted parts; the neutral track showing through is the THT rest.
+    expect(document.getElementById("stat-smt-bar").style.width).toBe("67%");
+  });
+
+  it("colours the out-of-stock count only when something is out of stock", () => {
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS);
+    const zero = document.getElementById("stat-zero");
+
+    window.renderStats(ROWS);
+    expect(zero.classList.contains("is-warn")).toBe(true);
+
+    // An orange 0 would be an alarm about the absence of a problem.
+    window.renderStats([row({ quantity: 5 })]);
+    expect(zero.classList.contains("is-warn")).toBe(false);
+    expect(document.getElementById("stat-zero-share").textContent).toBe("");
+  });
+
+  it("leaves the bar empty when nothing is SMT or THT", () => {
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS);
+    window.renderStats([row({ mounting_type: "Other" })]);
+    expect(document.getElementById("stat-smt-bar").style.width).toBe("0%");
+  });
+
+  it("puts an MPN on the page as text, not as markup", () => {
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS);
+    window.renderStats([row({ mpn: "<b>R</b>" })]);
+    const el = document.getElementById("stat-top-mpn");
+    expect(el.textContent).toBe("<b>R</b>");
+    expect(el.querySelector("b")).toBeNull(); // textContent, not innerHTML
+  });
+
+  it("follows the column header filters", () => {
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS);
+    window.renderStats(ROWS);
+    expect(document.getElementById("stat-components").textContent).toBe("4");
+
+    // What the library does on every keystroke in a header filter: hand back the
+    // rows that survived. The tiles must describe those, not the whole feed.
+    window.Tabulator.handlers.dataFiltered(
+      [{ field: "type", value: "cap" }],
+      ROWS.filter((r) => r.type === "capacitor").map((r) => ({ getData: () => r })),
+    );
+    expect(document.getElementById("stat-components").textContent).toBe("2");
+    expect(document.getElementById("stat-units").textContent).toBe("0");
+    expect(document.getElementById("stat-zero").textContent).toBe("2");
+  });
+
+  it("reserves the sub-line's height under the real app.css", () => {
+    // Load-bearing, not cosmetic: most tiles have an empty sub-line, and a strip
+    // that changed height as the numbers changed would resize the page header —
+    // which frameTable measures to size the table below it, on every keystroke
+    // in a header filter.
+    const css = readFileSync(
+      new URL("../../app/web/static/app.css", import.meta.url),
+      "utf8",
+    );
+    const dom = new JSDOM(`<style>${css}</style><span class="stat-sub" id="s"></span>`);
+    const style = dom.window.getComputedStyle(dom.window.document.getElementById("s"));
+    expect(style.minHeight).toBe("15px");
+  });
+
+  const feeding = (rows) => (url) =>
+    url.startsWith("/web/api/components")
+      ? Promise.resolve({ ok: true, json: async () => ({ columns: [], data: rows }) })
+      : Promise.resolve({ ok: true, json: async () => ({}) });
+
+  it("fills the strip from the feed loadTable just pulled", async () => {
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS, {
+      fetchImpl: feeding(ROWS),
+    });
+
+    await window.loadTable();
+
+    expect(document.getElementById("stat-components").textContent).toBe("4");
+    expect(document.getElementById("stat-units").textContent).toBe(
+      (1250).toLocaleString(),
+    );
+  });
+
+  it("keeps describing the filtered slice when the table reloads under a filter", async () => {
+    // A header filter outlives setColumns AND setData (checked against Tabulator
+    // 6.3.0), and loadTable runs on every type-filter change and after every
+    // Add/Take from a row button. Filling the strip from the payload would leave
+    // the table showing two capacitors and the strip describing all four parts —
+    // wrong until the next keystroke in a filter box.
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS, {
+      fetchImpl: feeding(ROWS),
+    });
+    window.Tabulator.activeRows = ROWS.filter((r) => r.type === "capacitor");
+
+    await window.loadTable();
+
+    expect(document.getElementById("stat-components").textContent).toBe("2");
+    expect(document.getElementById("stat-units").textContent).toBe("0");
+    expect(document.getElementById("stat-zero").textContent).toBe("2");
+  });
+
+  it("re-frames the table only when the header actually changed height", () => {
+    // The strip's height is fixed, but its WIDTH tracks its numbers, so a filter
+    // can pull it back onto the title's line. frameTable stays off the keystroke
+    // path — but a table sized against a header that has since moved leaves the
+    // page with a scrollbar of its own, which is the invariant here.
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS);
+    const framed = vi.fn();
+    window.frameTable = framed;
+    const head = document.querySelector(".head");
+    const setHeadHeight = (px) =>
+      Object.defineProperty(head, "offsetHeight", { value: px, configurable: true });
+    const filter = (rows) =>
+      window.Tabulator.handlers.dataFiltered(
+        [],
+        rows.map((r) => ({ getData: () => r })),
+      );
+
+    setHeadHeight(96);
+    filter(ROWS); // first pass only records the height
+    expect(framed).not.toHaveBeenCalled();
+
+    filter(ROWS.slice(0, 2)); // numbers changed, header did not move
+    expect(framed).not.toHaveBeenCalled();
+
+    setHeadHeight(150); // the strip wrapped onto its own line
+    filter(ROWS.slice(0, 1));
+    expect(framed).toHaveBeenCalledTimes(1);
+
+    filter(ROWS); // and not again while it stays there
+    expect(framed).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("app.js — the row opens the part", () => {
   // The handler the real library would call on a click, plus a row element to
   // aim the click at. `document.body` stands in for a plain cell: it is inside no
