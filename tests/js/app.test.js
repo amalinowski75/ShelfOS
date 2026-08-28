@@ -371,15 +371,15 @@ describe("app.js — header stats", () => {
     expect(style.minHeight).toBe("15px");
   });
 
+  const feeding = (rows) => (url) =>
+    url.startsWith("/web/api/components")
+      ? Promise.resolve({ ok: true, json: async () => ({ columns: [], data: rows }) })
+      : Promise.resolve({ ok: true, json: async () => ({}) });
+
   it("fills the strip from the feed loadTable just pulled", async () => {
-    const fetchImpl = (url) =>
-      url.startsWith("/web/api/components")
-        ? Promise.resolve({
-            ok: true,
-            json: async () => ({ columns: [], data: ROWS }),
-          })
-        : Promise.resolve({ ok: true, json: async () => ({}) });
-    const { window, document } = loadPage(typePageFixture(), SCRIPTS, { fetchImpl });
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS, {
+      fetchImpl: feeding(ROWS),
+    });
 
     await window.loadTable();
 
@@ -387,6 +387,56 @@ describe("app.js — header stats", () => {
     expect(document.getElementById("stat-units").textContent).toBe(
       (1250).toLocaleString(),
     );
+  });
+
+  it("keeps describing the filtered slice when the table reloads under a filter", async () => {
+    // A header filter outlives setColumns AND setData (checked against Tabulator
+    // 6.3.0), and loadTable runs on every type-filter change and after every
+    // Add/Take from a row button. Filling the strip from the payload would leave
+    // the table showing two capacitors and the strip describing all four parts —
+    // wrong until the next keystroke in a filter box.
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS, {
+      fetchImpl: feeding(ROWS),
+    });
+    window.Tabulator.activeRows = ROWS.filter((r) => r.type === "capacitor");
+
+    await window.loadTable();
+
+    expect(document.getElementById("stat-components").textContent).toBe("2");
+    expect(document.getElementById("stat-units").textContent).toBe("0");
+    expect(document.getElementById("stat-zero").textContent).toBe("2");
+  });
+
+  it("re-frames the table only when the header actually changed height", () => {
+    // The strip's height is fixed, but its WIDTH tracks its numbers, so a filter
+    // can pull it back onto the title's line. frameTable stays off the keystroke
+    // path — but a table sized against a header that has since moved leaves the
+    // page with a scrollbar of its own, which is the invariant here.
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS);
+    const framed = vi.fn();
+    window.frameTable = framed;
+    const head = document.querySelector(".head");
+    const setHeadHeight = (px) =>
+      Object.defineProperty(head, "offsetHeight", { value: px, configurable: true });
+    const filter = (rows) =>
+      window.Tabulator.handlers.dataFiltered(
+        [],
+        rows.map((r) => ({ getData: () => r })),
+      );
+
+    setHeadHeight(96);
+    filter(ROWS); // first pass only records the height
+    expect(framed).not.toHaveBeenCalled();
+
+    filter(ROWS.slice(0, 2)); // numbers changed, header did not move
+    expect(framed).not.toHaveBeenCalled();
+
+    setHeadHeight(150); // the strip wrapped onto its own line
+    filter(ROWS.slice(0, 1));
+    expect(framed).toHaveBeenCalledTimes(1);
+
+    filter(ROWS); // and not again while it stays there
+    expect(framed).toHaveBeenCalledTimes(1);
   });
 });
 

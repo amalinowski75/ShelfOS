@@ -320,19 +320,42 @@ async function loadTable() {
   columns.push(actionColumn());
   table.setColumns(columns);
   await table.setData(payload.data);
-  // Before frameTable: the strip is part of the header, and frameTable sizes the
-  // table to whatever room is left under it, so the header must be final first.
-  renderStats(payload.data);
+  // The rows that SURVIVED, not the ones that arrived: a header filter outlives
+  // both setColumns and setData, and loadTable runs on every type-filter change
+  // and after every Add/Take from a row button. Filling from `payload.data` here
+  // would hand the strip the whole feed while the table shows a filtered slice.
+  //
+  // Before frameTable, which sizes the table to whatever room is left under the
+  // header — so the header has to be final first.
+  renderStats(table.getData("active"));
   frameTable(table);
+}
+
+// The strip's HEIGHT is fixed by its skeleton, but its WIDTH tracks the numbers
+// in it — so a filter that shrinks "16,970" to "0" can pull the strip back onto
+// the title's line, and clearing that filter can push it off again. frameTable
+// deliberately does not re-run per keystroke, so re-fit only when the header
+// really did change height; otherwise the table keeps a height measured against
+// a header that is no longer there, and the page grows a scrollbar of its own.
+let framedHeadHeight = null;
+function refitIfHeaderResized() {
+  const head = document.querySelector(".head");
+  if (!head) return;
+  const height = head.offsetHeight;
+  if (framedHeadHeight !== null && height !== framedHeadHeight) frameTable(table);
+  framedHeadHeight = height;
 }
 
 typeFilter.addEventListener("change", loadTable);
 table.on("tableBuilt", loadTable);
 // What makes the tiles follow the column header filters: the library re-runs
-// them on every keystroke and hands us the rows that survived.
-table.on("dataFiltered", (filters, rows) =>
-  renderStats(rows.map((row) => row.getData())),
-);
+// them on every keystroke and hands us the rows that survived. It also fires
+// this inside setData, before that promise resolves — which is why loadTable
+// can rely on the table already knowing what is active.
+table.on("dataFiltered", (filters, rows) => {
+  renderStats(rows.map((row) => row.getData()));
+  refitIfHeaderResized();
+});
 table.on("columnResized", (column) =>
   rememberColumnWidth(column.getField(), column.getWidth()),
 );

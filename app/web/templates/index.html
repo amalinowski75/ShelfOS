@@ -20,7 +20,11 @@
      Server-rendered as a fixed skeleton that app.js only writes text into: a strip
      that grew or shrank as the numbers changed would resize the header, and
      frameTable sizes the table to whatever room is left below it. #}
-  <div class="head-stats" id="component-stats" aria-live="polite">
+  {# Deliberately not a live region: the numbers change on every keystroke in a
+     column filter, and announcing all seven tiles — label and value — over
+     someone who is mid-word in the filter box is the least wanted moment for it.
+     The strip sits before the table, so it is read on the way in. #}
+  <div class="head-stats" id="component-stats">
     <div class="stat">
       <span class="stat-label">Components</span>
       <span class="stat-value accent" id="stat-components">0</span>

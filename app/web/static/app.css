@@ -180,16 +180,19 @@ a { color: var(--accent-strong); text-underline-offset: 2px; }
    title and the page actions, and is the first thing allowed to shrink — below
    roughly 1100px it wraps onto its own line (`.head` already wraps). */
 .head-stats {
-  display: flex; flex-wrap: wrap; align-items: stretch; justify-content: center;
-  /* Shrinks (and wraps internally) before anything else in the header, but never
-     grows: a stretched pill would be mostly empty box. */
-  flex: 0 1 auto; min-width: 0;
+  display: flex; align-items: stretch; justify-content: center;
+  /* Never grows — a stretched pill would be mostly empty box. It wraps onto its
+     own line inside `.head` when the header runs out of room, and only on a
+     screen too narrow even for that does it scroll itself.
+     `nowrap` is what keeps the dividers honest: they hang off the left of every
+     tile but the first, and a wrapped second row would start with one dangling. */
+  flex: 0 1 auto; flex-wrap: nowrap; max-width: 100%; overflow-x: auto;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); box-shadow: var(--shadow-sm);
   padding: 8px 4px;
 }
 .stat {
-  display: flex; flex-direction: column; gap: 2px; justify-content: flex-start;
+  display: flex; flex: none; flex-direction: column; gap: 2px; justify-content: flex-start;
   padding: 2px 14px; border-left: 1px solid var(--border);
 }
 .stat:first-child { border-left: none; }
