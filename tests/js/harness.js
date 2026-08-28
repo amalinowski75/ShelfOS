@@ -697,8 +697,9 @@ export function componentDialogFixture(types = [{ id: 1, name: "resistor" }]) {
 }
 
 // The components page essentials app.js needs at load: type filter, table mount,
-// the New Type dialog (+ its param-row <template>) and New Type / New Component
-// buttons. Mirrors index.html closely enough to drive the type-builder flow.
+// the header stats strip, the New Type dialog (+ its param-row <template>) and
+// New Type / New Component buttons. Mirrors index.html closely enough to drive
+// the type-builder flow.
 export function typePageFixture(types = [{ id: 1, name: "resistor" }]) {
   const options = types
     .map((t) => `<option value="${t.id}">${t.name}</option>`)
@@ -706,6 +707,16 @@ export function typePageFixture(types = [{ id: 1, name: "resistor" }]) {
   return `
     <select id="type-filter" class="control"><option value="">All types</option>${options}</select>
     <button id="new-component-btn"></button>
+    <div class="head-stats" id="component-stats">
+      <span id="stat-components">0</span>
+      <span id="stat-units">0</span>
+      <span id="stat-zero">0</span><span id="stat-zero-share"></span>
+      <span id="stat-types">0</span>
+      <span id="stat-makers">0</span>
+      <span id="stat-smt">0</span><span id="stat-tht">0</span>
+      <span class="stat-bar"><i id="stat-smt-bar" style="width: 0%"></i></span>
+      <span id="stat-top-qty">0</span><span id="stat-top-mpn"></span>
+    </div>
     <div id="components-table"></div>
     <dialog id="stock-dialog">
       <strong id="stock-dialog-title"></strong>

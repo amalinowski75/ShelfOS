@@ -228,6 +228,84 @@ function actionColumn() {
   };
 }
 
+// ---- header stats ----------------------------------------------------------
+// A summary of what the table is SHOWING, not of the whole database — which is
+// why it is computed here from the rows rather than fetched from the server: the
+// type filter and every per-column header filter move it for free, so "how many
+// resistors are out of stock" is a filter away instead of a query away.
+
+// Pure, so a test can hand it rows and check the arithmetic. Blank strings are
+// not counted as a type or a manufacturer — the feed sends "" for both when the
+// component has none, and one anonymous group is not a distinct maker.
+function computeStats(rows) {
+  const stats = {
+    components: rows.length,
+    units: 0,
+    zero: 0,
+    zeroShare: 0,
+    types: 0,
+    makers: 0,
+    smt: 0,
+    tht: 0,
+    topQty: 0,
+    topMpn: "",
+  };
+  const types = new Set();
+  const makers = new Set();
+  let top = null;
+  for (const row of rows) {
+    const quantity = Number(row.quantity) || 0;
+    stats.units += quantity;
+    if (quantity === 0) stats.zero += 1;
+    if (row.type) types.add(row.type);
+    if (row.manufacturer) makers.add(row.manufacturer);
+    if (row.mounting_type === "SMT") stats.smt += 1;
+    else if (row.mounting_type === "THT") stats.tht += 1;
+    if (top === null || quantity > (Number(top.quantity) || 0)) top = row;
+  }
+  stats.types = types.size;
+  stats.makers = makers.size;
+  stats.zeroShare = rows.length ? Math.round((stats.zero / rows.length) * 100) : 0;
+  if (top !== null) {
+    stats.topQty = Number(top.quantity) || 0;
+    // The MPN names the part, but plenty of parts have none; the type is the
+    // next most recognisable thing the row carries.
+    stats.topMpn = top.mpn || top.type || "";
+  }
+  return stats;
+}
+
+function renderStats(rows) {
+  const strip = document.getElementById("component-stats");
+  if (!strip) return; // no strip on this page — nothing to fill
+  const stats = computeStats(rows);
+  const put = (id, text) => {
+    document.getElementById(id).textContent = text;
+  };
+  const count = (n) => n.toLocaleString();
+
+  put("stat-components", count(stats.components));
+  put("stat-units", count(stats.units));
+  put("stat-types", count(stats.types));
+  put("stat-makers", count(stats.makers));
+  put("stat-smt", count(stats.smt));
+  put("stat-tht", count(stats.tht));
+
+  const zeroEl = document.getElementById("stat-zero");
+  zeroEl.textContent = count(stats.zero);
+  zeroEl.classList.toggle("is-warn", stats.zero > 0);
+  put("stat-zero-share", stats.zero ? `${stats.zeroShare}% of shown` : "");
+
+  const mounted = stats.smt + stats.tht;
+  document.getElementById("stat-smt-bar").style.width = mounted
+    ? `${Math.round((stats.smt / mounted) * 100)}%`
+    : "0%";
+
+  put("stat-top-qty", count(stats.topQty));
+  // textContent, not innerHTML: an MPN is user text and lands here unescaped.
+  put("stat-top-mpn", stats.topMpn);
+}
+
 function currentTypeQuery() {
   const value = typeFilter.value;
   return value ? `?type_id=${value}` : "";
@@ -242,11 +320,19 @@ async function loadTable() {
   columns.push(actionColumn());
   table.setColumns(columns);
   await table.setData(payload.data);
+  // Before frameTable: the strip is part of the header, and frameTable sizes the
+  // table to whatever room is left under it, so the header must be final first.
+  renderStats(payload.data);
   frameTable(table);
 }
 
 typeFilter.addEventListener("change", loadTable);
 table.on("tableBuilt", loadTable);
+// What makes the tiles follow the column header filters: the library re-runs
+// them on every keystroke and hands us the rows that survived.
+table.on("dataFiltered", (filters, rows) =>
+  renderStats(rows.map((row) => row.getData())),
+);
 table.on("columnResized", (column) =>
   rememberColumnWidth(column.getField(), column.getWidth()),
 );
