@@ -31,9 +31,11 @@ def _scan_identifiers(code: str) -> list[str]:
     """Part numbers a scanned label offers, best first, de-duplicated.
 
     The manufacturer's own number leads because that is what a component
-    stores; a shop's symbol (TME's ``PN:``, a DataMatrix 30P) only matches when
-    the two happen to agree, and the URL's segments are the last resort of a
-    QR that states nothing outright.
+    stores; a shop's symbol (TME's ``PN:``, a DataMatrix ``30P`` or Farnell's
+    ``3P``) only matches when the two happen to agree — or when the part came in
+    on that shop's invoice, which stores exactly that number as the line's
+    supplier_part_number. The URL's segments are the last resort of a QR that
+    states nothing outright.
     """
     scan = parse_scan(code)  # ValidationError → 422
     candidates = [scan.manufacturer_pn, scan.mpn, scan.distributor_pn]

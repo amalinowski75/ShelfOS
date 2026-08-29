@@ -61,7 +61,13 @@ _PROVIDERS: list[ShopProvider] = [_mouser, _digikey, _tme, _farnell]
 # carries a product URL anyway, so it takes the URL path.
 #
 # Farnell reaches this map through the 3P field on its DataMatrix (see `scan`),
-# which is the one identifier neither of the others prints.
+# which is the one identifier neither of the others prints. Note what that leaves
+# on the table: 3P carries element14's ORDER CODE, the key their API resolves with
+# `id:` to exactly one product — and `import_code` still looks a scanned label up by
+# its MPN, so Farnell's canonical-variant rule picks the packaging variant rather
+# than the bag in your hand. Routing scans through `fetch_by_index` instead would
+# fix that, but it would also change Digi-Key's path (its labels carry a distributor
+# number too), which is not verifiable without a key.
 _BY_MPN: dict[str, MpnProvider] = {
     "mouser": _mouser,
     "digikey": _digikey,

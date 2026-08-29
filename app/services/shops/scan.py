@@ -4,9 +4,10 @@ Two shapes reach us, both as plain text a keyboard-wedge scanner typed into a fi
 
 * **A QR that embeds a product URL** (TME) or a plain pasted shop URL — the URL is a
   contiguous token, so it survives regardless of how the scanner treats separators.
-* **A DataMatrix** (Mouser, Digi-Key) in ISO 15434 / ANSI MH10.8.2: a ``[)>`` envelope
-  and fields separated by the group/record separator, each starting with a Data
-  Identifier (``1P``=MPN, ``30P``=distributor PN, ``1V``=manufacturer, …).
+* **A DataMatrix** (Mouser, Digi-Key, Farnell) in ISO 15434 / ANSI MH10.8.2: a ``[)>``
+  envelope and fields separated by the group/record separator, each starting with a
+  Data Identifier (``1P``=MPN, ``30P``/``3P``=the distributor's own number,
+  ``1V``=manufacturer, …).
 
 The DataMatrix is only parseable when the field separators survive the trip. Three
 things a scanner does with them, and what happens here:
@@ -46,10 +47,11 @@ _TRAILING = ".,;:!?'\"()[]{}<>"
 # The Digi-Key-only Z data identifiers — a strong signal it's a Digi-Key label.
 _DIGIKEY_Z = ("11Z", "12Z", "13Z", "20Z")
 # Farnell prints its own order code under 3P, where Mouser and Digi-Key use 30P (or,
-# on Mouser's labels, nothing at all). Comparing the three real labels this repo has:
+# on Mouser's labels, nothing at all). The data identifiers on the three real labels
+# this repo holds as fixtures — recomputed from them, not recalled:
 #
 #   Mouser    11K 14K 1P 1V 4L K Q
-#   Digi-Key  10K 11K 11Z 12Z 1K 1P 1T 20Z 30P 4L 9D K P Q
+#   Digi-Key  10K 11K 11Z 12Z 13Z 1K 1P 1T 20Z 30P 4L 9D K P Q
 #   Farnell   1P 1T 3P 4K 4L 9D K P Q
 #
 # so 3P (and 4K, whose meaning is unknown and which is therefore not used) is the
@@ -87,10 +89,11 @@ class ScanResult:
     url: str | None = None
     mpn: str | None = None
     manufacturer: str | None = None
-    shop: str | None = None  # "mouser" | "digikey" | None
-    # The 30P field: the DISTRIBUTOR's own part number (Mouser No, Digi-Key
-    # "…-ND"). Matches an invoice line's supplier_part_number, which is exactly
-    # what a bag scanned against a draft invoice needs to be matched by.
+    shop: str | None = None  # "mouser" | "digikey" | "farnell" | None
+    # The DISTRIBUTOR's own part number — the 30P field (Mouser No, Digi-Key "…-ND")
+    # or Farnell's 3P order code. Matches an invoice line's supplier_part_number,
+    # which is exactly what a bag scanned against a draft invoice needs to be
+    # matched by; for Farnell it is also the key its API resolves with `id:`.
     distributor_pn: str | None = None
     # The MANUFACTURER's part number where the label states it separately (a TME
     # QR's ``MPN:`` token; on a DataMatrix the 1P field already lands in ``mpn``).
@@ -144,31 +147,62 @@ def _split_fields(text: str, separators: list[str]) -> list[str]:
     return [f for f in re.split(pattern, text) if f]
 
 
-def _read_fields(
-    fields: list[str],
-) -> tuple[str | None, str | None, str | None, bool, bool]:
-    """Pull the identifiers we understand out of already-split fields."""
+@dataclass
+class _Fields:
+    """What one way of splitting a label yielded.
+
+    A dataclass rather than a tuple because the members are of two kinds and the
+    difference is load-bearing: ``identifiers`` counts only the VALUES, and a
+    positional ``found[:3]`` doing that job is one careless edit away from letting a
+    stray character that exposed a single flag outscore the real separator.
+    """
+
     mpn: str | None = None
     manufacturer: str | None = None
-    distributor_pn: str | None = None
-    has_digikey_z = False
-    has_farnell_code = False
+    # 30P (Mouser, Digi-Key) and 3P (Farnell) both name the distributor's own
+    # number. Held apart so the shop test can key on WHICH was printed, and so a
+    # label carrying both resolves by rule instead of by whichever came last.
+    pn_30p: str | None = None
+    pn_3p: str | None = None
+    has_digikey_z: bool = False
+
+    @property
+    def distributor_pn(self) -> str | None:
+        # 30P wins: a label carrying both routes to Digi-Key on the stronger
+        # evidence, so answering with Farnell's number alongside would be incoherent.
+        return self.pn_30p or self.pn_3p
+
+    @property
+    def identifiers(self) -> int:
+        """How many part identifiers this split found — the separator's evidence.
+
+        Only the values. A flag says something about WHOSE label it is, not that the
+        payload was split correctly, so counting one would let a stray character
+        beat the separator that actually read the fields.
+        """
+        return sum(
+            1 for value in (self.mpn, self.manufacturer, self.distributor_pn) if value
+        )
+
+
+def _read_fields(fields: list[str]) -> _Fields:
+    """Pull the identifiers we understand out of already-split fields."""
+    found = _Fields()
     for field in fields:
         # "30P" is tested before "3P" for the reader's sake only — the two prefixes
         # are disjoint ("30P…" does not start with "3P"), so neither can shadow the
         # other whatever the order.
         if field.startswith("30P"):
-            distributor_pn = field[3:].strip()
+            found.pn_30p = field[3:].strip()
         elif field.startswith(_FARNELL_ORDER_CODE):
-            distributor_pn = field[2:].strip()
-            has_farnell_code = True
+            found.pn_3p = field[2:].strip()
         elif field.startswith("1P"):
-            mpn = field[2:].strip()
+            found.mpn = field[2:].strip()
         elif field.startswith("1V"):
-            manufacturer = field[2:].strip()
+            found.manufacturer = field[2:].strip()
         elif field[:3] in _DIGIKEY_Z:
-            has_digikey_z = True
-    return mpn, manufacturer, distributor_pn, has_digikey_z, has_farnell_code
+            found.has_digikey_z = True
+    return found
 
 
 def _parse_datamatrix(text: str) -> ScanResult:
@@ -176,9 +210,7 @@ def _parse_datamatrix(text: str) -> ScanResult:
     configured = configured_separator()
     if configured:
         separators.append(configured)
-    mpn, manufacturer, distributor_pn, has_digikey_z, has_farnell_code = _read_fields(
-        _split_fields(text, separators)
-    )
+    found = _read_fields(_split_fields(text, separators))
 
     # Not "did the split produce more than one field" — GS and RS are separately
     # configurable on most scanners, so one that drops GS but keeps the RS inside
@@ -186,7 +218,7 @@ def _parse_datamatrix(text: str) -> ScanResult:
     # payload really was split is finding a data identifier we recognise. That does
     # conflate the dropped-separator case with a label carrying only identifiers we
     # don't read, hence the message names both rather than misdiagnosing the scanner.
-    if not (mpn or manufacturer or distributor_pn):
+    if not found.identifiers:
         # Many scanners can't emit the ISO control characters at all and are
         # configured to print a visible stand-in. Rather than make the user
         # declare it (SHELFOS_SCAN_SEPARATOR), try the few characters that can
@@ -194,22 +226,21 @@ def _parse_datamatrix(text: str) -> ScanResult:
         # yield a data identifier we know. A candidate that occurs inside real
         # values is not offered here — splitting "1PESQ-106-33-T-S" on "-"
         # would leave "1PESQ" and look convincingly like a success.
-        best: tuple[str | None, str | None, str | None, bool, bool] | None = None
+        best: _Fields | None = None
         best_score = 0
         for candidate in _AUTO_SEPARATORS:
             if candidate not in text:
                 continue
-            found = _read_fields(_split_fields(text, [*separators, candidate]))
+            split = _read_fields(_split_fields(text, [*separators, candidate]))
             # Score, not first-past-the-post: a real separator splits the WHOLE
             # label, so it yields more identifiers than a stray character that
             # happens to sit in front of one. (A "|" inside a value on a
             # "^"-separated label would otherwise win and lose the rest.)
-            score = sum(1 for value in found[:3] if value)
-            if score > best_score:
-                best, best_score = found, score
+            if split.identifiers > best_score:
+                best, best_score = split, split.identifiers
         if best is None:
             raise ValidationError(_UNREADABLE)
-        mpn, manufacturer, distributor_pn, has_digikey_z, has_farnell_code = best
+        found = best
 
     # Mouser prints nothing uniquely its own, so it stays the default. That is safe
     # rather than a guess: 1P is a MANUFACTURER part number, so looking it up at
@@ -220,18 +251,19 @@ def _parse_datamatrix(text: str) -> ScanResult:
     # on its own part number, or one of four identifiers nobody else prints. Farnell
     # follows on the single 3P field.
     is_digikey = (
-        distributor_pn is not None and distributor_pn.upper().endswith("-ND")
-    ) or has_digikey_z
+        found.distributor_pn is not None
+        and found.distributor_pn.upper().endswith("-ND")
+    ) or found.has_digikey_z
     if is_digikey:
         shop = "digikey"
-    elif has_farnell_code:
+    elif found.pn_3p is not None:
         shop = "farnell"
     else:
         shop = "mouser"
     return ScanResult(
         url=None,
-        mpn=mpn or None,
-        manufacturer=manufacturer or None,
+        mpn=found.mpn or None,
+        manufacturer=found.manufacturer or None,
         shop=shop,
-        distributor_pn=distributor_pn or None,
+        distributor_pn=found.distributor_pn or None,
     )
