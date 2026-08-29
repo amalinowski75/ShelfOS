@@ -48,6 +48,20 @@ _DIGIKEY_FIELDS = [
 ]
 
 
+_FARNELL_FIELDS = [
+    "[)>\x1e06",
+    "K20260821154125",
+    "P",
+    "1PNCP730BMT330TBG",
+    "3P3367839",
+    "Q5",
+    "9D2628",
+    "1T1TPU25QF1PW",
+    "4LUS",
+    "4K4",
+]
+
+
 def _label(fields: list[str], separator: str = GS) -> str:
     return separator.join(fields)
 
@@ -337,6 +351,87 @@ def test_digikey_fetch_by_mpn_sends_the_scanned_part_number(monkeypatch) -> None
     assert product.source_url == "https://www.digikey.com/x/ESQ-106-33-T-S"
 
 
+# --- Farnell labels ---------------------------------------------------------
+
+
+def test_a_farnell_label_is_recognised_by_its_order_code_field() -> None:
+    scan = parse_scan(_label(_FARNELL_FIELDS))
+    assert scan.shop == "farnell"
+    assert scan.mpn == "NCP730BMT330TBG"
+    # 3P carries element14's own order code. It used to be dropped entirely, which
+    # cost the one number that matches an imported Farnell invoice line's
+    # supplier_part_number — and is the key their API resolves with `id:`.
+    assert scan.distributor_pn == "3367839"
+
+
+def test_the_real_farnell_bag_scan_with_a_printable_separator() -> None:
+    """The payload this user's scanner actually produced, verbatim.
+
+    Nothing is configured here: the "|" is accepted because splitting on it yields
+    data identifiers we know, the same evidence rule the Mouser/Digi-Key labels go
+    through.
+    """
+    scan = parse_scan(
+        "[)>06|K20260821154125|P|1PNCP730BMT330TBG|3P3367839|Q5|9D2628"
+        "|1T1TPU25QF1PW|4LUS|4K4"
+    )
+    assert (scan.shop, scan.mpn, scan.distributor_pn) == (
+        "farnell",
+        "NCP730BMT330TBG",
+        "3367839",
+    )
+
+
+def test_3p_does_not_shadow_digikeys_30p() -> None:
+    # The prefixes are disjoint, but a "3P" test placed carelessly would swallow
+    # "30PSAM11086-ND" and take "SAM11086-ND" for a Farnell order code — routing a
+    # Digi-Key bag to a shop that has never heard of the part.
+    scan = parse_scan(
+        "[)>06|PSAM11086-ND|1PESQ-106-33-T-S|30PSAM11086-ND|K|1K97898569|11ZPICK|20Z"
+    )
+    assert scan.shop == "digikey"
+    assert scan.distributor_pn == "SAM11086-ND"
+
+
+def test_digikeys_stronger_evidence_wins_over_a_3p_field() -> None:
+    # Three real labels is thin evidence for "3P means Farnell", so it sits below
+    # Digi-Key's test, which rests on identifiers nobody else prints. A label
+    # carrying both is Digi-Key's.
+    scan = parse_scan(_label(["[)>\x1e06", "1PESQ-106-33-T-S", "3P123456", "20Z"]))
+    assert scan.shop == "digikey"
+
+
+def test_a_label_carrying_both_numbers_answers_with_the_30p_one() -> None:
+    # No real label does this, so the point is that it resolves by RULE rather than
+    # by which field came last: routing to Digi-Key on the stronger evidence while
+    # handing back Farnell's order code would be incoherent — and distributor_pn is
+    # matched against invoice lines downstream.
+    fields = ["[)>\x1e06", "1PESQ-106-33-T-S", "3P3367839", "30PSAM11086-ND"]
+    assert parse_scan(_label(fields)).distributor_pn == "SAM11086-ND"
+    # Order of appearance must not change the answer.
+    assert parse_scan(_label(fields[:2] + fields[:1:-1])).distributor_pn == (
+        "SAM11086-ND"
+    )
+
+
+def test_a_separator_exposing_only_a_shop_flag_does_not_win() -> None:
+    """The scorer counts identifiers, never the "whose label is this" flags.
+
+    Here "^" is the real separator and yields two identifiers; a stray "|" splits
+    off a "20Z" and a "3P9" — one identifier plus two flags. Counting the flags
+    would make the wrong split win and lose the MPN entirely.
+    """
+    scan = parse_scan("[)>06^1PAB^1VXX|20Z|3P9")
+    assert scan.mpn == "AB"
+    assert scan.manufacturer == "XX|20Z|3P9"
+
+
+def test_a_label_without_a_3p_field_still_defaults_to_mouser() -> None:
+    # Mouser prints nothing of its own, so it stays the fallback — adding Farnell
+    # must not have narrowed that.
+    assert parse_scan(_label(_MOUSER_FIELDS)).shop == "mouser"
+
+
 # --- import_code routing ---------------------------------------------------
 
 
@@ -391,6 +486,28 @@ def test_import_code_routes_a_datamatrix_through_fetch_by_mpn(monkeypatch) -> No
     # bare MPN sold under several makers.
     assert provider.manufacturer == "Keystone"
     assert product.manufacturer == "Keystone Electronics"
+
+
+def test_import_code_routes_a_farnell_label_to_farnell(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    # The half that makes the detection worth anything: without the _BY_MPN entry the
+    # label parses as Farnell's and then gets no enrichment at all.
+    #
+    # Patching the PROVIDER's method, not the map — monkeypatch.setitem INSERTS the
+    # key, so a test that stubs `_BY_MPN["farnell"]` passes whether the registration
+    # exists or not, which is the one thing this test is about.
+    seen: dict[str, object] = {}
+
+    def fake(mpn: str, *, manufacturer: str | None = None) -> ProductData:
+        seen["mpn"], seen["manufacturer"] = mpn, manufacturer
+        return ProductData(mpn=mpn, manufacturer="ONSEMI")
+
+    monkeypatch.setattr(shops._farnell, "fetch_by_mpn", fake)
+    product = shops.import_code(_label(_FARNELL_FIELDS))
+    assert seen["mpn"] == "NCP730BMT330TBG"
+    # Farnell prints no 1V, so there is no manufacturer to disambiguate with — the
+    # provider's own canonical-variant rule decides instead.
+    assert seen["manufacturer"] is None
+    assert product.manufacturer == "ONSEMI"
 
 
 def test_import_code_falls_back_to_the_label_when_the_api_fails(monkeypatch) -> None:  # type: ignore[no-untyped-def]

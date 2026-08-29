@@ -126,10 +126,14 @@ interaction. Two shapes are understood:
 
 - **TME's QR** embeds the product URL, so it works with any scanner and imports
   exactly like a pasted URL. So does any shop URL you paste by hand.
-- **Mouser's and Digi-Key's DataMatrix** is ISO 15434 / ANSI MH10.8.2: fields carrying
-  data identifiers (`1P` = manufacturer part number, `30P` = the distributor's own SKU,
-  `1V` = manufacturer) separated by the group separator, `GS` / `0x1D`. The part number
-  is then looked up through that shop's API as usual.
+- **Mouser's, Digi-Key's and Farnell's DataMatrix** is ISO 15434 / ANSI MH10.8.2: fields
+  carrying data identifiers (`1P` = manufacturer part number, `30P` or Farnell's `3P` =
+  the distributor's own order code, `1V` = manufacturer) separated by the group
+  separator, `GS` / `0x1D`. The part number is then looked up through that shop's API as
+  usual. Which shop printed the label is worked out from the identifiers on it —
+  Digi-Key's `-ND` suffix and `…Z` fields, Farnell's `3P` — falling back to Mouser, which
+  prints nothing of its own. A wrong guess costs nothing but the enrichment: the shop
+  answers "no product found" and the dialog fills from the label.
 
 **Your scanner must keep the field separators.** Many emit `GS` as a *key press* (an
 F-key) rather than a character, so it never reaches the input and the fields arrive
