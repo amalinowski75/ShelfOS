@@ -60,10 +60,8 @@ _PROVIDERS: list[ShopProvider] = [_mouser, _digikey, _tme, _farnell]
 # on purpose: its API keys on TME's own symbol, not the MPN — and a scanned TME QR
 # carries a product URL anyway, so it takes the URL path.
 #
-# Farnell is here even though `scan.py` cannot yet tell a Farnell label from a
-# Mouser one (it defaults to Mouser), so nothing routes here today: the entry is
-# what the detector will need, and leaving it out would make adding one look like
-# it should have worked.
+# Farnell reaches this map through the 3P field on its DataMatrix (see `scan`),
+# which is the one identifier neither of the others prints.
 _BY_MPN: dict[str, MpnProvider] = {
     "mouser": _mouser,
     "digikey": _digikey,

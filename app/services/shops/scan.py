@@ -45,6 +45,19 @@ _TME_MPN = re.compile(r"\bMPN:([^\s\x00-\x20]+)", re.IGNORECASE)
 _TRAILING = ".,;:!?'\"()[]{}<>"
 # The Digi-Key-only Z data identifiers — a strong signal it's a Digi-Key label.
 _DIGIKEY_Z = ("11Z", "12Z", "13Z", "20Z")
+# Farnell prints its own order code under 3P, where Mouser and Digi-Key use 30P (or,
+# on Mouser's labels, nothing at all). Comparing the three real labels this repo has:
+#
+#   Mouser    11K 14K 1P 1V 4L K Q
+#   Digi-Key  10K 11K 11Z 12Z 1K 1P 1T 20Z 30P 4L 9D K P Q
+#   Farnell   1P 1T 3P 4K 4L 9D K P Q
+#
+# so 3P (and 4K, whose meaning is unknown and which is therefore not used) is the
+# only field of Farnell's that neither of the others prints. Three labels is thin
+# evidence for a rule, which is why it sits BELOW Digi-Key's multi-signal test and
+# why Mouser stays the default: a shop that doesn't carry the part just answers
+# "no product found" and the dialog fills from the label.
+_FARNELL_ORDER_CODE = "3P"
 
 # Visible stand-ins a scanner may print in place of the GS/RS control characters,
 # tried automatically when the control characters are absent. Deliberately tiny:
@@ -131,22 +144,31 @@ def _split_fields(text: str, separators: list[str]) -> list[str]:
     return [f for f in re.split(pattern, text) if f]
 
 
-def _read_fields(fields: list[str]) -> tuple[str | None, str | None, str | None, bool]:
+def _read_fields(
+    fields: list[str],
+) -> tuple[str | None, str | None, str | None, bool, bool]:
     """Pull the identifiers we understand out of already-split fields."""
     mpn: str | None = None
     manufacturer: str | None = None
     distributor_pn: str | None = None
     has_digikey_z = False
+    has_farnell_code = False
     for field in fields:
+        # "30P" is tested before "3P" for the reader's sake only — the two prefixes
+        # are disjoint ("30P…" does not start with "3P"), so neither can shadow the
+        # other whatever the order.
         if field.startswith("30P"):
             distributor_pn = field[3:].strip()
+        elif field.startswith(_FARNELL_ORDER_CODE):
+            distributor_pn = field[2:].strip()
+            has_farnell_code = True
         elif field.startswith("1P"):
             mpn = field[2:].strip()
         elif field.startswith("1V"):
             manufacturer = field[2:].strip()
         elif field[:3] in _DIGIKEY_Z:
             has_digikey_z = True
-    return mpn, manufacturer, distributor_pn, has_digikey_z
+    return mpn, manufacturer, distributor_pn, has_digikey_z, has_farnell_code
 
 
 def _parse_datamatrix(text: str) -> ScanResult:
@@ -154,7 +176,7 @@ def _parse_datamatrix(text: str) -> ScanResult:
     configured = configured_separator()
     if configured:
         separators.append(configured)
-    mpn, manufacturer, distributor_pn, has_digikey_z = _read_fields(
+    mpn, manufacturer, distributor_pn, has_digikey_z, has_farnell_code = _read_fields(
         _split_fields(text, separators)
     )
 
@@ -172,7 +194,7 @@ def _parse_datamatrix(text: str) -> ScanResult:
         # yield a data identifier we know. A candidate that occurs inside real
         # values is not offered here — splitting "1PESQ-106-33-T-S" on "-"
         # would leave "1PESQ" and look convincingly like a success.
-        best: tuple[str | None, str | None, str | None, bool] | None = None
+        best: tuple[str | None, str | None, str | None, bool, bool] | None = None
         best_score = 0
         for candidate in _AUTO_SEPARATORS:
             if candidate not in text:
@@ -187,19 +209,29 @@ def _parse_datamatrix(text: str) -> ScanResult:
                 best, best_score = found, score
         if best is None:
             raise ValidationError(_UNREADABLE)
-        mpn, manufacturer, distributor_pn, has_digikey_z = best
+        mpn, manufacturer, distributor_pn, has_digikey_z, has_farnell_code = best
 
-    # Mouser prints nothing uniquely its own, so it's the default. That is safe
+    # Mouser prints nothing uniquely its own, so it stays the default. That is safe
     # rather than a guess: 1P is a MANUFACTURER part number, so looking it up at
     # Mouser is meaningful whoever printed the label — and a shop that doesn't
     # carry it just answers "no product found", which falls back to the label.
+    #
+    # Digi-Key is tested first because its evidence is the strongest: a "-ND" suffix
+    # on its own part number, or one of four identifiers nobody else prints. Farnell
+    # follows on the single 3P field.
     is_digikey = (
         distributor_pn is not None and distributor_pn.upper().endswith("-ND")
     ) or has_digikey_z
+    if is_digikey:
+        shop = "digikey"
+    elif has_farnell_code:
+        shop = "farnell"
+    else:
+        shop = "mouser"
     return ScanResult(
         url=None,
         mpn=mpn or None,
         manufacturer=manufacturer or None,
-        shop="digikey" if is_digikey else "mouser",
+        shop=shop,
         distributor_pn=distributor_pn or None,
     )
