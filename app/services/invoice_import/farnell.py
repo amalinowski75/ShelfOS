@@ -86,12 +86,14 @@ class FarnellInvoiceParser:
 
         parsed: list[ParsedLine] = []
         charges: list[ParsedLine] = []
+        numbers: list[int] = []  # Farnell's own line numbers, for the gap check
         item: re.Match[str] | None = None
         cont: list[str] = []
 
         def flush() -> None:
             if item is not None:
                 parsed.append(_line(item, cont))
+                numbers.append(int(item.group(1)))
 
         for line in text.splitlines():
             match = _ITEM.match(line)
@@ -110,7 +112,13 @@ class FarnellInvoiceParser:
                 item, cont = None, []
                 continue
             charge = _CHARGE.match(line)
-            if charge:
+            # Only once the item has its own rows. The charge always follows a
+            # completed block, and without this the FIRST continuation row is
+            # offered to the charge shape — so a description that happened to fit it
+            # would be taken out of the item AND added as a charge, leaving a
+            # component with an order code and nothing else. Silently: it is still
+            # one parsed line per customs code, so neither check below can see it.
+            if charge and cont:
                 charges.append(
                     ParsedLine(
                         quantity=1,
@@ -125,11 +133,24 @@ class FarnellInvoiceParser:
 
         if not parsed:
             raise ValidationError("no invoice lines found in this Farnell PDF")
-        # Every component line carries exactly one customs code, so a mismatch means
-        # a row was dropped — fail loudly rather than lose a line silently. The
-        # delivery charge has none, hence counting components and not len(lines).
+        # Farnell numbers its own lines, so the primary check is that what was read
+        # runs 1..N with no gaps. It costs nothing, it is a fact about the PARTS
+        # rather than about the shipment, and it catches a row that broke in the
+        # order-code or unit-of-measure columns — which matches neither _ITEM nor
+        # _LOOSE_ITEM and would otherwise fold into the block above it.
+        for position, printed in enumerate(numbers, start=1):
+            if printed != position:
+                raise ValidationError(
+                    f"Farnell invoice line {position} was not recognised (the next "
+                    f"row read is line {printed}) — the layout wasn't fully understood"
+                )
+        # The customs codes catch the one gap the numbering cannot: a row dropped
+        # from the END leaves 1..N-1, which is contiguous. Guarded on there being any,
+        # because "Tariff Code:" is a fact about a cross-border shipment and not a
+        # catalogue column — a domestic invoice can carry none, and refusing one this
+        # parser reads perfectly well would be worse than doing without the check.
         expected = text.count(_TARIFF)
-        if len(parsed) != expected:
+        if expected and len(parsed) != expected:
             raise ValidationError(
                 f"recognised {len(parsed)} of {expected} Farnell lines — the invoice "
                 "layout wasn't fully understood"

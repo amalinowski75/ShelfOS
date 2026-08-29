@@ -507,6 +507,92 @@ def test_farnell_delivery_charge_is_a_charge_not_a_component() -> None:
     assert charges[0].supplier_part_number is None
 
 
+def test_farnell_a_charge_shaped_description_stays_with_its_item() -> None:
+    # The charge shape is offered every row of an open block, including the one
+    # carrying the MPN and description. Taking that row would BOTH invent a charge
+    # and strip the item bare — and neither integrity check can see it, since the
+    # line is still parsed and still one per customs code. Requiring the item to
+    # already have a row of its own closes it, because the real charge always
+    # follows a completed block.
+    poisoned = _text("farnell.txt").replace(
+        "NCP730BMT330TBG LDO, FIXED, 3.3V, 0.15A, -40 TO 125DEG C",
+        "ABCDEF LDO FIXED                                   3.30 0.15",
+    )
+    invoice = FarnellInvoiceParser().parse(poisoned)
+    line = next(
+        row for row in invoice.lines if row.supplier_part_number == "3367839"
+    )
+    assert line.mpn == "ABCDEF"  # not None: the row stayed with its item
+    assert [row.description for row in invoice.lines if row.kind != "component"] == [
+        "EXPRESS"
+    ]
+
+
+def test_farnell_reads_an_invoice_carrying_no_customs_codes() -> None:
+    # "Tariff Code:" is a fact about a cross-border shipment, not a catalogue
+    # column — a domestic invoice can carry none. Counting it unconditionally
+    # refused a document this parser reads perfectly well, with a message ("7 of 0")
+    # that read as a parser bug rather than as what happened.
+    domestic = "\n".join(
+        row for row in _text("farnell.txt").splitlines() if "Tariff Code:" not in row
+    )
+    invoice = FarnellInvoiceParser().parse(domestic)
+    assert len([row for row in invoice.lines if row.kind == "component"]) == 7
+
+
+def test_farnell_notices_a_row_that_broke_outside_the_money_columns() -> None:
+    # _LOOSE_ITEM shares the order-code and unit shapes with _ITEM, so it only flags
+    # a row that broke in the AMOUNTS. One that breaks in the unit of measure — a
+    # unit this parser has not seen — matches neither and folds into the block above
+    # it. Farnell numbers its own lines, and the gap is what shows.
+    broken = _text("farnell.txt").replace(
+        "     3  2300551                         EA ",
+        "     3  2300551                         E  ",
+    )
+    with pytest.raises(ValidationError, match="line 3 was not recognised"):
+        FarnellInvoiceParser().parse(broken)
+
+
+def test_farnell_still_catches_a_row_dropped_from_the_end() -> None:
+    # The gap the numbering cannot see: dropping the LAST row leaves 1..N-1, which
+    # is contiguous. This is what the customs-code count is still there for.
+    text = _text("farnell.txt")
+    broken = text.replace("     7  2497595", "     X  2497595", 1)
+    with pytest.raises(ValidationError, match="wasn't fully understood"):
+        FarnellInvoiceParser().parse(broken)
+
+
+def test_farnell_currency_requires_an_amount_beside_the_code() -> None:
+    # "Invoice Total" is printed on every page and only the last one states the
+    # money. Nothing on this invoice sits where a bare "Invoice Total <WORD>" would
+    # be misread, so the fixture cannot demonstrate the guard — pin it on the
+    # pattern itself rather than claim a coverage that isn't there.
+    from app.services.invoice_import.farnell import _CURRENCY
+
+    match = _CURRENCY.search(
+        "Invoice Total\n     PAY NOW\nInvoice Total  PLN 577.91\n"
+    )
+    assert match is not None
+    assert match.group(1) == "PLN"
+
+
+def test_farnell_reads_an_item_that_has_no_description_row() -> None:
+    # The customs row is skipped when looking for the "<MPN> <description>" row, so
+    # an item printed without one yields no MPN rather than a customs code as its
+    # part number. Not exercised by the sample invoice, where every item has both.
+    from app.services.invoice_import.farnell import _ITEM, _line
+
+    row = _ITEM.match(
+        "     1  3772760                         TC  100 1.3300 0.00 1.3300"
+        " 0.00  133.00"
+    )
+    assert row is not None
+    parsed = _line(row, ["        Tariff Code: IL 85412900"])
+    assert parsed.mpn is None
+    assert parsed.description is None
+    assert parsed.supplier_part_number == "3772760"
+
+
 def test_farnell_end_of_table_marker_survives_the_extractor() -> None:
     # Why the parser stops on "P&P Charge" and not on the "Very Important" beside
     # it: pdfplumber renders that heading as "Very Im portant" on one page of this
