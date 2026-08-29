@@ -1,0 +1,192 @@
+                                                                                  
+                                                                                  
+                                                                                  
+     .Sales  Invoice                                                              
+                                                                                  
+     Farnell a division of Premier Farnell UK Ltd.                                
+                                                                                  
+     150 Canal Road                                                               
+     LS12 2QQ, Leeds                                        www.farnell.com       
+                              Please email your remittance advice to:             
+      Contact-us                                     Invoice Number 8208977       
+                                EuropeanCash@farnell.com                          
+                                                     Invoice Date 24 AUG 2026     
+                                                     Order Date 21 AUG 2026       
+                                                     Despatch Date 24 AUG 2026    
+                                                     Account No 000000            
+                                                     Despatch No 005741149        
+                                                     Page No   1/3                
+                                                     Tracking No 1Z00000000000000000
+           Invoice Address           Delivery Address                             
+           SAMPLE BUYER SAMPLE CO       SAMPLE BUYER SAMPLE CO                  
+           UL. SAMPLE 1                 UL. SAMPLE 1                          
+           SAMPLE                    SAMPLE                                       
+           00-000 SAMPLE            00-000 SAMPLE                               
+           SAMPLE REGION Poland 00-000   SAMPLE REGION Poland 00-000            
+           PL                        PL                                           
+                                                           Customer VAT Number: PL0000000000
+     Customer Order No: 00000000000000        Our Order Ref: 2060-7264/01         
+     Line Order Code/Description     Unit Quantity List Discount Net Price Vat Rate Amount
+                                               Price Rate %                       
+     1  3772760                         TC  100 1.3300 0.00 1.3300 0.00  133.00   
+        SI5419DU-T1-GE3 MOSFET, P-CH, 30V, 12A, POWERPAK CHIPFET                  
+        Tariff Code: IL 85412900                                                  
+     2  2490597                         EA    5 37.3900 0.00 37.3900 0.00 186.95  
+        USB5744-I/2G USB HUB CTRL, 4PORT, 5GBPS, SQFN-56                          
+        Tariff Code: US 85423990                                                  
+     3  2300551                         EA    5 12.5800 0.00 12.5800 0.00 62.90   
+        1270.1001 LIGHT GUIDE, DUAL, HORIZONTAL,3MM,2W                            
+        Tariff Code: DE 90019000                                                  
+     4  3367839                         TC    5 3.7700 0.00 3.7700 0.00   18.85   
+        NCP730BMT330TBG LDO, FIXED, 3.3V, 0.15A, -40 TO 125DEG C                  
+        Tariff Code: MY 85429000                                                  
+                                                                                  
+     5  3596298                         TC    5 15.0700 0.00 15.0700 0.00 75.35   
+        MAX14689AETB+T ANALOGUE SW, DPDT, 1-CH, TDFN-EP-10                        
+        Tariff Code: TW 85423990                                                  
+                                                                                  
+     Very Important             Vat Rate Goods Vat       P&P Charge               
+     Title to the goods specific to this invoice remains with Farnell a Invoice Subtotal
+     division of Premier Farnell UK Ltd. until such time as full settlement       
+     is received. Please refer to https://uk.farnell.com/terms-of-purchase        
+     for our full terms of purchase.                     Vat                      
+                                                         Invoice Total            
+     Payment Due By:         Payment Terms:           Please Quote With Payment:  
+                                                                                  
+                                                                                  
+     A Division of Premier Farnell UK Limited                 Bank information    
+     Registered Office: 150 Armley Road, Leeds, LS12 2QQ                          
+     Registered in England NO. 860093                         ACCOUNT NO:         
+     For details of WEEE and battery registrations please     SORT CODE:          
+     see www.farnell.com                                      IBAN :              
+     Vat Reg No: DE284299742                                  BICSWIFTCode :      
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+     .Sales  Invoice                                                              
+                                                                                  
+     Farnell a division of Premier Farnell UK Ltd.                                
+                                                                                  
+     150 Canal Road                                                               
+     LS12 2QQ, Leeds                                        www.farnell.com       
+                              Please email your remittance advice to:             
+      Contact-us                                     Invoice Number 8208977       
+                                EuropeanCash@farnell.com                          
+                                                     Invoice Date 24 AUG 2026     
+                                                     Order Date 21 AUG 2026       
+                                                     Despatch Date 24 AUG 2026    
+                                                     Account No 000000            
+                                                     Despatch No 005741149        
+                                                     Page No   2/3                
+                                                     Tracking No 1Z00000000000000000
+           Invoice Address           Delivery Address                             
+           SAMPLE BUYER SAMPLE CO       SAMPLE BUYER SAMPLE CO                  
+           UL. SAMPLE 1                 UL. SAMPLE 1                          
+           SAMPLE                    SAMPLE                                       
+           00-000 SAMPLE            00-000 SAMPLE                               
+           SAMPLE REGION Poland 00-000   SAMPLE REGION Poland 00-000            
+           PL                        PL                                           
+                                                           Customer VAT Number: PL0000000000
+     Customer Order No: 00000000000000        Our Order Ref: 2060-7264/01         
+     Line Order Code/Description      Unit Quantity List Discount Net Price Vat Rate Amount
+                                               Price Rate %                       
+     6  2164811                         EA   15 1.7100 0.00 1.7100 0.00   25.65   
+        NTS0102GT,115 IC, TRANSLATING TXRX, DUAL, XSON8                           
+        Tariff Code: TH 85423990                                                  
+     7  2497595                         TC    6 5.8700 0.00 5.8700 0.00   35.22   
+        9774025151R SPACER, SMT ROUND, STEEL, M2.5, 2.5MM                         
+        Tariff Code: DE 73181900                                                  
+        EXPRESS                                                  0.00     39.99   
+                                                                                  
+                                                                                  
+        Intra-Community Supply - Reverse Charge Mechanism applies                 
+        ORDER PLACED BY MR SAMPLE BUYER                                           
+        *** PAID BY CREDIT/DEBIT CARD ***                                         
+        Authorisation Code: 000000                                                
+        IMPORTANT: Please refer to recent business communications regarding       
+        Premier Farnell UK Ltd's change of bank details for the following         
+        currencies: GBP, EUR, USD, RON, HUF, CZK, PLN. Please update your         
+        records to reflect the below details before 18 December 2025.             
+     Very Im portant            Vat Rate Goods Vat       P&P Charge               
+     Title to the goods specific to this invoice remains with Farnell a Invoice Subtotal
+     division of Premier Farnell UK Ltd. until such time as full settlement       
+     is received. Please refer to https://uk.farnell.com/terms-of-purchase        
+     for our full terms of purchase.                     Vat                      
+                                                         Invoice Total            
+     Payment Due By:         Payment Terms:           Please Quote With Payment:  
+                                                                                  
+                                                                                  
+     A Division of Premier Farnell UK Limited                 Bank information    
+     Registered Office: 150 Armley Road, Leeds, LS12 2QQ                          
+     Registered in England NO. 860093                         ACCOUNT NO:         
+     For details of WEEE and battery registrations please     SORT CODE:          
+     see www.farnell.com                                      IBAN :              
+     Vat Reg No: DE284299742                                  BICSWIFTCode :      
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+     .Sales  Invoice                                                              
+                                                                                  
+     Farnell a division of Premier Farnell UK Ltd.                                
+                                                                                  
+     150 Canal Road                                                               
+     LS12 2QQ, Leeds                                        www.farnell.com       
+                              Please email your remittance advice to:             
+      Contact-us                                     Invoice Number 8208977       
+                                EuropeanCash@farnell.com                          
+                                                     Invoice Date 24 AUG 2026     
+                                                     Order Date 21 AUG 2026       
+                                                     Despatch Date 24 AUG 2026    
+                                                     Account No 000000            
+                                                     Despatch No 005741149        
+                                                     Page No   3/3                
+                                                     Tracking No 1Z00000000000000000
+           Invoice Address           Delivery Address                             
+           SAMPLE BUYER SAMPLE CO       SAMPLE BUYER SAMPLE CO                  
+           UL. SAMPLE 1                 UL. SAMPLE 1                          
+           SAMPLE                    SAMPLE                                       
+           00-000 SAMPLE            00-000 SAMPLE                               
+           SAMPLE REGION Poland 00-000   SAMPLE REGION Poland 00-000            
+           PL                        PL                                           
+                                                           Customer VAT Number: PL0000000000
+     Customer Order No: 00000000000000        Our Order Ref: 2060-7264/01         
+     Line Order Code/Description      Unit Quantity List Discount Net Price Vat Rate Amount
+                                                Price Rate %                      
+        For VAT Information Only                                                  
+                   GBP                                                            
+        Goods Total 114.77                                                        
+        VAT Total  0.00                                                           
+        Net Total 114.77                                                          
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+     Very Important             Vat Rate Goods Vat      P&P Charge                
+     Title to the goods specific to this invoice remains with Farnell a Invoice Subtotal 577.91
+     division of Premier Farnell UK Ltd. until such time as full                  
+     settlement is received. Please refer to https://uk.farnell.com/terms- XPORT 577.91 0.00
+     of-purchase for our full terms of purchase.        Vat                0.00   
+                                                        Invoice Total  PLN 577.91 
+     Payment Due By:         Payment Terms:           Please Quote With Payment:  
+                                                                                  
+     24 AUG 2026             PAID WITH THANKS         0000008208977               
+     A Division of Premier Farnell UK Limited                 Bank information    
+     Registered Office: 150 Armley Road, Leeds, LS12 2QQ                          
+     Registered in England NO. 860093                         ACCOUNT NO:         
+     For details of WEEE and battery registrations please     SORT CODE:          
+     see www.farnell.com                                      IBAN :              
+     Vat Reg No: DE284299742                                  BICSWIFTCode :      
+                                                                                  
+                                                                                  
