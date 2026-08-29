@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+import unicodedata
+
 from sqlmodel import Session, SQLModel
 
 from app.models.bom import Bom
@@ -50,3 +53,21 @@ def require_entity[M: SQLModel](
     if entity is None:
         raise NotFoundError(f"{label} {entity_id} not found")
     return entity
+
+
+# Fold a shop's parameter label / value to a comparable key: lowercase, strip accents
+# to their base letter, then drop every non-alphanumeric character. So "Rezystancja",
+# "Resistance (Ω)" and "resistance" fold the same — and, crucially for Polish, so do
+# "wstążkowy" and "wstazkowy" (an accent must not simply vanish and change the word).
+_NON_ALNUM = re.compile(r"[^a-z0-9]")
+# Letters NFKD does not decompose (they have no combining form), folded by hand.
+_STANDALONE_FOLD = str.maketrans({"ł": "l", "đ": "d", "ø": "o", "ß": "ss", "þ": "th"})
+
+
+def normalize(name: str | None) -> str:
+    text = str(name or "").lower().translate(_STANDALONE_FOLD)
+    # NFKD splits e.g. "ż" into "z" + a combining mark; dropping the marks leaves "z".
+    text = "".join(
+        c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c)
+    )
+    return _NON_ALNUM.sub("", text)

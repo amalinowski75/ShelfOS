@@ -120,6 +120,14 @@
     });
   }
 
+  // Typed by hand rather than imported. "change" and not "input": the question is
+  // about a part number the user has finished writing, and one request per
+  // keystroke would ask it about a dozen prefixes of it.
+  for (const name of ["mpn", "manufacturer"]) {
+    const control = form.elements[name];
+    if (control) control.addEventListener("change", () => checkConflicts());
+  }
+
   // Build a value input for one effective parameter definition, keyed by its id
   // and data type so the payload can be assembled without another lookup.
   function buildParamField(definition) {
@@ -467,6 +475,105 @@
     if (input) input.value = String(rawValue).split(/[\s/]/)[0];
   }
 
+  // ---- "you may already have this part" -------------------------------------
+  // A component's identity is (MPN, manufacturer), and every source spells the
+  // maker differently — "MICROCHIP" and "Microchip Technology" are one company and
+  // two components. Rather than guess (a wrong guess FUSES two real parts, where a
+  // missed one only duplicates), show what the MPN already matches under another
+  // name and let the user say. Their answer is stored as an alias, so the same
+  // spelling never asks twice.
+  const conflictBox = document.getElementById("mfr-conflict");
+  const conflictSummary = document.getElementById("mfr-conflict-summary");
+  const conflictList = document.getElementById("mfr-conflict-list");
+  // Monotonic, like paramsRequestId: the MPN field can change faster than the
+  // lookups return, and a stale answer would describe a part number nobody is
+  // looking at any more.
+  let conflictRequestId = 0;
+
+  function hideConflicts() {
+    conflictRequestId += 1; // abandon anything in flight
+    if (!conflictBox) return;
+    conflictBox.hidden = true;
+    conflictList.replaceChildren();
+  }
+
+  // What the user picked: this IS that part. Teach the alias, then go to it —
+  // there is nothing left to create.
+  async function adoptExisting(candidate, spelling) {
+    if (spelling && candidate.manufacturer) {
+      // Best-effort. The alias is a convenience for NEXT time; failing to store it
+      // must not strand the user on a dialog for a component that already exists.
+      try {
+        await fetch("/api/manufacturers/aliases", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+          body: JSON.stringify({
+            alias: spelling,
+            canonical: candidate.manufacturer,
+          }),
+        });
+      } catch {
+        // Nothing to do: the navigation below is still the right outcome.
+      }
+    }
+    window.location = `/components/${candidate.id}`;
+  }
+
+  function renderConflicts(body, spelling) {
+    const candidates = (body && body.candidates) || [];
+    if (!conflictBox || !candidates.length) {
+      hideConflicts();
+      return;
+    }
+    conflictList.replaceChildren();
+    for (const candidate of candidates) {
+      const item = document.createElement("li");
+      const name = document.createElement("span");
+      // The maker's name is the whole point of the comparison, so it leads.
+      name.className = "mfr-conflict-name";
+      name.textContent = candidate.manufacturer || "(no manufacturer)";
+      const detail = document.createElement("span");
+      detail.className = "muted";
+      detail.textContent = ` ${candidate.mpn || ""}${
+        candidate.type_name ? ` · ${candidate.type_name}` : ""
+      }${candidate.description ? ` · ${candidate.description}` : ""}`;
+      const pick = document.createElement("button");
+      pick.type = "button"; // never submits the create form
+      pick.className = "btn btn-secondary btn-sm";
+      pick.textContent = "This is it";
+      pick.addEventListener("click", () => adoptExisting(candidate, spelling));
+      item.append(name, detail, pick);
+      conflictList.append(item);
+    }
+    const shown = spelling ? `“${spelling}”` : "no manufacturer";
+    conflictSummary.textContent =
+      `This MPN is already in stock under ${
+        candidates.length === 1 ? "another name" : "other names"
+      }, and you entered ${shown}. If one of these is the same part, say so — ` +
+      "otherwise carry on and a separate component is created.";
+    conflictBox.hidden = false;
+  }
+
+  async function checkConflicts() {
+    const mpn = (form.elements.mpn.value || "").trim();
+    const spelling = (form.elements.manufacturer.value || "").trim();
+    const token = (conflictRequestId += 1);
+    if (!mpn) {
+      hideConflicts();
+      return;
+    }
+    const query = new URLSearchParams({ mpn });
+    if (spelling) query.set("manufacturer", spelling);
+    try {
+      const resp = await fetch(`/api/manufacturers/conflicts?${query}`);
+      if (token !== conflictRequestId) return; // the fields moved on
+      if (!resp.ok) return hideConflicts();
+      renderConflicts(await resp.json(), spelling);
+    } catch {
+      hideConflicts(); // offline or blocked: say nothing rather than something wrong
+    }
+  }
+
   // Pre-fill the dialog. From a BOM line: { category, value, mpn, manufacturer }.
   // From a shop import, additionally: { notes, package, proposal }, where the SERVER's
   // matching engine already worked out the type, mounting and parameter values (the
@@ -482,6 +589,8 @@
       await applyPrefillFields(prefill);
     } finally {
       refreshGaps();
+      // After the fields, not before: the question is about what they now hold.
+      checkConflicts();
     }
   }
 
@@ -748,6 +857,7 @@
     // marked against bag B's number read as information, which is worse than noise.
     showingGaps = false;
     refreshGaps();
+    hideConflicts(); // the previous session's candidates are about another part
     openToken += 1; // invalidate any in-flight shop lookup from a prior open
     importing = false; // …and release its lock so the new code is looked up
     errorEl.hidden = true;

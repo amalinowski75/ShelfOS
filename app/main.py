@@ -30,6 +30,7 @@ from app.api.routes import (
     labels,
     links,
     locations,
+    manufacturers,
     matching,
     shops,
     stock,
@@ -58,6 +59,7 @@ _PROTECTED_ROUTERS = (
     boms,
     shops,
     matching,
+    manufacturers,
     links,
     labels,
 )

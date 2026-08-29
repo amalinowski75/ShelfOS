@@ -642,6 +642,10 @@ export function componentPageFixture(types = [{ id: 1, name: "resistor" }]) {
       <button type="button" id="component-new-type" hidden></button>
       <input name="manufacturer" />
       <input name="mpn" />
+      <div class="field mfr-conflict" id="mfr-conflict" hidden>
+        <p class="warn" id="mfr-conflict-summary"></p>
+        <ul class="mfr-conflict-list" id="mfr-conflict-list"></ul>
+      </div>
       <input name="package" />
       <select name="mounting_type">
         <option value="SMT">SMT</option>
@@ -706,6 +710,10 @@ export function componentDialogFixture(types = [{ id: 1, name: "resistor" }]) {
       <button type="button" id="component-new-type" hidden></button>
       <input name="manufacturer" />
       <input name="mpn" />
+      <div class="field mfr-conflict" id="mfr-conflict" hidden>
+        <p class="warn" id="mfr-conflict-summary"></p>
+        <ul class="mfr-conflict-list" id="mfr-conflict-list"></ul>
+      </div>
       <input name="package" />
       <select name="mounting_type"><option value="Other" selected>Other</option></select>
       <input name="notes" />

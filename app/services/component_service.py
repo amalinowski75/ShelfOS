@@ -32,6 +32,7 @@ from app.models.invoice import Invoice, InvoiceImportLine, InvoiceLine
 from app.models.location import ComponentLocation
 from app.models.match_rule import MatchRule
 from app.services import attachment_service, audit_service, link_service
+from app.services import manufacturer_service as ms
 from app.services._common import refuse_if_deleted, require_entity
 from app.services.errors import DuplicateComponentError, ValidationError
 from app.units import UnitParseError, parse_engineering
@@ -959,7 +960,10 @@ def create_component_with_values(
         # Normalise so blanks and surrounding whitespace never reach the store: a
         # stray " " or "" would otherwise slip past the (MPN, manufacturer) de-dup
         # (which compares trimmed) and confuse case/whitespace-sensitive lookups.
-        manufacturer=_blank_to_none(manufacturer),
+        # A known alias is resolved here rather than at read time, so what is stored
+        # IS the canonical spelling and every listing, filter and export agrees
+        # without consulting the alias table.
+        manufacturer=ms.canonical_name(session, manufacturer),
         mpn=_blank_to_none(mpn),
         package=package,
         mounting_type=mounting_type,
@@ -1072,6 +1076,34 @@ def find_components_by_mpn(session: Session, mpn: str) -> list[Component]:
     )
 
 
+def find_manufacturer_conflicts(
+    session: Session, *, mpn: str | None, manufacturer: str | None
+) -> list[Component]:
+    """Live components with this MPN that are filed under a DIFFERENT maker.
+
+    The evidence behind "you may already have this part". A part number is not
+    unique across manufacturers, so these are candidates for a human to judge, never
+    a match: two makers really do sell an "MCP2200", and the answer to which this is
+    cannot be computed — see ``manufacturer_service`` for what happens when it is
+    guessed.
+
+    Empty when the MPN is blank (nothing to compare) or when one of these components
+    IS the part (an exact hit is ``find_duplicate_component``'s job, and asking the
+    user about a part we already matched would be noise). A blank incoming
+    manufacturer does NOT suppress the question — a Farnell invoice prints no maker
+    at all, and today every one of its lines whose MPN already exists quietly becomes
+    a second component.
+    """
+    if _blank_to_none(mpn) is None:
+        return []
+    wanted = _match_key(ms.canonical_name(session, manufacturer))
+    return [
+        component
+        for component in find_components_by_mpn(session, cast(str, mpn).strip())
+        if _match_key(component.manufacturer) != wanted
+    ]
+
+
 def _blank_to_none(text: str | None) -> str | None:
     """A trimmed non-empty string, or None for a blank/whitespace-only value."""
     if text is None:
@@ -1090,6 +1122,11 @@ def find_duplicate_component(
 ) -> Component | None:
     """The existing non-deleted component with the same (MPN, manufacturer), or None.
 
+    The manufacturer is resolved through the alias table first, so a part arriving
+    as "ONSEMI" finds the one stored as "ON Semiconductor" once the user has said
+    those are the same maker. Only an alias does that — see ``manufacturer_service``
+    for why nothing is inferred.
+
     Both are matched case-insensitively and whitespace-insensitively. A blank MPN is
     exempt: a part with no MPN can't be de-duplicated (generic passives, BOM lines
     without a part number), and two such parts must be allowed to coexist. The
@@ -1105,7 +1142,8 @@ def find_duplicate_component(
     """
     if _blank_to_none(mpn) is None:
         return None
-    mpn_key, mfr_key = _match_key(mpn), _match_key(manufacturer)
+    mpn_key = _match_key(mpn)
+    mfr_key = _match_key(ms.canonical_name(session, manufacturer))
     candidates = session.exec(
         select(Component)
         .where(col(Component.deleted_at).is_(None))
@@ -1473,7 +1511,7 @@ def update_component(
     # another part — apply the same (MPN, manufacturer) guard as create, excluding
     # this component itself. Reuses DuplicateComponentError so the dialog links to the
     # existing part just as the create flow does.
-    new_manufacturer = _blank_to_none(manufacturer)
+    new_manufacturer = ms.canonical_name(session, manufacturer)
     duplicate = find_duplicate_component(
         session, mpn=component.mpn, manufacturer=new_manufacturer
     )
