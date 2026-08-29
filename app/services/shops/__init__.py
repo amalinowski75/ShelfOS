@@ -76,10 +76,10 @@ _BY_MPN: dict[str, MpnProvider] = {
 # what `product_url` dispatches on, so a shop missing here has a permanently greyed
 # "open in shop" button.
 #
-# Farnell's entry, like its _BY_MPN one, is not reachable yet: both keys come from
-# something that names the shop, and nothing does — there is no Farnell invoice
-# parser, so `shop_key` is never "farnell". Registered anyway so that adding the
-# parser is one file rather than one file plus a lookup someone has to remember.
+# Farnell's enrichment is the sharpest of the four: its invoice prints element14's
+# own order code in the item row, and that is exactly the key its API resolves with
+# `id:` — one product, no maker to disambiguate. (Its _BY_MPN entry above is still
+# unreachable; only the invoice names the shop, a scan does not.)
 _BY_INDEX: dict[str, IndexProvider] = {
     "mouser": _mouser,
     "digikey": _digikey,

@@ -1,8 +1,8 @@
 """Per-shop invoice-PDF parser tests.
 
 The parsers consume extracted PDF text, so these run against text fixtures under
-``tests/fixtures/invoices/`` — the pdfplumber output of the three real invoices with
-the buyer's name/address/VAT redacted (the parsers never read that block). The real
+``tests/fixtures/invoices/`` — the pdfplumber output of the real invoices with the
+buyer's name/address/VAT redacted (the parsers never read that block). The real
 PDFs are kept out of the repo (``samples/`` is gitignored); ``extract_text`` itself is
 covered separately with a generated PDF so no personal file is committed.
 """
@@ -17,6 +17,7 @@ import pytest
 from app.services.errors import ValidationError
 from app.services.invoice_import import parse_invoice
 from app.services.invoice_import.digikey import DigiKeyInvoiceParser
+from app.services.invoice_import.farnell import FarnellInvoiceParser
 from app.services.invoice_import.mouser import MouserInvoiceParser
 from app.services.invoice_import.pdf import extract_text
 from app.services.invoice_import.tme import TmeInvoiceParser
@@ -410,6 +411,124 @@ def test_digikey_mpn_may_contain_a_slash() -> None:
     assert line.manufacturer == "Microchip Technology"
 
 
+# --- Farnell -----------------------------------------------------------------
+
+
+def test_farnell_header() -> None:
+    invoice = FarnellInvoiceParser().parse(_text("farnell.txt"))
+    assert invoice.supplier == "Farnell"
+    assert invoice.shop_key == "farnell"
+    assert invoice.invoice_number == "8208977"
+    # "24 AUG 2026" — the same DD-Mon-YYYY as the others, spaced not hyphenated.
+    assert invoice.invoice_date == date(2026, 8, 24)
+
+
+def test_farnell_takes_the_invoice_currency_not_the_vat_information_one() -> None:
+    # The invoice states its money in PLN and ALSO restates the goods total in GBP
+    # under "For VAT Information Only". Reading the wrong one would record every
+    # price on the invoice in a currency nobody paid.
+    text = _text("farnell.txt")
+    assert "GBP" in text
+    assert FarnellInvoiceParser().parse(text).currency == "PLN"
+
+
+def test_farnell_reads_a_line_across_its_three_rows() -> None:
+    invoice = FarnellInvoiceParser().parse(_text("farnell.txt"))
+    line = _by_mpn(invoice, "NCP730BMT330TBG")
+    # The order code is element14's own catalogue number, so enrichment can look the
+    # part up by `id:` and cannot land on another maker's part.
+    assert line.supplier_part_number == "3367839"
+    assert line.quantity == 5
+    assert line.unit_price == Decimal("3.770000")
+    # MPN and description share a row with only a space between them.
+    assert line.description == "LDO, FIXED, 3.3V, 0.15A, -40 TO 125DEG C"
+    # Farnell prints no manufacturer column at all.
+    assert line.manufacturer is None
+
+
+def test_farnell_reads_every_line_including_the_page_break() -> None:
+    invoice = FarnellInvoiceParser().parse(_text("farnell.txt"))
+    components = [line for line in invoice.lines if line.kind == "component"]
+    assert len(components) == 7  # 5 on page 1, 2 on page 2
+    assert [line.supplier_part_number for line in components] == [
+        "3772760",
+        "2490597",
+        "2300551",
+        "3367839",
+        "3596298",
+        "2164811",  # the page break falls here
+        "2497595",
+    ]
+
+
+def test_farnell_line_total_reconciles_with_the_invoice_total() -> None:
+    # An independent check on the columns: the parser could plausibly take the LIST
+    # price, or the vat rate, or misread a quantity, and every assertion above would
+    # still pass on this invoice (its discounts are all zero). Summing has to hit the
+    # stated total.
+    invoice = FarnellInvoiceParser().parse(_text("farnell.txt"))
+    total = sum(line.quantity * line.unit_price for line in invoice.lines)
+    assert total == Decimal("577.91")  # "Invoice Total PLN 577.91"
+
+
+def test_farnell_takes_the_net_price_not_the_list_one() -> None:
+    # Every discount on the sample invoice is 0.00, so list and net are identical
+    # there and no assertion over it can tell the two columns apart — including the
+    # total-reconciliation one. This is the row that can: a 10% discount, where
+    # taking the list price would overstate what was paid by 11%.
+    from app.services.invoice_import.farnell import _ITEM, _line
+
+    row = _ITEM.match(
+        "     3  2300551                         EA    5 12.5800 10.00 11.3220"
+        " 0.00 56.61   "
+    )
+    assert row is not None
+    parsed = _line(row, ["        1270.1001 LIGHT GUIDE, DUAL, HORIZONTAL,3MM,2W"])
+    assert parsed.unit_price == Decimal("11.322000")
+    assert parsed.quantity == 5
+
+
+def test_farnell_mpn_may_contain_a_comma_or_a_plus() -> None:
+    invoice = FarnellInvoiceParser().parse(_text("farnell.txt"))
+    # The MPN is everything up to the first space, so punctuation inside it survives.
+    assert _by_mpn(invoice, "NTS0102GT,115").supplier_part_number == "2164811"
+    assert _by_mpn(invoice, "MAX14689AETB+T").supplier_part_number == "3596298"
+
+
+def test_farnell_delivery_charge_is_a_charge_not_a_component() -> None:
+    # It sits among the items with no line number and no order code. Imported as a
+    # component it would become a phantom part; dropped entirely, the invoice would
+    # no longer add up.
+    invoice = FarnellInvoiceParser().parse(_text("farnell.txt"))
+    charges = [line for line in invoice.lines if line.kind != "component"]
+    assert len(charges) == 1
+    assert charges[0].description == "EXPRESS"
+    assert charges[0].unit_price == Decimal("39.990000")
+    assert charges[0].supplier_part_number is None
+
+
+def test_farnell_end_of_table_marker_survives_the_extractor() -> None:
+    # Why the parser stops on "P&P Charge" and not on the "Very Important" beside
+    # it: pdfplumber renders that heading as "Very Im portant" on one page of this
+    # invoice. Recorded as a test because the alternative reads like the obvious
+    # choice, and nothing else in the fixture explains why it was not taken.
+    text = _text("farnell.txt")
+    assert "Very Im portant" in text
+    assert text.count("P&P Charge") == 3  # every page, intact
+
+
+def test_farnell_does_not_read_the_prose_around_the_items_as_charges() -> None:
+    # The page-2 footer has all-caps prose sitting inside the last item's block
+    # ("ORDER PLACED BY MR …", "*** PAID BY CREDIT/DEBIT CARD ***"). The charge
+    # shape has to be narrow enough to leave it alone.
+    text = _text("farnell.txt")
+    assert "ORDER PLACED BY" in text
+    invoice = FarnellInvoiceParser().parse(text)
+    assert [line.description for line in invoice.lines if line.kind != "component"] == [
+        "EXPRESS"
+    ]
+
+
 # --- integrity: a dropped line fails loudly, not silently --------------------
 
 
@@ -533,6 +652,32 @@ def test_digikey_requires_a_currency() -> None:
         DigiKeyInvoiceParser().parse(broken)
 
 
+def test_farnell_raises_on_an_item_shaped_line_it_cannot_read() -> None:
+    # Corrupt one net price so the strict row no longer matches. The row still looks
+    # item-shaped, so the parser names it rather than folding it into the previous
+    # item's continuation — where its MPN row would overwrite that item's.
+    broken = _text("farnell.txt").replace(
+        "37.3900 0.00 37.3900", "37.3900 0.00 37.X900", 1
+    )
+    with pytest.raises(ValidationError, match="could not read this Farnell line"):
+        FarnellInvoiceParser().parse(broken)
+
+
+def test_farnell_counts_customs_codes_when_a_row_vanishes_entirely() -> None:
+    # A row damaged past even the loose shape drops with no item active, so neither
+    # pattern can flag it. Every component carries one "Tariff Code:", so the count
+    # is the net that catches it.
+    broken = _text("farnell.txt").replace("     1  3772760", "     X  3772760", 1)
+    with pytest.raises(ValidationError, match="wasn't fully understood"):
+        FarnellInvoiceParser().parse(broken)
+
+
+def test_farnell_requires_a_currency() -> None:
+    broken = _text("farnell.txt").replace("Invoice Total  PLN 577.91", "Invoice Total")
+    with pytest.raises(ValidationError, match="currency"):
+        FarnellInvoiceParser().parse(broken)
+
+
 # --- Registry / extract_text -------------------------------------------------
 
 
@@ -542,6 +687,30 @@ def test_parse_invoice_rejects_unrecognised_text(monkeypatch) -> None:  # type: 
     monkeypatch.setattr(pkg, "extract_text", lambda data: "a plain shopping receipt")
     with pytest.raises(ValidationError, match="unrecognised invoice"):
         parse_invoice(b"%PDF-1.4", "receipt.pdf")
+
+
+@pytest.mark.parametrize(
+    ("fixture", "shop_key"),
+    [
+        ("tme.txt", "tme"),
+        ("mouser.txt", "mouser"),
+        ("digikey.txt", "digikey"),
+        ("farnell.txt", "farnell"),
+    ],
+)
+def test_parse_invoice_picks_the_right_parser(
+    fixture: str, shop_key: str, monkeypatch  # type: ignore[no-untyped-def]
+) -> None:
+    """Registering a parser is the whole integration surface — check it took.
+
+    Every fixture against the whole registry, not just its own parser: a signature
+    that also matches another shop's invoice would silently import it under the
+    wrong shop, and only trying them all can show that.
+    """
+    import app.services.invoice_import as pkg
+
+    monkeypatch.setattr(pkg, "extract_text", lambda data: _text(fixture))
+    assert parse_invoice(b"%PDF-1.4", fixture).shop_key == shop_key
 
 
 def _minimal_pdf(text: str) -> bytes:
