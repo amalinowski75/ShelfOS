@@ -97,12 +97,26 @@ export SHELFOS_TME_COUNTRY="PL"
 # optional. Same caveat as Digi-Key's LANGUAGE above — this translates the parameter
 # NAMES, so a non-English value only helps if your own parameter labels match it.
 export SHELFOS_TME_LANGUAGE="en"
+
+# Farnell / Newark / CPC — one element14 API key, from partner.element14.com
+export SHELFOS_FARNELL_API_KEY="..."
+# optional: which element14 store to ask. Same caveat as the two LANGUAGE settings
+# above, and the reason the default is a UK store rather than your nearest one: the
+# store also decides the language of the attribute LABELS, and a translated label
+# stops matching your parameter labels and is dropped. Any of their sites works,
+# e.g. pl.farnell.com, de.farnell.com, www.newark.com.
+export SHELFOS_FARNELL_STORE="uk.farnell.com"
 ```
 
-TME returns structured parameters, so its imports are the richest of the three;
-Mouser exposes specs only inside the free-text description, which the dialog parses
-best-effort. Whatever a shop returns is pre-filled for review — nothing is saved
-until you confirm the dialog.
+All but Mouser return structured parameters; Mouser exposes specs only inside the
+free-text description, which the dialog parses best-effort. Farnell is the one that
+also states the component's case and how it mounts, so those two fields fill
+themselves. Whatever a shop returns is pre-filled for review — nothing is saved until
+you confirm the dialog.
+
+A Farnell product URL ends in the order code (`…/dp/3367839`), which is element14's
+own unique key, so pasting a link never has to guess between two makers sharing a
+part number.
 
 ### Scanning the packaging label
 

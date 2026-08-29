@@ -15,10 +15,11 @@ def test_registry_dispatches_each_shop_by_host() -> None:
             "https://www.mouser.pl/pl/ProductDetail/Walsin/MR04X1201FTL",
             "https://www.digikey.pl/pl/products/detail/walsin/MR04X1201FTL/13908146",
             "https://www.tme.eu/pl/details/mr04x1201ftl/rezystory-smd-0402/walsin/",
+            "https://uk.farnell.com/onsemi/ncp730bmt330tbg/ldo-fixed/dp/3367839",
             "https://example.com/part/1",
         )
     }
-    assert list(resolved.values()) == ["Mouser", "Digi-Key", "TME", None]
+    assert list(resolved.values()) == ["Mouser", "Digi-Key", "TME", "Farnell", None]
 
 
 def _read_only_headers(client: TestClient, anon_client: TestClient) -> dict[str, str]:

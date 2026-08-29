@@ -14,6 +14,7 @@ from typing import Protocol, cast
 from app.services.errors import ValidationError
 from app.services.shops.base import ProductData, ShopProvider
 from app.services.shops.digikey import DigiKeyProvider
+from app.services.shops.farnell import FarnellProvider
 from app.services.shops.mouser import MouserProvider
 from app.services.shops.scan import ScanResult, parse_scan
 from app.services.shops.tme import TmeProvider
@@ -51,21 +52,39 @@ class IndexProvider(Protocol):
 _mouser = MouserProvider()
 _digikey = DigiKeyProvider()
 _tme = TmeProvider()
+_farnell = FarnellProvider()
 
-_PROVIDERS: list[ShopProvider] = [_mouser, _digikey, _tme]
+_PROVIDERS: list[ShopProvider] = [_mouser, _digikey, _tme, _farnell]
 
 # Shops whose DataMatrix label we can look up by part number alone. TME is absent
 # on purpose: its API keys on TME's own symbol, not the MPN — and a scanned TME QR
 # carries a product URL anyway, so it takes the URL path.
-_BY_MPN: dict[str, MpnProvider] = {"mouser": _mouser, "digikey": _digikey}
+#
+# Farnell is here even though `scan.py` cannot yet tell a Farnell label from a
+# Mouser one (it defaults to Mouser), so nothing routes here today: the entry is
+# what the detector will need, and leaving it out would make adding one look like
+# it should have worked.
+_BY_MPN: dict[str, MpnProvider] = {
+    "mouser": _mouser,
+    "digikey": _digikey,
+    "farnell": _farnell,
+}
 
 # Invoice-import enrichment, keyed by the shop's own catalogue index (the invoice
-# always carries it in the item row itself). ALL three shops — including TME, whose
-# symbol is exactly that index, giving it API enrichment the MPN path never could.
+# always carries it in the item row itself). Including TME, whose symbol is exactly
+# that index, giving it API enrichment the MPN path never could. This map is also
+# what `product_url` dispatches on, so a shop missing here has a permanently greyed
+# "open in shop" button.
+#
+# Farnell's entry, like its _BY_MPN one, is not reachable yet: both keys come from
+# something that names the shop, and nothing does — there is no Farnell invoice
+# parser, so `shop_key` is never "farnell". Registered anyway so that adding the
+# parser is one file rather than one file plus a lookup someone has to remember.
 _BY_INDEX: dict[str, IndexProvider] = {
     "mouser": _mouser,
     "digikey": _digikey,
     "tme": _tme,
+    "farnell": _farnell,
 }
 
 
