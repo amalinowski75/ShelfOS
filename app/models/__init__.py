@@ -29,6 +29,7 @@ from app.models.enums import (
 from app.models.invoice import Invoice, InvoiceImportLine, InvoiceLine
 from app.models.link import Link
 from app.models.location import ComponentLocation, Location
+from app.models.manufacturer import ManufacturerAlias
 from app.models.match_rule import MatchRule
 from app.models.stock import StockMovement
 from app.models.user import User
@@ -54,6 +55,7 @@ __all__ = [
     "LinkKind",
     "Location",
     "LocationType",
+    "ManufacturerAlias",
     "MatchDomain",
     "MatchRule",
     "MountingType",

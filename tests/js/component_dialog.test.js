@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { JSDOM } from "jsdom";
 import { describe, it, expect, vi } from "vitest";
 import { loadPage, tick } from "./harness.js";
 
@@ -19,6 +21,11 @@ function dialogFixture() {
       <button type="button" id="component-new-type" hidden></button>
       <input name="manufacturer" />
       <input name="mpn" />
+      <div class="field mfr-conflict" id="mfr-conflict" hidden>
+        <p class="warn" id="mfr-conflict-summary"></p>
+        <ul class="mfr-conflict-list" id="mfr-conflict-list"></ul>
+        <p id="mfr-conflict-note" hidden></p>
+      </div>
       <input name="package" />
       <select name="mounting_type">
         <option value="Other" selected>Other</option>
@@ -337,5 +344,304 @@ describe("component_dialog.js — showing what an import left unfilled", () => {
     open(page, () => {});
     await tick();
     expect(tinted(page)).toEqual([]);
+  });
+});
+
+describe("component_dialog.js — you may already have this part", () => {
+  // A component's identity is (MPN, manufacturer), and every source spells the
+  // maker differently. Rather than guess — a wrong guess FUSES two real parts,
+  // where a missed one only duplicates — the dialog shows what the MPN already
+  // matches under another name and lets the user say.
+  const CANDIDATE = {
+    id: 42,
+    mpn: "MCP2200",
+    manufacturer: "Microchip Technology",
+    description: "USB-UART bridge",
+    type_name: "ic",
+  };
+
+  function conflictFetch(candidates, seen = []) {
+    return (url, opts) => {
+      seen.push({ url, opts });
+      if (url.startsWith("/api/manufacturers/same-mpn")) {
+        return ok({ manufacturer: "MICROCHIP", candidates });
+      }
+      if (url.endsWith("/parameters")) return ok([]);
+      return ok({});
+    };
+  }
+
+  const warning = (page) => page.document.getElementById("mfr-conflict");
+  const picks = (page) => [
+    ...page.document.querySelectorAll("#mfr-conflict-list button"),
+  ];
+
+  it("asks after an import fills the fields", async () => {
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: conflictFetch([CANDIDATE]),
+    });
+    open(page, () => {}, { mpn: "MCP2200", manufacturer: "MICROCHIP" });
+    await tick();
+
+    expect(warning(page).hidden).toBe(false);
+    const name = page.document.querySelector("#mfr-conflict-list .mfr-conflict-name");
+    // The maker's name is the whole comparison, so it is the whole row. Asserted as
+    // the exact text: the part number is identical by construction and sits in the
+    // form two fields up, and printing it again cost the width the button needs.
+    expect(name.textContent).toBe("Microchip Technology");
+    expect(name.textContent).not.toContain("MCP2200");
+    // What is left over is recoverable on hover rather than laid out — it only
+    // matters when two real companies share a part number.
+    expect(name.title).toBe("ic · USB-UART bridge");
+    expect(picks(page)).toHaveLength(1);
+  });
+
+  it("keeps the button in the dialog however long the maker's name is", async () => {
+    // What actually broke in use: the row outgrew the dialog and "This is it" —
+    // the one control the warning exists to offer — needed a horizontal scroll to
+    // reach. Under the real app.css the name is the part that yields.
+    const css = readFileSync(
+      new URL("../../app/web/static/app.css", import.meta.url),
+      "utf8",
+    );
+    const dom = new JSDOM(
+      `<style>${css}</style>
+       <ul class="mfr-conflict-list"><li>
+         <span class="mfr-conflict-name">x</span>
+         <button class="btn btn-secondary btn-sm">This is it</button>
+       </li></ul>`,
+    );
+    const styleOf = (sel) =>
+      dom.window.getComputedStyle(dom.window.document.querySelector(sel));
+    expect(styleOf(".mfr-conflict-name").flex).toBe("1 1 0%");
+    expect(styleOf(".mfr-conflict-name").textOverflow).toBe("ellipsis");
+    expect(styleOf(".mfr-conflict-name").overflow).toBe("hidden");
+    // The load-bearing half: a shrinkable button is one a long name can squeeze
+    // out of the dialog entirely.
+    expect(styleOf(".mfr-conflict-list .btn").flex).toBe("0 0 auto");
+  });
+
+  it("says what picking one will teach it, before the click", async () => {
+    // The confusion this caused: "This is it" quietly created a global rule that
+    // changed how later imports read a manufacturer's name, and nothing said so.
+    // It has to be said BEFORE — the components page navigates away the instant a
+    // part is chosen, so anything reported afterwards is never read.
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: conflictFetch([CANDIDATE]),
+    });
+    open(page, () => {}, { mpn: "MCP2200", manufacturer: "MICROCHIP" });
+    await tick();
+
+    const note = page.document.getElementById("mfr-conflict-note");
+    expect(note.hidden).toBe(false);
+    expect(note.textContent).toContain("MICROCHIP");
+    expect(note.textContent).toContain("records");
+  });
+
+  it("promises no such thing when nothing would be recorded", async () => {
+    // Same spelling as the part already carries: picking it teaches nothing, so
+    // claiming otherwise would be a lie about what the button does.
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: conflictFetch([CANDIDATE]),
+    });
+    open(page, () => {}, {
+      mpn: "MCP2200",
+      manufacturer: "microchip technology", // differs only in case
+    });
+    await tick();
+
+    expect(warning(page).hidden).toBe(false); // still says you own the part
+    expect(page.document.getElementById("mfr-conflict-note").hidden).toBe(true);
+  });
+
+  it("says nothing when the part number matches nothing", async () => {
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: conflictFetch([]),
+    });
+    open(page, () => {}, { mpn: "MCP2200", manufacturer: "MICROCHIP" });
+    await tick();
+    expect(warning(page).hidden).toBe(true);
+  });
+
+  it("asks nothing at all without a part number", async () => {
+    // Every field empty is the ordinary manual create, not a question.
+    const seen = [];
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: conflictFetch([CANDIDATE], seen),
+    });
+    open(page, () => {});
+    await tick();
+    expect(seen.filter((r) => r.url.includes("same-mpn"))).toHaveLength(0);
+    expect(warning(page).hidden).toBe(true);
+  });
+
+  it("asks again when the MPN is typed by hand", async () => {
+    const seen = [];
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: conflictFetch([CANDIDATE], seen),
+    });
+    open(page, () => {});
+    await tick();
+
+    const mpn = page.document.querySelector('[name="mpn"]');
+    mpn.value = "MCP2200";
+    mpn.dispatchEvent(new page.window.Event("change", { bubbles: true }));
+    await tick();
+
+    const asked = seen.filter((r) => r.url.includes("same-mpn"));
+    expect(asked).toHaveLength(1);
+    // "change", not "input": one request for a finished part number, not one per
+    // keystroke of it.
+    expect(asked[0].url).toContain("mpn=MCP2200");
+    expect(warning(page).hidden).toBe(false);
+  });
+
+  it("teaches the alias and answers the dialog with the part picked", async () => {
+    const seen = [];
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: conflictFetch([CANDIDATE], seen),
+    });
+    const answered = [];
+    open(page, (chosen) => answered.push(chosen), {
+      mpn: "MCP2200",
+      manufacturer: "MICROCHIP",
+    });
+    await tick();
+
+    // The harness's showModal() is a no-op, so `open` is false either way unless
+    // the test puts the dialog in the state the browser would have it in.
+    const dialogEl = page.document.getElementById("component-dialog");
+    dialogEl.open = true;
+
+    picks(page)[0].click();
+    await tick();
+
+    const posted = seen.find((r) => r.url === "/api/manufacturers/aliases");
+    expect(posted).toBeTruthy();
+    expect(JSON.parse(posted.opts.body)).toEqual({
+      alias: "MICROCHIP", // what arrived
+      canonical: "Microchip Technology", // what the existing part is filed under
+    });
+    // Nothing is left to create, so the dialog finishes with the part it found —
+    // the same way it finishes with one it made. What the caller then does with it
+    // is the caller's business, which is why this does NOT navigate.
+    expect(answered).toEqual([CANDIDATE]);
+    expect(dialogEl.open).toBe(false);
+    expect(page.navigations.length).toBe(0);
+  });
+
+  it("still answers with the part when the alias could not be stored", async () => {
+    // The alias is a convenience for NEXT time; failing to record it must not
+    // strand the user on a dialog for a component that already exists.
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: (url) => {
+        if (url === "/api/manufacturers/aliases") return Promise.reject(new Error());
+        if (url.startsWith("/api/manufacturers/same-mpn")) {
+          return ok({ manufacturer: "MICROCHIP", candidates: [CANDIDATE] });
+        }
+        return ok({});
+      },
+    });
+    const answered = [];
+    open(page, (chosen) => answered.push(chosen), {
+      mpn: "MCP2200",
+      manufacturer: "MICROCHIP",
+    });
+    await tick();
+    picks(page)[0].click();
+    await tick();
+    expect(answered).toEqual([CANDIDATE]);
+  });
+
+  it("records nothing when there is no spelling to remember", async () => {
+    // A Farnell invoice prints no manufacturer column at all, so the question is
+    // still worth asking — but there is no alias in the answer.
+    const seen = [];
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: conflictFetch([CANDIDATE], seen),
+    });
+    const answered = [];
+    open(page, (chosen) => answered.push(chosen), { mpn: "MCP2200" });
+    await tick();
+    picks(page)[0].click();
+    await tick();
+
+    expect(seen.some((r) => r.url === "/api/manufacturers/aliases")).toBe(false);
+    expect(answered).toEqual([CANDIDATE]); // the choice still stands
+  });
+
+  it("asks nothing while editing a staged invoice line", async () => {
+    // There "this is it" would have to resolve that LINE to the existing
+    // component — a different endpoint, on the invoice panel. Asking a question
+    // whose only answer is unavailable is worse than not asking.
+    const seen = [];
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: conflictFetch([CANDIDATE], seen),
+    });
+    open(page, () => {}, { mpn: "MCP2200", manufacturer: "MICROCHIP" }, {
+      stage: { invoiceId: 1, importLineId: 2 },
+    });
+    await tick();
+
+    expect(seen.filter((r) => r.url.includes("same-mpn"))).toHaveLength(0);
+    expect(warning(page).hidden).toBe(true);
+  });
+
+  it("ignores an answer about a part number the fields have moved on from", async () => {
+    // The MPN field can change faster than the lookups return, and a stale answer
+    // would describe a number nobody is looking at any more — as a warning about
+    // the one they ARE looking at.
+    let call = 0;
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: (url) => {
+        if (!url.startsWith("/api/manufacturers/same-mpn")) return ok({});
+        call += 1;
+        if (call === 1) {
+          return new Promise((resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  ok: true,
+                  json: async () => ({
+                    manufacturer: "MICROCHIP",
+                    candidates: [CANDIDATE],
+                  }),
+                }),
+              30,
+            ),
+          );
+        }
+        return ok({ manufacturer: "NXP", candidates: [] });
+      },
+    });
+    open(page, () => {});
+    await tick();
+
+    const mpn = page.document.querySelector('[name="mpn"]');
+    const change = () =>
+      mpn.dispatchEvent(new page.window.Event("change", { bubbles: true }));
+    mpn.value = "MCP2200";
+    change(); // slow, and about to be superseded
+    mpn.value = "NX3P1108";
+    change(); // fast, and the one on screen
+    await tick();
+    await new Promise((resolve) => setTimeout(resolve, 60)); // let the slow one land
+
+    expect(warning(page).hidden).toBe(true);
+  });
+
+  it("clears a previous session's candidates when the dialog reopens", async () => {
+    // The components page reopens this dialog for the next scanned bag; last bag's
+    // candidates describe a different part number entirely.
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: conflictFetch([CANDIDATE]),
+    });
+    open(page, () => {}, { mpn: "MCP2200", manufacturer: "MICROCHIP" });
+    await tick();
+    expect(warning(page).hidden).toBe(false);
+
+    page.document.getElementById("component-dialog").open = false;
+    open(page, () => {});
+    expect(warning(page).hidden).toBe(true); // synchronously, before any lookup
   });
 });

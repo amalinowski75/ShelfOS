@@ -118,6 +118,19 @@ A Farnell product URL ends in the order code (`…/dp/3367839`), which is elemen
 own unique key, so pasting a link never has to guess between two makers sharing a
 part number.
 
+### When the same maker arrives spelled two ways
+
+A component is identified by its manufacturer part number **and** its manufacturer,
+and the shops disagree about the latter: Farnell says `ONSEMI`, a Digi-Key invoice
+says `ON Semiconductor`. Left alone, those become two components for one part.
+
+ShelfOS does not guess. When you import a part whose MPN is already in stock under a
+different maker's name, the dialog says so and lists what it found — with the type
+and description, since an MPN really can belong to two different companies. If one of
+them is the same part, say so: ShelfOS opens it and remembers that spelling, so the
+question is asked once per spelling and never again. Every component is then stored
+under the one canonical name, which is what the tables and filters show.
+
 ### Scanning the packaging label
 
 The same field takes a barcode/QR scan. It is focused when the dialog opens, and a

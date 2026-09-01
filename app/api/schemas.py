@@ -532,6 +532,43 @@ class ComponentScanRead(BaseModel):
     matches: list[ScannedComponentRead]
 
 
+class SameMpnCandidateRead(BaseModel):
+    """One component already in stock carrying the queried part number."""
+
+    id: int
+    mpn: str | None
+    manufacturer: str | None
+    description: str | None
+    type_name: str | None
+
+
+class SameMpnRead(BaseModel):
+    """Parts already in stock that MIGHT be what is being imported.
+
+    Candidates, never a match: an MPN is not unique across manufacturers, so which
+    one this is — if any — is a question only the user can answer. Includes one
+    whose maker matches exactly; that is a duplicate rather than an ambiguity, but
+    it is the same news and worth hearing before the form is filled in. Empty means
+    there is nothing to say.
+    """
+
+    manufacturer: str | None  # the incoming name, resolved through known aliases
+    candidates: list[SameMpnCandidateRead]
+
+
+class ManufacturerAliasCreate(BaseModel):
+    """Record that one spelling of a maker's name means another."""
+
+    alias: str = Field(max_length=200)
+    canonical: str = Field(min_length=1, max_length=200)
+
+
+class ManufacturerAliasRead(BaseModel):
+    id: int
+    alias: str
+    canonical: str
+
+
 class ShopParameter(BaseModel):
     name: str
     value: str

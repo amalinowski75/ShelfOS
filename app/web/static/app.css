@@ -520,6 +520,29 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 /* Secondary line under a table cell (e.g. an imported part's description). */
 .small { font-size: 12px; }
 
+/* ---------- "you may already have this part" ---------- */
+/* A warning, not an error: what it lists may or may not be the same part, and
+   carrying on is a legitimate answer. `.field` sets `display`, which beats the UA
+   `[hidden]` rule — the same trap as .btn/.badge — hence the explicit reset. */
+.mfr-conflict {
+  gap: 8px; padding: 10px 12px; border-radius: var(--radius-sm);
+  background: var(--warn-soft); border: 1px solid var(--warn);
+}
+.mfr-conflict[hidden] { display: none; }
+.mfr-conflict p { margin: 0; }
+.mfr-conflict-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.mfr-conflict-list li {
+  display: flex; align-items: center; gap: 8px; font-size: 13.5px;
+}
+/* The name yields, the button never does. Without this a long manufacturer pushes
+   "This is it" outside the dialog, where it takes a horizontal scroll to reach —
+   the one control the whole warning exists to offer. */
+.mfr-conflict-name {
+  flex: 1; min-width: 0; font-weight: 650;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mfr-conflict-list .btn { flex: none; }
+
 /* An imported-review row still missing a type or a location — a soft accent bar
    so it reads as "needs a touch" without shouting error red. */
 #invoice-review tr.is-incomplete > td:first-child { box-shadow: inset 3px 0 0 var(--warn); }

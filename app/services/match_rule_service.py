@@ -12,8 +12,6 @@ resulting :class:`RuleSet`.
 
 from __future__ import annotations
 
-import re
-import unicodedata
 from dataclasses import dataclass, field
 from typing import cast
 
@@ -23,27 +21,9 @@ from app.models.component import ParameterDefinition
 from app.models.enums import MatchDomain, MountingType
 from app.models.match_rule import MatchRule
 from app.services import audit_service
-from app.services._common import require_entity
+from app.services._common import normalize, require_entity
 from app.services.component_service import enum_values_of
 from app.services.errors import ValidationError
-
-# Fold a shop's parameter label / value to a comparable key: lowercase, strip accents
-# to their base letter, then drop every non-alphanumeric character. So "Rezystancja",
-# "Resistance (Ω)" and "resistance" fold the same — and, crucially for Polish, so do
-# "wstążkowy" and "wstazkowy" (an accent must not simply vanish and change the word).
-_NON_ALNUM = re.compile(r"[^a-z0-9]")
-# Letters NFKD does not decompose (they have no combining form), folded by hand.
-_STANDALONE_FOLD = str.maketrans({"ł": "l", "đ": "d", "ø": "o", "ß": "ss", "þ": "th"})
-
-
-def normalize(name: str | None) -> str:
-    text = str(name or "").lower().translate(_STANDALONE_FOLD)
-    # NFKD splits e.g. "ż" into "z" + a combining mark; dropping the marks leaves "z".
-    text = "".join(
-        c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c)
-    )
-    return _NON_ALNUM.sub("", text)
-
 
 # What the audit log calls a matching rule (spec §19).
 _AUDIT_ENTITY = "match_rule"

@@ -46,6 +46,19 @@
         <label>MPN</label>
         <input class="control" name="mpn" placeholder="optional" />
       </div>
+      {# "You may already have this part." Shown when the MPN is already in stock
+         under a DIFFERENT maker's name — which is either the same part spelled
+         another way, or genuinely another company's part with the same number.
+         Nothing here decides that; the list is the evidence and the user picks.
+         Picking teaches the alias, so the question is asked once per spelling. #}
+      <div class="field mfr-conflict" id="mfr-conflict" hidden>
+        <p class="warn" id="mfr-conflict-summary"></p>
+        <ul class="mfr-conflict-list" id="mfr-conflict-list"></ul>
+        {# What picking one does BESIDES opening it. Said before the click, not
+           after: the components page navigates away the moment a part is chosen,
+           so anything reported afterwards would never be read. #}
+        <p class="muted small" id="mfr-conflict-note" hidden></p>
+      </div>
       <div class="field">
         <label>Package</label>
         <input class="control" name="package" placeholder="optional" />

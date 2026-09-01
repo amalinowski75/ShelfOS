@@ -120,6 +120,14 @@
     });
   }
 
+  // Typed by hand rather than imported. "change" and not "input": the question is
+  // about a part number the user has finished writing, and one request per
+  // keystroke would ask it about a dozen prefixes of it.
+  for (const name of ["mpn", "manufacturer"]) {
+    const control = form.elements[name];
+    if (control) control.addEventListener("change", () => checkConflicts());
+  }
+
   // Build a value input for one effective parameter definition, keyed by its id
   // and data type so the payload can be assembled without another lookup.
   function buildParamField(definition) {
@@ -467,6 +475,155 @@
     if (input) input.value = String(rawValue).split(/[\s/]/)[0];
   }
 
+  // ---- "you may already have this part" -------------------------------------
+  // Shown whenever the part number is already in stock, whoever the shop says makes
+  // it. Two different things bring you here and both are worth hearing before the
+  // form is filled in: the maker is spelled differently ("MICROCHIP" against
+  // "Microchip Technology" — one company, two components unless someone says so),
+  // or it is spelled the same and you are about to add a part you already own.
+  //
+  // Which of the listed parts this is — if any — is never guessed. A wrong guess
+  // FUSES two real parts, where a missed one only duplicates, and an MPN genuinely
+  // is not unique across manufacturers. When the answer involves a new spelling it
+  // is stored as an alias, so that spelling resolves by itself from then on.
+  const conflictBox = document.getElementById("mfr-conflict");
+  const conflictSummary = document.getElementById("mfr-conflict-summary");
+  const conflictList = document.getElementById("mfr-conflict-list");
+  const conflictNote = document.getElementById("mfr-conflict-note");
+  // Monotonic, like paramsRequestId: the MPN field can change faster than the
+  // lookups return, and a stale answer would describe a part number nobody is
+  // looking at any more.
+  let conflictRequestId = 0;
+
+  function hideConflicts() {
+    conflictRequestId += 1; // abandon anything in flight
+    if (!conflictBox) return;
+    conflictBox.hidden = true;
+    conflictList.replaceChildren();
+    // The note is INSIDE the box, and renderConflicts is the only thing that ever
+    // reopens it — and always resets the note when it does. Clearing it here reads
+    // tidy and does nothing at all.
+  }
+
+  // What the user picked: this IS that part. Teach the alias, then finish the
+  // dialog with it — there is nothing left to create.
+  async function adoptExisting(candidate, spelling) {
+    if (spelling && candidate.manufacturer) {
+      // Best-effort. The alias is a convenience for NEXT time; failing to store it
+      // must not strand the user on a dialog for a component that already exists.
+      try {
+        await fetch("/api/manufacturers/aliases", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+          body: JSON.stringify({
+            alias: spelling,
+            canonical: candidate.manufacturer,
+          }),
+        });
+      } catch {
+        // Nothing to do: the answer below is still the right outcome.
+      }
+    }
+    hideConflicts();
+    dialog.close();
+    // The dialog's answer, delivered exactly as a create's is — because it IS the
+    // answer: the part the dialog was opened to produce, which turned out to exist
+    // already. Each caller then does its own thing (the components page navigates
+    // to it, the invoice line picker selects it, the BOM report reloads), and none
+    // of them has to know the difference. The candidate carries id, mpn and
+    // manufacturer, which is everything the callers read off a created component.
+    if (onCreated) {
+      try {
+        onCreated(candidate);
+      } catch {
+        /* swallow — the choice stands; only the caller's hook failed */
+      }
+    }
+  }
+
+  function renderConflicts(body, spelling) {
+    const candidates = (body && body.candidates) || [];
+    if (!conflictBox || !candidates.length) {
+      hideConflicts();
+      return;
+    }
+    conflictList.replaceChildren();
+    for (const candidate of candidates) {
+      const item = document.createElement("li");
+      const name = document.createElement("span");
+      // ONLY the maker's name. It is the whole of the comparison — the part number
+      // is identical by construction (that is why the row is here) and sits in the
+      // form two fields up, so printing it again spent width the button needed.
+      name.className = "mfr-conflict-name";
+      name.textContent = candidate.manufacturer || "(no manufacturer)";
+      // The rest is recoverable on hover rather than laid out: it only matters in
+      // the rarer case where two real companies share a part number, and paying
+      // for it in every row is what pushed the button out of the dialog.
+      const detail = [candidate.type_name, candidate.description]
+        .filter(Boolean)
+        .join(" · ");
+      if (detail) name.title = detail;
+      const pick = document.createElement("button");
+      pick.type = "button"; // never submits the create form
+      pick.className = "btn btn-secondary btn-sm";
+      pick.textContent = "This is it";
+      pick.addEventListener("click", () => adoptExisting(candidate, spelling));
+      item.append(name, pick);
+      conflictList.append(item);
+    }
+    conflictSummary.textContent =
+      "This part number is already in stock. Pick the one that is the same part, " +
+      "or carry on to create a separate component.";
+    // Picking a part also teaches ShelfOS a manufacturer name, which changes how
+    // every later import reads that spelling. Say so HERE, before the click: the
+    // components page navigates away the moment a part is chosen, so a message
+    // afterwards would never be read — and a global rule created by a button that
+    // did not mention it is one nobody knows to look for when it misfires.
+    const teaches =
+      spelling &&
+      candidates.some(
+        (c) =>
+          (c.manufacturer || "").trim().toLowerCase() !== spelling.toLowerCase(),
+      );
+    if (conflictNote) {
+      conflictNote.textContent = teaches
+        ? `Picking one also records that “${spelling}” means that manufacturer, so ` +
+          "parts imported under that spelling land on the same component from now on."
+        : "";
+      conflictNote.hidden = !teaches;
+    }
+    conflictBox.hidden = false;
+  }
+
+  async function checkConflicts() {
+    // Not in stage mode. There the dialog edits a staged invoice line, and
+    // answering "this is it" has to resolve that LINE to the existing component
+    // rather than close the dialog with it — a different endpoint and a different
+    // panel, which the invoice-side change brings. Asking a question whose only
+    // answer is unavailable is worse than not asking.
+    if (stageTarget) {
+      hideConflicts();
+      return;
+    }
+    const mpn = (form.elements.mpn.value || "").trim();
+    const spelling = (form.elements.manufacturer.value || "").trim();
+    const token = (conflictRequestId += 1);
+    if (!mpn) {
+      hideConflicts();
+      return;
+    }
+    const query = new URLSearchParams({ mpn });
+    if (spelling) query.set("manufacturer", spelling);
+    try {
+      const resp = await fetch(`/api/manufacturers/same-mpn?${query}`);
+      if (token !== conflictRequestId) return; // the fields moved on
+      if (!resp.ok) return hideConflicts();
+      renderConflicts(await resp.json(), spelling);
+    } catch {
+      hideConflicts(); // offline or blocked: say nothing rather than something wrong
+    }
+  }
+
   // Pre-fill the dialog. From a BOM line: { category, value, mpn, manufacturer }.
   // From a shop import, additionally: { notes, package, proposal }, where the SERVER's
   // matching engine already worked out the type, mounting and parameter values (the
@@ -482,6 +639,8 @@
       await applyPrefillFields(prefill);
     } finally {
       refreshGaps();
+      // After the fields, not before: the question is about what they now hold.
+      checkConflicts();
     }
   }
 
@@ -748,6 +907,7 @@
     // marked against bag B's number read as information, which is worse than noise.
     showingGaps = false;
     refreshGaps();
+    hideConflicts(); // the previous session's candidates are about another part
     openToken += 1; // invalidate any in-flight shop lookup from a prior open
     importing = false; // …and release its lock so the new code is looked up
     errorEl.hidden = true;

@@ -27,8 +27,9 @@ from sqlmodel import Session
 from app.models.component import ParameterDefinition
 from app.models.enums import MountingType, ParameterDataType
 from app.services import component_service as cs
+from app.services._common import normalize
 from app.services.component_service import ParameterValue
-from app.services.match_rule_service import RuleSet, load_rules, normalize
+from app.services.match_rule_service import RuleSet, load_rules
 from app.services.shops.base import ProductData
 from app.units import UnitParseError, parse_engineering
 
