@@ -67,6 +67,55 @@ def test_a_second_answer_repoints_the_alias_rather_than_duplicating_it(
     assert rows[0].canonical == "Microchip Technology Inc."  # the newest answer wins
 
 
+def test_a_chain_is_collapsed_when_the_second_link_is_recorded(
+    session: Session,
+) -> None:
+    """Recording B -> C must also move A -> B on to C.
+
+    The route through the UI is real: a part is filed under "Texas Instr", an
+    import of "TI" points an alias at it, and later that part is corrected to
+    "Texas Instruments". A one-pass lookup over un-collapsed rows would answer
+    "Texas Instr" — a spelling nothing is filed under any more — and the next
+    import would quietly start a third variant.
+    """
+    ms.record_alias(session, alias="TI", canonical="Texas Instr")
+    ms.record_alias(session, alias="Texas Instr", canonical="Texas Instruments")
+    assert ms.canonical_name(session, "TI") == "Texas Instruments"
+    assert {row.canonical for row in ms.list_aliases(session)} == {"Texas Instruments"}
+
+
+def test_a_chain_is_collapsed_when_the_target_is_already_an_alias(
+    session: Session,
+) -> None:
+    # The other direction: the name being pointed AT is one we already resolve.
+    ms.record_alias(session, alias="TI", canonical="Texas Instruments")
+    ms.record_alias(session, alias="TEXAS", canonical="TI")
+    assert ms.canonical_name(session, "TEXAS") == "Texas Instruments"
+
+
+def test_the_repointing_is_written_not_just_held_in_the_session(
+    session: Session, engine
+) -> None:  # type: ignore[no-untyped-def]
+    # The rows moved by the collapse are a second write, after record_alias has
+    # already committed its own. Read them back through a FRESH session, or the
+    # test passes on objects the first session is simply still holding.
+    ms.record_alias(session, alias="TI", canonical="Texas Instr")
+    ms.record_alias(session, alias="Texas Instr", canonical="Texas Instruments")
+
+    with Session(engine) as fresh:
+        assert ms.canonical_name(fresh, "TI") == "Texas Instruments"
+
+
+def test_a_cycle_cannot_be_recorded(session: Session) -> None:
+    # Pointing the canonical name back at its own alias resolves to itself, which
+    # is the "nothing to record" case rather than a loop for the lookup to walk.
+    ms.record_alias(session, alias="TI", canonical="Texas Instruments")
+    assert (
+        ms.record_alias(session, alias="Texas Instruments", canonical="TI") is None
+    )
+    assert ms.canonical_name(session, "TI") == "Texas Instruments"
+
+
 def test_a_deleted_alias_stops_resolving(session: Session) -> None:
     row = ms.record_alias(session, alias="MICROCHIP", canonical="Microchip Technology")
     assert row is not None

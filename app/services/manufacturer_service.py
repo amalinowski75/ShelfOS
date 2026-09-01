@@ -74,10 +74,20 @@ def record_alias(
     An alias already pointing somewhere else is REPOINTED rather than refused. It is
     the answer to "which existing part is this", so the newest answer is the best
     evidence; and only future lookups change, never a stored component.
+
+    Chains are collapsed HERE rather than followed at lookup time, in both
+    directions: the target is resolved through any alias it is itself known by, and
+    any row pointing at this alias is moved on to the same target. So recording
+    "TI -> Texas Instr" and then "Texas Instr -> Texas Instruments" leaves TI
+    pointing at "Texas Instruments" — where a one-pass lookup over un-collapsed rows
+    would have answered "Texas Instr", a spelling nothing is filed under any more,
+    and quietly started a third variant.
     """
     canonical_text = _blank_to_none(canonical)
     if canonical_text is None:
         raise ValidationError("an alias needs a canonical manufacturer to point at")
+    # Follow the target's own alias, if it has one.
+    canonical_text = cast(str, canonical_name(session, canonical_text))
     # One check for both "nothing to record" cases: a blank name has no characters
     # to normalise, so it folds to an empty key just as surely as a name that folds
     # to the canonical one. Spelling the blank case out separately reads clearer but
@@ -96,16 +106,33 @@ def record_alias(
     if existing is not None:
         existing.alias = alias_text
         existing.canonical = canonical_text
-        session.add(existing)
-        session.commit()
-        session.refresh(existing)
-        return existing
-
-    row = ManufacturerAlias(alias=alias_text, canonical=canonical_text)
+        row = existing
+    else:
+        row = ManufacturerAlias(alias=alias_text, canonical=canonical_text)
     session.add(row)
     session.commit()
     session.refresh(row)
+    # One collapse for both paths. It can only ever move something on the INSERT
+    # path — after any write, no alias points at another alias, so by the time a
+    # spelling has a row of its own nothing is left pointing at it — but writing
+    # that as two calls would leave one of them permanently unreachable.
+    _collapse_chains_into(session, key=key, canonical=canonical_text)
     return row
+
+
+def _collapse_chains_into(session: Session, *, key: str, canonical: str) -> None:
+    """Move every alias pointing at ``key`` on to ``canonical``.
+
+    The other half of keeping the table one level deep — see ``record_alias``.
+    """
+    changed = False
+    for row in session.exec(select(ManufacturerAlias)).all():
+        if normalize(row.canonical) == key and row.canonical != canonical:
+            row.canonical = canonical
+            session.add(row)
+            changed = True
+    if changed:
+        session.commit()
 
 
 def delete_alias(session: Session, alias_id: int) -> None:
