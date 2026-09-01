@@ -529,28 +529,29 @@
     for (const candidate of candidates) {
       const item = document.createElement("li");
       const name = document.createElement("span");
-      // The maker's name is the whole point of the comparison, so it leads.
+      // ONLY the maker's name. It is the whole of the comparison — the part number
+      // is identical by construction (that is why the row is here) and sits in the
+      // form two fields up, so printing it again spent width the button needed.
       name.className = "mfr-conflict-name";
       name.textContent = candidate.manufacturer || "(no manufacturer)";
-      const detail = document.createElement("span");
-      detail.className = "muted";
-      detail.textContent = ` ${candidate.mpn || ""}${
-        candidate.type_name ? ` · ${candidate.type_name}` : ""
-      }${candidate.description ? ` · ${candidate.description}` : ""}`;
+      // The rest is recoverable on hover rather than laid out: it only matters in
+      // the rarer case where two real companies share a part number, and paying
+      // for it in every row is what pushed the button out of the dialog.
+      const detail = [candidate.type_name, candidate.description]
+        .filter(Boolean)
+        .join(" · ");
+      if (detail) name.title = detail;
       const pick = document.createElement("button");
       pick.type = "button"; // never submits the create form
       pick.className = "btn btn-secondary btn-sm";
       pick.textContent = "This is it";
       pick.addEventListener("click", () => adoptExisting(candidate, spelling));
-      item.append(name, detail, pick);
+      item.append(name, pick);
       conflictList.append(item);
     }
-    const shown = spelling ? `“${spelling}”` : "no manufacturer";
     conflictSummary.textContent =
-      `This MPN is already in stock under ${
-        candidates.length === 1 ? "another name" : "other names"
-      }, and you entered ${shown}. If one of these is the same part, say so — ` +
-      "otherwise carry on and a separate component is created.";
+      "This part number is already in stock under a different manufacturer. " +
+      "Pick the one that is the same part, or carry on to create a separate one.";
     conflictBox.hidden = false;
   }
 

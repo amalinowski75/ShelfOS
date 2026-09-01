@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { JSDOM } from "jsdom";
 import { describe, it, expect, vi } from "vitest";
 import { loadPage, tick } from "./harness.js";
 
@@ -381,11 +383,41 @@ describe("component_dialog.js — you may already have this part", () => {
     await tick();
 
     expect(warning(page).hidden).toBe(false);
-    const text = page.document.getElementById("mfr-conflict-list").textContent;
-    // The maker's name is the comparison being made, so it has to be visible.
-    expect(text).toContain("Microchip Technology");
-    expect(text).toContain("ic");
+    const name = page.document.querySelector("#mfr-conflict-list .mfr-conflict-name");
+    // The maker's name is the whole comparison, so it is the whole row. Asserted as
+    // the exact text: the part number is identical by construction and sits in the
+    // form two fields up, and printing it again cost the width the button needs.
+    expect(name.textContent).toBe("Microchip Technology");
+    expect(name.textContent).not.toContain("MCP2200");
+    // What is left over is recoverable on hover rather than laid out — it only
+    // matters when two real companies share a part number.
+    expect(name.title).toBe("ic · USB-UART bridge");
     expect(picks(page)).toHaveLength(1);
+  });
+
+  it("keeps the button in the dialog however long the maker's name is", async () => {
+    // What actually broke in use: the row outgrew the dialog and "This is it" —
+    // the one control the warning exists to offer — needed a horizontal scroll to
+    // reach. Under the real app.css the name is the part that yields.
+    const css = readFileSync(
+      new URL("../../app/web/static/app.css", import.meta.url),
+      "utf8",
+    );
+    const dom = new JSDOM(
+      `<style>${css}</style>
+       <ul class="mfr-conflict-list"><li>
+         <span class="mfr-conflict-name">x</span>
+         <button class="btn btn-secondary btn-sm">This is it</button>
+       </li></ul>`,
+    );
+    const styleOf = (sel) =>
+      dom.window.getComputedStyle(dom.window.document.querySelector(sel));
+    expect(styleOf(".mfr-conflict-name").flex).toBe("1 1 0%");
+    expect(styleOf(".mfr-conflict-name").textOverflow).toBe("ellipsis");
+    expect(styleOf(".mfr-conflict-name").overflow).toBe("hidden");
+    // The load-bearing half: a shrinkable button is one a long name can squeeze
+    // out of the dialog entirely.
+    expect(styleOf(".mfr-conflict-list .btn").flex).toBe("0 0 auto");
   });
 
   it("says nothing when the part number matches nothing", async () => {
