@@ -113,52 +113,62 @@ def test_two_makers_sharing_an_mpn_are_still_two_parts(session: Session) -> None
 # --- the candidates the user is asked about ----------------------------------
 
 
-def test_conflicts_are_the_same_mpn_under_another_name(session: Session) -> None:
+def test_a_differently_named_maker_is_offered(session: Session) -> None:
     existing = _part(session, mpn="MCP2200", manufacturer="Microchip Technology")
-    found = cs.find_manufacturer_conflicts(
-        session, mpn="MCP2200", manufacturer="MICROCHIP"
-    )
+    found = cs.find_parts_sharing_mpn(session, "MCP2200")
+    assert [c.id for c in found] == [existing.id]
+    assert found[0].manufacturer == "Microchip Technology"
+
+
+def test_an_exact_match_is_offered_too(session: Session) -> None:
+    """The rule this used to break: a same-maker hit was left out as "not an
+    ambiguity".
+
+    It is a duplicate rather than an ambiguity, true — and the create endpoint
+    refuses it anyway. But that refusal lands after the form is filled in, which is
+    when it is least welcome, and "I already have this part number" is the same news
+    either way.
+    """
+    existing = _part(session, mpn="MCP2200", manufacturer="Microchip Technology")
+    found = cs.find_parts_sharing_mpn(session, "MCP2200")
     assert [c.id for c in found] == [existing.id]
 
 
-def test_an_exact_match_is_not_a_conflict(session: Session) -> None:
-    # It is the part, not a candidate — asking about it would be noise.
-    _part(session, mpn="MCP2200", manufacturer="Microchip Technology")
-    assert (
-        cs.find_manufacturer_conflicts(
-            session, mpn="MCP2200", manufacturer="Microchip Technology"
-        )
-        == []
-    )
-
-
-def test_a_known_alias_settles_it_without_asking(session: Session) -> None:
-    # The whole point of recording one: the question is asked once per spelling.
+def test_an_alias_does_not_hide_a_part_you_already_own(session: Session) -> None:
+    # With the alias, "MICROCHIP" now RESOLVES to the stored maker — which makes
+    # this a duplicate, not a question about naming. Still worth saying: the user
+    # is one click from creating a second copy of a part they have.
     _part(session, mpn="MCP2200", manufacturer="Microchip Technology")
     ms.record_alias(session, alias="MICROCHIP", canonical="Microchip Technology")
-    assert (
-        cs.find_manufacturer_conflicts(
-            session, mpn="MCP2200", manufacturer="MICROCHIP"
-        )
-        == []
-    )
+    assert len(cs.find_parts_sharing_mpn(session, "MCP2200")) == 1
 
 
-def test_a_blank_incoming_manufacturer_still_asks(session: Session) -> None:
-    # A Farnell invoice prints no maker at all, so today every one of its lines
-    # whose MPN already exists quietly becomes a second component.
+def test_a_part_with_no_manufacturer_is_offered(session: Session) -> None:
+    # A Farnell invoice prints no maker at all, so nothing about the maker can
+    # narrow this — the part number is the whole of the evidence.
     existing = _part(session, mpn="MCP2200", manufacturer="Microchip Technology")
-    found = cs.find_manufacturer_conflicts(session, mpn="MCP2200", manufacturer=None)
-    assert [c.id for c in found] == [existing.id]
+    assert [c.id for c in cs.find_parts_sharing_mpn(session, "MCP2200")] == [
+        existing.id
+    ]
 
 
 def test_an_unknown_mpn_asks_nothing(session: Session) -> None:
     _part(session, mpn="MCP2200", manufacturer="Microchip Technology")
-    assert (
-        cs.find_manufacturer_conflicts(session, mpn="NX3P1108", manufacturer="NXP")
-        == []
-    )
-    assert cs.find_manufacturer_conflicts(session, mpn=None, manufacturer="NXP") == []
+    assert cs.find_parts_sharing_mpn(session, "NX3P1108") == []
+    # A half-typed field must not reach the query at all, and None must not reach
+    # .lower() — the dialog calls this as the MPN settles, blank included.
+    assert cs.find_parts_sharing_mpn(session, None) == []
+    assert cs.find_parts_sharing_mpn(session, "   ") == []
+
+
+def test_the_part_number_is_trimmed_before_it_is_looked_up(session: Session) -> None:
+    # The whole job of the guard beyond the blank check: a field the user pasted
+    # into carries whitespace, and the lookup is an exact (case-folded) equality —
+    # so an untrimmed value silently matches nothing.
+    existing = _part(session, mpn="MCP2200", manufacturer="Microchip Technology")
+    assert [c.id for c in cs.find_parts_sharing_mpn(session, "  MCP2200 ")] == [
+        existing.id
+    ]
 
 
 def test_the_tolerant_comparator_is_not_used_for_identity(session: Session) -> None:

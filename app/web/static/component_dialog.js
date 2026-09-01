@@ -476,15 +476,20 @@
   }
 
   // ---- "you may already have this part" -------------------------------------
-  // A component's identity is (MPN, manufacturer), and every source spells the
-  // maker differently — "MICROCHIP" and "Microchip Technology" are one company and
-  // two components. Rather than guess (a wrong guess FUSES two real parts, where a
-  // missed one only duplicates), show what the MPN already matches under another
-  // name and let the user say. Their answer is stored as an alias, so the same
-  // spelling never asks twice.
+  // Shown whenever the part number is already in stock, whoever the shop says makes
+  // it. Two different things bring you here and both are worth hearing before the
+  // form is filled in: the maker is spelled differently ("MICROCHIP" against
+  // "Microchip Technology" — one company, two components unless someone says so),
+  // or it is spelled the same and you are about to add a part you already own.
+  //
+  // Which of the listed parts this is — if any — is never guessed. A wrong guess
+  // FUSES two real parts, where a missed one only duplicates, and an MPN genuinely
+  // is not unique across manufacturers. When the answer involves a new spelling it
+  // is stored as an alias, so that spelling resolves by itself from then on.
   const conflictBox = document.getElementById("mfr-conflict");
   const conflictSummary = document.getElementById("mfr-conflict-summary");
   const conflictList = document.getElementById("mfr-conflict-list");
+  const conflictNote = document.getElementById("mfr-conflict-note");
   // Monotonic, like paramsRequestId: the MPN field can change faster than the
   // lookups return, and a stale answer would describe a part number nobody is
   // looking at any more.
@@ -495,10 +500,13 @@
     if (!conflictBox) return;
     conflictBox.hidden = true;
     conflictList.replaceChildren();
+    // The note is INSIDE the box, and renderConflicts is the only thing that ever
+    // reopens it — and always resets the note when it does. Clearing it here reads
+    // tidy and does nothing at all.
   }
 
-  // What the user picked: this IS that part. Teach the alias, then go to it —
-  // there is nothing left to create.
+  // What the user picked: this IS that part. Teach the alias, then finish the
+  // dialog with it — there is nothing left to create.
   async function adoptExisting(candidate, spelling) {
     if (spelling && candidate.manufacturer) {
       // Best-effort. The alias is a convenience for NEXT time; failing to store it
@@ -513,10 +521,24 @@
           }),
         });
       } catch {
-        // Nothing to do: the navigation below is still the right outcome.
+        // Nothing to do: the answer below is still the right outcome.
       }
     }
-    window.location = `/components/${candidate.id}`;
+    hideConflicts();
+    dialog.close();
+    // The dialog's answer, delivered exactly as a create's is — because it IS the
+    // answer: the part the dialog was opened to produce, which turned out to exist
+    // already. Each caller then does its own thing (the components page navigates
+    // to it, the invoice line picker selects it, the BOM report reloads), and none
+    // of them has to know the difference. The candidate carries id, mpn and
+    // manufacturer, which is everything the callers read off a created component.
+    if (onCreated) {
+      try {
+        onCreated(candidate);
+      } catch {
+        /* swallow — the choice stands; only the caller's hook failed */
+      }
+    }
   }
 
   function renderConflicts(body, spelling) {
@@ -550,12 +572,39 @@
       conflictList.append(item);
     }
     conflictSummary.textContent =
-      "This part number is already in stock under a different manufacturer. " +
-      "Pick the one that is the same part, or carry on to create a separate one.";
+      "This part number is already in stock. Pick the one that is the same part, " +
+      "or carry on to create a separate component.";
+    // Picking a part also teaches ShelfOS a manufacturer name, which changes how
+    // every later import reads that spelling. Say so HERE, before the click: the
+    // components page navigates away the moment a part is chosen, so a message
+    // afterwards would never be read — and a global rule created by a button that
+    // did not mention it is one nobody knows to look for when it misfires.
+    const teaches =
+      spelling &&
+      candidates.some(
+        (c) =>
+          (c.manufacturer || "").trim().toLowerCase() !== spelling.toLowerCase(),
+      );
+    if (conflictNote) {
+      conflictNote.textContent = teaches
+        ? `Picking one also records that “${spelling}” means that manufacturer, so ` +
+          "parts imported under that spelling land on the same component from now on."
+        : "";
+      conflictNote.hidden = !teaches;
+    }
     conflictBox.hidden = false;
   }
 
   async function checkConflicts() {
+    // Not in stage mode. There the dialog edits a staged invoice line, and
+    // answering "this is it" has to resolve that LINE to the existing component
+    // rather than close the dialog with it — a different endpoint and a different
+    // panel, which the invoice-side change brings. Asking a question whose only
+    // answer is unavailable is worse than not asking.
+    if (stageTarget) {
+      hideConflicts();
+      return;
+    }
     const mpn = (form.elements.mpn.value || "").trim();
     const spelling = (form.elements.manufacturer.value || "").trim();
     const token = (conflictRequestId += 1);
@@ -566,7 +615,7 @@
     const query = new URLSearchParams({ mpn });
     if (spelling) query.set("manufacturer", spelling);
     try {
-      const resp = await fetch(`/api/manufacturers/conflicts?${query}`);
+      const resp = await fetch(`/api/manufacturers/same-mpn?${query}`);
       if (token !== conflictRequestId) return; // the fields moved on
       if (!resp.ok) return hideConflicts();
       renderConflicts(await resp.json(), spelling);

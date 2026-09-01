@@ -1076,32 +1076,29 @@ def find_components_by_mpn(session: Session, mpn: str) -> list[Component]:
     )
 
 
-def find_manufacturer_conflicts(
-    session: Session, *, mpn: str | None, manufacturer: str | None
-) -> list[Component]:
-    """Live components with this MPN that are filed under a DIFFERENT maker.
+def find_parts_sharing_mpn(session: Session, mpn: str | None) -> list[Component]:
+    """Every live component already carrying this part number.
 
-    The evidence behind "you may already have this part". A part number is not
-    unique across manufacturers, so these are candidates for a human to judge, never
-    a match: two makers really do sell an "MCP2200", and the answer to which this is
-    cannot be computed — see ``manufacturer_service`` for what happens when it is
-    guessed.
+    The evidence behind "you may already have this part". Deliberately ALL of them,
+    including one whose manufacturer matches exactly: "I already have this MPN" is
+    the same news either way, and it is most useful while the user can still act on
+    it. An exact match used to be left out — it is a plain duplicate, which the
+    create endpoint refuses anyway — but that refusal arrives after the form is
+    filled, which is exactly when it is least welcome.
 
-    Empty when the MPN is blank (nothing to compare) or when one of these components
-    IS the part (an exact hit is ``find_duplicate_component``'s job, and asking the
-    user about a part we already matched would be noise). A blank incoming
-    manufacturer does NOT suppress the question — a Farnell invoice prints no maker
-    at all, and today every one of its lines whose MPN already exists quietly becomes
-    a second component.
+    They are candidates for a person to judge, never a match. A part number is not
+    unique across manufacturers: two makers really do sell an "MCP2200", and which
+    one this is cannot be computed — see ``manufacturer_service`` for what happens
+    when it is guessed.
+
+    ``find_components_by_mpn`` does the lookup; this adds the blank guard and the
+    trim, so a caller passing a half-typed field gets an empty list rather than a
+    query for "".
     """
-    if _blank_to_none(mpn) is None:
+    wanted = _blank_to_none(mpn)
+    if wanted is None:
         return []
-    wanted = _match_key(ms.canonical_name(session, manufacturer))
-    return [
-        component
-        for component in find_components_by_mpn(session, cast(str, mpn).strip())
-        if _match_key(component.manufacturer) != wanted
-    ]
+    return find_components_by_mpn(session, wanted)
 
 
 def _blank_to_none(text: str | None) -> str | None:

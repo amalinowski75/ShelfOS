@@ -54,6 +54,10 @@
       <div class="field mfr-conflict" id="mfr-conflict" hidden>
         <p class="warn" id="mfr-conflict-summary"></p>
         <ul class="mfr-conflict-list" id="mfr-conflict-list"></ul>
+        {# What picking one does BESIDES opening it. Said before the click, not
+           after: the components page navigates away the moment a part is chosen,
+           so anything reported afterwards would never be read. #}
+        <p class="muted small" id="mfr-conflict-note" hidden></p>
       </div>
       <div class="field">
         <label>Package</label>

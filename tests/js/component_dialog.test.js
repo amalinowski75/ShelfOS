@@ -24,6 +24,7 @@ function dialogFixture() {
       <div class="field mfr-conflict" id="mfr-conflict" hidden>
         <p class="warn" id="mfr-conflict-summary"></p>
         <ul class="mfr-conflict-list" id="mfr-conflict-list"></ul>
+        <p id="mfr-conflict-note" hidden></p>
       </div>
       <input name="package" />
       <select name="mounting_type">
@@ -362,7 +363,7 @@ describe("component_dialog.js — you may already have this part", () => {
   function conflictFetch(candidates, seen = []) {
     return (url, opts) => {
       seen.push({ url, opts });
-      if (url.startsWith("/api/manufacturers/conflicts")) {
+      if (url.startsWith("/api/manufacturers/same-mpn")) {
         return ok({ manufacturer: "MICROCHIP", candidates });
       }
       if (url.endsWith("/parameters")) return ok([]);
@@ -420,6 +421,39 @@ describe("component_dialog.js — you may already have this part", () => {
     expect(styleOf(".mfr-conflict-list .btn").flex).toBe("0 0 auto");
   });
 
+  it("says what picking one will teach it, before the click", async () => {
+    // The confusion this caused: "This is it" quietly created a global rule that
+    // changed how later imports read a manufacturer's name, and nothing said so.
+    // It has to be said BEFORE — the components page navigates away the instant a
+    // part is chosen, so anything reported afterwards is never read.
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: conflictFetch([CANDIDATE]),
+    });
+    open(page, () => {}, { mpn: "MCP2200", manufacturer: "MICROCHIP" });
+    await tick();
+
+    const note = page.document.getElementById("mfr-conflict-note");
+    expect(note.hidden).toBe(false);
+    expect(note.textContent).toContain("MICROCHIP");
+    expect(note.textContent).toContain("records");
+  });
+
+  it("promises no such thing when nothing would be recorded", async () => {
+    // Same spelling as the part already carries: picking it teaches nothing, so
+    // claiming otherwise would be a lie about what the button does.
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: conflictFetch([CANDIDATE]),
+    });
+    open(page, () => {}, {
+      mpn: "MCP2200",
+      manufacturer: "microchip technology", // differs only in case
+    });
+    await tick();
+
+    expect(warning(page).hidden).toBe(false); // still says you own the part
+    expect(page.document.getElementById("mfr-conflict-note").hidden).toBe(true);
+  });
+
   it("says nothing when the part number matches nothing", async () => {
     const page = loadPage(dialogFixture(), SCRIPTS, {
       fetchImpl: conflictFetch([]),
@@ -437,7 +471,7 @@ describe("component_dialog.js — you may already have this part", () => {
     });
     open(page, () => {});
     await tick();
-    expect(seen.filter((r) => r.url.includes("conflicts"))).toHaveLength(0);
+    expect(seen.filter((r) => r.url.includes("same-mpn"))).toHaveLength(0);
     expect(warning(page).hidden).toBe(true);
   });
 
@@ -454,7 +488,7 @@ describe("component_dialog.js — you may already have this part", () => {
     mpn.dispatchEvent(new page.window.Event("change", { bubbles: true }));
     await tick();
 
-    const asked = seen.filter((r) => r.url.includes("conflicts"));
+    const asked = seen.filter((r) => r.url.includes("same-mpn"));
     expect(asked).toHaveLength(1);
     // "change", not "input": one request for a finished part number, not one per
     // keystroke of it.
@@ -462,13 +496,22 @@ describe("component_dialog.js — you may already have this part", () => {
     expect(warning(page).hidden).toBe(false);
   });
 
-  it("teaches the alias and goes to the part the user picked", async () => {
+  it("teaches the alias and answers the dialog with the part picked", async () => {
     const seen = [];
     const page = loadPage(dialogFixture(), SCRIPTS, {
       fetchImpl: conflictFetch([CANDIDATE], seen),
     });
-    open(page, () => {}, { mpn: "MCP2200", manufacturer: "MICROCHIP" });
+    const answered = [];
+    open(page, (chosen) => answered.push(chosen), {
+      mpn: "MCP2200",
+      manufacturer: "MICROCHIP",
+    });
     await tick();
+
+    // The harness's showModal() is a no-op, so `open` is false either way unless
+    // the test puts the dialog in the state the browser would have it in.
+    const dialogEl = page.document.getElementById("component-dialog");
+    dialogEl.open = true;
 
     picks(page)[0].click();
     await tick();
@@ -479,27 +522,35 @@ describe("component_dialog.js — you may already have this part", () => {
       alias: "MICROCHIP", // what arrived
       canonical: "Microchip Technology", // what the existing part is filed under
     });
-    // Nothing is left to create — the part is already there.
-    expect(page.navigations.length).toBe(1);
+    // Nothing is left to create, so the dialog finishes with the part it found —
+    // the same way it finishes with one it made. What the caller then does with it
+    // is the caller's business, which is why this does NOT navigate.
+    expect(answered).toEqual([CANDIDATE]);
+    expect(dialogEl.open).toBe(false);
+    expect(page.navigations.length).toBe(0);
   });
 
-  it("still opens the part when the alias could not be stored", async () => {
+  it("still answers with the part when the alias could not be stored", async () => {
     // The alias is a convenience for NEXT time; failing to record it must not
     // strand the user on a dialog for a component that already exists.
     const page = loadPage(dialogFixture(), SCRIPTS, {
       fetchImpl: (url) => {
         if (url === "/api/manufacturers/aliases") return Promise.reject(new Error());
-        if (url.startsWith("/api/manufacturers/conflicts")) {
+        if (url.startsWith("/api/manufacturers/same-mpn")) {
           return ok({ manufacturer: "MICROCHIP", candidates: [CANDIDATE] });
         }
         return ok({});
       },
     });
-    open(page, () => {}, { mpn: "MCP2200", manufacturer: "MICROCHIP" });
+    const answered = [];
+    open(page, (chosen) => answered.push(chosen), {
+      mpn: "MCP2200",
+      manufacturer: "MICROCHIP",
+    });
     await tick();
     picks(page)[0].click();
     await tick();
-    expect(page.navigations.length).toBe(1);
+    expect(answered).toEqual([CANDIDATE]);
   });
 
   it("records nothing when there is no spelling to remember", async () => {
@@ -509,13 +560,31 @@ describe("component_dialog.js — you may already have this part", () => {
     const page = loadPage(dialogFixture(), SCRIPTS, {
       fetchImpl: conflictFetch([CANDIDATE], seen),
     });
-    open(page, () => {}, { mpn: "MCP2200" });
+    const answered = [];
+    open(page, (chosen) => answered.push(chosen), { mpn: "MCP2200" });
     await tick();
     picks(page)[0].click();
     await tick();
 
     expect(seen.some((r) => r.url === "/api/manufacturers/aliases")).toBe(false);
-    expect(page.navigations.length).toBe(1);
+    expect(answered).toEqual([CANDIDATE]); // the choice still stands
+  });
+
+  it("asks nothing while editing a staged invoice line", async () => {
+    // There "this is it" would have to resolve that LINE to the existing
+    // component — a different endpoint, on the invoice panel. Asking a question
+    // whose only answer is unavailable is worse than not asking.
+    const seen = [];
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: conflictFetch([CANDIDATE], seen),
+    });
+    open(page, () => {}, { mpn: "MCP2200", manufacturer: "MICROCHIP" }, {
+      stage: { invoiceId: 1, importLineId: 2 },
+    });
+    await tick();
+
+    expect(seen.filter((r) => r.url.includes("same-mpn"))).toHaveLength(0);
+    expect(warning(page).hidden).toBe(true);
   });
 
   it("ignores an answer about a part number the fields have moved on from", async () => {
@@ -525,7 +594,7 @@ describe("component_dialog.js — you may already have this part", () => {
     let call = 0;
     const page = loadPage(dialogFixture(), SCRIPTS, {
       fetchImpl: (url) => {
-        if (!url.startsWith("/api/manufacturers/conflicts")) return ok({});
+        if (!url.startsWith("/api/manufacturers/same-mpn")) return ok({});
         call += 1;
         if (call === 1) {
           return new Promise((resolve) =>

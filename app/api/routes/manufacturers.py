@@ -20,8 +20,8 @@ from app.api.deps import get_session
 from app.api.schemas import (
     ManufacturerAliasCreate,
     ManufacturerAliasRead,
-    ManufacturerConflictRead,
-    ManufacturerConflictsRead,
+    SameMpnCandidateRead,
+    SameMpnRead,
 )
 from app.services import component_service as cs
 from app.services import manufacturer_service as ms
@@ -29,32 +29,32 @@ from app.services import manufacturer_service as ms
 router = APIRouter(prefix="/api/manufacturers", tags=["manufacturers"])
 
 
-@router.get("/conflicts", response_model=ManufacturerConflictsRead)
-def manufacturer_conflicts(
+@router.get("/same-mpn", response_model=SameMpnRead)
+def parts_sharing_mpn(
     mpn: str,
     manufacturer: str | None = None,
     session: Session = Depends(get_session),
-) -> ManufacturerConflictsRead:
-    """Parts already in stock with this MPN but a different maker's name.
+) -> SameMpnRead:
+    """Parts already in stock carrying this part number, whoever makes them.
 
     A GET because it decides nothing and spends nothing — the dialog calls it as
-    the MPN field settles.
+    the MPN field settles. ``manufacturer`` is not a filter: it is echoed back
+    resolved through the alias table, so the caller can show what the name it was
+    given actually means here.
     """
-    conflicts = cs.find_manufacturer_conflicts(
-        session, mpn=mpn, manufacturer=manufacturer
-    )
-    types = {t.id: t.name for t in cs.list_types(session)} if conflicts else {}
-    return ManufacturerConflictsRead(
+    found = cs.find_parts_sharing_mpn(session, mpn)
+    types = {t.id: t.name for t in cs.list_types(session)} if found else {}
+    return SameMpnRead(
         manufacturer=ms.canonical_name(session, manufacturer),
         candidates=[
-            ManufacturerConflictRead(
+            SameMpnCandidateRead(
                 id=component.id,
                 mpn=component.mpn,
                 manufacturer=component.manufacturer,
                 description=component.notes,
                 type_name=types.get(component.type_id),
             )
-            for component in conflicts
+            for component in found
         ],
     )
 

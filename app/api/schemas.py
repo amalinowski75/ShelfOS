@@ -532,8 +532,8 @@ class ComponentScanRead(BaseModel):
     matches: list[ScannedComponentRead]
 
 
-class ManufacturerConflictRead(BaseModel):
-    """One existing component that shares the queried MPN under another maker."""
+class SameMpnCandidateRead(BaseModel):
+    """One component already in stock carrying the queried part number."""
 
     id: int
     mpn: str | None
@@ -542,16 +542,18 @@ class ManufacturerConflictRead(BaseModel):
     type_name: str | None
 
 
-class ManufacturerConflictsRead(BaseModel):
+class SameMpnRead(BaseModel):
     """Parts already in stock that MIGHT be what is being imported.
 
     Candidates, never a match: an MPN is not unique across manufacturers, so which
-    one this is — if any — is a question only the user can answer. Empty means
-    there is nothing to ask about.
+    one this is — if any — is a question only the user can answer. Includes one
+    whose maker matches exactly; that is a duplicate rather than an ambiguity, but
+    it is the same news and worth hearing before the form is filled in. Empty means
+    there is nothing to say.
     """
 
     manufacturer: str | None  # the incoming name, resolved through known aliases
-    candidates: list[ManufacturerConflictRead]
+    candidates: list[SameMpnCandidateRead]
 
 
 class ManufacturerAliasCreate(BaseModel):

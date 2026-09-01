@@ -15,10 +15,10 @@ def _component(client: TestClient, *, mpn: str, manufacturer: str) -> int:
     return int(resp.json()["id"])
 
 
-def test_conflicts_lists_the_part_under_its_other_name(client: TestClient) -> None:
+def test_it_lists_the_part_under_its_other_name(client: TestClient) -> None:
     existing = _component(client, mpn="MCP2200", manufacturer="Microchip Technology")
     resp = client.get(
-        "/api/manufacturers/conflicts",
+        "/api/manufacturers/same-mpn",
         params={"mpn": "MCP2200", "manufacturer": "MICROCHIP"},
     )
     assert resp.status_code == 200
@@ -33,16 +33,18 @@ def test_conflicts_lists_the_part_under_its_other_name(client: TestClient) -> No
     assert body["manufacturer"] == "MICROCHIP"
 
 
-def test_conflicts_is_empty_for_an_exact_match(client: TestClient) -> None:
-    _component(client, mpn="MCP2200", manufacturer="Microchip Technology")
+def test_an_exact_match_is_listed_too(client: TestClient) -> None:
+    # Not an ambiguity but a duplicate, and the user is better told now than at
+    # "Create component" — which is where they used to find out.
+    existing = _component(client, mpn="MCP2200", manufacturer="Microchip Technology")
     resp = client.get(
-        "/api/manufacturers/conflicts",
+        "/api/manufacturers/same-mpn",
         params={"mpn": "MCP2200", "manufacturer": "Microchip Technology"},
     )
-    assert resp.json()["candidates"] == []
+    assert [c["id"] for c in resp.json()["candidates"]] == [existing]
 
 
-def test_recording_an_alias_settles_the_question_for_good(client: TestClient) -> None:
+def test_recording_an_alias_resolves_the_name_from_then_on(client: TestClient) -> None:
     _component(client, mpn="MCP2200", manufacturer="Microchip Technology")
     created = client.post(
         "/api/manufacturers/aliases",
@@ -52,12 +54,15 @@ def test_recording_an_alias_settles_the_question_for_good(client: TestClient) ->
     assert created.json()["canonical"] == "Microchip Technology"
 
     resp = client.get(
-        "/api/manufacturers/conflicts",
+        "/api/manufacturers/same-mpn",
         params={"mpn": "MCP2200", "manufacturer": "MICROCHIP"},
     )
     body = resp.json()
-    assert body["candidates"] == []
-    assert body["manufacturer"] == "Microchip Technology"  # resolved now
+    # The spelling now means the stored maker — which is the alias's whole job.
+    assert body["manufacturer"] == "Microchip Technology"
+    # The part is still listed: the user owns it, and that is worth saying whether
+    # or not the naming was ambiguous.
+    assert len(body["candidates"]) == 1
 
 
 def test_a_part_created_after_the_alias_lands_on_the_canonical_name(
@@ -125,7 +130,7 @@ def test_both_endpoints_are_closed_to_read_only_accounts(
     # The lookup is a GET and decides nothing, so a reader may ask it…
     assert (
         anon_client.get(
-            "/api/manufacturers/conflicts",
+            "/api/manufacturers/same-mpn",
             params={"mpn": "X"},
             headers=headers,
         ).status_code
