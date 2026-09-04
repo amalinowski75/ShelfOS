@@ -173,6 +173,50 @@ describe("match_rules.js — loading & delete", () => {
     expect(setData).toHaveBeenCalledWith(feed.data);
   });
 
+  it("does not let an unreadable rules feed look like an empty vocabulary", async () => {
+    // The match rules ARE the import engine's vocabulary. An empty table says "the
+    // engine knows nothing", which is a claim worth being wrong about only when it
+    // is true — and a 500 body parses as JSON perfectly well, handing `undefined`
+    // to setData with no error of its own.
+    const placeholderAfter = async (body, status = 200) => {
+      const page = loadPage(matchRulesPageFixture(), SCRIPTS, {
+        fetchImpl: () => Promise.resolve({ ok: status === 200, status, json: async () => body }),
+      });
+      page.window.alert = vi.fn();
+      await page.window.loadRules();
+      return {
+        placeholder: page.window.Tabulator.instances[0].options.placeholder,
+        alerts: page.window.alert.mock.calls.length,
+      };
+    };
+
+    expect(await placeholderAfter({ data: [] })).toEqual({
+      placeholder: "No match rules",
+      alerts: 0,
+    });
+    // A 500 that parses: the shape check is the only thing standing between this
+    // and a silently blank vocabulary.
+    expect(await placeholderAfter({ detail: "Server Error" }, 500)).toEqual({
+      placeholder: "Could not load match rules",
+      alerts: 1,
+    });
+  });
+
+  it("frames the table even when it rejects its data", async () => {
+    // frameTable is what stops the page scrolling; a table that fails to take its
+    // rows must not also be left at its default height.
+    const page = loadPage(matchRulesPageFixture(), SCRIPTS, {
+      fetchImpl: () => Promise.resolve({ ok: true, json: async () => ({ data: [] }) }),
+    });
+    const framed = [];
+    page.window.frameTable = (t) => framed.push(t);
+    page.window.Tabulator.prototype.setData = () => Promise.reject(new Error("boom"));
+
+    await expect(page.window.loadRules()).rejects.toThrow("boom");
+
+    expect(framed.length).toBe(1);
+  });
+
   it("deletes only after confirmation", async () => {
     const { window, fetchMock } = loadPage(matchRulesPageFixture(), SCRIPTS);
 
@@ -532,14 +576,56 @@ describe("match_rules.js — manufacturer aliases", () => {
     expect(page.window.Tabulator.rows).toEqual([ALIAS]);
   });
 
-  it("explains where aliases come from only while there are none", async () => {
-    const hint = async (rows) => {
-      const page = aliasPage(rows);
+  it("distinguishes an empty list from a list it could not read", async () => {
+    // The table's placeholder is the ONE empty state — the note above the table
+    // already explains where aliases come from, so this only has to say WHICH
+    // nothing is on screen. Getting that wrong is how a failed load ends up
+    // asserting "you have no aliases", which is the claim the loader refuses.
+    const placeholderAfter = async (fetchImpl) => {
+      const page = loadPage(matchRulesPageFixture(), SCRIPTS, { fetchImpl });
+      page.window.alert = vi.fn();
       await page.window.loadAliases();
-      return page.document.getElementById("aliases-empty");
+      return page.window.Tabulator.instances.at(-1).options.placeholder;
     };
-    expect((await hint([])).hidden).toBe(false);
-    expect((await hint([ALIAS])).hidden).toBe(true);
+    const feed = (body) => () => Promise.resolve({ ok: true, json: async () => body });
+
+    expect(await placeholderAfter(feed({ data: [] }))).toBe("No manufacturer aliases yet");
+    expect(await placeholderAfter(feed({ detail: "Not Found" }))).toBe(
+      "Could not load manufacturer aliases",
+    );
+  });
+
+  it("gives each Forget button the name of the row it acts on", async () => {
+    // Every one of them renders the bare word "Forget". Without the row's spelling
+    // in the accessible name, a screen-reader user hears a column of identical
+    // buttons and cannot tell which alias they are about to drop.
+    const page = aliasPage();
+    await page.window.loadAliases();
+    const actions = page.window.Tabulator.columns.find((c) => c.field === "actions");
+    const html = actions.formatter({ getRow: () => ({ getData: () => ALIAS }) });
+
+    expect(html).toContain('aria-label="Forget “MICROCHIP”"');
+
+    // Escaped, because a manufacturer name is whatever a shop or an invoice said it
+    // was. A quote in it would otherwise close the attribute and start a new one.
+    const quoted = { ...ALIAS, alias: '"><img src=x onerror=alert(1)>' };
+    const evil = actions.formatter({ getRow: () => ({ getData: () => quoted }) });
+    expect(evil).not.toContain("<img");
+  });
+
+  it("frames the rules table even when the alias table rejects its data", async () => {
+    // loadAliases is what re-frames the RULES table, because only one table on a
+    // page can fill the viewport and that one is the long one. Coupling the two
+    // that way is deliberate; leaving the rules table unsized when this one
+    // stumbles would not be.
+    const page = aliasPage();
+    const framed = [];
+    page.window.frameTable = (t) => framed.push(t);
+    page.window.Tabulator.prototype.setData = () => Promise.reject(new Error("boom"));
+
+    await expect(page.window.loadAliases()).rejects.toThrow("boom");
+
+    expect(framed.length).toBe(1);
   });
 
   it("forgets one, and reloads rather than guessing what is left", async () => {
@@ -598,7 +684,6 @@ describe("match_rules.js — aliases that fail to load", () => {
 
     expect(page.window.alert).toHaveBeenCalledTimes(1);
     expect(page.window.Tabulator.rows).toEqual([]);
-    expect(page.document.getElementById("aliases-empty").hidden).toBe(false);
   });
 
   it("treats a 200 of the wrong shape as a failure, not as an empty list", async () => {

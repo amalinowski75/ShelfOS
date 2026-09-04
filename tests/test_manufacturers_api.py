@@ -213,7 +213,7 @@ def test_forgetting_an_alias_leaves_the_components_alone(client: TestClient) -> 
 
 
 def test_forgetting_an_alias_that_is_not_there(client: TestClient) -> None:
-    assert client.delete("/api/manufacturers/aliases/999").status_code == 422
+    assert client.delete("/api/manufacturers/aliases/999").status_code == 404
 
 
 def test_only_an_admin_can_see_or_forget_an_alias(
