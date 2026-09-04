@@ -24,9 +24,27 @@ It is intentionally **not** an ERP, accounting, or advanced warehouse system.
 ## Development
 
 ```bash
+./run.sh
+```
+
+That is the whole setup: on a fresh clone it builds the virtualenv and installs the
+dependencies, then serves on <http://127.0.0.1:9000>. Later runs go straight to
+serving — except after a change to `pyproject.toml`, when it reinstalls first, so a
+pull that adds a dependency doesn't leave you with an app that crashes on import.
+
+It also loads `~/.ShelfOS/.env` if you keep one (shop API keys, printer, secret key
+— see below); without it the app runs on its development defaults. Settings can come
+from either side: `PORT=8080 ./run.sh` and a `PORT` line in that file both work, as
+do `PYTHON` (which interpreter builds the venv) and `SHELFOS_ENV_FILE` (which file
+to read).
+
+The equivalent by hand, if you would rather:
+
+```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+uvicorn app.main:app --reload --port 9000
 ```
 
 Run the quality gate (Definition of Done):
@@ -46,11 +64,7 @@ The server-rendered web UI's browser scripts have their own test suite
 npm test
 ```
 
-Run the API locally (interactive docs at `/docs`):
-
-```bash
-uvicorn app.main:app --reload --port 9000
-```
+Interactive API docs are at `/docs` once it is running.
 
 ### Authentication
 
