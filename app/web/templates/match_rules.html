@@ -18,7 +18,22 @@
   </div>
 </div>
 
+<h2 class="section-head">Import vocabulary</h2>
 <div id="rules-table"></div>
+
+{# Manufacturer aliases. Same idea — "when you see this name, treat it as this one"
+   — but a separate table rather than a sixth MatchDomain: a match rule resolves a
+   shop's free text to a vocabulary an admin defines, while these resolve one
+   manufacturer name to another that any import may have introduced. #}
+<h2 class="section-head">Manufacturer names</h2>
+<p class="muted section-note">One spelling per row, and the name every component is
+  stored under. Written when someone answers "this is it" while importing a part
+  whose number is already in stock under another spelling. Deleting one changes only
+  what later imports resolve — components already stored under the name keep it.</p>
+<div id="aliases-table"></div>
+<p class="empty" id="aliases-empty" hidden>No manufacturer aliases yet. One is
+  recorded the first time you tell an import that a differently-spelled maker is the
+  same part.</p>
 
 <dialog id="rule-new-dialog">
   <article>

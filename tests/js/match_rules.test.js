@@ -500,3 +500,121 @@ describe("match_rules.js — create", () => {
     expect(document.getElementById("rule-new-error").hidden).toBe(false);
   });
 });
+
+describe("match_rules.js — manufacturer aliases", () => {
+  // The screen that opens a one-way door: until it existed an alias recorded by a
+  // mis-click could not be undone from the app at all, not even by editing the
+  // component, because that write path canonicalises too.
+  const ALIAS = { id: 3, alias: "MICROCHIP", canonical: "Microchip Technology" };
+
+  function aliasPage(rows = [ALIAS], extra = {}) {
+    return loadPage(matchRulesPageFixture(), SCRIPTS, {
+      fetchImpl: (url, opts) => {
+        if (url === "/web/api/manufacturer-aliases") {
+          return Promise.resolve({ ok: true, json: async () => ({ data: rows }) });
+        }
+        if (url.startsWith("/web/api/match-rules")) {
+          return Promise.resolve({ ok: true, json: async () => ({ data: [] }) });
+        }
+        return Promise.resolve({ ok: true, json: async () => [], ...extra });
+      },
+    });
+  }
+
+  it("shows the spelling and the name it resolves to", async () => {
+    const page = aliasPage();
+    // The stub records handlers on the CLASS, so the second table's tableBuilt
+    // replaces the first's and neither fires by itself — drive the load directly,
+    // as the rules tests do.
+    await page.window.loadAliases();
+    const columns = page.window.Tabulator.columns.map((c) => c.field);
+    expect(columns).toEqual(["alias", "canonical", "actions"]);
+    expect(page.window.Tabulator.rows).toEqual([ALIAS]);
+  });
+
+  it("explains where aliases come from only while there are none", async () => {
+    const hint = async (rows) => {
+      const page = aliasPage(rows);
+      await page.window.loadAliases();
+      return page.document.getElementById("aliases-empty");
+    };
+    expect((await hint([])).hidden).toBe(false);
+    expect((await hint([ALIAS])).hidden).toBe(true);
+  });
+
+  it("forgets one, and reloads rather than guessing what is left", async () => {
+    const page = aliasPage();
+    await page.window.loadAliases();
+    page.window.confirm = vi.fn(() => true);
+    page.window.forgetAlias(ALIAS);
+    await tick();
+
+    const del = writeCall(page.fetchMock, "DELETE");
+    expect(del[0]).toBe("/api/manufacturers/aliases/3");
+    expect(del[1].headers["X-CSRF-Token"]).toBe(CSRF);
+    // Re-read after the write: the table must show what the server has, not what
+    // the client assumed it would have.
+    const reloads = page.fetchMock.mock.calls.filter(
+      (c) => c[0] === "/web/api/manufacturer-aliases",
+    );
+    expect(reloads.length).toBe(2);
+  });
+
+  it("says what forgetting does and does not touch, and obeys a no", async () => {
+    const page = aliasPage();
+    await page.window.loadAliases();
+    page.window.confirm = vi.fn(() => false);
+    page.window.forgetAlias(ALIAS);
+    await tick();
+
+    const asked = page.window.confirm.mock.calls[0][0];
+    expect(asked).toContain("MICROCHIP");
+    expect(asked).toContain("Microchip Technology");
+    // "Delete" beside a manufacturer's name reads as though it might rename or
+    // remove the parts filed under it. It does neither, and has to say so.
+    expect(asked).toContain("keep it");
+    expect(writeCall(page.fetchMock, "DELETE")).toBeUndefined();
+  });
+});
+
+describe("match_rules.js — aliases that fail to load", () => {
+  it("says so, and leaves an empty table rather than a broken one", async () => {
+    // An HTTP failure still parses as JSON, so reading .data off it yields
+    // undefined — which used to reach Tabulator as no rows AND throw on the
+    // length check, half-loading the page with no clue why.
+    const page = loadPage(matchRulesPageFixture(), SCRIPTS, {
+      fetchImpl: (url) =>
+        url === "/web/api/manufacturer-aliases"
+          ? Promise.resolve({
+              ok: false,
+              status: 404,
+              json: async () => ({ detail: "Not Found" }),
+            })
+          : Promise.resolve({ ok: true, json: async () => ({ data: [] }) }),
+    });
+    page.window.alert = vi.fn();
+
+    await page.window.loadAliases(); // must not throw
+
+    expect(page.window.alert).toHaveBeenCalledTimes(1);
+    expect(page.window.Tabulator.rows).toEqual([]);
+    expect(page.document.getElementById("aliases-empty").hidden).toBe(false);
+  });
+
+  it("treats a 200 of the wrong shape as a failure, not as an empty list", async () => {
+    // Silently showing an empty table would answer "you have no aliases", which is
+    // a worse thing to be wrong about than "could not load".
+    const page = loadPage(matchRulesPageFixture(), SCRIPTS, {
+      fetchImpl: (url) =>
+        Promise.resolve({
+          ok: true,
+          json: async () => (url === "/web/api/manufacturer-aliases" ? {} : { data: [] }),
+        }),
+    });
+    page.window.alert = vi.fn();
+
+    await page.window.loadAliases();
+
+    expect(page.window.alert).toHaveBeenCalledTimes(1);
+  });
+});

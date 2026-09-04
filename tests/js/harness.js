@@ -319,6 +319,8 @@ export function matchRulesPageFixture() {
     <option value="enum_value">enum_value</option>`;
   return `
     <div id="rules-table"></div>
+    <div id="aliases-table"></div>
+    <p id="aliases-empty" hidden></p>
     <button id="rule-new-btn"></button>
     <dialog id="rule-new-dialog"><form id="rule-new-form">
       <select name="domain">${domainOptions}</select>

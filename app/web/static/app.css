@@ -465,6 +465,12 @@ table.kv tr:last-child th, table.kv tr:last-child td { border-bottom: none; }
 .loc-picker-nomatch { color: var(--muted); font-size: 13px; margin: 4px 8px; }
 .loc-picker-nomatch[hidden] { display: none; }
 
+/* A heading that separates two tables on one page (the admin match-rules page).
+   Sized between the page title and a card's own heading, since it is neither. */
+.section-head { font-size: 17px; margin: 26px 0 8px; }
+.section-head:first-of-type { margin-top: 0; }
+.section-note { margin: 0 0 12px; font-size: 13.5px; max-width: 70ch; }
+
 /* ---------- badges ---------- */
 .badge {
   display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600;

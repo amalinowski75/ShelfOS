@@ -40,6 +40,7 @@ from app.services import invoice_import_service as imp
 from app.services import invoice_service as inv
 from app.services import label_service as lbl
 from app.services import location_service as ls
+from app.services import manufacturer_service as mfs
 from app.services import match_rule_service as mrs
 from app.services import stock_service as ss
 from app.services import user_service as us
@@ -508,6 +509,27 @@ def match_rules_feed(
                 "sort_order": rule.sort_order,
             }
             for rule in rules
+        ]
+    }
+
+
+@router.get("/web/api/manufacturer-aliases")
+def manufacturer_aliases_feed(
+    session: Session = Depends(get_session),
+    user: User = Depends(require_web_admin),
+) -> dict[str, Any]:
+    """JSON feed for the manufacturer-alias table (admin only).
+
+    Sits beside the match rules because it is the same kind of thing — "when you see
+    this name, treat it as this one" — but it is a separate table rather than a sixth
+    MatchDomain: those rules resolve a shop's free text to a ShelfOS vocabulary the
+    admin defines, while these resolve one manufacturer name to another that any
+    import may have introduced.
+    """
+    return {
+        "data": [
+            {"id": alias.id, "alias": alias.alias, "canonical": alias.canonical}
+            for alias in mfs.list_aliases(session)
         ]
     }
 
