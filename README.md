@@ -149,6 +149,12 @@ Those remembered spellings are listed on the **Match rules** page under *Manufac
 names*, where an admin can forget one. Forgetting changes only what later imports
 resolve — components already stored under a name keep it.
 
+Scan putaway asks the same question. A bag label states its maker in the `1V` field,
+and a scan is only a putaway when that maker is the one the part is stored under —
+otherwise the same dialog opens and asks, rather than accepting stock onto a part
+that merely shares a number. A label that names no maker (most 1D barcodes) is not a
+disagreement, and matches on the number alone as it always has.
+
 ### Scanning the packaging label
 
 The same field takes a barcode/QR scan. It is focused when the dialog opens, and a
