@@ -158,14 +158,29 @@ const rulesTable = new Tabulator("#rules-table", {
 });
 
 async function loadRules() {
+  let rows = [];
+  let failed = false;
   try {
-    const payload = await fetch("/web/api/match-rules").then((r) => r.json());
-    await rulesTable.setData(payload.data);
-    frameTable(rulesTable);
+    // Checking the SHAPE, not resp.ok: an HTTP failure body parses as JSON
+    // perfectly well and simply has no `data` array, so this catches a 404 as
+    // surely as a 200 of the wrong shape — where a resp.ok test would catch
+    // strictly less and read as if it caught more.
+    const body = await fetch("/web/api/match-rules").then((r) => r.json());
+    if (!Array.isArray(body.data)) throw new Error("unexpected response");
+    rows = body.data;
   } catch {
-    await rulesTable.setData([]);
-    frameTable(rulesTable);
+    failed = true;
     alert("Could not load match rules — refresh to try again.");
+  }
+  // A failure is never left looking like an empty vocabulary: the alert is
+  // transient, the placeholder is what stays on the screen.
+  rulesTable.options.placeholder = failed
+    ? "Could not load match rules"
+    : "No match rules";
+  try {
+    await rulesTable.setData(rows);
+  } finally {
+    frameTable(rulesTable);
   }
 }
 
@@ -370,3 +385,111 @@ if (newRuleBtn) {
 
 rulesTable.on("tableBuilt", loadRules);
 loadTypeNames(); // ready the type list for the inline Target editor
+
+// ---- manufacturer aliases --------------------------------------------------
+// The other half of "when you see this, treat it as that": one spelling of a
+// maker's name per row, and the name components are stored under. Written by the
+// import dialog when someone answers "this is it"; removable only here, which is
+// the point — until this table existed a mistaken alias could not be undone from
+// the app at all, not even by editing the component, since the write path
+// canonicalises too.
+
+
+const aliasesTable = new Tabulator("#aliases-table", {
+  ...TABLE_DEFAULTS,
+  // fitColumns, not the fitDataFill the rules table uses: three columns of short
+  // names size to a few characters each and huddle at the left edge of a wide page,
+  // which reads as a broken table rather than a small one.
+  layout: "fitColumns",
+  placeholder: "No manufacturer aliases",
+  columns: [
+    ruleFilter({ title: "Seen as", field: "alias", widthGrow: 1 }),
+    ruleFilter({ title: "Stored as", field: "canonical", widthGrow: 1 }),
+    {
+      title: "",
+      field: "actions",
+      headerSort: false,
+      width: 110,
+      hozAlign: "right",
+      // aria-label names the row: every button on the page otherwise reads as the
+      // bare word "Forget", which tells a screen-reader user nothing about which
+      // spelling they are about to drop.
+      formatter: (cell) =>
+        '<button class="btn btn-ghost btn-sm" data-act="forget" aria-label="Forget ' +
+        `“${esc(cell.getRow().getData().alias)}”">Forget</button>`,
+      cellClick: (event, cell) => {
+        if (event.target.dataset.act !== "forget") return;
+        forgetAlias(cell.getRow().getData());
+      },
+    },
+  ],
+});
+
+const aliasGuard = makeGuard();
+
+function forgetAlias(row) {
+  // Named for what it does: later imports stop resolving that spelling. Say so,
+  // because "delete" next to a manufacturer's name reads as though it might rename
+  // or remove the parts filed under it, and it does neither.
+  const ok = window.confirm(
+    `Forget that “${row.alias}” means “${row.canonical}”?\n\n` +
+      "Components already stored under that name keep it — only later imports change.",
+  );
+  if (!ok) return;
+  aliasGuard(async () => {
+    try {
+      const resp = await sendRuleWrite(
+        `/api/manufacturers/aliases/${row.id}`,
+        "DELETE",
+      );
+      if (resp.ok) return loadAliases();
+      alert(await errorMessage(resp));
+    } catch {
+      alert("Could not reach the server.");
+    }
+  });
+}
+
+async function loadAliases() {
+  let rows = [];
+  let failed = false;
+  try {
+    // The check is on the SHAPE, and it is the only one needed: an HTTP failure
+    // body parses as JSON perfectly well and simply has no `data` array, so this
+    // catches a 404 or a 500 as surely as a 200 of the wrong shape — where a
+    // `resp.ok` test would catch strictly less and read as if it caught more.
+    //
+    // And a failure is a failure, never an empty list: showing an empty table
+    // nobody was warned about answers "you have no aliases", which is a worse
+    // thing to be wrong about than "could not load". (Found the hard way, against
+    // a server left running from an earlier session.)
+    const body = await fetch("/web/api/manufacturer-aliases").then((r) => r.json());
+    if (!Array.isArray(body.data)) throw new Error("unexpected response");
+    rows = body.data;
+  } catch {
+    failed = true;
+    alert("Could not load manufacturer aliases — refresh to try again.");
+  }
+  // The placeholder is the ONE empty state. The note above the table already
+  // explains where aliases come from whether or not there are any, so a third
+  // sentence saying it again under an empty table earns nothing — and leaving that
+  // sentence on screen after a failed load would state as fact the very thing this
+  // function refuses to claim: that you have no aliases.
+  aliasesTable.options.placeholder = failed
+    ? "Could not load manufacturer aliases"
+    : "No manufacturer aliases yet";
+  try {
+    await aliasesTable.setData(rows);
+  } finally {
+    // NOT frameTable on THIS table: it sizes to its content. frameTable fills the
+    // rest of the viewport, which only one table on a page can do — and the rules
+    // table above is the one that can be long. Re-frame that one instead, now that
+    // this table has its height: frameTable measures the live page bottom, so it
+    // has to run after everything below it is on the page, or it leaves room for a
+    // table that was not there yet. In a `finally`, so a table that fails to take
+    // its data cannot leave the other one unframed.
+    frameTable(rulesTable);
+  }
+}
+
+aliasesTable.on("tableBuilt", loadAliases);

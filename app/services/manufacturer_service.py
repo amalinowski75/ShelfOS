@@ -20,7 +20,7 @@ from typing import cast
 from sqlmodel import Session, col, select
 
 from app.models.manufacturer import ManufacturerAlias
-from app.services._common import normalize
+from app.services._common import normalize, require_entity
 from app.services.errors import ValidationError
 
 
@@ -136,8 +136,9 @@ def _collapse_chains_into(session: Session, *, key: str, canonical: str) -> None
 
 
 def delete_alias(session: Session, alias_id: int) -> None:
-    row = session.get(ManufacturerAlias, alias_id)
-    if row is None:
-        raise ValidationError("no such manufacturer alias")
+    # NotFoundError, so the route answers 404 like every other missing entity. The
+    # ordinary way to arrive here is two admins on the page at once: one forgets a
+    # row, the other clicks Forget on a table that no longer matches the database.
+    row = require_entity(session, ManufacturerAlias, alias_id, "manufacturer alias")
     session.delete(row)
     session.commit()

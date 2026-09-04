@@ -13,7 +13,7 @@ non-admin looking at a warning they cannot resolve.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 from sqlmodel import Session
 
 from app.api.deps import get_session
@@ -23,6 +23,8 @@ from app.api.schemas import (
     SameMpnCandidateRead,
     SameMpnRead,
 )
+from app.auth.deps import require_admin
+from app.models.user import User
 from app.services import component_service as cs
 from app.services import manufacturer_service as ms
 
@@ -81,3 +83,23 @@ def create_manufacturer_alias(
         alias=row.alias,
         canonical=row.canonical,
     )
+
+
+@router.delete("/aliases/{alias_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_manufacturer_alias(
+    alias_id: int,
+    session: Session = Depends(get_session),
+    admin: User = Depends(require_admin),
+) -> None:
+    """Forget one spelling.
+
+    Admin-only, though any writer can CREATE one by answering "this is it" during an
+    import — the same split the app already makes for component types, which a writer
+    adds inline from the dialog and an admin manages on their own page. Creating
+    vocabulary is part of doing the work; curating it is not.
+
+    Only future lookups change. Components already stored under the canonical name
+    keep it: the alias was never a live indirection, just the rule that decided what
+    to write.
+    """
+    ms.delete_alias(session, alias_id)

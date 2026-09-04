@@ -138,12 +138,16 @@ A component is identified by its manufacturer part number **and** its manufactur
 and the shops disagree about the latter: Farnell says `ONSEMI`, a Digi-Key invoice
 says `ON Semiconductor`. Left alone, those become two components for one part.
 
-ShelfOS does not guess. When you import a part whose MPN is already in stock under a
-different maker's name, the dialog says so and lists what it found — with the type
-and description, since an MPN really can belong to two different companies. If one of
-them is the same part, say so: ShelfOS opens it and remembers that spelling, so the
-question is asked once per spelling and never again. Every component is then stored
-under the one canonical name, which is what the tables and filters show.
+ShelfOS does not guess. When you import a part whose number is already in stock, the
+dialog says so and lists what it found — an MPN really can belong to two different
+companies, so which one this is, if any, is your call. If one of them is the same
+part, say so: ShelfOS opens it, and if the maker was spelled differently it remembers
+that spelling. Every component is then stored under the one canonical name, which is
+what the tables and filters show.
+
+Those remembered spellings are listed on the **Match rules** page under *Manufacturer
+names*, where an admin can forget one. Forgetting changes only what later imports
+resolve — components already stored under a name keep it.
 
 ### Scanning the packaging label
 

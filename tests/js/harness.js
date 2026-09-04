@@ -80,6 +80,13 @@ export function loadPage(
       // revises it mid-drag, which is what pulls the scrollbar thumb away from the
       // pointer (see TABLE_DEFAULTS in shared.js).
       window.Tabulator.options = options ?? {};
+      // ALSO on the instance: a real table exposes `.options`, and page code
+      // reassigns fields on it (match_rules.js swaps `placeholder` to say whether
+      // an empty table is empty or unread). With options only on the class, that
+      // write throws on the second table and the class copy hides which instance
+      // it belonged to.
+      this.options = window.Tabulator.options;
+      window.Tabulator.instances.push(this);
     }
     setColumns(columns) {
       window.Tabulator.columns = columns ?? [];
@@ -140,6 +147,8 @@ export function loadPage(
     static filters = [];
     static refilters = 0;
     static columns = [];
+    // Every table built on the page, in construction order.
+    static instances = [];
     // What survives the header filters. null = no filter, so everything does.
     static activeRows = null;
     static activeData() {
@@ -319,6 +328,7 @@ export function matchRulesPageFixture() {
     <option value="enum_value">enum_value</option>`;
   return `
     <div id="rules-table"></div>
+    <div id="aliases-table"></div>
     <button id="rule-new-btn"></button>
     <dialog id="rule-new-dialog"><form id="rule-new-form">
       <select name="domain">${domainOptions}</select>
