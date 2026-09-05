@@ -2265,3 +2265,67 @@ def test_audit_page_offers_only_filters_the_log_can_answer(client: TestClient) -
 
     assert mounted("kinds") == ["component"]
     assert mounted("actors") == [{"id": 1, "name": "admin"}]
+
+
+def _staged_line(session, invoice_id: int, *, mpn: str, manufacturer: str) -> int:
+    """One ready staged row on a draft, as an import leaves it."""
+    from decimal import Decimal
+
+    from app.models.component import ComponentType
+    from app.models.invoice import InvoiceImportLine
+
+    row = InvoiceImportLine(
+        invoice_id=invoice_id,
+        line_no=1,
+        mpn=mpn,
+        manufacturer=manufacturer,
+        quantity=1,
+        unit_price=Decimal("1"),
+        shop_key="tme",
+        type_id=session.get(ComponentType, 1).id,
+        reason="",
+    )
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return row.id
+
+
+def test_a_staged_line_says_when_the_number_is_already_in_stock(
+    client: TestClient,
+    session,  # type: ignore[no-untyped-def]
+) -> None:
+    """The third and last place a part enters the catalog asks the same question.
+
+    A line is staged because nothing matched it on maker + number — but a
+    component carrying the same NUMBER can still be the same part under a maker
+    spelled another way, and finalizing would then file it twice.
+    """
+    handles = _invoice_with_line(client)
+    invoice_id = handles["invoice"]["id"]  # type: ignore[index]
+    existing = handles["component"]  # R-100, made by _invoice_with_line
+    _staged_line(session, invoice_id, mpn=existing["mpn"], manufacturer="OTHERCO")  # type: ignore[index]
+
+    html = client.get(f"/invoices/{invoice_id}").text
+
+    assert 'data-act="show-existing"' in html  # the chip that opens the evidence
+    assert 'data-act="adopt-existing"' in html  # "This is it"
+    assert f'data-component-id="{existing["id"]}"' in html  # type: ignore[index]
+    # The consequence is stated BEFORE the click, since picking one reloads the page.
+    assert "records that “OTHERCO”" in html
+    assert "so later invoices match on their own" in html
+
+
+def test_a_staged_line_with_no_twin_says_nothing(
+    client: TestClient,
+    session,  # type: ignore[no-untyped-def]
+) -> None:
+    """Not a banner on every row: only where something really shares the number."""
+    handles = _invoice_with_line(client)
+    invoice_id = handles["invoice"]["id"]  # type: ignore[index]
+    _staged_line(session, invoice_id, mpn="NOTHING-LIKE-IT", manufacturer="OTHERCO")
+
+    html = client.get(f"/invoices/{invoice_id}").text
+
+    assert 'id="invoice-review"' in html  # the row is there…
+    assert 'data-act="show-existing"' not in html  # …without the warning

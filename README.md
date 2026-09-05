@@ -149,6 +149,11 @@ Those remembered spellings are listed on the **Match rules** page under *Manufac
 names*, where an admin can forget one. Forgetting changes only what later imports
 resolve — components already stored under a name keep it.
 
+The invoice review asks it too. A staged line whose number is already in the
+inventory carries an **Already in stock?** marker; opening it lists what shares the
+number, and *This is it* files the line against that component — so finalizing does
+not create a second one — while recording the invoice's spelling for next time.
+
 Scan putaway asks the same question. A bag label states its maker in the `1V` field,
 and a scan is only a putaway when that maker is the one the part is stored under —
 otherwise the same dialog opens and asks, rather than accepting stock onto a part

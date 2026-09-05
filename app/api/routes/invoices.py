@@ -10,6 +10,7 @@ from sqlmodel import Session
 from app import config
 from app.api.deps import get_session
 from app.api.schemas import (
+    ImportLineAdopt,
     InvoiceCreate,
     InvoiceDetailRead,
     InvoiceFinalize,
@@ -213,6 +214,34 @@ def update_import_line(
         session, invoice_id, import_line_id, **changes, user_id=user_id
     )
     return InvoiceImportLineRead.model_validate(staging)
+
+
+@router.post(
+    "/{invoice_id}/import-lines/{import_line_id}/adopt",
+    response_model=InvoiceLine,
+    status_code=status.HTTP_201_CREATED,
+)
+def adopt_import_line(
+    invoice_id: int,
+    import_line_id: int,
+    payload: ImportLineAdopt,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> InvoiceLine:
+    """File a staged line against a component already in stock (writers).
+
+    The reviewer's answer to "you may already have this part": this invoice line
+    is that component, spelled differently. The staged row becomes a real line on
+    it — so finalize will not create a second component — and the invoice's
+    spelling is recorded as an alias, so the next invoice matches on its own.
+    """
+    return imp.adopt_pending(
+        session,
+        invoice_id,
+        import_line_id,
+        component_id=payload.component_id,
+        user_id=user_id,
+    )
 
 
 @router.delete(

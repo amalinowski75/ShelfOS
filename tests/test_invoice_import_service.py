@@ -16,6 +16,7 @@ from app import config
 from app.services import component_service as cs
 from app.services import invoice_import_service as iis
 from app.services import invoice_service, shops
+from app.services import manufacturer_service as mfs
 from app.services.errors import NotFoundError, ValidationError
 from app.services.invoice_import import ParsedInvoice, ParsedLine
 from app.services.shops.base import ProductData
@@ -899,3 +900,81 @@ def test_dismiss_rejects_a_foreign_invoice_id(session: Session, monkeypatch) -> 
     # The staging row exists, but not under this (wrong) invoice id.
     with pytest.raises(NotFoundError):
         iis.dismiss_pending(session, result.invoice_id + 999, staged.id, user_id=1)
+
+
+def test_adopting_files_the_line_on_the_existing_part_and_teaches_the_spelling(
+    session: Session, monkeypatch
+) -> None:
+    """The reviewer's answer to "you may already have this part".
+
+    A Farnell invoice prints ONSEMI where the component is stored as "ON
+    Semiconductor", so nothing matches and the line is staged — and finalizing
+    would file the same part a second time. Saying "this is it" must do BOTH
+    halves: attach the line to the part that exists, and record the spelling so
+    the next invoice from this supplier never asks again.
+    """
+    rtype = cs.create_type(session, "regulator")
+    existing = cs.create_component_with_values(
+        session, rtype.id, mpn="NCP730", manufacturer="ON Semiconductor", values=[]
+    )
+    invoice_id, row = _import_one_ready(
+        session, monkeypatch, mpn="NCP730", manufacturer="ONSEMI"
+    )
+    location = _make_location(session)
+    iis.update_pending(session, invoice_id, row.id, location_id=location, user_id=1)
+
+    line = iis.adopt_pending(
+        session, invoice_id, row.id, component_id=existing.id, user_id=1
+    )
+
+    assert line.component_id == existing.id
+    assert line.location_id == location  # the location already chosen comes along
+    assert iis.list_pending(session, invoice_id) == []  # the staged row is gone
+    # No second component: that is the whole point.
+    assert [c.id for c in cs.find_components_by_mpn(session, "NCP730")] == [existing.id]
+    # …and the next invoice spelling it that way resolves on its own.
+    assert mfs.canonical_name(session, "ONSEMI") == "ON Semiconductor"
+
+
+def test_adopting_when_the_spelling_already_agrees_records_no_alias(
+    session: Session, monkeypatch
+) -> None:
+    """An alias only where the two spellings really differ.
+
+    A line can be staged for reasons other than the maker — an ambiguous MPN, a
+    type it could not guess — and adopting one whose manufacturer already matches
+    must not write "Acme means Acme" into the table an admin has to read.
+    """
+    rtype = cs.create_type(session, "regulator")
+    existing = cs.create_component_with_values(
+        session, rtype.id, mpn="R9", manufacturer="Acme", values=[]
+    )
+    invoice_id, row = _import_one_ready(
+        session, monkeypatch, mpn="R9-OTHER", manufacturer="Acme"
+    )
+
+    iis.adopt_pending(session, invoice_id, row.id, component_id=existing.id, user_id=1)
+
+    assert mfs.list_aliases(session) == []
+
+
+def test_adopting_refuses_a_line_from_another_invoice(
+    session: Session, monkeypatch
+) -> None:
+    """The staged row is addressed through its invoice, as every other route is."""
+    rtype = cs.create_type(session, "regulator")
+    existing = cs.create_component_with_values(
+        session, rtype.id, mpn="X1", manufacturer="Acme", values=[]
+    )
+    invoice_id, row = _import_one_ready(
+        session, monkeypatch, mpn="X1", manufacturer="B"
+    )
+    other = invoice_service.create_invoice(
+        session, supplier="TME", invoice_number="OTHER-1",
+        invoice_date=date(2026, 1, 1), currency="PLN"
+    )
+
+    with pytest.raises(NotFoundError):
+        iis.adopt_pending(
+            session, other.id, row.id, component_id=existing.id, user_id=1
+        )

@@ -22,7 +22,6 @@ from app.services import component_service as cs
 from app.services import location_service as ls
 from app.services import manufacturer_service as mfs
 from app.services import stock_service as ss
-from app.services._common import normalize
 from app.services.errors import DuplicateComponentError
 from app.services.shops.scan import ScanResult, parse_scan
 
@@ -67,7 +66,6 @@ def scan_component(
     # Through the alias table, so a bag printed "ONSEMI" is measured against the
     # spelling its components are stored under.
     scanned_maker = mfs.canonical_name(session, scan.manufacturer)
-    wanted = normalize(scanned_maker) if scanned_maker else ""
     matches: list[ScannedComponentRead] = []
     seen_ids: set[int] = set()
     for identifier in identifiers:
@@ -82,16 +80,10 @@ def scan_component(
                     mpn=component.mpn,
                     manufacturer=component.manufacturer,
                     description=component.notes,
-                    # None, not False, whenever EITHER side named nobody: no one
-                    # was contradicted, and a caller must not read silence as a
-                    # disagreement and refuse a perfectly good putaway. Both ends
-                    # matter — a Farnell invoice prints no manufacturer column at
-                    # all, so every component that arrived on one has no maker to
-                    # be measured against.
-                    same_manufacturer=(
-                        normalize(component.manufacturer) == wanted
-                        if wanted and component.manufacturer
-                        else None
+                    # Shared with the invoice review, which asks the same question
+                    # of a staged line: one rule, so the two cannot drift.
+                    same_manufacturer=mfs.agrees_with(
+                        scanned_maker, component.manufacturer
                     ),
                     locations=[
                         ScannedStockRead(

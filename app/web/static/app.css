@@ -549,6 +549,25 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 }
 .mfr-conflict-list .btn { flex: none; }
 
+/* "You may already have this part", on an invoice review row. Same question the
+   New Component dialog asks, so it borrows that block's list shape — the name
+   yields, the button never does. */
+.badge.linkish {
+  border: 0; cursor: pointer; font: inherit; font-size: 11.5px;
+  margin-left: 6px; vertical-align: middle;
+}
+#invoice-review tr.existing-row > td {
+  background: var(--warn-soft); box-shadow: inset 3px 0 0 var(--warn);
+}
+.existing-lead { margin: 0 0 8px; }
+.existing-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.existing-list li { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+.existing-name {
+  flex: 1; min-width: 0; font-weight: 650;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.existing-list .btn { flex: none; }
+
 /* An imported-review row still missing a type or a location — a soft accent bar
    so it reads as "needs a touch" without shouting error red. */
 #invoice-review tr.is-incomplete > td:first-child { box-shadow: inset 3px 0 0 var(--warn); }

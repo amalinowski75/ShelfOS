@@ -679,6 +679,26 @@ def invoice_detail(
     pending_import_subtotal = sum(
         (line.unit_price * line.quantity for line in pending_import), Decimal(0)
     )
+    # "You may already have this part", per staged line. An invoice line is staged
+    # because nothing matched it on manufacturer + MPN — but a component carrying
+    # the same NUMBER may still be sitting in the inventory under a maker spelled
+    # another way, and finalizing would then file the part twice. The same question
+    # the New Component dialog and a bag scan ask; asked here too, because this is
+    # the third and last way a part gets into the catalog.
+    already_in_stock = {
+        line.id: [
+            {
+                "id": part.id,
+                "manufacturer": part.manufacturer,
+                "description": part.notes,
+                "same_manufacturer": mfs.agrees_with(
+                    mfs.canonical_name(session, line.manufacturer), part.manufacturer
+                ),
+            }
+            for part in cs.find_parts_sharing_mpn(session, line.mpn)
+        ]
+        for line in pending_import
+    }
     return templates.TemplateResponse(
         request,
         "invoice_detail.html",
@@ -687,6 +707,7 @@ def invoice_detail(
             "lines": lines,
             "pending_import_lines": pending_import,
             "pending_import_subtotal": pending_import_subtotal,
+            "already_in_stock": already_in_stock,
             # The line dialog (location tree-picker + "New component") only renders
             # for a writer on a draft, so only fetch its data then.
             "location_tree": tree,

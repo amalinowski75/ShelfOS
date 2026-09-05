@@ -526,6 +526,12 @@ class ScannedComponentRead(BaseModel):
     same_manufacturer: bool | None = None
 
 
+class ImportLineAdopt(BaseModel):
+    """Which component in stock a staged import line turned out to be."""
+
+    component_id: int
+
+
 class ComponentScanRead(BaseModel):
     """What a scanned bag resolves to: the identifiers read, and the matches.
 

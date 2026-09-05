@@ -135,6 +135,29 @@ def _collapse_chains_into(session: Session, *, key: str, canonical: str) -> None
         session.commit()
 
 
+def agrees_with(canonical: str | None, stored: str | None) -> bool | None:
+    """Whether a stated maker and a stored one are the same company.
+
+    ``None`` — not ``False`` — whenever EITHER side named nobody. Silence is an
+    unanswered question, not a contradiction, and the difference decides whether a
+    part is offered or refused: most 1D barcodes carry no maker at all, and a
+    Farnell invoice prints no manufacturer column, so every component that arrived
+    on one has none stored. Reading either silence as disagreement refuses a whole
+    class of perfectly good parts.
+
+    The rule to check any change against: **a match stands unless the other side
+    actively contradicts it.**
+
+    ``canonical`` is expected to have been through :func:`canonical_name` already —
+    resolve it once per request rather than once per candidate — so a bag or an
+    invoice line saying ``ONSEMI`` is measured against the spelling the components
+    are stored under.
+    """
+    if not canonical or not stored:
+        return None
+    return normalize(stored) == normalize(canonical)
+
+
 def delete_alias(session: Session, alias_id: int) -> None:
     # NotFoundError, so the route answers 404 like every other missing entity. The
     # ordinary way to arrive here is two admins on the page at once: one forgets a

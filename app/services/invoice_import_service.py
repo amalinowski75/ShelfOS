@@ -22,7 +22,13 @@ from app.models.component import ComponentType
 from app.models.enums import AttachmentKind, MountingType
 from app.models.invoice import Invoice, InvoiceImportLine, InvoiceLine
 from app.models.location import Location
-from app.services import attachment_service, audit_service, invoice_service, shops
+from app.services import (
+    attachment_service,
+    audit_service,
+    invoice_service,
+    manufacturer_service,
+    shops,
+)
 from app.services import component_service as cs
 from app.services._common import require_entity
 from app.services.errors import (
@@ -411,6 +417,68 @@ def dismiss_pending(
     )
     session.delete(staging)
     session.commit()
+
+
+def adopt_pending(
+    session: Session,
+    invoice_id: int,
+    import_line_id: int,
+    *,
+    component_id: int,
+    user_id: int,
+) -> InvoiceLine:
+    """File a staged line against a component already in stock, not a new one.
+
+    The answer to "you may already have this part" on the review table. The line
+    was staged because nothing matched it on manufacturer + MPN, but a component
+    carrying the same NUMBER can still be the same part under a maker spelled
+    another way — and only a person can tell that from another company's part that
+    happens to share the number.
+
+    Saying so does two things. The line becomes a real invoice line on that
+    component, so finalize will not create a second one; and the spelling the
+    invoice used is recorded as an alias, so the next invoice from this supplier
+    matches on its own and the question is not asked again. That second half is the
+    whole point of routing this through here rather than letting the user dismiss
+    the line and add it by hand.
+
+    The staged row's location comes along if one was chosen. A line still needs a
+    location before finalize, and having just picked one on the review row, being
+    sent to a dialog to pick it again would be a poor thanks.
+    """
+    _require_draft_invoice(session, invoice_id)
+    staging = get_pending(session, invoice_id, import_line_id)
+    component = cs.require_live_component(session, component_id)
+
+    # Record the alias BEFORE the line, and only when the two spellings really
+    # differ — canonical_name resolves through any alias already known, so
+    # re-answering an invoice whose spelling is already taught adds nothing.
+    manufacturer_service.record_alias(
+        session, alias=staging.manufacturer, canonical=component.manufacturer
+    )
+    line = invoice_service.add_line(
+        session,
+        invoice_id,
+        component_id=component_id,
+        quantity=staging.quantity,
+        unit_price=staging.unit_price,
+        supplier_part_number=staging.supplier_part_number,
+        location_id=staging.location_id,
+    )
+    audit_service.record_change(
+        session,
+        entity_type="invoice",
+        entity_id=invoice_id,
+        field=audit_service.import_line_field(
+            staging.line_no, audit_service.FIELD_DELETED
+        ),
+        old_value=False,
+        new_value=True,
+        user_id=user_id,
+    )
+    session.delete(staging)
+    session.commit()
+    return line
 
 
 def update_pending(

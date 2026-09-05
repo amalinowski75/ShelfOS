@@ -525,7 +525,9 @@ export function detailFixture({
                data-package="SOT23" data-mounting-type="THT" data-description="A widget"
                data-source-url="https://www.tme.eu/en/details/ABC123/"
                data-parameters='[{"parameter_definition_id":9,"value":"4k7"}]'>
-             <td><span class="mono">ABC123</span></td>
+             <td><span class="mono">ABC123</span>
+               <button type="button" data-act="show-existing" aria-expanded="false"
+                       aria-controls="existing-21">Already in stock?</button></td>
              <td><span class="badge">diode</span></td>
              <td class="num">7</td>
              <td class="num">2.50</td>
@@ -538,6 +540,15 @@ export function detailFixture({
              <td>
                <button type="button" data-act="edit-import"></button>
                <button type="button" data-act="dismiss-import"></button>
+             </td>
+           </tr>
+           <tr class="existing-row" id="existing-21" hidden>
+             <td colspan="6">
+               <ul class="existing-list"><li>
+                 <a class="existing-name">ON Semiconductor</a>
+                 <button type="button" data-act="adopt-existing"
+                         data-component-id="88" data-import-line-id="21">This is it</button>
+               </li></ul>
              </td>
            </tr>
          </tbody></table>
