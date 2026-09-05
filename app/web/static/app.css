@@ -104,6 +104,7 @@
 
 /* ---------- base ---------- */
 * { box-sizing: border-box; }
+
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
@@ -232,11 +233,6 @@ a { color: var(--accent-strong); text-underline-offset: 2px; }
 
 /* ---------- form controls ---------- */
 .field { display: flex; flex-direction: column; gap: 5px; }
-/* `.field` sets `display: flex`, which beats the UA `[hidden] { display: none }`, so
-   a JS-toggled field (the invoice line dialog hides its Component field on edit) would
-   stay on screen — showing an empty, unusable combobox. Restore the attribute's
-   authority (same trap as .btn[hidden] / .badge[hidden]). */
-.field[hidden] { display: none; }
 .field label { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .01em; }
 .control {
   appearance: none; font: inherit; width: 100%; color: var(--text);
@@ -262,10 +258,6 @@ select.control {
 }
 .btn:active { transform: translateY(1px); }
 .btn svg { width: 16px; height: 16px; }
-/* .btn sets display, which overrides the UA [hidden] { display: none } — so a
-   hidden .btn (e.g. "+ New type" on pages without the type builder) would still
-   show. Restore the attribute's authority app-wide (cf. .loc-picker-new[hidden]). */
-.btn[hidden] { display: none; }
 .btn-primary { background: var(--accent); color: var(--on-accent); box-shadow: var(--shadow-sm); }
 .btn-primary:hover { background: var(--accent-strong); }
 .btn-secondary { background: var(--surface); color: var(--text); border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
@@ -440,10 +432,6 @@ table.kv tr:last-child th, table.kv tr:last-child td { border-bottom: none; }
   border: none; padding: 5px 8px; border-radius: 6px;
   border-bottom: 1px solid var(--border); margin-bottom: 4px;
 }
-/* The app has no global [hidden] rule, so this author `display` would otherwise
-   beat the UA `[hidden] { display: none }` and show the button regardless of the
-   attribute location_tree.js toggles. */
-.loc-picker-new[hidden] { display: none; }
 .loc-picker-new:hover { background: var(--row-hover); }
 
 /* A node kept only as the path to a match below it: readable, but plainly not a
@@ -452,18 +440,14 @@ table.kv tr:last-child th, table.kv tr:last-child td { border-bottom: none; }
   color: var(--muted); opacity: .55; cursor: not-allowed;
 }
 .loc-picker-node.is-unavailable:hover { background: transparent; }
-.loc-picker-caret[hidden] { display: none; }
 .loc-picker-toggle:disabled { color: var(--muted); cursor: progress; }
-/* The escape hatch from a mode filter, and the message when it filters to nothing.
-   Both carry an author `display`, so both need the [hidden] rule (cf. above). */
+/* The escape hatch from a mode filter, and the message when it filters to nothing. */
 .loc-picker-showall {
   display: flex; align-items: center; gap: 6px; cursor: pointer;
   color: var(--muted); font-size: 13px; padding: 4px 8px;
   border-bottom: 1px solid var(--border); margin-bottom: 4px;
 }
-.loc-picker-showall[hidden] { display: none; }
 .loc-picker-nomatch { color: var(--muted); font-size: 13px; margin: 4px 8px; }
-.loc-picker-nomatch[hidden] { display: none; }
 
 /* A heading that separates two tables on one page (the admin match-rules page).
    Sized between the page title and a card's own heading, since it is neither. */
@@ -476,11 +460,6 @@ table.kv tr:last-child th, table.kv tr:last-child td { border-bottom: none; }
   display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600;
   padding: 3px 9px; border-radius: 999px; line-height: 1.4; white-space: nowrap;
 }
-/* .badge sets `display`, so it beats the UA `[hidden] { display: none }` and a
-   hidden badge would stay on screen. Same trap (and same one-line remedy) as
-   .btn[hidden] above — generalised to every badge, since the next one someone
-   hides would hit it too. */
-.badge[hidden] { display: none; }
 .badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
 .b-accent { background: var(--accent-soft); color: var(--accent-ink); }
 .b-ok { background: var(--ok-soft); color: var(--ok); }
@@ -523,11 +502,6 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 .error-row {
   display: flex; align-items: center; gap: 10px; margin: 0;
 }
-/* This `display` beats the UA `[hidden] { display: none }`, so without restoring
-   the attribute's authority the row stays on screen with a stale message while
-   every test asserting `.hidden` passes — the trap .field[hidden] and .btn[hidden]
-   already document, walked into again. */
-.error-row[hidden] { display: none; }
 .error-row .error { flex: 1; min-width: 0; }
 .error-row .btn { flex: none; }
 /* Feedback under the stock dialog's "scan a location" field. */
@@ -541,13 +515,11 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 
 /* ---------- "you may already have this part" ---------- */
 /* A warning, not an error: what it lists may or may not be the same part, and
-   carrying on is a legitimate answer. `.field` sets `display`, which beats the UA
-   `[hidden]` rule — the same trap as .btn/.badge — hence the explicit reset. */
+   carrying on is a legitimate answer. */
 .mfr-conflict {
   gap: 8px; padding: 10px 12px; border-radius: var(--radius-sm);
   background: var(--warn-soft); border: 1px solid var(--warn);
 }
-.mfr-conflict[hidden] { display: none; }
 .mfr-conflict p { margin: 0; }
 .mfr-conflict-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .mfr-conflict-list li {
@@ -1078,3 +1050,31 @@ html.bom-pick-open, html.bom-pick-open body { overflow: hidden; }
 .label-preview img:not([src]) { display: none; }
 .hint { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
 .row-actions-inline { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+
+/* ---------- `hidden` means hidden ---------- */
+/* Last in the file AND !important, and it needs both.
+
+   The UA rule is `[hidden] { display: none }` at origin level, so ANY author
+   `display` beats it — and this app puts `display` on nearly everything it
+   toggles: buttons, badges, flex rows, the location picker's parts. That was
+   paid for nine separate times, each with its own one-line reset and its own
+   comment explaining the trap; the ninth was written by someone who had read the
+   other eight and walked into it anyway. The failure is silent in the worst way:
+   the element is hidden as far as `el.hidden` and every test asserting it are
+   concerned, and plainly visible on screen with stale content.
+
+   `!important` because `[hidden]` is specificity (0,1,0): being last beats a
+   single class, but still loses to any two-class selector (`.error-row .btn` is
+   one). Only the important form actually holds in a browser.
+
+   LAST because jsdom's cascade is source-order only and ignores `!important`
+   outright — verified, not assumed — so the same rule at the top of this file
+   would work in every browser and read as broken to the computed-style checks
+   that exist to guard it. Those checks are the only thing that can see this
+   class of bug, so the rule goes where they can see it too.
+
+   Nothing here has a legitimate reason to out-rank the attribute: an element
+   that must show while carrying `hidden` is a contradiction, not a design. No
+   script in this app writes `style.display`, so there is no inline `display` for
+   this to overrule either. */
+[hidden] { display: none !important; }
