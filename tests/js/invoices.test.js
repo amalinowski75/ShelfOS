@@ -114,6 +114,86 @@ describe("invoices.js — review imported lines inline", () => {
     );
   }
 
+  it("still opens Add line when the component list cannot be read", async () => {
+    // The failure that used to be silent: `.data` came back undefined, `.map`
+    // threw out of an async click handler with nobody to catch it, and the dialog
+    // never opened — a dead button, no message, nothing in the page to act on.
+    const page = loadPage(detailFixture(), SCRIPTS, {
+      fetchImpl: (url) =>
+        Promise.resolve({
+          ok: url !== "/web/api/components",
+          json: async () =>
+            url === "/web/api/components" ? { detail: "Server Error" } : {},
+        }),
+    });
+    const opened = [];
+    page.document.getElementById("invoice-line-dialog").showModal = () =>
+      opened.push(true);
+
+    page.document.getElementById("invoice-addline-btn").click();
+    await tick();
+    await tick();
+
+    expect(opened.length).toBe(1); // the dialog is still the way out
+    const error = page.document.getElementById("invoice-line-error");
+    expect(error.hidden).toBe(false);
+    expect(error.textContent).toContain("Could not load");
+  });
+
+  it("says WHICH nothing it is — an empty catalog is not an unreadable one", async () => {
+    const message = async (body) => {
+      const page = loadPage(detailFixture(), SCRIPTS, {
+        fetchImpl: () => Promise.resolve({ ok: true, json: async () => body }),
+      });
+      page.document.getElementById("invoice-line-dialog").showModal = () => {};
+      page.document.getElementById("invoice-addline-btn").click();
+      await tick();
+      await tick();
+      return page.document.getElementById("invoice-line-error").textContent;
+    };
+
+    expect(await message({ data: [] })).toContain("No components yet");
+    // A 200 of the wrong shape is a failure, not an empty inventory: telling the
+    // user they have no components is a worse thing to be wrong about.
+    expect(await message({})).toContain("Could not load");
+  });
+
+  it("does not cache a failed load, so the next open tries again", async () => {
+    let calls = 0;
+    const page = loadPage(detailFixture(), SCRIPTS, {
+      fetchImpl: (url) => {
+        if (url !== "/web/api/components") {
+          return Promise.resolve({ ok: true, json: async () => ({}) });
+        }
+        calls += 1;
+        return Promise.resolve({
+          ok: true,
+          json: async () =>
+            calls === 1 ? {} : { data: [{ id: 1, mpn: "R", type: "t" }] },
+        });
+      },
+    });
+    page.document.getElementById("invoice-line-dialog").showModal = () => {};
+    const btn = page.document.getElementById("invoice-addline-btn");
+
+    btn.click();
+    await tick();
+    await tick();
+    expect(page.document.getElementById("invoice-line-error").textContent).toContain(
+      "Could not load",
+    );
+
+    btn.click();
+    await tick();
+    await tick();
+    expect(calls).toBe(2);
+    expect(page.document.getElementById("invoice-line-error").hidden).toBe(true);
+    expect(
+      page.document.querySelectorAll("#invoice-line-form select[name=component_id] option")
+        .length,
+    ).toBe(1);
+  });
+
   it("PATCHes location_id (as null when blanked) on location change", async () => {
     const { document, fetchMock } = loadPage(detailFixture({ pending: true }), SCRIPTS, {
       fetchImpl: () => Promise.resolve({ ok: true, json: async () => ({}) }),
