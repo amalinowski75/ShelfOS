@@ -203,8 +203,20 @@ if (detail && lineDialog) {
   let componentOptions = null;
   async function loadComponentOptions() {
     if (componentOptions) return componentOptions;
-    const payload = await fetch("/web/api/components").then((r) => r.json());
-    componentOptions = payload.data.map((row) => ({
+    // No resp.ok test and no shape test: an HTTP failure body parses as JSON
+    // perfectly well and simply has no `data` array, so `.map` below throws on a
+    // 404, a 500 and a 200 of the wrong shape alike — one mechanism, and the
+    // caller turns any of them into a message. A separate check here would be a
+    // guard no test could kill, which is the kind this codebase has learned to
+    // drop rather than keep for reassurance.
+    //
+    // What was wrong was never the throw; it was that nobody caught it. `.map`
+    // threw out of an async click handler with no catch, so the dialog never
+    // opened, nothing was said, and "Add line" was simply a dead button.
+    // Assignment happens last, so a failure caches nothing and the next open
+    // tries again.
+    const body = await fetch("/web/api/components").then((r) => r.json());
+    componentOptions = body.data.map((row) => ({
       id: row.id,
       label:
         (row.mpn || `#${row.id}`) +
@@ -236,11 +248,28 @@ if (detail && lineDialog) {
     locationPicker?.reset();
     componentField.hidden = false;
     componentSelect.required = true;
-    const options = await loadComponentOptions();
-    if (!options.length) {
+    // Open either way. The list failing does not make the dialog useless — its
+    // own "New component" button still works, and that is the way out of an empty
+    // catalog — but a dead button that opens nothing is no way out of anything.
+    let options = null;
+    try {
+      options = await loadComponentOptions();
+    } catch {
+      options = null;
+    }
+    // Two different nothings, said differently: an empty catalog is a fact about
+    // the inventory, an unreadable one is a fact about this page.
+    if (options === null) {
+      // "close and try again", not "refresh": nothing is cached on failure, so
+      // reopening IS the retry, and it costs nothing. A draft invoice is where
+      // someone is mid-review — a reload would throw away their scroll position,
+      // any open panel and whatever was half-typed here. (match_rules.js says
+      // "refresh" and is right to: that load runs once at tableBuilt.)
+      showError(lineError, "Could not load the component list — close and try again.");
+    } else if (!options.length) {
       showError(lineError, "No components yet — use “New component” to add one.");
     }
-    fillComponentSelect(options);
+    fillComponentSelect(options || []);
     lineDialog.showModal();
   }
 
