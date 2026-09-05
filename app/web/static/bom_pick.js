@@ -35,10 +35,19 @@
   let selected = null; // the chosen component row
   let onAssigned = null;
 
-  function setError(text) {
+  const errorRow = document.getElementById("bom-pick-error-row");
+  const retryBtn = document.getElementById("bom-pick-retry");
+
+  // `retry` is for a failed LOAD only. A rejected save has its own remedy (fix
+  // the thing and confirm again); re-fetching the list would not help, and a
+  // button that does nothing useful is worse than none.
+  function setError(text, { retry = false } = {}) {
     errorEl.textContent = text || "";
-    errorEl.hidden = !text;
+    errorRow.hidden = !text;
+    retryBtn.hidden = !text || !retry;
   }
+
+  retryBtn.addEventListener("click", () => loadInventory());
 
   // Hand the page back its scrolling. Safe to call twice.
   function unlock() {
@@ -184,13 +193,12 @@
       payload = await fetch(`/web/api/components${query}`).then((r) => r.json());
       columns = pickerColumns(payload.columns);
     } catch {
-      // "close and reopen", because that is the recovery that exists. This runs
-      // from exactly two places — opening the dialog, and a `change` on the type
-      // select — and re-picking the option already selected fires no change, so
-      // "pick the type again" was advice that did nothing. Picking a DIFFERENT
-      // type does reload, but only by asking a different question, which is not
-      // a retry either.
-      setError("Could not load the inventory — close and reopen to retry.");
+      // The button, not a sentence about one. Nothing else here re-runs this: it
+      // fires on opening the dialog and on a `change` of the type select, and
+      // re-picking the option already selected fires no change — so every wording
+      // of "try again" had to describe something indirect (close and reopen, pick
+      // a different type, which asks a different question). Retry just retries.
+      setError("Could not load the inventory.", { retry: true });
       // Empty it, and say WHICH nothing it is. The table outlives the dialog, so
       // on a failed RELOAD the previous type's parts would sit there under the
       // new type's name — a list you could pick a part from, answering a

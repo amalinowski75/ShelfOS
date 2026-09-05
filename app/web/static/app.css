@@ -517,6 +517,19 @@ dialog .close:hover { background: var(--surface-2); color: var(--text); }
 dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 
 .error { color: var(--danger); font-size: 13.5px; margin: 0; }
+/* A failure and the button that undoes it, on one line. The message yields so a
+   long server error cannot push Retry out of reach — the one control the row
+   exists to offer. */
+.error-row {
+  display: flex; align-items: center; gap: 10px; margin: 0;
+}
+/* This `display` beats the UA `[hidden] { display: none }`, so without restoring
+   the attribute's authority the row stays on screen with a stale message while
+   every test asserting `.hidden` passes — the trap .field[hidden] and .btn[hidden]
+   already document, walked into again. */
+.error-row[hidden] { display: none; }
+.error-row .error { flex: 1; min-width: 0; }
+.error-row .btn { flex: none; }
 /* Feedback under the stock dialog's "scan a location" field. */
 #stock-loc-scan-msg { font-size: 13px; margin: 6px 0 0; }
 /* A partial success — something landed, but not everything asked for. Red would

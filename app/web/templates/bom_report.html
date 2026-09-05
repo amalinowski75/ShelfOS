@@ -77,7 +77,23 @@
         <div id="bom-pick-table"></div>
       </div>
     </div>
-    <p id="bom-pick-error" class="error" hidden></p>
+    {# The action, not advice about it. Three fixes running got the wording of
+       "how to retry" wrong; a button beside the message cannot be wrong about
+       it. Hidden unless a failed LOAD put it there — a rejected save has its own
+       remedy.
+
+       role="alert" because "the user is already looking here" is a sighted
+       premise: this appears asynchronously inside an open modal and now carries
+       the ONLY instruction on recovering, the wording that used to say it having
+       been deliberately removed. alert rather than the status/polite pair used
+       for the location picker's "no match" line — that reports a state, this
+       reports a failure. Retry is the next thing in tab order after it. #}
+    <p class="error-row" id="bom-pick-error-row" role="alert" hidden>
+      <span id="bom-pick-error" class="error"></span>
+      <button type="button" class="btn btn-secondary btn-sm" id="bom-pick-retry" hidden>
+        Retry
+      </button>
+    </p>
   </article>
 </dialog>
 {% endif %}
