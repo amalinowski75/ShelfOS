@@ -18,11 +18,16 @@
 {% macro line_columns(with_actions=true) -%}
 <colgroup>
   <col />
-  {# Twice what it was: a nested path ("Lab / Rack A / Drawer 3") was being cut
-     off, and a <select> gives no way to scroll or reveal the rest — the value is
-     simply unreadable. There is room to spare in Part, which is the column that
-     yields. #}
-  <col style="width: 560px" />
+  {# A share of the table, not a fixed slab. It has to be generous — a nested path
+     ("Lab / Rack A / Shelf 1 / Drawer 6") is unreadable in a <select>, which
+     offers no way to scroll or reveal the rest — but generous in PIXELS is only
+     generous on a wide screen. At a fixed 560px the numeric and action columns
+     already claim 640px, so a 1366px laptop left Part 78px for the part number,
+     the maker, the description and two hint lines, and anything narrower pushed
+     it to zero and scrolled the table sideways. As a percentage it is ~590px on
+     a wide monitor — the width this was asked for — and gives ground instead of
+     taking it when there is less to go round. #}
+  <col style="width: 26%" />
   <col style="width: 80px" />
   <col style="width: 130px" />
   <col style="width: 130px" />
@@ -158,7 +163,9 @@
             {% endif %}
           </td>
           <td>
-            <select class="control ril-location">
+            {# title, so a path clipped at a narrow width is still readable. #}
+            <select class="control ril-location"
+                    title="{{ (location_options | selectattr('id', 'equalto', p.location_id) | map(attribute='path') | first) or 'no location chosen' }}">
               <option value="">— choose a location —</option>
               {% for opt in location_options %}
               <option value="{{ opt.id }}" {{ 'selected' if opt.id == p.location_id else '' }}>{{ opt.path }}</option>
@@ -260,6 +267,7 @@
                would revert it to blank on screen — a wrong answer, and a
                tempting one to act on. #}
             <select class="control line-location" data-line-id="{{ l.line_id }}"
+                    title="{{ l.location or 'no location chosen' }}"
                     data-last-value="{{ l.location_id if l.location_id is not none else '' }}">
               {% if l.location_id is none %}<option value="">— choose a location —</option>{% endif %}
               {% for opt in location_options %}

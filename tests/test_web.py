@@ -2549,15 +2549,20 @@ def test_the_two_tables_share_one_column_grid(
 
     assert grid("invoice-review") == grid("invoice-lines")
     assert len(grid("invoice-review")) == 6  # one per column, actions included
-    # The location column is the widest of the fixed ones, and deliberately so: a
-    # <select> clips its value with no way to scroll or reveal the rest, so a
-    # nested path ("Lab / Rack A / Shelf 1 / Drawer 6") has to fit outright. A
-    # test cannot measure text — this only stops the number being quietly
-    # shrunk; the fit itself was checked in a browser.
-    widths = [
-        int(m) for m in re.findall(r'width:\s*(\d+)px', "".join(grid("invoice-review")))
-    ]
-    assert widths[0] == max(widths[:-1]) >= 500  # location, ignoring the actions column
+    # Location is a SHARE of the table, not a fixed slab. It has to be generous —
+    # a <select> clips its value with no way to scroll or reveal the rest — but
+    # generous in pixels is only generous on a wide screen: at a fixed 560px a
+    # 1366px laptop left the Part column 78px, and anything narrower pushed it to
+    # zero and scrolled the table sideways. Measured in a browser; a test cannot,
+    # so this pins the shape of the answer rather than the fit.
+    cols = "".join(grid("invoice-review"))
+    assert "width: 26%" in cols  # location, the only proportional one
+    assert len(re.findall(r"width:\s*\d+%", cols)) == 1
+    # …and a clipped path stays readable however narrow it gets: each picker
+    # carries its own value as a title, so hovering reveals what a narrow column
+    # cut off. Anchored to the <select>, since `title=` alone appears all over.
+    assert re.search(r'class="control ril-location"[^>]*\stitle="', html, re.S)
+    assert re.search(r'class="control line-location"[^>]*\stitle="', html, re.S)
     # Fixed layout is what makes a browser honour those widths at all.
     assert html.count('class="data lines-grid"') == 2
 
