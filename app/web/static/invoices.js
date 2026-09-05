@@ -260,7 +260,12 @@ if (detail && lineDialog) {
     // Two different nothings, said differently: an empty catalog is a fact about
     // the inventory, an unreadable one is a fact about this page.
     if (options === null) {
-      showError(lineError, "Could not load the component list — refresh to try again.");
+      // "close and try again", not "refresh": nothing is cached on failure, so
+      // reopening IS the retry, and it costs nothing. A draft invoice is where
+      // someone is mid-review — a reload would throw away their scroll position,
+      // any open panel and whatever was half-typed here. (match_rules.js says
+      // "refresh" and is right to: that load runs once at tableBuilt.)
+      showError(lineError, "Could not load the component list — close and try again.");
     } else if (!options.length) {
       showError(lineError, "No components yet — use “New component” to add one.");
     }

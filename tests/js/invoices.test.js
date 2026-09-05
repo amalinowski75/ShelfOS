@@ -138,6 +138,10 @@ describe("invoices.js — review imported lines inline", () => {
     const error = page.document.getElementById("invoice-line-error");
     expect(error.hidden).toBe(false);
     expect(error.textContent).toContain("Could not load");
+    // The advice has to be the recovery that works: reopening retries (the test
+    // below proves it), and a reload would cost this reviewer their place.
+    expect(error.textContent).toContain("close and try again");
+    expect(error.textContent).not.toContain("refresh");
   });
 
   it("says WHICH nothing it is — an empty catalog is not an unreadable one", async () => {
