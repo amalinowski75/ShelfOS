@@ -518,6 +518,12 @@ class ScannedComponentRead(BaseModel):
     manufacturer: str | None
     description: str | None
     locations: list[ScannedStockRead]
+    #: Whether this component's maker is the one the label named. ``None`` when the
+    #: label named nobody, which is the ordinary case for a bare 1D barcode — an
+    #: unanswerable question rather than a failed test, and the caller must not read
+    #: it as disagreement. Resolved through the alias table, so a bag printed
+    #: ``ONSEMI`` agrees with a component stored as ``ON Semiconductor``.
+    same_manufacturer: bool | None = None
 
 
 class ComponentScanRead(BaseModel):
@@ -526,9 +532,16 @@ class ComponentScanRead(BaseModel):
     ``matches`` is empty when nothing in the inventory carries the part number,
     and may hold several — MPN is not unique — which the caller must not guess
     between.
+
+    An MPN alone does not identify a part: two companies really do print the same
+    number on different components. So the maker the label named travels with the
+    answer, and each match says whether it agrees, leaving the caller to decide
+    what a disagreement means rather than quietly treating it as a hit.
     """
 
     identifiers: list[str]
+    #: The maker the label named, canonicalised. ``None`` if it named none.
+    scanned_manufacturer: str | None = None
     matches: list[ScannedComponentRead]
 
 

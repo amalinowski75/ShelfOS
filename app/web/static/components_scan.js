@@ -189,40 +189,70 @@
     async resolve(code) {
       const resp = await scanFetch("/api/components/scan", "POST", { code });
       if (!resp.ok) throw new ScanMiss(await errorMessage(resp));
-      const { identifiers, matches } = await resp.json();
+      const { identifiers, matches, scanned_manufacturer: scannedMaker } =
+        await resp.json();
       const seen = identifiers.join(" / ") || "this code";
-      if (!matches.length) {
-        // Nothing in the inventory holds this code yet. Instead of a dead-end
-        // miss, open the New Component dialog and hand it the scanned code: its
-        // import field looks the part up and pre-fills the form, so a brand-new
-        // bag goes straight from scan to create without rescanning. Returning
-        // nothing tells scan_putaway the scan was taken care of here.
-        if (window.openComponentDialog) {
-          // Keep the diagnostic the miss used to carry: name what was scanned, so
-          // if the user cancels (or the shop lookup can't resolve it either) the
-          // scan isn't left with no trace on the now-blank panel.
-          showToast(`${seen} isn't in the inventory yet — creating it.`, {
-            tone: "ok",
-          });
-          window.openComponentDialog(
-            (created) => {
-              window.location = `/components/${created.id}`;
-            },
-            null,
-            { importCode: code },
-          );
-          return null;
-        }
-        throw new ScanMiss(`No component matches ${seen}.`);
+      // An MPN is not an identity: two companies print the same number on
+      // different parts. Where the label named its maker, only the components that
+      // agree are this bag — the rest share a number and nothing else, and
+      // accepting stock onto one of those is a silent, invisible error. Where the
+      // label named nobody (same_manufacturer === null), nothing was asked and
+      // every match stands, exactly as before.
+      const confident = matches.filter((m) => m.same_manufacturer !== false);
+
+      // Two ways a bag can turn out not to be a part you already have, and both end
+      // the same way: hand the code to the New Component dialog. Its import field
+      // looks the part up and prefills the form — and where an existing component
+      // shares the number, its own "you may already have this" list offers "This is
+      // it", which adopts that part AND records the spelling, so the next bag from
+      // this maker resolves on its own. Returning nothing tells scan_putaway the
+      // scan was taken care of here.
+      const createFrom = (message, tone, fallback) => {
+        if (!window.openComponentDialog) throw new ScanMiss(fallback);
+        // Say what was scanned. If the user cancels — or the shop lookup can't
+        // resolve it either — the scan is not left with no trace on a blank panel.
+        showToast(message, { tone });
+        window.openComponentDialog(
+          (created) => {
+            window.location = `/components/${created.id}`;
+          },
+          null,
+          { importCode: code },
+        );
+        return null;
+      };
+
+      if (matches.length && !confident.length) {
+        // Same number, different maker: either the same part spelled another way,
+        // or genuinely another company's component. Nothing here can tell those
+        // apart, and the dialog is where that question already gets asked.
+        // Every distinct maker that shares the number, not just the first: with
+        // three matches from three companies, naming one states it as THE other
+        // maker, which is a different (and wrong) claim.
+        const others = [...new Set(matches.map((m) => m.manufacturer).filter(Boolean))];
+        const theirs = others.join(" / ") || "another maker";
+        return createFrom(
+          `${seen} is in stock, but from ${theirs}` +
+            `${scannedMaker ? `, not ${scannedMaker}` : ""} — check whether it is the same part.`,
+          "warn",
+          `${seen} is in stock from a different maker — open it from the table.`,
+        );
       }
-      if (matches.length > 1) {
+      if (!matches.length) {
+        return createFrom(
+          `${seen} isn't in the inventory yet — creating it.`,
+          "ok",
+          `No component matches ${seen}.`,
+        );
+      }
+      if (confident.length > 1) {
         throw new ScanMiss(
-          `${matches.length} components share ${seen} — open one from the table.`,
+          `${confident.length} components share ${seen} — open one from the table.`,
         );
       }
       // One component, and more than one thing you might want with it. Ask, and
       // report the scan as handled: whichever answer comes back drives the rest.
-      askWhatNext(matches[0]);
+      askWhatNext(confident[0]);
       return null;
     },
   });

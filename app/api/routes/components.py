@@ -20,14 +20,16 @@ from app.models.component import Component, ComponentParameter
 from app.models.user import User
 from app.services import component_service as cs
 from app.services import location_service as ls
+from app.services import manufacturer_service as mfs
 from app.services import stock_service as ss
+from app.services._common import normalize
 from app.services.errors import DuplicateComponentError
-from app.services.shops.scan import parse_scan
+from app.services.shops.scan import ScanResult, parse_scan
 
 router = APIRouter(prefix="/api/components", tags=["components"])
 
 
-def _scan_identifiers(code: str) -> list[str]:
+def _scan_identifiers(scan: ScanResult) -> list[str]:
     """Part numbers a scanned label offers, best first, de-duplicated.
 
     The manufacturer's own number leads because that is what a component
@@ -37,7 +39,6 @@ def _scan_identifiers(code: str) -> list[str]:
     supplier_part_number. The URL's segments are the last resort of a QR that
     states nothing outright.
     """
-    scan = parse_scan(code)  # ValidationError → 422
     candidates = [scan.manufacturer_pn, scan.mpn, scan.distributor_pn]
     if not any(candidates):
         from app.api.routes.shops import _url_symbols
@@ -61,7 +62,12 @@ def scan_component(
     match and the stock a relocation would move, so the client never has to
     guess between identifiers or fetch the slots separately.
     """
-    identifiers = _scan_identifiers(payload.code)
+    scan = parse_scan(payload.code)  # ValidationError → 422
+    identifiers = _scan_identifiers(scan)
+    # Through the alias table, so a bag printed "ONSEMI" is measured against the
+    # spelling its components are stored under.
+    scanned_maker = mfs.canonical_name(session, scan.manufacturer)
+    wanted = normalize(scanned_maker) if scanned_maker else ""
     matches: list[ScannedComponentRead] = []
     seen_ids: set[int] = set()
     for identifier in identifiers:
@@ -76,6 +82,17 @@ def scan_component(
                     mpn=component.mpn,
                     manufacturer=component.manufacturer,
                     description=component.notes,
+                    # None, not False, whenever EITHER side named nobody: no one
+                    # was contradicted, and a caller must not read silence as a
+                    # disagreement and refuse a perfectly good putaway. Both ends
+                    # matter — a Farnell invoice prints no manufacturer column at
+                    # all, so every component that arrived on one has no maker to
+                    # be measured against.
+                    same_manufacturer=(
+                        normalize(component.manufacturer) == wanted
+                        if wanted and component.manufacturer
+                        else None
+                    ),
                     locations=[
                         ScannedStockRead(
                             id=slot.location_id,
@@ -86,9 +103,18 @@ def scan_component(
                     ],
                 )
             )
-        if matches:
+        # Only a match that was not contradicted counts as an answer. A set that
+        # all disagree is the opposite of one: the identifiers are tried best
+        # first, so a collision on the manufacturer's number — the very case this
+        # marking exists for — must not stop the search before the distributor's
+        # number, which is shop-unique and may well find the right part.
+        if any(m.same_manufacturer is not False for m in matches):
             break  # a better identifier already answered; don't widen the net
-    return ComponentScanRead(identifiers=identifiers, matches=matches)
+    return ComponentScanRead(
+        identifiers=identifiers,
+        scanned_manufacturer=scanned_maker,
+        matches=matches,
+    )
 
 
 @router.post("", response_model=Component, status_code=status.HTTP_201_CREATED)

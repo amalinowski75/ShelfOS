@@ -467,6 +467,135 @@ describe("components_scan.js — resolving a bag", () => {
     expect(page.document.getElementById("shop-import-url").value).toBe("NOPE-1");
   });
 
+  it("does not put a bag away onto a component that only shares its number", async () => {
+    // The silent-data-loss case. Scan putaway used to match on MPN alone, so a bag
+    // of Molex's part carrying a number Amphenol also uses resolved to one match
+    // and accepted stock onto the wrong component with nothing shown to the user.
+    const SHARED = {
+      identifiers: ["T821108A1S100CEU"],
+      scanned_manufacturer: "Molex",
+      matches: [
+        {
+          id: 42,
+          mpn: "T821108A1S100CEU",
+          manufacturer: "Amphenol",
+          description: "IDC socket, 8 pin",
+          same_manufacturer: false,
+          locations: [{ id: 5, path: "Lab / Rack A / D1", quantity: 100 }],
+        },
+      ],
+    };
+    const page = loadPage(componentsFixture({ withCreate: true }), SCRIPTS_WITH_DIALOG, {
+      fetchImpl: (url) => {
+        if (url === "/api/components/scan") return ok(SHARED);
+        if (url === "/api/shops/lookup")
+          return ok({ category: "widget", mpn: "T821108A1S100CEU", description: "" });
+        return ok({});
+      },
+    });
+    const createOpened = trackOpen(page.document.getElementById("component-dialog"));
+    const putawayOpened = trackOpen(page.document.getElementById("putaway-dialog"));
+    const chooser = trackOpen(page.document.getElementById("scan-choice-dialog"));
+
+    scan(page.document, "bag");
+    await tick();
+
+    // Neither the putaway dialog nor the "what next" chooser: both would be an
+    // offer to move stock onto a part this bag is not.
+    expect(putawayOpened).not.toHaveBeenCalled();
+    expect(chooser).not.toHaveBeenCalled();
+    // The create dialog instead, which asks the question properly — its own "you
+    // may already have this part" list offers adopting the Amphenol one.
+    expect(createOpened).toHaveBeenCalledTimes(1);
+    // A WARNING, not the neutral toast a brand-new bag gets: something IS in stock
+    // under this number, and the user needs to know before they answer.
+    const toast = page.document.querySelector(".toast-warn");
+    expect(toast).toBeTruthy();
+    expect(toast.textContent).toContain("Amphenol");
+    expect(toast.textContent).toContain("Molex");
+  });
+
+  it("names every maker that shares the number, not just the first", async () => {
+    // With three companies on the list, naming one states it as THE other maker.
+    const page = loadPage(componentsFixture({ withCreate: true }), SCRIPTS_WITH_DIALOG, {
+      fetchImpl: (url) => {
+        if (url === "/api/components/scan")
+          return ok({
+            identifiers: ["SHARED-9"],
+            scanned_manufacturer: "Molex",
+            matches: [
+              { id: 1, mpn: "SHARED-9", manufacturer: "Amphenol", description: null,
+                same_manufacturer: false, locations: [] },
+              { id: 2, mpn: "SHARED-9", manufacturer: "Keystone", description: null,
+                same_manufacturer: false, locations: [] },
+            ],
+          });
+        return ok({ category: "widget", mpn: "SHARED-9", description: "" });
+      },
+    });
+    trackOpen(page.document.getElementById("component-dialog"));
+
+    scan(page.document, "bag");
+    await tick();
+
+    const toast = page.document.querySelector(".toast-warn");
+    expect(toast.textContent).toContain("Amphenol");
+    expect(toast.textContent).toContain("Keystone");
+  });
+
+  it("still puts a bag away when the maker agrees, or when the label named none", async () => {
+    // The other half: this must not turn into a dialog for every scan. A label
+    // that names nobody (same_manufacturer null — most 1D barcodes) is not a
+    // disagreement, and neither is one that agrees.
+    for (const same of [true, null]) {
+      const page = loadPage(componentsFixture(), SCRIPTS, {
+        fetchImpl: routing({
+          ...MATCH,
+          scanned_manufacturer: same === true ? "Amphenol" : null,
+          matches: [{ ...MATCH.matches[0], same_manufacturer: same }],
+        }),
+      });
+      syncDialogOpen(page.document, "scan-choice-dialog");
+      scan(page.document, "bag");
+      await tick();
+
+      expect(page.document.getElementById("scan-choice-dialog").open).toBe(true);
+    }
+  });
+
+  it("counts only the components that agree when refusing to guess", async () => {
+    // Two share the number, but only one is this maker's — so there is no
+    // ambiguity to refuse, and reporting "2 components share…" would send the user
+    // to the table to pick between a right answer and an unrelated part.
+    const page = loadPage(componentsFixture(), SCRIPTS, {
+      fetchImpl: routing({
+        identifiers: ["SHARED-1"],
+        scanned_manufacturer: "Molex",
+        // The DISAGREEING one first, so a chooser fed matches[0] instead of
+        // confident[0] offers the wrong part and this test says so.
+        matches: [
+          { id: 2, mpn: "SHARED-1", manufacturer: "Amphenol", description: "theirs",
+            same_manufacturer: false, locations: [] },
+          { id: 1, mpn: "SHARED-1", manufacturer: "Molex", description: "ours",
+            same_manufacturer: true, locations: [] },
+        ],
+      }),
+    });
+    syncDialogOpen(page.document, "scan-choice-dialog");
+    page.window.openStockDialog = vi.fn();
+    scan(page.document, "bag");
+    await tick();
+
+    expect(page.document.getElementById("scan-status").textContent).not.toContain(
+      "share",
+    );
+    expect(page.document.getElementById("scan-choice-dialog").open).toBe(true);
+    // …and it is Molex's part on offer, not the one that merely shares the number.
+    expect(page.document.getElementById("scan-choice-desc").textContent).toContain(
+      "ours",
+    );
+  });
+
   it("re-runs the lookup instead of reopening when a scan is queued behind the first", async () => {
     // A bag scanned while the first lookup is in flight is queued and drained
     // once the create dialog is already up. Reopening then would call showModal()
