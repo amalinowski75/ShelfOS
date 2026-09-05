@@ -163,6 +163,13 @@
     return columns;
   }
 
+  // Only where there IS a table. A first-open failure returns before building
+  // one, so nothing is on screen to mislabel; every construction happens on the
+  // success path below, which is why the constructor can take the plain wording.
+  function setPlaceholder(text) {
+    if (table) table.options.placeholder = text;
+  }
+
   async function loadInventory() {
     setError("");
     const typeId = typeSelect.value;
@@ -177,17 +184,27 @@
       payload = await fetch(`/web/api/components${query}`).then((r) => r.json());
       columns = pickerColumns(payload.columns);
     } catch {
-      setError("Could not load the inventory — pick the type again to retry.");
-      // Empty it. The table outlives the dialog, so on a failed RELOAD the
-      // previous type's parts would sit there under the new type's name — a list
-      // you could pick a part from, answering a question nobody asked. The pick
-      // goes with them: Confirm would otherwise send a part chosen from a list
-      // that is no longer on screen. (No clearHeaderFilter here — a filter over
+      // "close and reopen", because that is the recovery that exists. This runs
+      // from exactly two places — opening the dialog, and a `change` on the type
+      // select — and re-picking the option already selected fires no change, so
+      // "pick the type again" was advice that did nothing. Picking a DIFFERENT
+      // type does reload, but only by asking a different question, which is not
+      // a retry either.
+      setError("Could not load the inventory — close and reopen to retry.");
+      // Empty it, and say WHICH nothing it is. The table outlives the dialog, so
+      // on a failed RELOAD the previous type's parts would sit there under the
+      // new type's name — a list you could pick a part from, answering a
+      // question nobody asked — and its "No components" placeholder would then
+      // claim an empty inventory when what happened is an unreadable one. The
+      // pick goes with the rows: Confirm would otherwise send a part chosen from
+      // a list that is no longer on screen. (No clearHeaderFilter — a filter over
       // zero rows shows nothing, and the next successful load clears it anyway.)
+      setPlaceholder("Could not load the inventory");
       pick(null);
       await table?.setData([]);
       return;
     }
+    setPlaceholder("No components");
     pick(null); // also drops any mark left from the previous list
     if (!table) {
       // Columns AND rows go in at construction: a table built empty and filled a

@@ -356,9 +356,16 @@ describe("bom_pick.js — a feed that cannot be read", () => {
     const error = page.document.getElementById("bom-pick-error");
     expect(error.hidden).toBe(false);
     expect(error.textContent).toContain("Could not load the inventory");
-    // The retry that works: this load re-runs on a type change, so say that
-    // rather than sending the user to a reload.
-    expect(error.textContent).toContain("pick the type again");
+    // The advice has to name the recovery that exists. loadInventory runs from
+    // exactly two places — opening the dialog, and a `change` on the type select
+    // — and re-picking the already-selected option fires no change, so telling
+    // the user to pick the type again would be telling them to do nothing.
+    expect(error.textContent).toContain("close and reopen");
+    expect(error.textContent).not.toContain("pick the type again");
+    // No table to mislabel: a first-open failure returns before constructing one,
+    // so there is no "No components" on screen to contradict the error above it.
+    // The failed-RELOAD case, where the table does exist, is covered below.
+    expect(page.window.Tabulator.options).toBeUndefined();
   });
 
   it("empties the list rather than offering the previous type's parts", async () => {
@@ -396,10 +403,51 @@ describe("bom_pick.js — a feed that cannot be read", () => {
 
     expect(page.window.Tabulator.rows).toEqual([]);
     expect(page.document.getElementById("bom-pick-error").hidden).toBe(false);
+    // An empty table has to say which nothing it is, here as in app.js.
+    expect(page.window.Tabulator.options.placeholder).toContain("Could not load");
     // The pick goes too: a part chosen from the old type's list is not an answer
     // about the new one, and Confirm would happily send it.
     expect(page.document.getElementById("bom-pick-selected").textContent).not.toContain(
       "GRM188R71H104K",
     );
+  });
+});
+
+describe("bom_pick.js — recovering after a failed load", () => {
+  it("puts the placeholder back once the feed answers again", async () => {
+    // A stale "Could not load" over a list that loaded fine is the same class of
+    // wrong answer, just pointing the other way.
+    const failing = (url) =>
+      String(url).startsWith("/web/api/components")
+        ? Promise.resolve({ ok: true, json: async () => ({ detail: "Server Error" }) })
+        : Promise.resolve({ ok: true, json: async () => ({ id: 1 }) });
+    const page = loadPage(bomPickFixture(), SCRIPTS, { fetchImpl: feedFetch });
+    const changeType = async (value) => {
+      const select = page.document.getElementById("bom-pick-type");
+      select.value = value;
+      select.dispatchEvent(
+        new page.window.Event("change", { bubbles: true, cancelable: true }),
+      );
+      await tick();
+      await tick();
+    };
+
+    await open(page); // constructs the table
+    await tick();
+    page.window.fetch = failing;
+    await changeType("9");
+    expect(page.window.Tabulator.options.placeholder).toContain("Could not load");
+
+    page.window.fetch = feedFetch;
+    const select = page.document.getElementById("bom-pick-type");
+    select.value = "9";
+    select.dispatchEvent(
+      new page.window.Event("change", { bubbles: true, cancelable: true }),
+    );
+    await tick();
+    await tick();
+
+    expect(page.window.Tabulator.options.placeholder).toBe("No components");
+    expect(page.document.getElementById("bom-pick-error").hidden).toBe(true);
   });
 });
