@@ -31,6 +31,7 @@ from app.models.enums import (
     ParameterDataType,
     UserRole,
 )
+from app.models.invoice import InvoiceImportLine
 from app.models.user import User
 from app.services import attachment_service as ats
 from app.services import audit_service, shops
@@ -685,20 +686,26 @@ def invoice_detail(
     # another way, and finalizing would then file the part twice. The same question
     # the New Component dialog and a bag scan ask; asked here too, because this is
     # the third and last way a part gets into the catalog.
-    already_in_stock = {
-        line.id: [
+    def _candidates(line: InvoiceImportLine) -> list[dict[str, Any]]:
+        # The line's spelling resolved ONCE, not once per candidate: canonical_name
+        # reads the whole alias table, and a draft can carry a hundred staged rows.
+        canonical = mfs.canonical_name(session, line.manufacturer)
+        return [
             {
                 "id": part.id,
                 "manufacturer": part.manufacturer,
                 "description": part.notes,
-                "same_manufacturer": mfs.agrees_with(
-                    mfs.canonical_name(session, line.manufacturer), part.manufacturer
-                ),
+                # True marks the row that already names this maker (through any
+                # alias). A line can be staged for reasons other than its
+                # manufacturer — an ambiguous number, a type nothing could guess —
+                # and where one candidate agrees, saying so is the difference
+                # between a list the reviewer has to read and an answer.
+                "same_manufacturer": mfs.agrees_with(canonical, part.manufacturer),
             }
             for part in cs.find_parts_sharing_mpn(session, line.mpn)
         ]
-        for line in pending_import
-    }
+
+    already_in_stock = {line.id: _candidates(line) for line in pending_import}
     return templates.TemplateResponse(
         request,
         "invoice_detail.html",

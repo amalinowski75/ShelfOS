@@ -149,6 +149,12 @@
               <li>
                 <a href="/components/{{ c.id }}" target="_blank" rel="noopener"
                    class="existing-name">{{ c.manufacturer or "— no manufacturer —" }}</a>
+                {# Where a candidate already names this maker (through any alias),
+                   say so. A line can be staged for reasons other than its
+                   manufacturer — an ambiguous number, a type nothing could guess —
+                   and marking the agreeing row turns a list the reviewer has to
+                   read into an answer. #}
+                {% if c.same_manufacturer %}<span class="badge b-ok">same maker</span>{% endif %}
                 {% if c.description %}<span class="muted small"> · {{ c.description }}</span>{% endif %}
                 <button type="button" class="btn btn-secondary btn-sm"
                         data-act="adopt-existing" data-component-id="{{ c.id }}"

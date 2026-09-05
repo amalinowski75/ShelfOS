@@ -2314,6 +2314,42 @@ def test_a_staged_line_says_when_the_number_is_already_in_stock(
     # The consequence is stated BEFORE the click, since picking one reloads the page.
     assert "records that “OTHERCO”" in html
     assert "so later invoices match on their own" in html
+    # Nothing agrees here, so nothing claims to.
+    assert "same maker" not in html
+
+
+def test_a_candidate_that_already_names_the_maker_is_marked(
+    client: TestClient,
+    session,  # type: ignore[no-untyped-def]
+) -> None:
+    """A line can be staged for reasons other than its manufacturer.
+
+    An ambiguous number, or a type nothing could guess — and then one candidate
+    may already be the right maker. Marking it turns a list the reviewer has to
+    read into an answer.
+    """
+    handles = _invoice_with_line(client)
+    invoice_id = handles["invoice"]["id"]  # type: ignore[index]
+    ctype = handles["type"]["id"] if "type" in handles else 1  # type: ignore[index]
+    named = client.post(
+        "/api/components",
+        json={"type_id": ctype, "mpn": "SAME-1", "manufacturer": "Acme"},
+    ).json()
+    # A genuinely different spelling, not just a different case — normalize()
+    # already folds case, so "ACME" would agree with "Acme" on its own.
+    _staged_line(session, invoice_id, mpn="SAME-1", manufacturer="Acme Components")
+
+    html = client.get(f"/invoices/{invoice_id}").text
+
+    assert f'data-component-id="{named["id"]}"' in html
+    assert "same maker" not in html  # nothing yet says the two are one company
+
+    # Teach it, and the same page now says which candidate is the answer.
+    client.post(
+        "/api/manufacturers/aliases",
+        json={"alias": "Acme Components", "canonical": "Acme"},
+    )
+    assert "same maker" in client.get(f"/invoices/{invoice_id}").text
 
 
 def test_a_staged_line_with_no_twin_says_nothing(

@@ -13,9 +13,10 @@ from decimal import Decimal
 
 import pytest
 from app import config
+from app.models.invoice import InvoiceImportLine
+from app.services import audit_service, invoice_service, shops
 from app.services import component_service as cs
 from app.services import invoice_import_service as iis
-from app.services import invoice_service, shops
 from app.services import manufacturer_service as mfs
 from app.services.errors import NotFoundError, ValidationError
 from app.services.invoice_import import ParsedInvoice, ParsedLine
@@ -978,3 +979,97 @@ def test_adopting_refuses_a_line_from_another_invoice(
         iis.adopt_pending(
             session, other.id, row.id, component_id=existing.id, user_id=1
         )
+
+
+def test_adopting_a_part_that_names_no_maker_works(
+    session: Session, monkeypatch
+) -> None:
+    """The button the template renders for that row has to succeed.
+
+    ``record_alias`` tolerates a blank alias but RAISES on a blank canonical, so
+    calling it unguarded made "This is it" fail every time on exactly the rows a
+    Farnell invoice leaves behind — it prints no manufacturer column, so every
+    component that arrived on one has none. A component with no maker simply has
+    nothing to be an alias of; that is not an error.
+    """
+    rtype = cs.create_type(session, "regulator")
+    existing = cs.create_component_with_values(
+        session, rtype.id, mpn="NM1", manufacturer=None, values=[]
+    )
+    invoice_id, row = _import_one_ready(
+        session, monkeypatch, mpn="NM1", manufacturer="SOMECO"
+    )
+
+    line = iis.adopt_pending(
+        session, invoice_id, row.id, component_id=existing.id, user_id=1
+    )
+
+    assert line.component_id == existing.id
+    assert iis.list_pending(session, invoice_id) == []
+    assert mfs.list_aliases(session) == []  # nothing to record, and none recorded
+
+
+def test_an_adoption_is_not_logged_as_a_dismissal(
+    session: Session, monkeypatch
+) -> None:
+    """The log has to say WHERE the line went, not just that the row vanished.
+
+    dismiss_pending's own reason for existing is that a line which never became
+    stock must be distinguishable from one that was never imported. An adoption is
+    neither — it did become stock — and add_line audits nothing of its own, so
+    without a field of its own the component it was filed against is nowhere.
+    """
+    rtype = cs.create_type(session, "regulator")
+    existing = cs.create_component_with_values(
+        session, rtype.id, mpn="A1", manufacturer="Acme", values=[]
+    )
+    invoice_id, row = _import_one_ready(
+        session, monkeypatch, mpn="A1", manufacturer="ACME CORP"
+    )
+
+    iis.adopt_pending(session, invoice_id, row.id, component_id=existing.id, user_id=1)
+
+    entries = audit_service.list_entries(
+        session, entity_type="invoice", entity_id=invoice_id
+    )
+    adopted = [
+        e
+        for e in entries
+        if e.field
+        == audit_service.import_line_field(row.line_no, audit_service.FIELD_ADOPTED)
+    ]
+    assert len(adopted) == 1
+    assert adopted[0].new_value == str(existing.id)  # which part, not merely "gone"
+    dismissed = [
+        e
+        for e in entries
+        if e.field
+        == audit_service.import_line_field(row.line_no, audit_service.FIELD_DELETED)
+    ]
+    assert dismissed == []
+
+
+def test_a_rejected_line_records_no_alias(session: Session, monkeypatch) -> None:
+    """The alias table is what an admin has to trust, so it goes last.
+
+    add_line validates the staged quantity and price. Recorded first, an alias
+    would permanently outlive an adoption that never happened.
+    """
+    rtype = cs.create_type(session, "regulator")
+    existing = cs.create_component_with_values(
+        session, rtype.id, mpn="B1", manufacturer="Acme", values=[]
+    )
+    invoice_id, row = _import_one_ready(
+        session, monkeypatch, mpn="B1", manufacturer="ACME CORP"
+    )
+    staged = session.get(InvoiceImportLine, row.id)
+    staged.quantity = 0  # what add_line refuses
+    session.add(staged)
+    session.commit()
+
+    with pytest.raises(ValidationError):
+        iis.adopt_pending(
+            session, invoice_id, row.id, component_id=existing.id, user_id=1
+        )
+
+    assert mfs.list_aliases(session) == []

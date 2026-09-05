@@ -450,12 +450,6 @@ def adopt_pending(
     staging = get_pending(session, invoice_id, import_line_id)
     component = cs.require_live_component(session, component_id)
 
-    # Record the alias BEFORE the line, and only when the two spellings really
-    # differ — canonical_name resolves through any alias already known, so
-    # re-answering an invoice whose spelling is already taught adds nothing.
-    manufacturer_service.record_alias(
-        session, alias=staging.manufacturer, canonical=component.manufacturer
-    )
     line = invoice_service.add_line(
         session,
         invoice_id,
@@ -465,19 +459,42 @@ def adopt_pending(
         supplier_part_number=staging.supplier_part_number,
         location_id=staging.location_id,
     )
+    # FIELD_ADOPTED, not the FIELD_DELETED a dismissal writes: those would be
+    # byte-identical, and the log exists precisely to tell a line that never became
+    # stock from one that was never imported. This one DID become stock, and
+    # add_line audits nothing of its own, so without this the component it was filed
+    # against appears nowhere in the trail.
     audit_service.record_change(
         session,
         entity_type="invoice",
         entity_id=invoice_id,
         field=audit_service.import_line_field(
-            staging.line_no, audit_service.FIELD_DELETED
+            staging.line_no, audit_service.FIELD_ADOPTED
         ),
-        old_value=False,
-        new_value=True,
+        old_value=None,
+        new_value=component_id,
         user_id=user_id,
     )
     session.delete(staging)
     session.commit()
+
+    # The alias LAST, and only where there is one to record. Two guards, for two
+    # different reasons.
+    #
+    # Ordering: add_line validates the staged quantity and price and can reject
+    # them, so an alias written first would be a permanent record of an adoption
+    # that never happened — in the one table an admin has to read and trust.
+    # Last, a failure here loses only the convenience; the line is already filed.
+    #
+    # And a component with NO manufacturer has nothing to be an alias OF.
+    # record_alias tolerates a blank alias but raises on a blank canonical, so
+    # calling it unguarded made "This is it" fail every time on exactly the rows a
+    # Farnell invoice leaves behind — the same silence-is-not-a-contradiction rule
+    # `agrees_with` states, arriving from the other end.
+    if component.manufacturer:
+        manufacturer_service.record_alias(
+            session, alias=staging.manufacturer, canonical=component.manufacturer
+        )
     return line
 
 
