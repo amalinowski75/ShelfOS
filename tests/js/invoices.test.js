@@ -144,6 +144,59 @@ describe("invoices.js — review imported lines inline", () => {
     expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
   });
 
+  it("keeps the evidence collapsed until asked for", async () => {
+    // On a long invoice most lines are unremarkable; a list under every one of
+    // them would bury the few that need a decision.
+    const { document } = loadPage(detailFixture({ pending: true }), SCRIPTS);
+    const chip = document.querySelector('[data-act="show-existing"]');
+    const panel = document.getElementById("existing-21");
+    expect(panel.hidden).toBe(true);
+
+    chip.click();
+    expect(panel.hidden).toBe(false);
+    expect(chip.getAttribute("aria-expanded")).toBe("true");
+
+    chip.click(); // and it closes again
+    expect(panel.hidden).toBe(true);
+    expect(chip.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("“This is it” files the line against that component, with CSRF", async () => {
+    const { document, fetchMock, navigations } = loadPage(
+      detailFixture({ pending: true }),
+      SCRIPTS,
+      { fetchImpl: () => Promise.resolve({ ok: true, json: async () => ({}) }) },
+    );
+    document.querySelector('[data-act="adopt-existing"]').click();
+    await tick();
+
+    const [url, opts] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/invoices/7/import-lines/21/adopt");
+    expect(opts.method).toBe("POST");
+    expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
+    expect(JSON.parse(opts.body)).toEqual({ component_id: 88 });
+    // A reload, not a hand-moved row: the line has crossed from the review table
+    // to the Lines table, and the totals and the pending count move with it.
+    expect(navigations.length).toBe(1);
+  });
+
+  it("reports an adopt that the server refused, and does not reload", async () => {
+    const { document, navigations } = loadPage(detailFixture({ pending: true }), SCRIPTS, {
+      fetchImpl: () =>
+        Promise.resolve({
+          ok: false,
+          json: async () => ({ detail: "component not found" }),
+        }),
+    });
+    document.querySelector('[data-act="adopt-existing"]').click();
+    await tick();
+
+    const error = document.getElementById("invoice-review-error");
+    expect(error.hidden).toBe(false);
+    expect(error.textContent).toBe("component not found");
+    expect(navigations.length).toBe(0);
+  });
+
   it("Edit opens the New Component dialog in stage mode with the row's prefill", async () => {
     const { window, document } = loadPage(detailFixture({ pending: true }), SCRIPTS);
     // The component dialog is a shared global; stub it to capture the call.

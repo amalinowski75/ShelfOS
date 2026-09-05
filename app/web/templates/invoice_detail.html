@@ -104,6 +104,17 @@
             <span class="mono">{{ p.mpn or ("Line " ~ p.line_no) }}</span>
             {% if p.manufacturer %}<span class="muted"> · {{ p.manufacturer }}</span>{% endif %}
             {% if p.description %}<div class="muted small">{{ p.description }}</div>{% endif %}
+            {# Nothing matched this line on maker + number, but something in the
+               inventory carries the same NUMBER. Either the same part under a maker
+               spelled another way, or another company's part that shares it — only a
+               person can tell, so this states the fact and offers the choice rather
+               than deciding. #}
+            {% if already_in_stock.get(p.id) %}
+            <button type="button" class="badge b-warn linkish" data-act="show-existing"
+                    aria-expanded="false" aria-controls="existing-{{ p.id }}">
+              Already in stock?
+            </button>
+            {% endif %}
           </td>
           <td>
             {% set ns = namespace(name=None) %}
@@ -125,6 +136,35 @@
             <button type="button" class="btn btn-ghost btn-sm" data-act="dismiss-import">Dismiss</button>
           </td>
         </tr>
+        {% if already_in_stock.get(p.id) %}
+        <tr class="existing-row" id="existing-{{ p.id }}" hidden>
+          <td colspan="6">
+            <p class="muted small existing-lead">These carry the same number.
+              {% if p.manufacturer %}This line says <strong>{{ p.manufacturer }}</strong>.{% endif %}
+              Picking one files this line against that component instead of creating a
+              second one{% if p.manufacturer %}, and records that “{{ p.manufacturer }}”
+              means that manufacturer, so later invoices match on their own{% endif %}.</p>
+            <ul class="existing-list">
+              {% for c in already_in_stock[p.id] %}
+              <li>
+                <a href="/components/{{ c.id }}" target="_blank" rel="noopener"
+                   class="existing-name">{{ c.manufacturer or "— no manufacturer —" }}</a>
+                {# Where a candidate already names this maker (through any alias),
+                   say so. A line can be staged for reasons other than its
+                   manufacturer — an ambiguous number, a type nothing could guess —
+                   and marking the agreeing row turns a list the reviewer has to
+                   read into an answer. #}
+                {% if c.same_manufacturer %}<span class="badge b-ok">same maker</span>{% endif %}
+                {% if c.description %}<span class="muted small"> · {{ c.description }}</span>{% endif %}
+                <button type="button" class="btn btn-secondary btn-sm"
+                        data-act="adopt-existing" data-component-id="{{ c.id }}"
+                        data-import-line-id="{{ p.id }}">This is it</button>
+              </li>
+              {% endfor %}
+            </ul>
+          </td>
+        </tr>
+        {% endif %}
         {% endfor %}
       </tbody>
     </table>

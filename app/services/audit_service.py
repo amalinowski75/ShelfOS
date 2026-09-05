@@ -52,6 +52,12 @@ FIELD_DELETED: Final = "deleted"
 # rather than folded into it, so a reader filtering on "deleted" gets the event
 # and a reader looking for the words gets them.
 FIELD_DELETED_REASON: Final = "deleted_reason"
+# A staged import line filed against a component that already existed, rather than
+# creating one at finalize. Distinct from FIELD_DELETED, which the same row would
+# otherwise write: the log's whole purpose there is to tell a line that never became
+# stock from one that was never imported, and an adoption is neither — it DID become
+# stock, on a part the log should name. ``new_value`` carries the component id.
+FIELD_ADOPTED: Final = "adopted_component_id"
 FIELD_LOCATION_ID: Final = "location_id"
 FIELD_IS_FINALIZED: Final = "is_finalized"
 FIELD_TOTAL_GROSS: Final = "total_gross"

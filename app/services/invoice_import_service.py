@@ -22,7 +22,13 @@ from app.models.component import ComponentType
 from app.models.enums import AttachmentKind, MountingType
 from app.models.invoice import Invoice, InvoiceImportLine, InvoiceLine
 from app.models.location import Location
-from app.services import attachment_service, audit_service, invoice_service, shops
+from app.services import (
+    attachment_service,
+    audit_service,
+    invoice_service,
+    manufacturer_service,
+    shops,
+)
 from app.services import component_service as cs
 from app.services._common import require_entity
 from app.services.errors import (
@@ -411,6 +417,85 @@ def dismiss_pending(
     )
     session.delete(staging)
     session.commit()
+
+
+def adopt_pending(
+    session: Session,
+    invoice_id: int,
+    import_line_id: int,
+    *,
+    component_id: int,
+    user_id: int,
+) -> InvoiceLine:
+    """File a staged line against a component already in stock, not a new one.
+
+    The answer to "you may already have this part" on the review table. The line
+    was staged because nothing matched it on manufacturer + MPN, but a component
+    carrying the same NUMBER can still be the same part under a maker spelled
+    another way — and only a person can tell that from another company's part that
+    happens to share the number.
+
+    Saying so does two things. The line becomes a real invoice line on that
+    component, so finalize will not create a second one; and the spelling the
+    invoice used is recorded as an alias, so the next invoice from this supplier
+    matches on its own and the question is not asked again. That second half is the
+    whole point of routing this through here rather than letting the user dismiss
+    the line and add it by hand.
+
+    The staged row's location comes along if one was chosen. A line still needs a
+    location before finalize, and having just picked one on the review row, being
+    sent to a dialog to pick it again would be a poor thanks.
+    """
+    _require_draft_invoice(session, invoice_id)
+    staging = get_pending(session, invoice_id, import_line_id)
+    component = cs.require_live_component(session, component_id)
+
+    line = invoice_service.add_line(
+        session,
+        invoice_id,
+        component_id=component_id,
+        quantity=staging.quantity,
+        unit_price=staging.unit_price,
+        supplier_part_number=staging.supplier_part_number,
+        location_id=staging.location_id,
+    )
+    # FIELD_ADOPTED, not the FIELD_DELETED a dismissal writes: those would be
+    # byte-identical, and the log exists precisely to tell a line that never became
+    # stock from one that was never imported. This one DID become stock, and
+    # add_line audits nothing of its own, so without this the component it was filed
+    # against appears nowhere in the trail.
+    audit_service.record_change(
+        session,
+        entity_type="invoice",
+        entity_id=invoice_id,
+        field=audit_service.import_line_field(
+            staging.line_no, audit_service.FIELD_ADOPTED
+        ),
+        old_value=None,
+        new_value=component_id,
+        user_id=user_id,
+    )
+    session.delete(staging)
+    session.commit()
+
+    # The alias LAST, and only where there is one to record. Two guards, for two
+    # different reasons.
+    #
+    # Ordering: add_line validates the staged quantity and price and can reject
+    # them, so an alias written first would be a permanent record of an adoption
+    # that never happened — in the one table an admin has to read and trust.
+    # Last, a failure here loses only the convenience; the line is already filed.
+    #
+    # And a component with NO manufacturer has nothing to be an alias OF.
+    # record_alias tolerates a blank alias but raises on a blank canonical, so
+    # calling it unguarded made "This is it" fail every time on exactly the rows a
+    # Farnell invoice leaves behind — the same silence-is-not-a-contradiction rule
+    # `agrees_with` states, arriving from the other end.
+    if component.manufacturer:
+        manufacturer_service.record_alias(
+            session, alias=staging.manufacturer, canonical=component.manufacturer
+        )
+    return line
 
 
 def update_pending(

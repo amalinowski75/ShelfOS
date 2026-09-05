@@ -376,6 +376,49 @@ if (detail && lineDialog) {
     const button = event.target.closest("[data-act]");
     if (!button) return;
     const row = button.closest("tr");
+    if (button.dataset.act === "show-existing") {
+      // The evidence sits in a row of its own, collapsed: on a long invoice most
+      // lines are unremarkable, and a list under every one of them would bury the
+      // few that need a decision.
+      const panel = document.getElementById(
+        button.getAttribute("aria-controls"),
+      );
+      if (panel) {
+        panel.hidden = !panel.hidden;
+        button.setAttribute("aria-expanded", String(!panel.hidden));
+      }
+      return;
+    }
+    if (button.dataset.act === "adopt-existing") {
+      // This line IS that component, spelled differently. The staged row becomes a
+      // real line on it — so finalize won't create a second — and the invoice's
+      // spelling is recorded, so the next one matches on its own.
+      guard(async () => {
+        const resp = await fetch(
+          `/api/invoices/${invoiceId}/import-lines/` +
+            `${button.dataset.importLineId}/adopt`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-CSRF-Token": csrfToken,
+            },
+            body: JSON.stringify({
+              component_id: Number(button.dataset.componentId),
+            }),
+          },
+        );
+        if (!resp.ok) {
+          showError(reviewError, await errorMessage(resp));
+          return;
+        }
+        // Reload rather than move the row by hand: the line has crossed from the
+        // review table to the Lines table, and the totals, the pending count and
+        // the Finalize button all change with it.
+        window.location.reload();
+      });
+      return;
+    }
     if (button.dataset.act === "edit-import") {
       // Reuse the New Component dialog in "stage" mode: it renders the type, identity
       // fields and the type's parameters (matching from the description), then saves to
