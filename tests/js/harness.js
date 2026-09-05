@@ -464,7 +464,7 @@ export function bomPickFixture(types = [{ id: 3, name: "capacitor" }]) {
       <dl id="bom-pick-facts"></dl>
       <select id="bom-pick-type"><option value="">All types</option>${options}</select>
       <div id="bom-pick-table"></div>
-      <p class="error-row" id="bom-pick-error-row" hidden>
+      <p class="error-row" id="bom-pick-error-row" role="alert" hidden>
         <span id="bom-pick-error"></span>
         <button type="button" id="bom-pick-retry" hidden>Retry</button>
       </p>
@@ -667,7 +667,7 @@ export function detailFixture({
           </ul>
         </div>
       </div>
-      <p class="error-row" id="invoice-line-error-row" hidden>
+      <p class="error-row" id="invoice-line-error-row" role="alert" hidden>
         <span id="invoice-line-error"></span>
         <button type="button" id="invoice-line-retry" hidden>Retry</button>
       </p>

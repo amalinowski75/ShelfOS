@@ -358,7 +358,10 @@ describe("bom_pick.js — a feed that cannot be read", () => {
     await tick();
 
     const error = page.document.getElementById("bom-pick-error");
-    expect(page.document.getElementById("bom-pick-error-row").hidden).toBe(false);
+    const row = page.document.getElementById("bom-pick-error-row");
+    expect(row.hidden).toBe(false);
+    // Announced, since the button beside it is now the only instruction.
+    expect(row.getAttribute("role")).toBe("alert");
     expect(error.textContent).toContain("Could not load the inventory");
     // The ACTION, not a sentence about it. Nothing else here re-runs the load —
     // re-picking the already-selected type fires no change — so every wording of

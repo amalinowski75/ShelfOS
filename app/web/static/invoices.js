@@ -204,6 +204,10 @@ if (detail && lineDialog) {
     lineErrorRow.hidden = false;
   }
   function clearLineError() {
+    // The TEXT too, as bom_pick's setError("") does. A dismissed message left in
+    // the DOM is exactly what the .error-row[hidden] bug turned into a visible
+    // one; clearing it makes that failure mode harmless rather than invisible.
+    lineError.textContent = "";
     lineErrorRow.hidden = true;
     lineRetry.hidden = true;
   }

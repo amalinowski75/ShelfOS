@@ -231,12 +231,38 @@ describe("invoices.js — review imported lines inline", () => {
     expect(calls).toBe(2);
     expect(page.document.getElementById("invoice-line-error-row").hidden).toBe(true);
     expect(retry.hidden).toBe(true);
+    // The TEXT goes with the row. Left in the DOM it is one CSS mistake away from
+    // being read out or shown again — which is exactly how the .error-row[hidden]
+    // bug surfaced.
+    expect(page.document.getElementById("invoice-line-error").textContent).toBe("");
     expect(
       page.document.querySelectorAll(
         "#invoice-line-form select[name=component_id] option",
       ).length,
     ).toBe(1);
     expect(opened.length).toBe(1); // still the same open — no reopen
+  });
+
+  it("announces the failure, since the message is the only instruction left", async () => {
+    // "The user is already looking at it" is a sighted premise: the row appears
+    // asynchronously inside an open modal and now carries the ONLY guidance on
+    // recovering, the wording having been deliberately removed in favour of the
+    // button. alert, not status: this reports a failure, not a state.
+    const page = loadPage(detailFixture(), SCRIPTS, {
+      fetchImpl: (url) =>
+        Promise.resolve({
+          ok: true,
+          json: async () => (url === "/web/api/components" ? { detail: "nope" } : {}),
+        }),
+    });
+    page.document.getElementById("invoice-line-dialog").showModal = () => {};
+    page.document.getElementById("invoice-addline-btn").click();
+    await tick();
+    await tick();
+
+    const row = page.document.getElementById("invoice-line-error-row");
+    expect(row.getAttribute("role")).toBe("alert");
+    expect(row.hidden).toBe(false); // announced only once it is actually shown
   });
 
   it("offers no Retry for an empty catalog or a rejected save", async () => {

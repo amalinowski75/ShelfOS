@@ -2587,3 +2587,29 @@ def test_a_read_only_invoice_drops_the_actions_column_from_the_grid_too(
     headers = re.findall(r"<th\b[^>]*>", table.split("</thead>")[0])
 
     assert len(cols) == len(headers) == 5
+
+
+def test_both_dialogs_announce_a_failed_load_and_offer_the_action(
+    client: TestClient, tmp_path, monkeypatch  # type: ignore[no-untyped-def]
+) -> None:
+    """The message is the only instruction left, so it has to be announced.
+
+    The wording that used to say how to retry was removed on purpose in favour of
+    a button — which makes "the user is already looking at it" a sighted premise.
+    Asserted against the real templates: the JS suite reads its own fixture copy
+    of this markup, so it cannot see the two drift apart.
+    """
+    import re
+
+    handles = _invoice_with_line(client)
+    invoice_html = client.get(f"/invoices/{handles['invoice']['id']}").text  # type: ignore[index]
+    bom_id = _upload_bom(client, tmp_path, monkeypatch)
+    bom_html = client.get(f"/boms/{bom_id}").text
+
+    for html, prefix in ((invoice_html, "invoice-line"), (bom_html, "bom-pick")):
+        row = re.search(rf'<p class="error-row" id="{prefix}-error-row"[^>]*>', html)
+        assert row, prefix
+        # alert, not status: this reports a failure, not a state.
+        assert 'role="alert"' in row.group(0), prefix
+        assert "hidden" in row.group(0), prefix  # only announced once shown
+        assert f'id="{prefix}-retry"' in html, prefix
