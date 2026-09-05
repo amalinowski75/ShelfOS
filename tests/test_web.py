@@ -2549,6 +2549,15 @@ def test_the_two_tables_share_one_column_grid(
 
     assert grid("invoice-review") == grid("invoice-lines")
     assert len(grid("invoice-review")) == 6  # one per column, actions included
+    # The location column is the widest of the fixed ones, and deliberately so: a
+    # <select> clips its value with no way to scroll or reveal the rest, so a
+    # nested path ("Lab / Rack A / Shelf 1 / Drawer 6") has to fit outright. A
+    # test cannot measure text — this only stops the number being quietly
+    # shrunk; the fit itself was checked in a browser.
+    widths = [
+        int(m) for m in re.findall(r'width:\s*(\d+)px', "".join(grid("invoice-review")))
+    ]
+    assert widths[0] == max(widths[:-1]) >= 500  # location, ignoring the actions column
     # Fixed layout is what makes a browser honour those widths at all.
     assert html.count('class="data lines-grid"') == 2
 

@@ -18,7 +18,11 @@
 {% macro line_columns(with_actions=true) -%}
 <colgroup>
   <col />
-  <col style="width: 280px" />
+  {# Twice what it was: a nested path ("Lab / Rack A / Drawer 3") was being cut
+     off, and a <select> gives no way to scroll or reveal the rest — the value is
+     simply unreadable. There is room to spare in Part, which is the column that
+     yields. #}
+  <col style="width: 560px" />
   <col style="width: 80px" />
   <col style="width: 130px" />
   <col style="width: 130px" />
