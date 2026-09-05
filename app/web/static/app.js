@@ -313,13 +313,40 @@ function currentTypeQuery() {
 
 async function loadTable() {
   columnWidths = readColumnWidths(); // another tab may have resized since
-  const payload = await fetch(
-    `/web/api/components${currentTypeQuery()}`,
-  ).then((r) => r.json());
-  const columns = payload.columns.map(columnDef);
-  columns.push(actionColumn());
-  table.setColumns(columns);
-  await table.setData(payload.data);
+  // An HTTP failure body parses as JSON perfectly well and simply has no
+  // `columns` key, so the map below throws on a 404 or a 500 as surely as on a
+  // 200 of the wrong shape — one mechanism, caught here rather than guarded
+  // against with a shape test no case could reach. Without the catch the throw
+  // escaped into `tableBuilt` and the type filter's change handler, where
+  // nothing was waiting for it.
+  let columns = null;
+  let rows = [];
+  try {
+    const payload = await fetch(
+      `/web/api/components${currentTypeQuery()}`,
+    ).then((r) => r.json());
+    columns = payload.columns.map(columnDef);
+    rows = payload.data;
+  } catch {
+    columns = null;
+  }
+  // A failure EMPTIES the table. From tableBuilt there is nothing to lose, but
+  // from the type filter this is the whole point: the throw used to land before
+  // setData, so the table kept the previous type's rows while the filter above
+  // it read the new one. Rows that answer a question nobody asked are worse than
+  // none, and the placeholder is what says which of the two you are looking at.
+  // "refresh" here, unlike the invoice dialog's "close and try again": this table
+  // IS the page, so there is no cheaper recovery to point at and nothing
+  // half-typed for a reload to throw away. (Changing the type filter also retries,
+  // but only by changing what you asked for, which is poor advice.)
+  table.options.placeholder = columns
+    ? "No components"
+    : "Could not load components — refresh to try again";
+  if (columns) {
+    columns.push(actionColumn());
+    table.setColumns(columns);
+  }
+  await table.setData(rows);
   // The rows that SURVIVED, not the ones that arrived: a header filter outlives
   // both setColumns and setData, and loadTable runs on every type-filter change
   // and after every Add/Take from a row button. Filling from `payload.data` here

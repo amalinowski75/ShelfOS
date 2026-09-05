@@ -337,3 +337,69 @@ describe("bom_pick.js — absent for read-only", () => {
     expect(window.openBomPicker).toBeUndefined();
   });
 });
+
+describe("bom_pick.js — a feed that cannot be read", () => {
+  const failing = (url) =>
+    String(url).startsWith("/web/api/components")
+      ? Promise.resolve({ ok: true, json: async () => ({ detail: "Server Error" }) })
+      : Promise.resolve({ ok: true, json: async () => ({ id: 1 }) });
+
+  it("reports it instead of throwing out of the opener", async () => {
+    // The catch used to end one line early: an HTTP failure body parses as JSON
+    // perfectly well and has no `columns`, so pickerColumns threw OUTSIDE it —
+    // out of the dialog opener, with nobody waiting.
+    const page = loadPage(bomPickFixture(), SCRIPTS, { fetchImpl: failing });
+
+    await open(page); // must not throw
+    await tick();
+
+    const error = page.document.getElementById("bom-pick-error");
+    expect(error.hidden).toBe(false);
+    expect(error.textContent).toContain("Could not load the inventory");
+    // The retry that works: this load re-runs on a type change, so say that
+    // rather than sending the user to a reload.
+    expect(error.textContent).toContain("pick the type again");
+  });
+
+  it("empties the list rather than offering the previous type's parts", async () => {
+    // The table outlives the dialog. On a failed RELOAD the old rows would sit
+    // there under the new type's name — a list you can pick a part from,
+    // answering a question nobody asked.
+    const page = loadPage(bomPickFixture(), SCRIPTS, { fetchImpl: feedFetch });
+    const changeType = async (value) => {
+      const select = page.document.getElementById("bom-pick-type");
+      select.value = value;
+      select.dispatchEvent(
+        new page.window.Event("change", { bubbles: true, cancelable: true }),
+      );
+      await tick();
+      await tick();
+    };
+
+    await open(page);
+    await tick();
+    // The FIRST load constructs the table (columns and rows go in together, so it
+    // has something to size against inside a dialog); only a reload goes through
+    // setData. Drive one, or the assertion below cannot tell "cleared" from
+    // "never set" — the stub's rows start empty either way.
+    await changeType("9");
+    expect(page.window.Tabulator.rows.length).toBe(2);
+
+    // …and mark a row, so the failure has a selection to drop.
+    page.window.Tabulator.handlers.rowClick(clickEvent, fakeRow(FEED.data[0], page));
+    expect(page.document.getElementById("bom-pick-selected").textContent).toContain(
+      "GRM188R71H104K",
+    );
+
+    page.window.fetch = failing;
+    await changeType("11");
+
+    expect(page.window.Tabulator.rows).toEqual([]);
+    expect(page.document.getElementById("bom-pick-error").hidden).toBe(false);
+    // The pick goes too: a part chosen from the old type's list is not an answer
+    // about the new one, and Confirm would happily send it.
+    expect(page.document.getElementById("bom-pick-selected").textContent).not.toContain(
+      "GRM188R71H104K",
+    );
+  });
+});

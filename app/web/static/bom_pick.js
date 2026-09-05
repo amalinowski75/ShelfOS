@@ -167,15 +167,28 @@
     setError("");
     const typeId = typeSelect.value;
     const query = typeId ? `?type_id=${encodeURIComponent(typeId)}` : "";
+    // The try has to cover pickerColumns, not just the fetch: an HTTP failure body
+    // parses as JSON perfectly well and simply has no `columns` key, so the throw
+    // came from HERE — one line outside the catch, and out of the dialog opener
+    // with nobody waiting for it.
     let payload;
+    let columns;
     try {
       payload = await fetch(`/web/api/components${query}`).then((r) => r.json());
+      columns = pickerColumns(payload.columns);
     } catch {
-      setError("Could not load the inventory.");
+      setError("Could not load the inventory — pick the type again to retry.");
+      // Empty it. The table outlives the dialog, so on a failed RELOAD the
+      // previous type's parts would sit there under the new type's name — a list
+      // you could pick a part from, answering a question nobody asked. The pick
+      // goes with them: Confirm would otherwise send a part chosen from a list
+      // that is no longer on screen. (No clearHeaderFilter here — a filter over
+      // zero rows shows nothing, and the next successful load clears it anyway.)
+      pick(null);
+      await table?.setData([]);
       return;
     }
     pick(null); // also drops any mark left from the previous list
-    const columns = pickerColumns(payload.columns);
     if (!table) {
       // Columns AND rows go in at construction: a table built empty and filled a
       // tick later has nothing to size itself against inside a dialog.

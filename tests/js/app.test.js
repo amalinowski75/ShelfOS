@@ -232,6 +232,78 @@ describe("app.js — table formatting", () => {
     ]);
     expect(setData.mock.calls[0][0]).toEqual([{ id: 1 }, { id: 2 }]);
   });
+
+  it("empties the table when the feed cannot be read, and says so", async () => {
+    // The throw used to escape into `tableBuilt` and the type filter's change
+    // handler with nothing waiting for it: from tableBuilt the page sat on the
+    // loading placeholder forever, and from the filter it was worse — the throw
+    // landed before setData, so the table kept the PREVIOUS type's rows while the
+    // filter above it read the new one.
+    const feed = (body) => (url) =>
+      Promise.resolve({
+        ok: true,
+        json: async () => (url.startsWith("/web/api/components") ? body : {}),
+      });
+    const { window } = loadPage(typePageFixture(), SCRIPTS, {
+      fetchImpl: feed({ columns: [{ title: "MPN", field: "mpn" }], data: [{ id: 7 }] }),
+    });
+    await window.loadTable();
+    expect(window.Tabulator.rows).toEqual([{ id: 7 }]);
+
+    // Now the feed breaks. A 500 body parses fine and simply has no `columns`.
+    window.fetch = feed({ detail: "Server Error" });
+    await window.loadTable(); // must not throw
+
+    expect(window.Tabulator.rows).toEqual([]);
+    expect(window.Tabulator.options.placeholder).toContain("Could not load");
+    // The columns are left alone. There are none to install, and replacing them
+    // with the actions column on its own would turn an empty table into a
+    // one-column stub — a second wrong answer on top of the first.
+    expect(window.Tabulator.columns.map((c) => c.field)).toEqual(["mpn", "actions"]);
+  });
+
+  it("distinguishes an empty inventory from an unreadable one", async () => {
+    // A table showing nothing has to say which nothing it is: "you own no
+    // components" is a claim, and a failure must not make it.
+    const placeholderAfter = async (body) => {
+      const { window } = loadPage(typePageFixture(), SCRIPTS, {
+        fetchImpl: (url) =>
+          Promise.resolve({
+            ok: true,
+            json: async () => (url.startsWith("/web/api/components") ? body : {}),
+          }),
+      });
+      await window.loadTable();
+      return window.Tabulator.options.placeholder;
+    };
+
+    expect(await placeholderAfter({ columns: [], data: [] })).toBe("No components");
+    expect(await placeholderAfter({ detail: "nope" })).toContain("Could not load");
+  });
+
+  it("does not leave the stats strip describing rows that are gone", async () => {
+    // The strip is filled from the table's ACTIVE rows, so emptying the table has
+    // to empty it too — otherwise a failure leaves "1 component" over a table
+    // showing none, which is the wrong answer this whole change is about.
+    const feed = (body) => (url) =>
+      Promise.resolve({
+        ok: true,
+        json: async () => (url.startsWith("/web/api/components") ? body : {}),
+      });
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS, {
+      fetchImpl: feed({
+        columns: [{ title: "MPN", field: "mpn" }],
+        data: [{ id: 7, mpn: "R", type: "resistor", total_stock: 5 }],
+      }),
+    });
+    await window.loadTable();
+    expect(document.getElementById("stat-components").textContent).not.toBe("0");
+
+    window.fetch = feed({ detail: "Server Error" });
+    await window.loadTable();
+
+    expect(document.getElementById("stat-components").textContent).toBe("0");
+  });
 });
 
 describe("app.js — header stats", () => {
