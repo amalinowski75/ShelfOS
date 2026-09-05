@@ -940,7 +940,10 @@ def test_invoice_detail_page_links_to_components(client: TestClient) -> None:
     # Header and line data are present.
     assert "INV-1" in html
     assert "Mouser" in html
-    assert "SPN-9" in html
+    # No longer a column — it is not what you look at an invoice for — but still
+    # carried on the row, because "Edit line" fills the field from it.
+    assert "<th>Supplier part #</th>" not in html
+    assert 'data-spn="SPN-9"' in html
     assert "D1" in html  # the line's location path
     # Each line links to its component (invoice -> component navigation, §9).
     assert f'href="/components/{component["id"]}"' in html  # type: ignore[index]
@@ -988,7 +991,11 @@ def test_import_review_panel_renders_with_type_and_location_pickers(
 
     html = client.get(f"/invoices/{invoice_id}").text
     assert 'id="invoice-review"' in html  # the review panel
-    assert ">resistor</span>" in html  # the resolved type shown on the row
+    # A RESOLVED type is not shown: it is not interesting on an invoice, and the
+    # column was dropped so both tables read the same. A missing one still is,
+    # because it blocks finalize (its own test below).
+    assert ">resistor</span>" not in html
+    assert "Needs a type" not in html
     assert 'class="control ril-location"' in html  # inline location picker
     assert 'data-act="edit-import"' in html  # opens the editor (type + params)
     # Finalize stays available (it validates readiness server-side).
@@ -2415,3 +2422,102 @@ def test_a_line_that_has_a_location_is_not_offered_a_blank_one(
     lines_table = html.split('id="invoice-lines"')[1]
 
     assert "— choose a location —" not in lines_table
+
+
+def test_the_two_tables_show_the_same_columns_in_the_same_order(
+    client: TestClient,
+    session,  # type: ignore[no-untyped-def]
+) -> None:
+    """Rows at two stages of one thing, so one layout.
+
+    A reader should not have to re-learn the table halfway down the page, and
+    neither the component's type nor the supplier's code is what an invoice is
+    read for.
+    """
+    import re
+
+    handles = _invoice_with_line(client)
+    invoice_id = handles["invoice"]["id"]  # type: ignore[index]
+    _staged_line(session, invoice_id, mpn="S-1", manufacturer="Beta")
+
+    html = client.get(f"/invoices/{invoice_id}").text
+
+    def headers(table_id: str) -> list[str]:
+        head = html.split(f'id="{table_id}"')[1].split("</thead>")[0]
+        cells = re.findall(r"<th[^>]*>.*?</th>", head, re.S)
+        return [re.sub(r"<[^>]+>", "", c).strip() for c in cells]
+
+    review, lines = headers("invoice-review"), headers("invoice-lines")
+    assert review == ["Part", "Location", "Qty", "Unit price", "Total", ""]
+    # Only the first header differs, and only in the word: a staged row is not a
+    # component yet.
+    assert lines == ["Component", *review[1:]]
+
+
+def test_a_staged_row_shows_what_it_will_cost(
+    client: TestClient,
+    session,  # type: ignore[no-untyped-def]
+) -> None:
+    """Total, like a real line has — the number you actually check an invoice by."""
+    from decimal import Decimal
+
+    from app.models.component import ComponentType
+    from app.models.invoice import InvoiceImportLine
+
+    handles = _invoice_with_line(client)
+    invoice_id = handles["invoice"]["id"]  # type: ignore[index]
+    session.add(
+        InvoiceImportLine(
+            invoice_id=invoice_id,
+            line_no=1,
+            mpn="S-2",
+            manufacturer="Beta",
+            quantity=7,
+            unit_price=Decimal("2.50"),
+            shop_key="tme",
+            type_id=session.get(ComponentType, 1).id,
+            reason="",
+        )
+    )
+    session.commit()
+
+    review = client.get(f"/invoices/{invoice_id}").text.split('id="invoice-review"')[1]
+
+    assert "17.50" in review  # 7 x 2.50, not merely the 2.50 unit price
+
+
+def test_a_staged_row_says_when_it_is_the_type_that_is_missing(
+    client: TestClient,
+    session,  # type: ignore[no-untyped-def]
+) -> None:
+    """With the type column gone, the one state worth seeing is the missing one.
+
+    Both a missing type and a missing location mark a row incomplete, and the
+    location is a visible dropdown — so without this the reviewer sees a flagged
+    row with a location set and nothing saying why.
+    """
+    from decimal import Decimal
+
+    from app.models.invoice import InvoiceImportLine
+
+    handles = _invoice_with_line(client)
+    invoice_id = handles["invoice"]["id"]  # type: ignore[index]
+    session.add(
+        InvoiceImportLine(
+            invoice_id=invoice_id,
+            line_no=1,
+            mpn="S-3",
+            manufacturer="Beta",
+            quantity=1,
+            unit_price=Decimal("1"),
+            shop_key="tme",
+            type_id=None,  # what an import stages when it could not guess one
+            reason="no matching type",
+        )
+    )
+    session.commit()
+
+    html = client.get(f"/invoices/{invoice_id}").text
+
+    assert "Needs a type" in html
+    assert "is-incomplete" in html

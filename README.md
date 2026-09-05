@@ -155,8 +155,9 @@ number, and *This is it* files the line against that component — so finalizing
 not create a second one — while recording the invoice's spelling for next time.
 
 On a draft invoice the two tables — lines already resolved, and lines still under
-review — offer the same edits, because they differ in what they *are*, not in what
-you can do with them. Each has an inline location picker, and each has an **Edit
+review — read the same and offer the same edits, because they differ in what they
+*are*, not in what you can do with them. Both show part, location, quantity, unit
+price and total, in that order. Each has an inline location picker, and each has an **Edit
 line** button for the invoice's own numbers (quantity, unit price, supplier part
 number). A staged row additionally has **Edit component**, which sets what it will
 become at finalize; the three editable things on the page are named apart, so no

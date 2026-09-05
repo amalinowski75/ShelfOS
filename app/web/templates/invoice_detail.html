@@ -80,12 +80,15 @@
   <div class="table-wrap">
     <table class="data" id="invoice-review">
       <thead>
+        {# Same columns, same order as Lines below: the two tables hold rows at
+           different stages of the same thing, and a reader should not have to
+           re-learn the layout halfway down the page. #}
         <tr>
           <th>Part</th>
-          <th>Type</th>
+          <th>Location</th>
           <th style="text-align:right">Qty</th>
           <th style="text-align:right">Unit price</th>
-          <th>Location</th>
+          <th style="text-align:right">Total</th>
           <th></th>
         </tr>
       </thead>
@@ -109,6 +112,10 @@
             <span class="mono">{{ p.mpn or ("Line " ~ p.line_no) }}</span>
             {% if p.manufacturer %}<span class="muted"> · {{ p.manufacturer }}</span>{% endif %}
             {% if p.description %}<div class="muted small">{{ p.description }}</div>{% endif %}
+            {# A set type is not interesting on an invoice — but a MISSING one stops
+               finalize, and with the column gone this is the only thing that says
+               which of the two gaps a row's incomplete marker means. #}
+            {% if not p.type_id %}<div class="muted small">Needs a type — set it under “Edit component”.</div>{% endif %}
             {# Nothing matched this line on maker + number, but something in the
                inventory carries the same NUMBER. Either the same part under a maker
                spelled another way, or another company's part that shares it — only a
@@ -122,13 +129,6 @@
             {% endif %}
           </td>
           <td>
-            {% set ns = namespace(name=None) %}
-            {% for t in types %}{% if t.id == p.type_id %}{% set ns.name = t.name %}{% endif %}{% endfor %}
-            {% if ns.name %}<span class="badge b-neutral">{{ ns.name }}</span>{% else %}<span class="muted">— set via Edit —</span>{% endif %}
-          </td>
-          <td class="num">{{ p.quantity }}</td>
-          <td class="num">{{ format_money(p.unit_price) }} {{ invoice.currency }}</td>
-          <td>
             <select class="control ril-location">
               <option value="">— choose a location —</option>
               {% for opt in location_options %}
@@ -136,6 +136,9 @@
               {% endfor %}
             </select>
           </td>
+          <td class="num">{{ p.quantity }}</td>
+          <td class="num">{{ format_money(p.unit_price) }} {{ invoice.currency }}</td>
+          <td class="num">{{ format_money(p.unit_price * p.quantity) }} {{ invoice.currency }}</td>
           <td class="line-actions">
             {# Two different edits, so two different words. "Edit line" means the
                invoice's own numbers everywhere on this page; the component this
@@ -192,7 +195,6 @@
       <thead>
         <tr>
           <th>Component</th>
-          <th>Supplier part #</th>
           <th>Location</th>
           <th style="text-align:right">Qty</th>
           <th style="text-align:right">Unit price</th>
@@ -216,7 +218,6 @@
             <span class="muted">Component #{{ l.component_id }} (deleted)</span>
             {% endif %}
           </td>
-          <td class="mono">{{ l.supplier_part_number or "—" }}</td>
           <td>
             {% if can_edit %}
             {# The same inline picker the review table has: choosing a shelf is the
