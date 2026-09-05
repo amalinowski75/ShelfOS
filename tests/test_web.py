@@ -2383,8 +2383,12 @@ def test_both_tables_offer_the_same_two_edits(
 
     html = client.get(f"/invoices/{invoice_id}").text
 
-    # Each table has an inline location picker…
-    assert html.count('class="control ril-location"') == 2
+    # Each table has an inline location picker, and each has its OWN class: they
+    # are structurally identical, sit in sibling panels and talk to different
+    # endpoints, so the discriminator belongs on the element rather than on which
+    # container a listener happens to be bound to.
+    assert html.count('class="control ril-location"') == 1  # staged rows
+    assert html.count('class="control line-location"') == 1  # real lines
     # …and the staged row can now reach the line dialog.
     assert 'data-act="edit-import-line"' in html
     # The two edits are named for what they edit; no bare "Edit" is left to be

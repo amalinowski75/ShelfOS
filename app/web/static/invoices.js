@@ -31,6 +31,32 @@ async function guard(run) {
   }
 }
 
+// The inline location pickers do NOT use `guard`. That flag is page-wide and
+// DROPS whatever arrives while something else is in flight — right for a submit
+// button, where the second click is the same action twice, and wrong here, where
+// the second change is a different row's shelf. Dropped silently, it leaves the
+// select showing a location the server never received.
+//
+// One queue per control instead: two rows file in parallel, and two picks on the
+// SAME row apply in the order they were made rather than racing.
+const pending = new WeakMap();
+const latest = new WeakMap();
+function queueOn(element, run) {
+  // A ticket per change, so a queued run can tell it has been superseded. Picking
+  // three shelves in a row down one dropdown should file the third, once — not
+  // replay the two the user passed through, each with its own audit row. The
+  // check happens INSIDE the queue, so a request already sent is never disowned;
+  // only work that has not started yet stands down.
+  const ticket = (latest.get(element) || 0) + 1;
+  latest.set(element, ticket);
+  const next = (pending.get(element) || Promise.resolve()).then(
+    () => (latest.get(element) === ticket ? run() : undefined),
+    () => (latest.get(element) === ticket ? run() : undefined),
+  );
+  pending.set(element, next);
+  return next;
+}
+
 // [data-close] buttons are wired once in shared.js.
 
 // ---- New invoice (list page) -----------------------------------------------
@@ -261,8 +287,10 @@ if (detail && lineDialog) {
     lineForm.supplier_part_number.value = row.dataset.spn;
     locationPicker?.reset();
     locationPicker?.setValue(row.dataset.locationId);
-    lineForm.dataset.originalLocationId = row.dataset.locationId;
-    lineForm.dataset.originalSpn = row.dataset.spn;
+    // No originalLocationId / originalSpn: the staged branch of the submit reads
+    // neither. Both exist for the real-line path, which has to tell an unchanged
+    // field from a cleared one across two endpoints; a staged row sends every
+    // field every time, to one.
     lineDialog.showModal();
   }
 
@@ -402,6 +430,12 @@ if (detail && lineDialog) {
     if (resp.ok) {
       reviewError.hidden = true;
       markRow(row);
+      // Keep the row's own record of its location in step. "Edit line" fills its
+      // picker from this attribute and the staged PATCH sends location_id
+      // unconditionally — so a stale value here is not merely displayed, it is
+      // SAVED, clearing a shelf the user picked a moment ago.
+      const inline = row.querySelector(".ril-location");
+      if (inline) row.dataset.locationId = inline.value;
     } else {
       showError(reviewError, await errorMessage(resp));
     }
@@ -412,7 +446,7 @@ if (detail && lineDialog) {
   reviewPanel?.addEventListener("change", (event) => {
     const select = event.target;
     if (!select.classList.contains("ril-location")) return;
-    guard(() =>
+    queueOn(select, () =>
       patchImportLine(select.closest("tr"), {
         location_id: select.value ? Number(select.value) : null,
       }),
@@ -527,9 +561,15 @@ if (detail && lineDialog) {
   const linesTable = document.getElementById("invoice-lines");
   linesTable?.addEventListener("change", (event) => {
     const select = event.target;
-    if (!select.classList.contains("ril-location")) return;
+    // Its OWN class, not the staged rows' `ril-location`. The two pickers are
+    // structurally identical, sit in sibling panels and talk to different
+    // endpoints; telling them apart by which container the listener is bound to
+    // puts the discriminator in the page's shape rather than on the element, and
+    // a later reshuffle would route a real line's change at the staged endpoint.
+    // The warning for this exact hazard is already a few lines below.
+    if (!select.classList.contains("line-location")) return;
     if (!select.value) return; // the placeholder, on a line with no location yet
-    guard(async () => {
+    queueOn(select, async () => {
       const resp = await sendJSON(
         `/api/invoices/${invoiceId}/lines/${select.dataset.lineId}/location`,
         "PUT",
@@ -539,6 +579,10 @@ if (detail && lineDialog) {
         // Once a line HAS a location the placeholder is a lie — the endpoint
         // cannot take it back — so drop it as soon as one is chosen.
         select.querySelector('option[value=""]')?.remove();
+        // The row's attribute is what "Edit line" fills its picker from, and this
+        // path deliberately does not reload. Left stale, the next dialog opens on
+        // the OLD location and saves it back over this one.
+        select.closest("tr").dataset.locationId = select.value;
       } else {
         window.alert(await errorMessage(resp));
         select.value = select.dataset.lastValue || "";

@@ -516,6 +516,7 @@ export function detailFixture({
   withFinalize = false,
   secondLine = false,
   pending = false,
+  secondPending = false,
 } = {}) {
   const pendingPanel = pending
     ? `<div id="invoice-pending">
@@ -554,6 +555,23 @@ export function detailFixture({
                </li></ul>
              </td>
            </tr>
+           ${secondPending ? `
+           <tr data-import-line-id="22" class="is-incomplete"
+               data-quantity="1" data-unit-price="1.00" data-spn=""
+               data-location-id="" data-type-id="3" data-mpn="DEF456">
+             <td><span class="mono">DEF456</span></td>
+             <td>
+               <select class="control ril-location">
+                 <option value="">— choose a location —</option>
+                 <option value="5">D1</option>
+               </select>
+             </td>
+             <td class="num">1</td>
+             <td class="num">1.00</td>
+             <td>
+               <button type="button" data-act="edit-import-line"></button>
+             </td>
+           </tr>` : ""}
          </tbody></table>
          <p id="invoice-review-error" hidden></p>
        </div>`
@@ -595,7 +613,7 @@ export function detailFixture({
             data-spn="${lineSpn}"
             data-location-id="${lineLocationId}">
           <td>
-            <select class="control ril-location" data-line-id="3"
+            <select class="control line-location" data-line-id="3"
                     data-last-value="${lineLocationId}">
               ${lineLocationId ? "" : '<option value="">— choose a location —</option>'}
               <option value="5" ${lineLocationId === "5" ? "selected" : ""}>D1</option>

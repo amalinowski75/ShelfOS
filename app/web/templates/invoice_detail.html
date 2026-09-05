@@ -228,7 +228,7 @@
                was. Without it the first failure on a line that HAD a location
                would revert it to blank on screen — a wrong answer, and a
                tempting one to act on. #}
-            <select class="control ril-location" data-line-id="{{ l.line_id }}"
+            <select class="control line-location" data-line-id="{{ l.line_id }}"
                     data-last-value="{{ l.location_id if l.location_id is not none else '' }}">
               {% if l.location_id is none %}<option value="">— choose a location —</option>{% endif %}
               {% for opt in location_options %}
