@@ -7,6 +7,39 @@
 
 {% set can_edit = current_user.role.value != "read-only" and not invoice.is_finalized %}
 
+{# The one place the two line tables' geometry is written down. They hold rows at
+   two stages of the same thing, so they share their columns AND their widths —
+   otherwise "the same columns" is true of the headings and visibly false on
+   screen, with every boundary landing somewhere different between the panels.
+   A macro rather than two copies, so they cannot drift apart later.
+
+   Part/Component is the one that yields; the rest are the invoice's numbers,
+   whose width is known and does not grow with the data. #}
+{% macro line_columns(with_actions=true) -%}
+<colgroup>
+  <col />
+  {# A share of the table, not a fixed slab. It has to be generous — a nested path
+     ("Lab / Rack A / Shelf 1 / Drawer 6") is unreadable in a <select>, which
+     offers no way to scroll or reveal the rest — but generous in PIXELS is only
+     generous on a wide screen. At a fixed 560px the numeric and action columns
+     already claim 640px, so a 1366px laptop left Part 78px for the part number,
+     the maker, the description and two hint lines, and anything narrower pushed
+     it to zero and scrolled the table sideways. As a percentage it is ~590px on
+     a wide monitor — the width this was asked for — and gives ground instead of
+     taking it when there is less to go round. #}
+  <col style="width: 26%" />
+  <col style="width: 80px" />
+  <col style="width: 130px" />
+  <col style="width: 130px" />
+  {# Wide enough for the review table's THREE buttons ("Edit component", "Edit
+     line", "Dismiss") — measured, not guessed: at 250px the last one hung 39px
+     past the table's edge, because table-layout: fixed will not let a cell grow
+     for its content. The Lines table has two buttons and simply gets more empty
+     space to their left; they are right-aligned, so it does not show. #}
+  {% if with_actions %}<col style="width: 300px" />{% endif %}
+</colgroup>
+{%- endmacro %}
+
 {% macro state_badge(finalized) -%}
   {% if finalized %}
   <span class="badge b-ok"><span class="dot"></span>finalized</span>
@@ -78,14 +111,18 @@
     These will add <strong class="mono">{{ format_money(pending_import_subtotal) }} {{ invoice.currency }}</strong>
     to the net (not counted in Total net until finalized).</p>
   <div class="table-wrap">
-    <table class="data" id="invoice-review">
+    <table class="data lines-grid" id="invoice-review">
+      {{ line_columns() }}
       <thead>
+        {# Same columns, same order as Lines below: the two tables hold rows at
+           different stages of the same thing, and a reader should not have to
+           re-learn the layout halfway down the page. #}
         <tr>
           <th>Part</th>
-          <th>Type</th>
+          <th>Location</th>
           <th style="text-align:right">Qty</th>
           <th style="text-align:right">Unit price</th>
-          <th>Location</th>
+          <th style="text-align:right">Total</th>
           <th></th>
         </tr>
       </thead>
@@ -109,6 +146,10 @@
             <span class="mono">{{ p.mpn or ("Line " ~ p.line_no) }}</span>
             {% if p.manufacturer %}<span class="muted"> · {{ p.manufacturer }}</span>{% endif %}
             {% if p.description %}<div class="muted small">{{ p.description }}</div>{% endif %}
+            {# A set type is not interesting on an invoice — but a MISSING one stops
+               finalize, and with the column gone this is the only thing that says
+               which of the two gaps a row's incomplete marker means. #}
+            {% if not p.type_id %}<div class="muted small">Needs a type — set it under “Edit component”.</div>{% endif %}
             {# Nothing matched this line on maker + number, but something in the
                inventory carries the same NUMBER. Either the same part under a maker
                spelled another way, or another company's part that shares it — only a
@@ -122,20 +163,18 @@
             {% endif %}
           </td>
           <td>
-            {% set ns = namespace(name=None) %}
-            {% for t in types %}{% if t.id == p.type_id %}{% set ns.name = t.name %}{% endif %}{% endfor %}
-            {% if ns.name %}<span class="badge b-neutral">{{ ns.name }}</span>{% else %}<span class="muted">— set via Edit —</span>{% endif %}
-          </td>
-          <td class="num">{{ p.quantity }}</td>
-          <td class="num">{{ format_money(p.unit_price) }} {{ invoice.currency }}</td>
-          <td>
-            <select class="control ril-location">
+            {# title, so a path clipped at a narrow width is still readable. #}
+            <select class="control ril-location"
+                    title="{{ (location_options | selectattr('id', 'equalto', p.location_id) | map(attribute='path') | first) or 'no location chosen' }}">
               <option value="">— choose a location —</option>
               {% for opt in location_options %}
               <option value="{{ opt.id }}" {{ 'selected' if opt.id == p.location_id else '' }}>{{ opt.path }}</option>
               {% endfor %}
             </select>
           </td>
+          <td class="num">{{ p.quantity }}</td>
+          <td class="num">{{ format_money(p.unit_price) }} {{ invoice.currency }}</td>
+          <td class="num">{{ format_money(p.unit_price * p.quantity) }} {{ invoice.currency }}</td>
           <td class="line-actions">
             {# Two different edits, so two different words. "Edit line" means the
                invoice's own numbers everywhere on this page; the component this
@@ -188,11 +227,11 @@
   <h2>Lines</h2>
   {% if lines %}
   <div class="table-wrap">
-    <table class="data" id="invoice-lines">
+    <table class="data lines-grid" id="invoice-lines">
+      {{ line_columns(can_edit) }}
       <thead>
         <tr>
           <th>Component</th>
-          <th>Supplier part #</th>
           <th>Location</th>
           <th style="text-align:right">Qty</th>
           <th style="text-align:right">Unit price</th>
@@ -216,7 +255,6 @@
             <span class="muted">Component #{{ l.component_id }} (deleted)</span>
             {% endif %}
           </td>
-          <td class="mono">{{ l.supplier_part_number or "—" }}</td>
           <td>
             {% if can_edit %}
             {# The same inline picker the review table has: choosing a shelf is the
@@ -229,6 +267,7 @@
                would revert it to blank on screen — a wrong answer, and a
                tempting one to act on. #}
             <select class="control line-location" data-line-id="{{ l.line_id }}"
+                    title="{{ l.location or 'no location chosen' }}"
                     data-last-value="{{ l.location_id if l.location_id is not none else '' }}">
               {% if l.location_id is none %}<option value="">— choose a location —</option>{% endif %}
               {% for opt in location_options %}
