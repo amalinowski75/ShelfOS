@@ -515,6 +515,34 @@ describe("components_scan.js — resolving a bag", () => {
     expect(toast.textContent).toContain("Molex");
   });
 
+  it("names every maker that shares the number, not just the first", async () => {
+    // With three companies on the list, naming one states it as THE other maker.
+    const page = loadPage(componentsFixture({ withCreate: true }), SCRIPTS_WITH_DIALOG, {
+      fetchImpl: (url) => {
+        if (url === "/api/components/scan")
+          return ok({
+            identifiers: ["SHARED-9"],
+            scanned_manufacturer: "Molex",
+            matches: [
+              { id: 1, mpn: "SHARED-9", manufacturer: "Amphenol", description: null,
+                same_manufacturer: false, locations: [] },
+              { id: 2, mpn: "SHARED-9", manufacturer: "Keystone", description: null,
+                same_manufacturer: false, locations: [] },
+            ],
+          });
+        return ok({ category: "widget", mpn: "SHARED-9", description: "" });
+      },
+    });
+    trackOpen(page.document.getElementById("component-dialog"));
+
+    scan(page.document, "bag");
+    await tick();
+
+    const toast = page.document.querySelector(".toast-warn");
+    expect(toast.textContent).toContain("Amphenol");
+    expect(toast.textContent).toContain("Keystone");
+  });
+
   it("still puts a bag away when the maker agrees, or when the label named none", async () => {
     // The other half: this must not turn into a dialog for every scan. A label
     // that names nobody (same_manufacturer null — most 1D barcodes) is not a

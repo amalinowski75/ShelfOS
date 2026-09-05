@@ -82,12 +82,15 @@ def scan_component(
                     mpn=component.mpn,
                     manufacturer=component.manufacturer,
                     description=component.notes,
-                    # None, not False, when the label named nobody: the question
-                    # was never asked, and a caller must not read that as a
-                    # disagreement and refuse a perfectly good putaway.
+                    # None, not False, whenever EITHER side named nobody: no one
+                    # was contradicted, and a caller must not read silence as a
+                    # disagreement and refuse a perfectly good putaway. Both ends
+                    # matter — a Farnell invoice prints no manufacturer column at
+                    # all, so every component that arrived on one has no maker to
+                    # be measured against.
                     same_manufacturer=(
-                        normalize(component.manufacturer or "") == wanted
-                        if wanted
+                        normalize(component.manufacturer) == wanted
+                        if wanted and component.manufacturer
                         else None
                     ),
                     locations=[
@@ -100,7 +103,12 @@ def scan_component(
                     ],
                 )
             )
-        if matches:
+        # Only a match that was not contradicted counts as an answer. A set that
+        # all disagree is the opposite of one: the identifiers are tried best
+        # first, so a collision on the manufacturer's number — the very case this
+        # marking exists for — must not stop the search before the distributor's
+        # number, which is shop-unique and may well find the right part.
+        if any(m.same_manufacturer is not False for m in matches):
             break  # a better identifier already answered; don't widen the net
     return ComponentScanRead(
         identifiers=identifiers,

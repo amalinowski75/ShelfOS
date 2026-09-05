@@ -2525,3 +2525,83 @@ def test_a_known_alias_makes_a_differently_spelled_bag_agree(
     assert after["scanned_manufacturer"] == "Amphenol"  # shown under the stored name
     assert [m["id"] for m in after["matches"]] == [ids["component"]]
     assert after["matches"][0]["same_manufacturer"] is True
+
+
+def test_a_component_that_names_no_maker_contradicts_nobody(
+    client: TestClient,
+) -> None:
+    """Silence is unanswerable from EITHER end, not just the label's.
+
+    A Farnell invoice prints no manufacturer column, so every component that
+    arrived on one has ``manufacturer = None``. Treating that as a disagreement
+    stopped offering putaway for a whole class of real parts and told the user
+    they were "in stock, but from another maker" — inventing a maker that the
+    row does not have.
+    """
+    ctype = client.post("/api/types", json={"name": "widget"}).json()
+    client.post(
+        "/api/components",
+        json={"type_id": ctype["id"], "mpn": "NO-MAKER-1", "manufacturer": None},
+    )
+
+    body = client.post(
+        "/api/components/scan", json={"code": _bag("NO-MAKER-1", "Amphenol")}
+    ).json()
+
+    assert body["scanned_manufacturer"] == "Amphenol"
+    assert body["matches"][0]["manufacturer"] is None
+    assert body["matches"][0]["same_manufacturer"] is None  # not False
+
+
+def test_a_collision_on_the_leading_number_still_tries_the_others(
+    client: TestClient,
+) -> None:
+    """A set of matches that all disagree is not an answer, so keep looking.
+
+    Identifiers are tried best first. When the manufacturer's number collides
+    with another company's part — the case this marking exists for — the search
+    has to reach the distributor's number, which is shop-unique.
+    """
+    ctype = client.post("/api/types", json={"name": "widget"}).json()
+    # Somebody else's part, carrying the number the label's 1P states.
+    theirs = client.post(
+        "/api/components",
+        json={"type_id": ctype["id"], "mpn": "COLLIDES-1", "manufacturer": "Molex"},
+    ).json()
+    # Ours, filed under the distributor's own code — as an invoice import leaves it.
+    ours = client.post(
+        "/api/components",
+        json={"type_id": ctype["id"], "mpn": "DK-9911", "manufacturer": "Amphenol"},
+    ).json()
+
+    code = (
+        "[)>\x1e06\x1d1PCOLLIDES-1\x1d1VAmphenol\x1d30PDK-9911\x1dQ5\x1e\x04"
+    )
+    body = client.post("/api/components/scan", json={"code": code}).json()
+
+    found = {m["id"]: m["same_manufacturer"] for m in body["matches"]}
+    assert found[theirs["id"]] is False  # shares the number, not the maker
+    assert found[ours["id"]] is True  # reached only by carrying on past it
+
+
+def test_a_confident_answer_stops_the_search(client: TestClient) -> None:
+    """The other half of the loop: once something answered, do not widen.
+
+    Identifiers are ranked, and a lower-ranked one matching a DIFFERENT component
+    is noise, not ambiguity — reporting both would send the user to the table to
+    choose between the right part and an unrelated one.
+    """
+    ctype = client.post("/api/types", json={"name": "widget"}).json()
+    right = client.post(
+        "/api/components",
+        json={"type_id": ctype["id"], "mpn": "BEST-1", "manufacturer": "Amphenol"},
+    ).json()
+    client.post(  # a different part filed under the distributor's code
+        "/api/components",
+        json={"type_id": ctype["id"], "mpn": "DK-7777", "manufacturer": "Amphenol"},
+    )
+
+    code = "[)>\x1e06\x1d1PBEST-1\x1d1VAmphenol\x1d30PDK-7777\x1dQ5\x1e\x04"
+    body = client.post("/api/components/scan", json={"code": code}).json()
+
+    assert [m["id"] for m in body["matches"]] == [right["id"]]

@@ -226,7 +226,11 @@
         // Same number, different maker: either the same part spelled another way,
         // or genuinely another company's component. Nothing here can tell those
         // apart, and the dialog is where that question already gets asked.
-        const theirs = matches[0].manufacturer || "another maker";
+        // Every distinct maker that shares the number, not just the first: with
+        // three matches from three companies, naming one states it as THE other
+        // maker, which is a different (and wrong) claim.
+        const others = [...new Set(matches.map((m) => m.manufacturer).filter(Boolean))];
+        const theirs = others.join(" / ") || "another maker";
         return createFrom(
           `${seen} is in stock, but from ${theirs}` +
             `${scannedMaker ? `, not ${scannedMaker}` : ""} — check whether it is the same part.`,
