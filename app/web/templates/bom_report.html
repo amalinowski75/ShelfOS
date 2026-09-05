@@ -77,7 +77,16 @@
         <div id="bom-pick-table"></div>
       </div>
     </div>
-    <p id="bom-pick-error" class="error" hidden></p>
+    {# The action, not advice about it. Three fixes running got the wording of
+       "how to retry" wrong; a button beside the message cannot be wrong about
+       it, and the user is already looking here. Hidden unless a failed LOAD put
+       it there — a rejected save has its own remedy. #}
+    <p class="error-row" id="bom-pick-error-row" hidden>
+      <span id="bom-pick-error" class="error"></span>
+      <button type="button" class="btn btn-secondary btn-sm" id="bom-pick-retry" hidden>
+        Retry
+      </button>
+    </p>
   </article>
 </dialog>
 {% endif %}

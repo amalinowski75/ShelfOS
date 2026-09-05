@@ -278,9 +278,13 @@ describe("bom_pick.js — choosing and confirming", () => {
     page.document.getElementById("bom-pick-confirm").click();
     await tick();
 
-    const error = page.document.getElementById("bom-pick-error");
-    expect(error.hidden).toBe(false);
-    expect(error.textContent).toContain("no longer in use");
+    expect(page.document.getElementById("bom-pick-error-row").hidden).toBe(false);
+    expect(page.document.getElementById("bom-pick-error").textContent).toContain(
+      "no longer in use",
+    );
+    // No Retry on a rejected SAVE: re-fetching the list would not help, and a
+    // button that does nothing useful is worse than none.
+    expect(page.document.getElementById("bom-pick-retry").hidden).toBe(true);
     // Still usable: the button is live again rather than stuck disabled.
     expect(page.document.getElementById("bom-pick-confirm").disabled).toBe(false);
   });
@@ -354,14 +358,14 @@ describe("bom_pick.js — a feed that cannot be read", () => {
     await tick();
 
     const error = page.document.getElementById("bom-pick-error");
-    expect(error.hidden).toBe(false);
+    expect(page.document.getElementById("bom-pick-error-row").hidden).toBe(false);
     expect(error.textContent).toContain("Could not load the inventory");
-    // The advice has to name the recovery that exists. loadInventory runs from
-    // exactly two places — opening the dialog, and a `change` on the type select
-    // — and re-picking the already-selected option fires no change, so telling
-    // the user to pick the type again would be telling them to do nothing.
-    expect(error.textContent).toContain("close and reopen");
-    expect(error.textContent).not.toContain("pick the type again");
+    // The ACTION, not a sentence about it. Nothing else here re-runs the load —
+    // re-picking the already-selected type fires no change — so every wording of
+    // "try again" had to describe something indirect. The message says none of
+    // them now, because the button is right there.
+    expect(page.document.getElementById("bom-pick-retry").hidden).toBe(false);
+    expect(error.textContent).not.toMatch(/reopen|pick the type|refresh/);
     // No table to mislabel: a first-open failure returns before constructing one,
     // so there is no "No components" on screen to contradict the error above it.
     // The failed-RELOAD case, where the table does exist, is covered below.
@@ -402,7 +406,7 @@ describe("bom_pick.js — a feed that cannot be read", () => {
     await changeType("11");
 
     expect(page.window.Tabulator.rows).toEqual([]);
-    expect(page.document.getElementById("bom-pick-error").hidden).toBe(false);
+    expect(page.document.getElementById("bom-pick-error-row").hidden).toBe(false);
     // An empty table has to say which nothing it is, here as in app.js.
     expect(page.window.Tabulator.options.placeholder).toContain("Could not load");
     // The pick goes too: a part chosen from the old type's list is not an answer
@@ -448,6 +452,50 @@ describe("bom_pick.js — recovering after a failed load", () => {
     await tick();
 
     expect(page.window.Tabulator.options.placeholder).toBe("No components");
-    expect(page.document.getElementById("bom-pick-error").hidden).toBe(true);
+    expect(page.document.getElementById("bom-pick-error-row").hidden).toBe(true);
+  });
+});
+
+describe("bom_pick.js — Retry", () => {
+  const failing = (url) =>
+    String(url).startsWith("/web/api/components")
+      ? Promise.resolve({ ok: true, json: async () => ({ detail: "Server Error" }) })
+      : Promise.resolve({ ok: true, json: async () => ({ id: 1 }) });
+
+  it("re-runs the load and clears the failure, without closing the dialog", async () => {
+    // The point of the button over any wording: the user stays where they are.
+    const page = loadPage(bomPickFixture(), SCRIPTS, { fetchImpl: failing });
+    // A close SPY, not `dialog.open`: the harness's showModal never sets it, so
+    // asserting on it would pass whatever the code did.
+    const closed = vi.fn();
+    page.document.getElementById("bom-pick-dialog").close = closed;
+    await open(page);
+    await tick();
+    const retry = page.document.getElementById("bom-pick-retry");
+    expect(retry.hidden).toBe(false);
+
+    page.window.fetch = feedFetch;
+    retry.click();
+    await tick();
+    await tick();
+
+    expect(page.document.getElementById("bom-pick-error-row").hidden).toBe(true);
+    expect(retry.hidden).toBe(true);
+    // The list is really there — the table was built by the retry, not the open.
+    expect(page.window.Tabulator.options.data.length).toBe(2);
+    expect(closed).not.toHaveBeenCalled(); // the user never left the dialog
+  });
+
+  it("stays offered when the retry fails again", async () => {
+    const page = loadPage(bomPickFixture(), SCRIPTS, { fetchImpl: failing });
+    await open(page);
+    await tick();
+
+    page.document.getElementById("bom-pick-retry").click();
+    await tick();
+    await tick();
+
+    expect(page.document.getElementById("bom-pick-error-row").hidden).toBe(false);
+    expect(page.document.getElementById("bom-pick-retry").hidden).toBe(false);
   });
 });

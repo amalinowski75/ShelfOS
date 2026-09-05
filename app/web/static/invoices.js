@@ -192,6 +192,21 @@ if (detail && lineDialog) {
   // --- Line dialog (shared by add and edit) ---
   const lineForm = document.getElementById("invoice-line-form");
   const lineError = document.getElementById("invoice-line-error");
+  const lineErrorRow = document.getElementById("invoice-line-error-row");
+  const lineRetry = document.getElementById("invoice-line-retry");
+
+  // `retry` only for a failed LOAD of the component list. A rejected save has its
+  // own remedy — change the values and submit again — and re-fetching the list
+  // would not help it.
+  function showLineError(message, { retry = false } = {}) {
+    lineError.textContent = message;
+    lineRetry.hidden = !retry;
+    lineErrorRow.hidden = false;
+  }
+  function clearLineError() {
+    lineErrorRow.hidden = true;
+    lineRetry.hidden = true;
+  }
   const lineTitle = document.getElementById("invoice-line-title");
   const componentField = document.getElementById("line-component-field");
   const componentSelect = lineForm.component_id;
@@ -237,9 +252,30 @@ if (detail && lineDialog) {
     if (selectedId != null) componentSelect.value = String(selectedId);
   }
 
+  // The load, on its own, so Retry can re-run exactly it without reopening.
+  async function refreshComponentOptions() {
+    clearLineError();
+    let options = null;
+    try {
+      options = await loadComponentOptions();
+    } catch {
+      options = null;
+    }
+    // Two different nothings, said differently: an empty catalog is a fact about
+    // the inventory, an unreadable one is a fact about this page. The failure
+    // needs no advice attached — the button beside it is the advice.
+    if (options === null) {
+      showLineError("Could not load the component list.", { retry: true });
+    } else if (!options.length) {
+      showLineError("No components yet — use “New component” to add one.");
+    }
+    fillComponentSelect(options || []);
+  }
+  lineRetry.addEventListener("click", () => refreshComponentOptions());
+
   async function openAddLine() {
     lineForm.reset();
-    lineError.hidden = true;
+    clearLineError();
     lineTitle.textContent = "Add line";
     lineForm.line_id.value = "";
     lineForm.dataset.importLineId = "";
@@ -251,25 +287,7 @@ if (detail && lineDialog) {
     // Open either way. The list failing does not make the dialog useless — its
     // own "New component" button still works, and that is the way out of an empty
     // catalog — but a dead button that opens nothing is no way out of anything.
-    let options = null;
-    try {
-      options = await loadComponentOptions();
-    } catch {
-      options = null;
-    }
-    // Two different nothings, said differently: an empty catalog is a fact about
-    // the inventory, an unreadable one is a fact about this page.
-    if (options === null) {
-      // "close and try again", not "refresh": nothing is cached on failure, so
-      // reopening IS the retry, and it costs nothing. A draft invoice is where
-      // someone is mid-review — a reload would throw away their scroll position,
-      // any open panel and whatever was half-typed here. (match_rules.js says
-      // "refresh" and is right to: that load runs once at tableBuilt.)
-      showError(lineError, "Could not load the component list — close and try again.");
-    } else if (!options.length) {
-      showError(lineError, "No components yet — use “New component” to add one.");
-    }
-    fillComponentSelect(options || []);
+    await refreshComponentOptions();
     lineDialog.showModal();
   }
 
@@ -291,7 +309,7 @@ if (detail && lineDialog) {
           componentSelect.appendChild(new Option(label, created.id));
         }
         componentSelect.value = String(created.id);
-        lineError.hidden = true;
+        clearLineError();
       });
     });
   }
@@ -302,7 +320,7 @@ if (detail && lineDialog) {
   // URL: the staged one takes location in the same PATCH and CAN clear it.
   function openEditStagedLine(row) {
     lineForm.reset();
-    lineError.hidden = true;
+    clearLineError();
     lineTitle.textContent = "Edit line";
     componentField.hidden = true;
     componentSelect.required = false;
@@ -325,7 +343,7 @@ if (detail && lineDialog) {
 
   function openEditLine(row) {
     lineForm.reset();
-    lineError.hidden = true;
+    clearLineError();
     lineTitle.textContent = "Edit line";
     lineForm.dataset.importLineId = "";
     // The line's component is fixed on edit (the update endpoint does not move
@@ -370,7 +388,7 @@ if (detail && lineDialog) {
           },
         );
         if (resp.ok) return window.location.reload();
-        return showError(lineError, await errorMessage(resp));
+        return showLineError(await errorMessage(resp));
       }
 
       if (!lineId) {
@@ -382,7 +400,7 @@ if (detail && lineDialog) {
           location_id: locationValue ? Number(locationValue) : null,
         });
         if (resp.ok) return window.location.reload();
-        return showError(lineError, await errorMessage(resp));
+        return showLineError(await errorMessage(resp));
       }
 
       // Edit. The location endpoint can only *set* a slot, not clear one, so
@@ -390,8 +408,7 @@ if (detail && lineDialog) {
       // silently ignoring it and reloading to the unchanged location.
       const originalLocation = lineForm.dataset.originalLocationId || "";
       if (!locationValue && originalLocation) {
-        return showError(
-          lineError,
+        return showLineError(
           "A line's location can't be cleared once set — pick a location or leave it unchanged.",
         );
       }
@@ -410,7 +427,7 @@ if (detail && lineDialog) {
               : lineForm.supplier_part_number.value.trim(),
         },
       );
-      if (!resp.ok) return showError(lineError, await errorMessage(resp));
+      if (!resp.ok) return showLineError(await errorMessage(resp));
 
       // The line-update endpoint does not carry location; apply a change via
       // the dedicated endpoint only when a different concrete slot was chosen.
@@ -423,8 +440,7 @@ if (detail && lineDialog) {
         if (!locResp.ok) {
           // The field changes above already persisted; be honest that only the
           // location step failed rather than implying nothing was saved.
-          return showError(
-            lineError,
+          return showLineError(
             `Line updated, but its location could not be set: ${await errorMessage(locResp)}`,
           );
         }

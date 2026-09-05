@@ -372,7 +372,14 @@
         <label>Location</label>
         {{ location_picker(location_tree, name="location_id", optional=true) }}
       </div>
-      <p id="invoice-line-error" class="error" hidden></p>
+      {# As in the BOM picker: where a failed load leaves the user with nothing to
+         do but repeat it, give them the repeat rather than a sentence about it. #}
+      <p class="error-row" id="invoice-line-error-row" hidden>
+        <span id="invoice-line-error" class="error"></span>
+        <button type="button" class="btn btn-secondary btn-sm" id="invoice-line-retry" hidden>
+          Retry
+        </button>
+      </p>
       <footer>
         <button type="button" class="btn btn-ghost" data-close>Cancel</button>
         <button type="submit" class="btn btn-primary">Save</button>

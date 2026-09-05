@@ -136,12 +136,12 @@ describe("invoices.js — review imported lines inline", () => {
 
     expect(opened.length).toBe(1); // the dialog is still the way out
     const error = page.document.getElementById("invoice-line-error");
-    expect(error.hidden).toBe(false);
+    expect(page.document.getElementById("invoice-line-error-row").hidden).toBe(false);
     expect(error.textContent).toContain("Could not load");
-    // The advice has to be the recovery that works: reopening retries (the test
-    // below proves it), and a reload would cost this reviewer their place.
-    expect(error.textContent).toContain("close and try again");
-    expect(error.textContent).not.toContain("refresh");
+    // The ACTION, not advice about it — three fixes running got the wording of
+    // "how to retry" wrong, and a button beside the message cannot be.
+    expect(page.document.getElementById("invoice-line-retry").hidden).toBe(false);
+    expect(error.textContent).not.toMatch(/refresh|close and/);
   });
 
   it("says WHICH nothing it is — an empty catalog is not an unreadable one", async () => {
@@ -191,11 +191,74 @@ describe("invoices.js — review imported lines inline", () => {
     await tick();
     await tick();
     expect(calls).toBe(2);
-    expect(page.document.getElementById("invoice-line-error").hidden).toBe(true);
+    expect(page.document.getElementById("invoice-line-error-row").hidden).toBe(true);
     expect(
       page.document.querySelectorAll("#invoice-line-form select[name=component_id] option")
         .length,
     ).toBe(1);
+  });
+
+  it("Retry re-loads the component list in place, without reopening", async () => {
+    // Why a button rather than a fourth attempt at the wording: the user stays
+    // in the dialog, and the sentence no longer has to describe anything.
+    let calls = 0;
+    const page = loadPage(detailFixture(), SCRIPTS, {
+      fetchImpl: (url) => {
+        if (url !== "/web/api/components") {
+          return Promise.resolve({ ok: true, json: async () => ({}) });
+        }
+        calls += 1;
+        return Promise.resolve({
+          ok: true,
+          json: async () =>
+            calls === 1 ? {} : { data: [{ id: 1, mpn: "R", type: "t" }] },
+        });
+      },
+    });
+    const opened = [];
+    page.document.getElementById("invoice-line-dialog").showModal = () =>
+      opened.push(true);
+    page.document.getElementById("invoice-addline-btn").click();
+    await tick();
+    await tick();
+
+    const retry = page.document.getElementById("invoice-line-retry");
+    expect(retry.hidden).toBe(false);
+    retry.click();
+    await tick();
+    await tick();
+
+    expect(calls).toBe(2);
+    expect(page.document.getElementById("invoice-line-error-row").hidden).toBe(true);
+    expect(retry.hidden).toBe(true);
+    expect(
+      page.document.querySelectorAll(
+        "#invoice-line-form select[name=component_id] option",
+      ).length,
+    ).toBe(1);
+    expect(opened.length).toBe(1); // still the same open — no reopen
+  });
+
+  it("offers no Retry for an empty catalog or a rejected save", async () => {
+    // Retry is for a failed LOAD. Re-fetching the list neither fills an empty
+    // inventory nor fixes a value the server refused, and a button that does
+    // nothing useful is worse than none.
+    const page = loadPage(detailFixture(), SCRIPTS, {
+      fetchImpl: (url) =>
+        Promise.resolve({
+          ok: true,
+          json: async () => (url === "/web/api/components" ? { data: [] } : {}),
+        }),
+    });
+    page.document.getElementById("invoice-line-dialog").showModal = () => {};
+    page.document.getElementById("invoice-addline-btn").click();
+    await tick();
+    await tick();
+
+    expect(page.document.getElementById("invoice-line-error").textContent).toContain(
+      "No components yet",
+    );
+    expect(page.document.getElementById("invoice-line-retry").hidden).toBe(true);
   });
 
   it("PATCHes location_id (as null when blanked) on location change", async () => {
@@ -382,7 +445,7 @@ describe("invoices.js — review imported lines inline", () => {
     await tick();
 
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).location_id).toBe(null);
-    expect(document.getElementById("invoice-line-error").hidden).toBe(true);
+    expect(document.getElementById("invoice-line-error-row").hidden).toBe(true);
   });
 
   it("does not carry one row's mode into the next open of the shared dialog", async () => {
@@ -937,6 +1000,24 @@ describe("invoices.js — error surfacing and add-line", () => {
          <select><option>x</option></select></div>`,
     );
     const style = dom.window.getComputedStyle(dom.window.document.getElementById("cf"));
+    expect(style.display).toBe("none");
+  });
+
+  it("really hides the error row under the real app.css", () => {
+    // `.error-row { display: flex }` beats the UA `[hidden] { display: none }`, so
+    // without restoring the attribute's authority the row stays on screen with a
+    // stale message while every `.hidden` assertion still passes. Found in a
+    // browser, not by the suite — which is the point of this check.
+    const css = readFileSync(
+      new URL("../../app/web/static/app.css", import.meta.url),
+      "utf8",
+    );
+    const dom = new JSDOM(
+      `<style>${css}</style>
+       <p class="error-row" id="row" hidden><span class="error">boom</span>
+         <button class="btn btn-secondary btn-sm">Retry</button></p>`,
+    );
+    const style = dom.window.getComputedStyle(dom.window.document.getElementById("row"));
     expect(style.display).toBe("none");
   });
 
