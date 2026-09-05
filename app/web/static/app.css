@@ -549,6 +549,14 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 }
 .mfr-conflict-list .btn { flex: none; }
 
+/* The two invoice line tables share a grid (the line_columns macro supplies the
+   colgroup). table-layout: fixed is what makes the browser honour those widths
+   instead of re-measuring from content — without it the columns still size
+   themselves and the two panels drift apart again. Fixed layout also stops a long
+   part number from widening a column, so the Part cell wraps instead. */
+.lines-grid { table-layout: fixed; }
+.lines-grid td { overflow-wrap: anywhere; }
+
 /* "You may already have this part", on an invoice review row. Same question the
    New Component dialog asks, so it borrows that block's list shape — the name
    yields, the button never does. */

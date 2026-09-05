@@ -7,6 +7,30 @@
 
 {% set can_edit = current_user.role.value != "read-only" and not invoice.is_finalized %}
 
+{# The one place the two line tables' geometry is written down. They hold rows at
+   two stages of the same thing, so they share their columns AND their widths —
+   otherwise "the same columns" is true of the headings and visibly false on
+   screen, with every boundary landing somewhere different between the panels.
+   A macro rather than two copies, so they cannot drift apart later.
+
+   Part/Component is the one that yields; the rest are the invoice's numbers,
+   whose width is known and does not grow with the data. #}
+{% macro line_columns(with_actions=true) -%}
+<colgroup>
+  <col />
+  <col style="width: 280px" />
+  <col style="width: 80px" />
+  <col style="width: 130px" />
+  <col style="width: 130px" />
+  {# Wide enough for the review table's THREE buttons ("Edit component", "Edit
+     line", "Dismiss") — measured, not guessed: at 250px the last one hung 39px
+     past the table's edge, because table-layout: fixed will not let a cell grow
+     for its content. The Lines table has two buttons and simply gets more empty
+     space to their left; they are right-aligned, so it does not show. #}
+  {% if with_actions %}<col style="width: 300px" />{% endif %}
+</colgroup>
+{%- endmacro %}
+
 {% macro state_badge(finalized) -%}
   {% if finalized %}
   <span class="badge b-ok"><span class="dot"></span>finalized</span>
@@ -78,7 +102,8 @@
     These will add <strong class="mono">{{ format_money(pending_import_subtotal) }} {{ invoice.currency }}</strong>
     to the net (not counted in Total net until finalized).</p>
   <div class="table-wrap">
-    <table class="data" id="invoice-review">
+    <table class="data lines-grid" id="invoice-review">
+      {{ line_columns() }}
       <thead>
         {# Same columns, same order as Lines below: the two tables hold rows at
            different stages of the same thing, and a reader should not have to
@@ -191,7 +216,8 @@
   <h2>Lines</h2>
   {% if lines %}
   <div class="table-wrap">
-    <table class="data" id="invoice-lines">
+    <table class="data lines-grid" id="invoice-lines">
+      {{ line_columns(can_edit) }}
       <thead>
         <tr>
           <th>Component</th>

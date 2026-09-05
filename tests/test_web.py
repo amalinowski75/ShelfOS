@@ -2444,7 +2444,8 @@ def test_the_two_tables_show_the_same_columns_in_the_same_order(
 
     def headers(table_id: str) -> list[str]:
         head = html.split(f'id="{table_id}"')[1].split("</thead>")[0]
-        cells = re.findall(r"<th[^>]*>.*?</th>", head, re.S)
+        # <th\b, not <th[^>]*> — the latter also matches <thead>.
+        cells = re.findall(r"<th\b[^>]*>.*?</th>", head, re.S)
         return [re.sub(r"<[^>]+>", "", c).strip() for c in cells]
 
     review, lines = headers("invoice-review"), headers("invoice-lines")
@@ -2521,3 +2522,54 @@ def test_a_staged_row_says_when_it_is_the_type_that_is_missing(
 
     assert "Needs a type" in html
     assert "is-incomplete" in html
+
+
+def test_the_two_tables_share_one_column_grid(
+    client: TestClient,
+    session,  # type: ignore[no-untyped-def]
+) -> None:
+    """Same columns is only half of it — the boundaries have to land together.
+
+    Two tables sized independently drift apart the moment their content differs,
+    and then "the same columns" is true of the headings and visibly false on
+    screen. One macro emits the grid for both, so they cannot diverge.
+    """
+    import re
+
+    handles = _invoice_with_line(client)
+    invoice_id = handles["invoice"]["id"]  # type: ignore[index]
+    _staged_line(session, invoice_id, mpn="S-4", manufacturer="Beta")
+
+    html = client.get(f"/invoices/{invoice_id}").text
+
+    def grid(table_id: str) -> list[str]:
+        table = html.split(f'id="{table_id}"')[1]
+        # <col\b, so <colgroup> itself is not counted as a column.
+        return re.findall(r"<col\b[^>]*>", table.split("</colgroup>")[0])
+
+    assert grid("invoice-review") == grid("invoice-lines")
+    assert len(grid("invoice-review")) == 6  # one per column, actions included
+    # Fixed layout is what makes a browser honour those widths at all.
+    assert html.count('class="data lines-grid"') == 2
+
+
+def test_a_read_only_invoice_drops_the_actions_column_from_the_grid_too(
+    client: TestClient,
+) -> None:
+    """The grid follows the table it belongs to.
+
+    A finalized invoice has no per-row buttons, so a sixth <col> would push every
+    boundary one column left of its heading.
+    """
+    import re
+
+    handles = _invoice_with_line(client)
+    invoice_id = handles["invoice"]["id"]  # type: ignore[index]
+    client.post(f"/api/invoices/{invoice_id}/finalize", json={"total_gross": "10.00"})
+
+    html = client.get(f"/invoices/{invoice_id}").text
+    table = html.split('id="invoice-lines"')[1]
+    cols = re.findall(r"<col\b[^>]*>", table.split("</colgroup>")[0])
+    headers = re.findall(r"<th\b[^>]*>", table.split("</thead>")[0])
+
+    assert len(cols) == len(headers) == 5
