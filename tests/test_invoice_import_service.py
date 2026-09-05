@@ -1073,3 +1073,91 @@ def test_a_rejected_line_records_no_alias(session: Session, monkeypatch) -> None
         )
 
     assert mfs.list_aliases(session) == []
+
+
+def test_a_staged_row_can_correct_the_invoice_s_own_numbers(
+    session: Session, monkeypatch
+) -> None:
+    """Price and supplier code, editable here as they already were on a real line.
+
+    The asymmetry this closes: a real line has always been able to fix a price the
+    parser misread; a staged one had to be dismissed and re-added by hand.
+    """
+    invoice_id, row = _import_one_ready(session, monkeypatch)
+
+    updated = iis.update_pending(
+        session,
+        invoice_id,
+        row.id,
+        quantity=9,
+        unit_price=Decimal("3.75"),
+        supplier_part_number="SPN-EDITED",
+        user_id=1,
+    )
+
+    assert updated.quantity == 9
+    assert updated.unit_price == Decimal("3.75")
+    assert updated.supplier_part_number == "SPN-EDITED"
+    fields = {
+        e.field
+        for e in audit_service.list_entries(
+            session, entity_type="invoice", entity_id=invoice_id
+        )
+    }
+    assert (
+        audit_service.import_line_field(
+            row.line_no, audit_service.FIELD_UNIT_PRICE
+        )
+        in fields
+    )
+    assert (
+        audit_service.import_line_field(
+            row.line_no, audit_service.FIELD_SUPPLIER_PART_NUMBER
+        )
+        in fields
+    )
+
+
+def test_a_staged_price_may_be_zero_but_not_negative(
+    session: Session, monkeypatch
+) -> None:
+    """Zero is a real price — a free sample lands on an invoice at 0.00."""
+    invoice_id, row = _import_one_ready(session, monkeypatch)
+
+    assert iis.update_pending(
+        session, invoice_id, row.id, unit_price=Decimal("0"), user_id=1
+    ).unit_price == Decimal("0")
+
+    with pytest.raises(ValidationError, match="not be negative"):
+        iis.update_pending(
+            session, invoice_id, row.id, unit_price=Decimal("-1"), user_id=1
+        )
+
+
+def test_a_staged_supplier_code_can_be_cleared_but_the_price_cannot(
+    session: Session, monkeypatch
+) -> None:
+    """Two different kinds of blank.
+
+    A parser can pick a stray code out of a mangled row, so an empty supplier part
+    number is an honest correction. A line always HAS a price and a count, so a
+    null there means "unchanged" rather than "cleared" — the same rule
+    ``mounting_type`` and ``quantity`` already follow.
+    """
+    invoice_id, row = _import_one_ready(session, monkeypatch)
+    iis.update_pending(
+        session, invoice_id, row.id, supplier_part_number="SPN-X", user_id=1
+    )
+
+    cleared = iis.update_pending(
+        session, invoice_id, row.id, supplier_part_number="", user_id=1
+    )
+    assert cleared.supplier_part_number is None
+
+    before = cleared.unit_price
+    assert (
+        iis.update_pending(
+            session, invoice_id, row.id, unit_price=None, user_id=1
+        ).unit_price
+        == before
+    )

@@ -521,6 +521,8 @@ export function detailFixture({
     ? `<div id="invoice-pending">
          <table class="data" id="invoice-review"><tbody>
            <tr data-import-line-id="21" class="is-incomplete"
+               data-quantity="7" data-unit-price="2.50" data-spn="SPN-2"
+               data-location-id=""
                data-type-id="3" data-mpn="ABC123" data-manufacturer="Acme"
                data-package="SOT23" data-mounting-type="THT" data-description="A widget"
                data-source-url="https://www.tme.eu/en/details/ABC123/"
@@ -539,6 +541,7 @@ export function detailFixture({
              </td>
              <td>
                <button type="button" data-act="edit-import"></button>
+               <button type="button" data-act="edit-import-line"></button>
                <button type="button" data-act="dismiss-import"></button>
              </td>
            </tr>
@@ -591,6 +594,14 @@ export function detailFixture({
             data-unit-price="1.50"
             data-spn="${lineSpn}"
             data-location-id="${lineLocationId}">
+          <td>
+            <select class="control ril-location" data-line-id="3"
+                    data-last-value="${lineLocationId}">
+              ${lineLocationId ? "" : '<option value="">— choose a location —</option>'}
+              <option value="5" ${lineLocationId === "5" ? "selected" : ""}>D1</option>
+              <option value="6">D2</option>
+            </select>
+          </td>
           <td>
             <button type="button" data-act="edit-line"></button>
             <button type="button" data-act="remove-line"></button>

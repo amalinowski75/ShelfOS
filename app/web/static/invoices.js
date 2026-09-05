@@ -204,6 +204,7 @@ if (detail && lineDialog) {
     lineError.hidden = true;
     lineTitle.textContent = "Add line";
     lineForm.line_id.value = "";
+    lineForm.dataset.importLineId = "";
     lineForm.dataset.originalLocationId = "";
     lineForm.dataset.originalSpn = "";
     locationPicker?.reset();
@@ -240,10 +241,36 @@ if (detail && lineDialog) {
     });
   }
 
+  // Which staged row the dialog is editing, if any. A staged row is not a line
+  // yet — it has no component and no line id — so the submit path has to know
+  // which of the two endpoints it is talking to, and they differ in more than the
+  // URL: the staged one takes location in the same PATCH and CAN clear it.
+  function openEditStagedLine(row) {
+    lineForm.reset();
+    lineError.hidden = true;
+    lineTitle.textContent = "Edit line";
+    componentField.hidden = true;
+    componentSelect.required = false;
+    // Cleared explicitly, because form.reset() above does NOT do it: setting
+    // .value on a hidden input writes the content attribute, and reset restores
+    // exactly that. Same reason openAddLine clears it.
+    lineForm.line_id.value = "";
+    lineForm.dataset.importLineId = row.dataset.importLineId;
+    lineForm.quantity.value = row.dataset.quantity;
+    lineForm.unit_price.value = row.dataset.unitPrice;
+    lineForm.supplier_part_number.value = row.dataset.spn;
+    locationPicker?.reset();
+    locationPicker?.setValue(row.dataset.locationId);
+    lineForm.dataset.originalLocationId = row.dataset.locationId;
+    lineForm.dataset.originalSpn = row.dataset.spn;
+    lineDialog.showModal();
+  }
+
   function openEditLine(row) {
     lineForm.reset();
     lineError.hidden = true;
     lineTitle.textContent = "Edit line";
+    lineForm.dataset.importLineId = "";
     // The line's component is fixed on edit (the update endpoint does not move
     // a line to a different component), so the picker is hidden.
     componentField.hidden = true;
@@ -264,10 +291,30 @@ if (detail && lineDialog) {
     event.preventDefault();
     guard(async () => {
       const lineId = lineForm.line_id.value;
+      const importLineId = lineForm.dataset.importLineId || "";
       const quantity = Number(lineForm.quantity.value);
       // Sent as a string so the server keeps the exact decimal (no float drift).
       const unitPrice = lineForm.unit_price.value;
       const locationValue = lineForm.location_id.value;
+
+      if (importLineId) {
+        // A staged row: one PATCH carries everything, location included, and a
+        // blank location really does clear it — nothing has been committed to
+        // stock yet, so there is no assignment to protect.
+        const resp = await sendJSON(
+          `/api/invoices/${invoiceId}/import-lines/${importLineId}`,
+          "PATCH",
+          {
+            quantity,
+            unit_price: unitPrice,
+            supplier_part_number:
+              lineForm.supplier_part_number.value.trim() || null,
+            location_id: locationValue ? Number(locationValue) : null,
+          },
+        );
+        if (resp.ok) return window.location.reload();
+        return showError(lineError, await errorMessage(resp));
+      }
 
       if (!lineId) {
         const resp = await sendJSON(`/api/invoices/${invoiceId}/lines`, "POST", {
@@ -419,6 +466,10 @@ if (detail && lineDialog) {
       });
       return;
     }
+    if (button.dataset.act === "edit-import-line") {
+      openEditStagedLine(row);
+      return;
+    }
     if (button.dataset.act === "edit-import") {
       // Reuse the New Component dialog in "stage" mode: it renders the type, identity
       // fields and the type's parameters (matching from the description), then saves to
@@ -466,6 +517,34 @@ if (detail && lineDialog) {
         }
       });
     }
+  });
+
+  // Inline location pick on a REAL line, the same quick action the review table
+  // offers. No reload: the cell is the only thing that changed, and re-rendering
+  // the page would throw away the reviewer's scroll position halfway down a long
+  // invoice. The dedicated endpoint only ASSIGNS a slot, never clears one, so the
+  // template offers a blank option only while there is nothing to clear.
+  const linesTable = document.getElementById("invoice-lines");
+  linesTable?.addEventListener("change", (event) => {
+    const select = event.target;
+    if (!select.classList.contains("ril-location")) return;
+    if (!select.value) return; // the placeholder, on a line with no location yet
+    guard(async () => {
+      const resp = await sendJSON(
+        `/api/invoices/${invoiceId}/lines/${select.dataset.lineId}/location`,
+        "PUT",
+        { location_id: Number(select.value) },
+      );
+      if (resp.ok) {
+        // Once a line HAS a location the placeholder is a lie — the endpoint
+        // cannot take it back — so drop it as soon as one is chosen.
+        select.querySelector('option[value=""]')?.remove();
+      } else {
+        window.alert(await errorMessage(resp));
+        select.value = select.dataset.lastValue || "";
+      }
+      select.dataset.lastValue = select.value;
+    });
   });
 
   // Per-row edit / remove, delegated from the lines table. Scoped by id (not

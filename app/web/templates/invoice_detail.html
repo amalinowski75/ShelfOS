@@ -33,7 +33,10 @@
   </div>
   {% if can_edit %}
   <div class="head-actions">
-    <button type="button" class="btn btn-ghost" id="invoice-edit-btn">Edit</button>
+    {# Three different things are editable on this page — the invoice, a line's
+       numbers, and the component a staged line will create. Each button says
+       which, so no two of them read alike. #}
+    <button type="button" class="btn btn-ghost" id="invoice-edit-btn">Edit invoice</button>
     <button type="button" class="btn btn-secondary" id="invoice-addline-btn">Add line</button>
     {# Finalize materialises the ready review rows too, so it's offered whenever the
        invoice isn't empty; it validates server-side that each row has a type + location. #}
@@ -93,6 +96,8 @@
             data-mpn="{{ p.mpn or '' }}"
             data-spn="{{ p.supplier_part_number or '' }}"
             data-quantity="{{ p.quantity }}"
+            data-unit-price="{{ format_money(p.unit_price) }}"
+            data-location-id="{{ p.location_id if p.location_id is not none else '' }}"
             data-manufacturer="{{ p.manufacturer or '' }}"
             data-package="{{ p.package or '' }}"
             data-mounting-type="{{ p.mounting_type.value }}"
@@ -132,7 +137,13 @@
             </select>
           </td>
           <td class="line-actions">
-            <button type="button" class="btn btn-secondary btn-sm" data-act="edit-import">Edit</button>
+            {# Two different edits, so two different words. "Edit line" means the
+               invoice's own numbers everywhere on this page; the component this
+               row will BECOME at finalize is a separate thing and says so. #}
+            <button type="button" class="btn btn-secondary btn-sm" data-act="edit-import"
+                    title="Type, part number, manufacturer and parameters of the component this line will create">Edit component</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-act="edit-import-line"
+                    title="Quantity, unit price, supplier part number and location">Edit line</button>
             <button type="button" class="btn btn-ghost btn-sm" data-act="dismiss-import">Dismiss</button>
           </td>
         </tr>
@@ -206,13 +217,32 @@
             {% endif %}
           </td>
           <td class="mono">{{ l.supplier_part_number or "—" }}</td>
-          <td>{{ l.location or "—" }}</td>
+          <td>
+            {% if can_edit %}
+            {# The same inline picker the review table has: choosing a shelf is the
+               commonest thing done on this page, and it should not need a dialog
+               in one table and not the other. A line's location cannot be CLEARED
+               once set (the endpoint only assigns), so the blank option is offered
+               only while there is nothing to clear. #}
+            {# data-last-value so a rejected change can put the cell back where it
+               was. Without it the first failure on a line that HAD a location
+               would revert it to blank on screen — a wrong answer, and a
+               tempting one to act on. #}
+            <select class="control ril-location" data-line-id="{{ l.line_id }}"
+                    data-last-value="{{ l.location_id if l.location_id is not none else '' }}">
+              {% if l.location_id is none %}<option value="">— choose a location —</option>{% endif %}
+              {% for opt in location_options %}
+              <option value="{{ opt.id }}" {{ 'selected' if opt.id == l.location_id else '' }}>{{ opt.path }}</option>
+              {% endfor %}
+            </select>
+            {% else %}{{ l.location or "—" }}{% endif %}
+          </td>
           <td class="num">{{ l.quantity }}</td>
           <td class="num">{{ format_money(l.unit_price) }} {{ invoice.currency }}</td>
           <td class="num">{{ format_money(l.total_price) }} {{ invoice.currency }}</td>
           {% if can_edit %}
           <td class="line-actions">
-            <button type="button" class="btn btn-secondary btn-sm" data-act="edit-line">Edit</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-act="edit-line">Edit line</button>
             <button type="button" class="btn btn-danger btn-sm" data-act="remove-line">Remove</button>
           </td>
           {% endif %}
