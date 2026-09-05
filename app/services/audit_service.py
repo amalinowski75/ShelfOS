@@ -74,6 +74,11 @@ FIELD_TYPE_ID: Final = "type_id"
 FIELD_MPN: Final = "mpn"
 FIELD_DESCRIPTION: Final = "description"
 FIELD_QUANTITY: Final = "quantity"
+# The invoice's own numbers on a staged row. A real line has always been editable
+# in these; a staged one had to be dismissed and re-added by hand to fix a price
+# the parser misread.
+FIELD_UNIT_PRICE: Final = "unit_price"
+FIELD_SUPPLIER_PART_NUMBER: Final = "supplier_part_number"
 FIELD_PARAMETERS: Final = "parameters"
 # A location's own fields (``location``). ``type`` is the location's kind (rack,
 # shelf, …), not a component type — hence the distinct name from FIELD_TYPE_ID.

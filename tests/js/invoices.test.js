@@ -144,6 +144,48 @@ describe("invoices.js — review imported lines inline", () => {
     expect(opts.headers["X-CSRF-Token"]).toBe(CSRF);
   });
 
+  it("files a real line from its inline picker, and drops the placeholder", async () => {
+    // The same quick action the review table has always offered. No reload: the
+    // cell is all that changed, and re-rendering would throw away the scroll
+    // position halfway down a long invoice.
+    const { document, fetchMock, navigations } = loadPage(
+      detailFixture({ lineLocationId: "" }),
+      SCRIPTS,
+      { fetchImpl: () => Promise.resolve({ ok: true, json: async () => ({}) }) },
+    );
+    const select = document.querySelector("#invoice-lines .line-location");
+    expect(select.querySelector('option[value=""]')).toBeTruthy();
+
+    select.value = "5";
+    change(select);
+    await tick();
+
+    const [url, opts] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/invoices/7/lines/3/location");
+    expect(opts.method).toBe("PUT");
+    expect(JSON.parse(opts.body)).toEqual({ location_id: 5 });
+    // Once filed there is nothing to clear — the endpoint cannot take it back —
+    // so the placeholder must stop offering it.
+    expect(select.querySelector('option[value=""]')).toBe(null);
+    expect(navigations.length).toBe(0);
+  });
+
+  it("puts the cell back where it was when the server refuses", async () => {
+    // Leaving the rejected choice on screen would show a location the line does
+    // not have, which is a tempting thing to act on.
+    const { document, window } = loadPage(detailFixture({ lineLocationId: "5" }), SCRIPTS, {
+      fetchImpl: () =>
+        Promise.resolve({ ok: false, json: async () => ({ detail: "no such location" }) }),
+    });
+    const select = document.querySelector("#invoice-lines .line-location");
+    select.value = "6";
+    change(select);
+    await tick();
+
+    expect(window.alert).toHaveBeenCalled();
+    expect(select.value).toBe("5");
+  });
+
   it("keeps the evidence collapsed until asked for", async () => {
     // On a long invoice most lines are unremarkable; a list under every one of
     // them would bury the few that need a decision.
@@ -195,6 +237,265 @@ describe("invoices.js — review imported lines inline", () => {
     expect(error.hidden).toBe(false);
     expect(error.textContent).toBe("component not found");
     expect(navigations.length).toBe(0);
+  });
+
+  it("“Edit line” on a staged row opens the same dialog, filled from the row", async () => {
+    const { document } = loadPage(detailFixture({ pending: true }), SCRIPTS);
+
+    // A REAL line first, so line_id is actually set — form.reset() does not clear
+    // a hidden input (setting .value writes the content attribute, and reset
+    // restores exactly that), so the staged open has to clear it itself.
+    document.querySelector('#invoice-lines [data-act="edit-line"]').click();
+    document.querySelector('[data-act="edit-import-line"]').click();
+
+    const form = document.getElementById("invoice-line-form");
+    expect(document.getElementById("invoice-line-title").textContent).toBe("Edit line");
+    // A staged row has no component to move it between, so that picker stays away.
+    expect(document.getElementById("line-component-field").hidden).toBe(true);
+    expect(form.quantity.value).toBe("7");
+    expect(form.unit_price.value).toBe("2.50");
+    expect(form.supplier_part_number.value).toBe("SPN-2");
+    expect(form.dataset.importLineId).toBe("21");
+    expect(form.line_id.value).toBe(""); // not a real line — the submit path forks on this
+  });
+
+  it("saves a staged row's line edits in ONE patch, location included", async () => {
+    const { document, fetchMock } = loadPage(detailFixture({ pending: true }), SCRIPTS, {
+      fetchImpl: () => Promise.resolve({ ok: true, json: async () => ({}) }),
+    });
+    document.querySelector('[data-act="edit-import-line"]').click();
+    const form = document.getElementById("invoice-line-form");
+    form.quantity.value = "9";
+    form.unit_price.value = "3.75";
+    form.supplier_part_number.value = "SPN-EDITED";
+    form.location_id.value = "5";
+    submit(document, "invoice-line-form");
+    await tick();
+
+    // One request, not the line-then-location pair a REAL line needs: nothing is
+    // committed to stock yet, so update_pending takes the location too.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, opts] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/invoices/7/import-lines/21");
+    expect(opts.method).toBe("PATCH");
+    expect(JSON.parse(opts.body)).toEqual({
+      quantity: 9,
+      unit_price: "3.75",
+      supplier_part_number: "SPN-EDITED",
+      location_id: 5,
+    });
+  });
+
+  it("lets a staged row clear its location, which a real line may not", async () => {
+    // The asymmetry that is real rather than accidental: a real line's endpoint
+    // only ASSIGNS a slot, but a staged row has committed nothing to protect.
+    const { document, fetchMock } = loadPage(detailFixture({ pending: true }), SCRIPTS, {
+      fetchImpl: () => Promise.resolve({ ok: true, json: async () => ({}) }),
+    });
+    document.querySelector('[data-act="edit-import-line"]').click();
+    document.getElementById("invoice-line-form").location_id.value = "";
+    submit(document, "invoice-line-form");
+    await tick();
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).location_id).toBe(null);
+    expect(document.getElementById("invoice-line-error").hidden).toBe(true);
+  });
+
+  it("does not carry one row's mode into the next open of the shared dialog", async () => {
+    // One dialog serves three jobs — add a line, edit a line, edit a staged row —
+    // and it forks on two markers. A marker left behind by the previous open
+    // sends the next save to the wrong endpoint, writing one row's edits onto
+    // another. Both directions, since only one of them is caught by the fork's
+    // own ordering.
+    const { document, fetchMock } = loadPage(
+      detailFixture({ pending: true, lineLocationId: "5" }),
+      SCRIPTS,
+      {
+        fetchImpl: (url) =>
+          Promise.resolve({
+            ok: true,
+            json: async () =>
+              url === "/web/api/components"
+                ? { data: [{ id: 1, mpn: "X", manufacturer: "A", type: "t" }] }
+                : {},
+          }),
+      },
+    );
+
+    // Staged first, then the real line: the real line must not PATCH the staged row.
+    document.querySelector('[data-act="edit-import-line"]').click();
+    document.querySelector('#invoice-lines [data-act="edit-line"]').click();
+    submit(document, "invoice-line-form");
+    await tick();
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/invoices/7/lines/3");
+
+    // And back the other way.
+    fetchMock.mockClear();
+    document.querySelector('[data-act="edit-import-line"]').click();
+    submit(document, "invoice-line-form");
+    await tick();
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/invoices/7/import-lines/21");
+    // …and the real line's location did not come with it: the staged row has
+    // none, so null is the right answer and proves the picker is reset too.
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).location_id).toBe(null);
+
+    // And "Add line", which shares the dialog with both of them: a marker left
+    // behind here would PATCH the staged row instead of creating a line.
+    fetchMock.mockClear();
+    document.getElementById("invoice-addline-btn").click();
+    await tick();
+    submit(document, "invoice-line-form");
+    await tick();
+    const writes = fetchMock.mock.calls.filter(([, opts]) => opts?.method);
+    expect(writes.at(-1)[0]).toBe("/api/invoices/7/lines");
+  });
+
+  it("does not wipe a location the inline picker just set", async () => {
+    // The bug this shape invites, and the one none of the other tests could see:
+    // they each exercise one entry point from a freshly rendered page. Here the
+    // reviewer sets a shelf inline, then opens Edit line to fix a price — and the
+    // staged PATCH sends location_id unconditionally, so a stale row attribute is
+    // not merely displayed, it is SAVED over the real value.
+    const { document, fetchMock } = loadPage(detailFixture({ pending: true }), SCRIPTS, {
+      fetchImpl: () => Promise.resolve({ ok: true, json: async () => ({}) }),
+    });
+    const row = document.querySelector("#invoice-review tr[data-import-line-id]");
+    const inline = row.querySelector(".ril-location");
+    inline.value = "5";
+    change(inline);
+    await tick();
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ location_id: 5 });
+
+    document.querySelector('[data-act="edit-import-line"]').click();
+    // The dialog opens on the location that is actually set…
+    expect(document.getElementById("invoice-line-form").location_id.value).toBe("5");
+    submit(document, "invoice-line-form");
+    await tick();
+    // …and saving anything else keeps it.
+    expect(JSON.parse(fetchMock.mock.calls.at(-1)[1].body).location_id).toBe(5);
+  });
+
+  it("keeps a real line's row in step with its inline picker too", async () => {
+    // Milder on this side — the real-line submit only fires the location PUT when
+    // the value CHANGED, so a stale attribute shows a wrong answer rather than
+    // saving one. Still a wrong answer next to an editable control.
+    const { document } = loadPage(detailFixture({ lineLocationId: "" }), SCRIPTS, {
+      fetchImpl: () => Promise.resolve({ ok: true, json: async () => ({}) }),
+    });
+    const select = document.querySelector("#invoice-lines .line-location");
+    select.value = "5";
+    change(select);
+    await tick();
+
+    expect(select.closest("tr").dataset.locationId).toBe("5");
+    document.querySelector('#invoice-lines [data-act="edit-line"]').click();
+    expect(document.getElementById("invoice-line-form").location_id.value).toBe("5");
+  });
+
+  it("never drops a pick made while another is still in flight", async () => {
+    // `guard` is page-wide and DISCARDS whatever arrives mid-request. For a submit
+    // button that is right — the second click is the same action twice. For these
+    // it is not: the second change is a different row's shelf, and dropping it
+    // leaves the select showing a location the server never received. Working
+    // down a long invoice row by row is exactly this motion.
+    const release = [];
+    const { document, fetchMock } = loadPage(
+      detailFixture({ pending: true, secondPending: true }),
+      SCRIPTS,
+      {
+        fetchImpl: () =>
+          new Promise((r) =>
+            release.push(() => r({ ok: true, json: async () => ({}) })),
+          ),
+      },
+    );
+    const selects = [...document.querySelectorAll("#invoice-review .ril-location")];
+    expect(selects.length).toBe(2);
+
+    selects[0].value = "5";
+    change(selects[0]);
+    selects[1].value = "5";
+    change(selects[1]); // arrives while the first is still open
+
+    await tick();
+    expect(fetchMock.mock.calls.length).toBe(2); // neither was thrown away
+    release.forEach((f) => f());
+    await tick();
+  });
+
+  it("files the last of several quick picks on one control, and only that one", async () => {
+    // Same rule on the other table, and the shape it takes on a SINGLE control:
+    // under the page-wide flag the second pick vanishes and the cell shows a shelf
+    // nobody was told about. Queued, the user's final choice is filed — once,
+    // rather than replaying every shelf they passed through with an audit row each.
+    const release = [];
+    const { document, fetchMock } = loadPage(
+      detailFixture({ lineLocationId: "" }),
+      SCRIPTS,
+      {
+        fetchImpl: () =>
+          new Promise((r) =>
+            release.push(() => r({ ok: true, json: async () => ({}) })),
+          ),
+      },
+    );
+    const select = document.querySelector("#invoice-lines .line-location");
+
+    select.value = "5";
+    change(select);
+    select.value = "6";
+    change(select); // arrives while the first is still open
+
+    await tick();
+    await tick();
+
+    // One request, carrying 6 — not two, and not the abandoned 5.
+    expect(fetchMock.mock.calls.length).toBe(1);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).location_id).toBe(6);
+
+    // And the superseded run really stood down rather than merely waiting its
+    // turn: letting the queue drain adds nothing.
+    release.shift()();
+    await tick();
+    await tick();
+    expect(fetchMock.mock.calls.length).toBe(1);
+  });
+
+  it("waits for a pick already in flight instead of racing it", async () => {
+    // Once a request has STARTED it is never disowned — the next pick queues
+    // behind it, so the server sees the two writes in the order they were made
+    // rather than whichever round trip happens to finish first.
+    const release = [];
+    const { document, fetchMock } = loadPage(
+      detailFixture({ lineLocationId: "" }),
+      SCRIPTS,
+      {
+        fetchImpl: () =>
+          new Promise((r) =>
+            release.push(() => r({ ok: true, json: async () => ({}) })),
+          ),
+      },
+    );
+    const select = document.querySelector("#invoice-lines .line-location");
+
+    select.value = "5";
+    change(select);
+    await tick(); // the first request is now open
+
+    select.value = "6";
+    change(select);
+    await tick();
+    expect(fetchMock.mock.calls.length).toBe(1); // the second is holding
+
+    release.shift()();
+    await tick();
+    await tick();
+
+    expect(fetchMock.mock.calls.map(([, o]) => JSON.parse(o.body).location_id)).toEqual([
+      5, 6,
+    ]);
+    release.forEach((f) => f());
+    await tick();
   });
 
   it("Edit opens the New Component dialog in stage mode with the row's prefill", async () => {

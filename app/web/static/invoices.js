@@ -31,6 +31,32 @@ async function guard(run) {
   }
 }
 
+// The inline location pickers do NOT use `guard`. That flag is page-wide and
+// DROPS whatever arrives while something else is in flight — right for a submit
+// button, where the second click is the same action twice, and wrong here, where
+// the second change is a different row's shelf. Dropped silently, it leaves the
+// select showing a location the server never received.
+//
+// One queue per control instead: two rows file in parallel, and two picks on the
+// SAME row apply in the order they were made rather than racing.
+const pending = new WeakMap();
+const latest = new WeakMap();
+function queueOn(element, run) {
+  // A ticket per change, so a queued run can tell it has been superseded. Picking
+  // three shelves in a row down one dropdown should file the third, once — not
+  // replay the two the user passed through, each with its own audit row. The
+  // check happens INSIDE the queue, so a request already sent is never disowned;
+  // only work that has not started yet stands down.
+  const ticket = (latest.get(element) || 0) + 1;
+  latest.set(element, ticket);
+  const next = (pending.get(element) || Promise.resolve()).then(
+    () => (latest.get(element) === ticket ? run() : undefined),
+    () => (latest.get(element) === ticket ? run() : undefined),
+  );
+  pending.set(element, next);
+  return next;
+}
+
 // [data-close] buttons are wired once in shared.js.
 
 // ---- New invoice (list page) -----------------------------------------------
@@ -204,6 +230,7 @@ if (detail && lineDialog) {
     lineError.hidden = true;
     lineTitle.textContent = "Add line";
     lineForm.line_id.value = "";
+    lineForm.dataset.importLineId = "";
     lineForm.dataset.originalLocationId = "";
     lineForm.dataset.originalSpn = "";
     locationPicker?.reset();
@@ -240,10 +267,38 @@ if (detail && lineDialog) {
     });
   }
 
+  // Which staged row the dialog is editing, if any. A staged row is not a line
+  // yet — it has no component and no line id — so the submit path has to know
+  // which of the two endpoints it is talking to, and they differ in more than the
+  // URL: the staged one takes location in the same PATCH and CAN clear it.
+  function openEditStagedLine(row) {
+    lineForm.reset();
+    lineError.hidden = true;
+    lineTitle.textContent = "Edit line";
+    componentField.hidden = true;
+    componentSelect.required = false;
+    // Cleared explicitly, because form.reset() above does NOT do it: setting
+    // .value on a hidden input writes the content attribute, and reset restores
+    // exactly that. Same reason openAddLine clears it.
+    lineForm.line_id.value = "";
+    lineForm.dataset.importLineId = row.dataset.importLineId;
+    lineForm.quantity.value = row.dataset.quantity;
+    lineForm.unit_price.value = row.dataset.unitPrice;
+    lineForm.supplier_part_number.value = row.dataset.spn;
+    locationPicker?.reset();
+    locationPicker?.setValue(row.dataset.locationId);
+    // No originalLocationId / originalSpn: the staged branch of the submit reads
+    // neither. Both exist for the real-line path, which has to tell an unchanged
+    // field from a cleared one across two endpoints; a staged row sends every
+    // field every time, to one.
+    lineDialog.showModal();
+  }
+
   function openEditLine(row) {
     lineForm.reset();
     lineError.hidden = true;
     lineTitle.textContent = "Edit line";
+    lineForm.dataset.importLineId = "";
     // The line's component is fixed on edit (the update endpoint does not move
     // a line to a different component), so the picker is hidden.
     componentField.hidden = true;
@@ -264,10 +319,30 @@ if (detail && lineDialog) {
     event.preventDefault();
     guard(async () => {
       const lineId = lineForm.line_id.value;
+      const importLineId = lineForm.dataset.importLineId || "";
       const quantity = Number(lineForm.quantity.value);
       // Sent as a string so the server keeps the exact decimal (no float drift).
       const unitPrice = lineForm.unit_price.value;
       const locationValue = lineForm.location_id.value;
+
+      if (importLineId) {
+        // A staged row: one PATCH carries everything, location included, and a
+        // blank location really does clear it — nothing has been committed to
+        // stock yet, so there is no assignment to protect.
+        const resp = await sendJSON(
+          `/api/invoices/${invoiceId}/import-lines/${importLineId}`,
+          "PATCH",
+          {
+            quantity,
+            unit_price: unitPrice,
+            supplier_part_number:
+              lineForm.supplier_part_number.value.trim() || null,
+            location_id: locationValue ? Number(locationValue) : null,
+          },
+        );
+        if (resp.ok) return window.location.reload();
+        return showError(lineError, await errorMessage(resp));
+      }
 
       if (!lineId) {
         const resp = await sendJSON(`/api/invoices/${invoiceId}/lines`, "POST", {
@@ -355,6 +430,12 @@ if (detail && lineDialog) {
     if (resp.ok) {
       reviewError.hidden = true;
       markRow(row);
+      // Keep the row's own record of its location in step. "Edit line" fills its
+      // picker from this attribute and the staged PATCH sends location_id
+      // unconditionally — so a stale value here is not merely displayed, it is
+      // SAVED, clearing a shelf the user picked a moment ago.
+      const inline = row.querySelector(".ril-location");
+      if (inline) row.dataset.locationId = inline.value;
     } else {
       showError(reviewError, await errorMessage(resp));
     }
@@ -365,7 +446,7 @@ if (detail && lineDialog) {
   reviewPanel?.addEventListener("change", (event) => {
     const select = event.target;
     if (!select.classList.contains("ril-location")) return;
-    guard(() =>
+    queueOn(select, () =>
       patchImportLine(select.closest("tr"), {
         location_id: select.value ? Number(select.value) : null,
       }),
@@ -419,6 +500,10 @@ if (detail && lineDialog) {
       });
       return;
     }
+    if (button.dataset.act === "edit-import-line") {
+      openEditStagedLine(row);
+      return;
+    }
     if (button.dataset.act === "edit-import") {
       // Reuse the New Component dialog in "stage" mode: it renders the type, identity
       // fields and the type's parameters (matching from the description), then saves to
@@ -466,6 +551,44 @@ if (detail && lineDialog) {
         }
       });
     }
+  });
+
+  // Inline location pick on a REAL line, the same quick action the review table
+  // offers. No reload: the cell is the only thing that changed, and re-rendering
+  // the page would throw away the reviewer's scroll position halfway down a long
+  // invoice. The dedicated endpoint only ASSIGNS a slot, never clears one, so the
+  // template offers a blank option only while there is nothing to clear.
+  const linesTable = document.getElementById("invoice-lines");
+  linesTable?.addEventListener("change", (event) => {
+    const select = event.target;
+    // Its OWN class, not the staged rows' `ril-location`. The two pickers are
+    // structurally identical, sit in sibling panels and talk to different
+    // endpoints; telling them apart by which container the listener is bound to
+    // puts the discriminator in the page's shape rather than on the element, and
+    // a later reshuffle would route a real line's change at the staged endpoint.
+    // The warning for this exact hazard is already a few lines below.
+    if (!select.classList.contains("line-location")) return;
+    if (!select.value) return; // the placeholder, on a line with no location yet
+    queueOn(select, async () => {
+      const resp = await sendJSON(
+        `/api/invoices/${invoiceId}/lines/${select.dataset.lineId}/location`,
+        "PUT",
+        { location_id: Number(select.value) },
+      );
+      if (resp.ok) {
+        // Once a line HAS a location the placeholder is a lie — the endpoint
+        // cannot take it back — so drop it as soon as one is chosen.
+        select.querySelector('option[value=""]')?.remove();
+        // The row's attribute is what "Edit line" fills its picker from, and this
+        // path deliberately does not reload. Left stale, the next dialog opens on
+        // the OLD location and saves it back over this one.
+        select.closest("tr").dataset.locationId = select.value;
+      } else {
+        window.alert(await errorMessage(resp));
+        select.value = select.dataset.lastValue || "";
+      }
+      select.dataset.lastValue = select.value;
+    });
   });
 
   // Per-row edit / remove, delegated from the lines table. Scoped by id (not

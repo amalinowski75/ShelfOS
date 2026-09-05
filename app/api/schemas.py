@@ -404,6 +404,11 @@ class InvoiceImportLineUpdate(BaseModel):
     parameters: list[ParameterValueSet] | None = None
     # What the bag actually holds, when that differs from the invoice.
     quantity: int | None = Field(default=None, gt=0)
+    # The invoice's own numbers, editable here for the same reason they are
+    # editable on a real line: a parser can misread a price or pick up a stray
+    # code, and the review is where that gets corrected.
+    unit_price: Decimal | None = Field(default=None, ge=0)
+    supplier_part_number: str | None = None
 
 
 class AttachmentRead(BaseModel):

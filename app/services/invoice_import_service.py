@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any, cast
 
 from sqlmodel import Session, col, select
@@ -59,6 +60,8 @@ _AUDITED_FIELDS = {
     "mounting_type": audit_service.FIELD_MOUNTING_TYPE,
     "description": audit_service.FIELD_DESCRIPTION,
     "quantity": audit_service.FIELD_QUANTITY,
+    "unit_price": audit_service.FIELD_UNIT_PRICE,
+    "supplier_part_number": audit_service.FIELD_SUPPLIER_PART_NUMBER,
     "parameters": audit_service.FIELD_PARAMETERS,
 }
 
@@ -512,6 +515,8 @@ def update_pending(
     description: str | None = _UNSET,
     parameters: list[dict[str, Any]] | None = _UNSET,
     quantity: int = _UNSET,
+    unit_price: Decimal = _UNSET,
+    supplier_part_number: str | None = _UNSET,
     user_id: int,
 ) -> InvoiceImportLine:
     """Edit a staged line during review (only the fields provided are changed).
@@ -568,6 +573,17 @@ def update_pending(
         if quantity <= 0:
             raise ValidationError("quantity must be positive")
         staging.quantity = quantity
+    if unit_price is not _UNSET and unit_price is not None:
+        # Same as quantity: a line always has a price, so there is no cleared
+        # state and an explicit null leaves it alone. Zero IS allowed — a free
+        # sample lands on an invoice at 0.00.
+        if unit_price < 0:
+            raise ValidationError("unit price must not be negative")
+        staging.unit_price = unit_price
+    if supplier_part_number is not _UNSET:
+        # Unlike the two above this one CAN be cleared: a parser can pick a stray
+        # code out of a mangled row, and blank is the honest correction.
+        staging.supplier_part_number = supplier_part_number or None
     for attr, field in _AUDITED_FIELDS.items():
         old_value = before[attr]
         new_value = getattr(staging, attr)

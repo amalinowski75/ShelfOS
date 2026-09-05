@@ -2365,3 +2365,53 @@ def test_a_staged_line_with_no_twin_says_nothing(
 
     assert 'id="invoice-review"' in html  # the row is there…
     assert 'data-act="show-existing"' not in html  # …without the warning
+
+
+def test_both_tables_offer_the_same_two_edits(
+    client: TestClient,
+    session,  # type: ignore[no-untyped-def]
+) -> None:
+    """A staged row and a real line differ in what they ARE, not in what you can do.
+
+    Before this the two tables disagreed twice over: a staged row had an inline
+    location picker and no way to fix a price, a real line had the reverse. And
+    both called their button "Edit" while meaning different things.
+    """
+    handles = _invoice_with_line(client)
+    invoice_id = handles["invoice"]["id"]  # type: ignore[index]
+    _staged_line(session, invoice_id, mpn="S-1", manufacturer="Beta")
+
+    html = client.get(f"/invoices/{invoice_id}").text
+
+    # Each table has an inline location picker, and each has its OWN class: they
+    # are structurally identical, sit in sibling panels and talk to different
+    # endpoints, so the discriminator belongs on the element rather than on which
+    # container a listener happens to be bound to.
+    assert html.count('class="control ril-location"') == 1  # staged rows
+    assert html.count('class="control line-location"') == 1  # real lines
+    # …and the staged row can now reach the line dialog.
+    assert 'data-act="edit-import-line"' in html
+    # The two edits are named for what they edit; no bare "Edit" is left to be
+    # read as either one.
+    assert ">Edit component</button>" in html
+    assert html.count(">Edit line</button>") == 2
+    assert ">Edit</button>" not in html
+    # The staged row carries what that dialog fills in.
+    assert 'data-unit-price=' in html
+
+
+def test_a_line_that_has_a_location_is_not_offered_a_blank_one(
+    client: TestClient,
+) -> None:
+    """The endpoint only ASSIGNS a slot, so a blank option would be a lie.
+
+    A real line with no location yet needs the placeholder; one already filed has
+    nothing to clear, and offering it would invite an action that cannot happen.
+    """
+    handles = _invoice_with_line(client)  # its line is created WITH a location
+    invoice_id = handles["invoice"]["id"]  # type: ignore[index]
+
+    html = client.get(f"/invoices/{invoice_id}").text
+    lines_table = html.split('id="invoice-lines"')[1]
+
+    assert "— choose a location —" not in lines_table
