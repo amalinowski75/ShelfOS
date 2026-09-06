@@ -60,6 +60,36 @@ def list_aliases(session: Session) -> list[ManufacturerAlias]:
     )
 
 
+def _records(key: str, canonical: str) -> bool:
+    """Whether a normalised alias key is worth storing against ``canonical``.
+
+    One check for both "nothing to record" cases: a blank name has no characters
+    to normalise, so it folds to an empty key just as surely as a name that folds
+    to the canonical one.
+    """
+    return bool(key) and key != normalize(canonical)
+
+
+def would_record_alias(
+    session: Session, *, alias: str | None, canonical: str | None
+) -> bool:
+    """Whether :func:`record_alias` would write anything for this pair.
+
+    Asked BEFORE the fact, by the dialog that offers to teach a spelling: it says
+    "picking this also records that X means Y", and that has to be true of the
+    button it sits beside. The client cannot work it out — the comparison is
+    ``normalize``, which strips accents and punctuation and carries a hand-written
+    fold table, and a second copy of that in JavaScript would drift the first time
+    someone adds a letter to it. So the question is answered here, by the same
+    predicate the write itself uses.
+    """
+    canonical_text = _blank_to_none(canonical)
+    if canonical_text is None:
+        return False  # nothing to point at; record_alias refuses this outright
+    resolved = cast(str, canonical_name(session, canonical_text))
+    return _records(normalize(alias), resolved)
+
+
 def record_alias(
     session: Session, *, alias: str | None, canonical: str | None
 ) -> ManufacturerAlias | None:
@@ -88,12 +118,8 @@ def record_alias(
         raise ValidationError("an alias needs a canonical manufacturer to point at")
     # Follow the target's own alias, if it has one.
     canonical_text = cast(str, canonical_name(session, canonical_text))
-    # One check for both "nothing to record" cases: a blank name has no characters
-    # to normalise, so it folds to an empty key just as surely as a name that folds
-    # to the canonical one. Spelling the blank case out separately reads clearer but
-    # is unreachable — this line already returns for it.
     key = normalize(alias)
-    if not key or key == normalize(canonical_text):
+    if not _records(key, canonical_text):
         return None
     # A non-empty key means the name had something in it.
     alias_text = cast(str, _blank_to_none(alias))

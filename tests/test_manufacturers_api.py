@@ -258,3 +258,102 @@ def test_only_an_admin_can_see_or_forget_an_alias(
         ).status_code
         == 403
     )
+
+
+def test_same_mpn_says_per_candidate_whether_picking_it_records_a_spelling(
+    client: TestClient,
+) -> None:
+    """The dialog promises this before the click, so the server has to answer it.
+
+    The client cannot: the test is ``normalize``, which folds accents and
+    punctuation and carries a hand-written table, and a second copy in JavaScript
+    would drift the first time someone adds a letter to it. Comparing lowercased
+    strings instead, the dialog promised to record "ON Semiconductor" against
+    "on-semiconductor" — where record_alias writes nothing.
+    """
+    ctype = client.post("/api/types", json={"name": "regulator"}).json()
+    for maker in ("on-semiconductor", "Micro Crystal"):
+        client.post(
+            "/api/components",
+            json={"type_id": ctype["id"], "mpn": "SHARED-1", "manufacturer": maker},
+        )
+
+    body = client.get(
+        "/api/manufacturers/same-mpn",
+        params={"mpn": "SHARED-1", "manufacturer": "ON Semiconductor"},
+    ).json()
+
+    by_maker = {c["manufacturer"]: c["records_alias"] for c in body["candidates"]}
+    # Folds to the same key, so picking it stores nothing — and must not claim to.
+    assert by_maker["on-semiconductor"] is False
+    # A different company: picking it really would teach the spelling.
+    assert by_maker["Micro Crystal"] is True
+
+
+def test_the_flag_agrees_with_what_recording_actually_does(
+    client: TestClient,
+    session,  # type: ignore[no-untyped-def]
+) -> None:
+    """One rule, asked two ways — the promise and the write must not drift.
+
+    They are the same predicate today; this is what fails if someone gives either
+    side its own copy.
+    """
+    from app.services import manufacturer_service as ms
+
+    pairs = [
+        ("ONSEMI", "ON SEMI"),
+        ("ON Semiconductor", "on-semiconductor"),
+        ("Würth", "Wurth"),
+        ("ONSEMI", "ON Semiconductor"),
+        ("", "Acme"),
+        ("Acme", None),
+    ]
+    for alias, canonical in pairs:
+        promised = ms.would_record_alias(session, alias=alias, canonical=canonical)
+        if canonical is None:
+            written = False  # record_alias refuses outright; nothing to point at
+        else:
+            written = (
+                ms.record_alias(session, alias=alias, canonical=canonical) is not None
+            )
+        assert promised is written, (alias, canonical)
+
+
+def test_the_flag_follows_the_candidate_s_own_alias(
+    client: TestClient,
+    session,  # type: ignore[no-untyped-def]
+) -> None:
+    """The stored name may itself have become an alias since the part was filed.
+
+    record_alias never rewrites a stored component — only future lookups change —
+    so a component can sit under a spelling that now points somewhere else. The
+    promise has to resolve the target the same way the write does, or it claims a
+    rule for a pair that already agrees.
+    """
+    from app.services import manufacturer_service as ms
+
+    ctype = client.post("/api/types", json={"name": "regulator"}).json()
+    client.post(
+        "/api/components",
+        json={
+            "type_id": ctype["id"],
+            "mpn": "LATER-1",
+            "manufacturer": "ON Semiconductor",
+        },
+    )
+    # …and only afterwards is that very spelling taught to mean something else.
+    ms.record_alias(session, alias="ON Semiconductor", canonical="onsemi")
+
+    body = client.get(
+        "/api/manufacturers/same-mpn",
+        params={"mpn": "LATER-1", "manufacturer": "onsemi"},
+    ).json()
+
+    # The candidate still reads "ON Semiconductor", but that now MEANS "onsemi",
+    # which is what was typed — so picking it stores nothing.
+    assert body["candidates"][0]["manufacturer"] == "ON Semiconductor"
+    assert body["candidates"][0]["records_alias"] is False
+    assert (
+        ms.record_alias(session, alias="onsemi", canonical="ON Semiconductor") is None
+    )

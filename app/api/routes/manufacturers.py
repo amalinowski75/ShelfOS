@@ -40,9 +40,12 @@ def parts_sharing_mpn(
     """Parts already in stock carrying this part number, whoever makes them.
 
     A GET because it decides nothing and spends nothing — the dialog calls it as
-    the MPN field settles. ``manufacturer`` is not a filter: it is echoed back
-    resolved through the alias table, so the caller can show what the name it was
-    given actually means here.
+    the MPN field settles. ``manufacturer`` is not a filter. It comes back
+    two ways: echoed whole, resolved through the alias table, so the caller can
+    show what the name it was given actually means here; and as ``records_alias``
+    per candidate, answering the question the dialog actually asks — would picking
+    THIS one also teach the spelling? The client cannot work that out, since the
+    test is ``normalize``.
     """
     found = cs.find_parts_sharing_mpn(session, mpn)
     types = {t.id: t.name for t in cs.list_types(session)} if found else {}
@@ -55,6 +58,9 @@ def parts_sharing_mpn(
                 manufacturer=component.manufacturer,
                 description=component.notes,
                 type_name=types.get(component.type_id),
+                records_alias=ms.would_record_alias(
+                    session, alias=manufacturer, canonical=component.manufacturer
+                ),
             )
             for component in found
         ],

@@ -564,6 +564,13 @@ class SameMpnCandidateRead(BaseModel):
     manufacturer: str | None
     description: str | None
     type_name: str | None
+    #: Whether adopting THIS one would also teach the alias table the incoming
+    #: spelling. Answered per candidate, and here rather than in the client,
+    #: because the test is ``normalize`` — accents, punctuation and a hand-written
+    #: fold table — which the client cannot repeat without a copy that drifts. The
+    #: dialog promises this before the click, so it has to be true of the button
+    #: it sits beside.
+    records_alias: bool = False
 
 
 class SameMpnRead(BaseModel):

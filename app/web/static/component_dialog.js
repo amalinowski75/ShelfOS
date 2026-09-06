@@ -568,7 +568,21 @@
       pick.className = "btn btn-secondary btn-sm";
       pick.textContent = "This is it";
       pick.addEventListener("click", () => adoptExisting(candidate, spelling));
-      item.append(name, pick);
+      item.append(name);
+      // The extra consequence, on the row it is true OF. The server answers this
+      // per candidate because it is the only side that can: the test is
+      // `normalize`, which folds accents and punctuation, so "ON Semiconductor"
+      // and "on-semiconductor" record nothing while a client comparing lowercased
+      // strings would promise they do. Said per row rather than once below,
+      // because "picking one also records…" is a claim about whichever button is
+      // clicked, and with two candidates it was routinely true of only one.
+      if (spelling && candidate.records_alias) {
+        const teaches = document.createElement("span");
+        teaches.className = "mfr-conflict-teaches";
+        teaches.textContent = `also records “${spelling}”`;
+        item.append(teaches);
+      }
+      item.append(pick);
       conflictList.append(item);
     }
     conflictSummary.textContent =
@@ -579,18 +593,16 @@
     // components page navigates away the moment a part is chosen, so a message
     // afterwards would never be read — and a global rule created by a button that
     // did not mention it is one nobody knows to look for when it misfires.
-    const teaches =
-      spelling &&
-      candidates.some(
-        (c) =>
-          (c.manufacturer || "").trim().toLowerCase() !== spelling.toLowerCase(),
-      );
+    // The note explains what the per-row mark MEANS; the rows say which ones it
+    // applies to. Shown whenever at least one does, since that is exactly when
+    // there is a mark on screen to explain.
+    const anyTeaches = spelling && candidates.some((c) => c.records_alias);
     if (conflictNote) {
-      conflictNote.textContent = teaches
-        ? `Picking one also records that “${spelling}” means that manufacturer, so ` +
-          "parts imported under that spelling land on the same component from now on."
+      conflictNote.textContent = anyTeaches
+        ? "Recording it means parts imported under that spelling land on the same " +
+          "component from now on."
         : "";
-      conflictNote.hidden = !teaches;
+      conflictNote.hidden = !anyTeaches;
     }
     conflictBox.hidden = false;
   }

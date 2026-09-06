@@ -533,6 +533,11 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .mfr-conflict-list .btn { flex: none; }
+/* The "this one also teaches a spelling" mark. Beside the name it applies to, not
+   under the list: it is true of one row's button and routinely false of another's. */
+.mfr-conflict-teaches {
+  flex: none; font-size: 12px; color: var(--warn); white-space: nowrap;
+}
 
 /* The two invoice line tables share a grid (the line_columns macro supplies the
    colgroup). table-layout: fixed is what makes the browser honour those widths
