@@ -24,6 +24,7 @@ from app.services import audit_service
 from app.services import component_service as cs
 from app.services import match_rule_service as mrs
 from app.services import user_service as us
+from app.services.errors import ValidationError
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -284,6 +285,20 @@ def set_password(
     session: Session = Depends(get_session),
     actor_id: int = Depends(current_user_id),
 ) -> UserRead:
+    """Reset another account's password (admin, §18).
+
+    Not your own: ``/api/auth/change-password`` is the route for that, and the
+    difference is not bookkeeping. That one asks for the current password
+    first, which is what stops a bystander at an unlocked browser from taking
+    the account over — a protection an admin would otherwise be the only person
+    unable to have, by resetting themselves through here instead. It also
+    re-binds the session it is called from, where this route deliberately does
+    not: a reset is meant to end the target's sessions, and for a self-reset
+    that would silently include the caller's own, leaving a page that looks
+    broken rather than signed out.
+    """
+    if user_id == actor_id:
+        raise ValidationError("use the change-password route to set your own password")
     return UserRead.model_validate(
         us.set_password(session, user_id, payload.password, actor_id=actor_id)
     )

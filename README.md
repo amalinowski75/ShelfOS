@@ -67,7 +67,9 @@ The server-rendered web UI's browser scripts have their own test suite
 npm test
 ```
 
-Interactive API docs are at `/docs` once it is running.
+Interactive API docs are at `/docs` (and `/redoc`) once it is running, signed in
+as an admin — they and the `/openapi.json` they read list every endpoint and its
+shapes, which is as useful to someone probing the instance as to whoever runs it.
 
 ### Authentication
 
@@ -79,6 +81,18 @@ export SHELFOS_SECRET_KEY="a-long-random-secret-at-least-32-bytes"
 export SHELFOS_ADMIN_USERNAME="admin"
 export SHELFOS_ADMIN_PASSWORD="change-me"
 ```
+
+Changing a password ends every sign-in made with the old one. Access tokens are
+stateless and session cookies are signed, so there is no server-side record to
+delete; instead each carries a fingerprint of the password it was issued against,
+which is checked on every request. So an admin resetting an account's password
+signs that account out everywhere, immediately — which is the point of resetting
+it. Changing your own password in the browser keeps that browser signed in, and
+retires your other sessions and any API tokens; an API client that changes its own
+password asks for a new token.
+
+One consequence at upgrade time: sessions and tokens issued before this existed
+carry no fingerprint and are refused, so everyone signs in once more.
 
 Passwords set through ShelfOS — an admin creating or resetting an account, a user
 changing their own — must be at least 8 characters. The bootstrap admin's comes

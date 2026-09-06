@@ -18,6 +18,8 @@ from app.web.presenter import (
 )
 from fastapi.testclient import TestClient
 
+from tests.conftest import web_login, web_logout
+
 
 def _definition(data_type: ParameterDataType, unit: str | None = None):
     return ParameterDefinition(
@@ -166,6 +168,7 @@ def test_require_web_user_heals_missing_csrf_token(session) -> None:  # type: ig
     Guards the regression where a pre-CSRF (or older-build) session cookie kept
     authenticating but left the meta token empty, so every browser write 403'd.
     """
+    from app.auth.tokens import CREDENTIAL_CLAIM, credential_fingerprint
     from app.models.enums import UserRole
     from app.services import user_service as us
     from app.web.routes import require_web_user
@@ -174,8 +177,12 @@ def test_require_web_user_heals_missing_csrf_token(session) -> None:  # type: ig
     user = us.create_user(
         session, username="stale", password="pw-password", role=UserRole.USER
     )
-    # A session that authenticates (user_id) but predates CSRF (no token).
-    sess: dict[str, object] = {"user_id": user.id}
+    # A session that authenticates (user_id + the credential binding) but
+    # predates CSRF (no token).
+    sess: dict[str, object] = {
+        "user_id": user.id,
+        CREDENTIAL_CLAIM: credential_fingerprint(user),
+    }
     scope = {
         "type": "http",
         "method": "GET",
@@ -201,7 +208,7 @@ def test_create_type_via_web_session_requires_csrf(
     us.create_user(
         session, username="admin", password="admin-password", role=UserRole.ADMIN
     )
-    anon_client.post("/login", data={"username": "admin", "password": "admin-password"})
+    web_login(anon_client, "admin", "admin-password")
 
     html = anon_client.get("/").text
     token = re.search(r'name="csrf-token" content="([^"]*)"', html).group(1)  # type: ignore[union-attr]
@@ -234,7 +241,7 @@ def test_create_type_accepts_builder_shaped_payload(
     us.create_user(
         session, username="admin", password="admin-password", role=UserRole.ADMIN
     )
-    anon_client.post("/login", data={"username": "admin", "password": "admin-password"})
+    web_login(anon_client, "admin", "admin-password")
     token = re.search(  # type: ignore[union-attr]
         r'name="csrf-token" content="([^"]*)"', anon_client.get("/").text
     ).group(1)
@@ -848,26 +855,22 @@ def test_login_page_renders(anon_client: TestClient) -> None:
 
 def test_login_flow_grants_access(session, anon_client: TestClient) -> None:  # type: ignore[no-untyped-def]
     _seed_admin(session)
-    resp = anon_client.post(
-        "/login",
-        data={"username": "admin", "password": "admin-password"},
-        follow_redirects=False,
-    )
+    resp = web_login(anon_client, "admin", "admin-password")
     assert resp.status_code == 303
     # The session cookie now grants access to protected pages.
     assert anon_client.get("/", follow_redirects=False).status_code == 200
 
 
 def test_login_invalid_credentials(session, anon_client: TestClient) -> None:  # type: ignore[no-untyped-def]
-    resp = anon_client.post("/login", data={"username": "ghost", "password": "x"})
+    resp = web_login(anon_client, "ghost", "wrong-password")
     assert resp.status_code == 401
     assert "Invalid" in resp.text
 
 
 def test_logout_clears_session(session, anon_client: TestClient) -> None:  # type: ignore[no-untyped-def]
     _seed_admin(session)
-    anon_client.post("/login", data={"username": "admin", "password": "admin-password"})
-    anon_client.post("/logout", follow_redirects=False)
+    web_login(anon_client, "admin", "admin-password")
+    assert web_logout(anon_client).status_code == 303
     assert anon_client.get("/", follow_redirects=False).status_code == 303
 
 

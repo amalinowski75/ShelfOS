@@ -7,6 +7,8 @@ import re
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.conftest import web_login
+
 
 def _bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
@@ -30,7 +32,7 @@ def _csrf_from_page(html: str) -> str:
 def test_cookie_write_requires_csrf_token(session, anon_client: TestClient) -> None:  # type: ignore[no-untyped-def]
     """Session-cookie writes need a matching CSRF token; bearer writes don't (M4)."""
     _seed_admin(session)
-    anon_client.post("/login", data={"username": "admin", "password": "admin-password"})
+    web_login(anon_client, "admin", "admin-password")
 
     # Cookie-authenticated write without the token is rejected.
     resp = anon_client.post("/api/types", json={"name": "resistor"})
@@ -67,7 +69,7 @@ def test_change_password_via_cookie_requires_csrf(
     token is actually required.
     """
     _seed_admin(session)
-    anon_client.post("/login", data={"username": "admin", "password": "admin-password"})
+    web_login(anon_client, "admin", "admin-password")
     body = {"current_password": "admin-password", "new_password": "newpassword"}
 
     assert anon_client.post("/api/auth/change-password", json=body).status_code == 403
@@ -294,7 +296,7 @@ def test_admin_user_endpoints_enforce_password_policy(client: TestClient) -> Non
 
 def test_change_own_password_enforces_policy(session, anon_client: TestClient) -> None:  # type: ignore[no-untyped-def]
     _seed_admin(session)
-    anon_client.post("/login", data={"username": "admin", "password": "admin-password"})
+    web_login(anon_client, "admin", "admin-password")
     csrf = _csrf_from_page(anon_client.get("/").text)
     resp = anon_client.post(
         "/api/auth/change-password",

@@ -30,6 +30,67 @@ behind.
   parts go back exactly where they came from and the snapshot stays on record,
   marked as reversed — a double-clicked Undo cannot return the same stock twice.
 
+## Three small things the security review left open
+
+None of them was going to be how an instance fell over, which is why they came
+after the throttle and the session invalidation. They are also cheap, and each
+one was a door left open for no reason.
+
+- **The API docs need an admin now.** `/docs`, `/redoc` and `/openapi.json`
+  were public: an inventory of every endpoint, its parameters and its shapes,
+  which is as useful to someone looking for a way in as to whoever runs the
+  instance. They sit behind the same session every other page does, and still
+  follow an ASGI `root_path`, so they keep working under a proxy that mounts
+  ShelfOS at a prefix.
+- **The sign-in and sign-out forms carry a CSRF token.** They were the two
+  plain HTML posts, with no header for the existing check to look at. A forged
+  sign-out is a small thing to be able to do to someone — dropped work, and a
+  login form to phish at the end of it — and a forged sign-in lands them in an
+  account the attacker controls. Signing in also starts a fresh session rather
+  than adopting the one the browser arrived with (session fixation). The login
+  page is sent `no-store`: it now carries a per-session token, so a copy the
+  browser kept is a stale one, and a Back-button form would otherwise reject
+  the first sign-in typed into it.
+- **A sign-in takes the same time whether or not the username exists.** A
+  wrong password for a real account cost a bcrypt round and a guess at a name
+  nobody had cost none, and the difference is readable off the response time —
+  which made the form a way to ask whether an account exists. A rejection now
+  verifies against a hash of a random value when there is no account to verify
+  against.
+
+## Changing a password now ends the sessions made with the old one
+
+Until this, it did not. Both ways in outlive the password they were issued
+against — an access token is stateless and a session cookie is signed, so
+neither has a server-side record to delete — which made "change your password"
+no answer at all to the situation it exists for: someone else has your
+credentials. A leaked token stayed good for its full 24 hours, and a stolen
+cookie indefinitely.
+
+- Each sign-in now carries a fingerprint of the password it was made with, and
+  it is checked on every request. Setting a new password changes the hash,
+  which changes the fingerprint, which retires every sign-in issued before it.
+  The fingerprint is an HMAC keyed by the app secret, not the bcrypt hash: it
+  travels in a JWT payload, which is signed but readable. (Django calls the
+  same mechanism the session auth hash.) No schema change and no session store,
+  which matters in a project with no migrations.
+- An admin resetting an account's password signs that account out everywhere.
+  A user changing their own in the browser stays signed in there — the change
+  would otherwise sign them out of the request making it — and loses their
+  other sessions and tokens.
+- The admin route now refuses to reset **your own** password, and the Users
+  table drops the action from your own row; *Change password* in the top bar is
+  the way. That route asks for the current password first, which is what stops
+  a bystander at an unlocked browser from taking the account over — a
+  protection an admin was until now the only person unable to have, by
+  resetting themselves through the admin route instead.
+- **Everyone signs in once more after this deploy**: a session or token from
+  before carries no fingerprint, and treating a missing one as acceptable would
+  make the check optional at the caller's choosing.
+- `report.json`, a BOM report dumped while working on the report code, is no
+  longer tracked. It is one project's parts list; the repo need not carry it or
+  keep its history.
+
 ## Sign-in hardening
 
 A public instance is only as safe as its weakest password and the number of

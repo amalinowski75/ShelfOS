@@ -6,6 +6,8 @@ management. There is no self-registration: accounts are created by an admin.
 
 from __future__ import annotations
 
+import functools
+import secrets
 from collections.abc import Iterable
 from typing import cast
 
@@ -64,6 +66,26 @@ def verify_password(password: str, password_hash: str) -> bool:
         return bcrypt.checkpw(password.encode(), password_hash.encode())
     except ValueError:
         return False
+
+
+@functools.cache
+def _absent_password_hash() -> str:
+    """A hash to check a password against when there is no account to check.
+
+    Without it, a wrong password for a real account costs a bcrypt round and a
+    guess at a name nobody has costs none, and the difference is large enough
+    to read off the response time — which turns the sign-in form into a way to
+    ask whether a username exists. Verifying against this instead makes both
+    answers cost the same.
+
+    Hashed from a random value, so no password can ever match it, and computed
+    on first use rather than at import: it costs one bcrypt round, once, and
+    only on an instance that is actually asked about a missing account. Derived
+    through :func:`hash_password` so it tracks the cost factor the real hashes
+    are made with — a constant baked in here would drift the moment that
+    changed, and take the timing back apart.
+    """
+    return hash_password(secrets.token_urlsafe(32))
 
 
 def get_by_username(session: Session, username: str) -> User | None:
@@ -133,9 +155,14 @@ def create_user(
 
 
 def authenticate(session: Session, username: str, password: str) -> User | None:
-    """Return the user if credentials are valid and the account is active."""
+    """Return the user if credentials are valid and the account is active.
+
+    Every rejection costs one bcrypt verification, whether or not there was an
+    account to verify against — see :func:`_absent_password_hash`.
+    """
     user = get_by_username(session, username)
     if user is None or not user.is_active or user.password_hash is None:
+        verify_password(password, _absent_password_hash())
         return None
     if not verify_password(password, user.password_hash):
         return None
@@ -244,6 +271,11 @@ def set_password(
     the old hash. What the entry says is that it changed and who changed it;
     an ``actor_id`` equal to ``user_id`` is someone changing their own, and
     anything else is an admin reset.
+
+    This is where sign-ins are invalidated, though nothing here does it: every
+    token and session carries a fingerprint of the password it was issued
+    against, so replacing the hash retires all of them by itself. See
+    :func:`app.auth.tokens.credential_fingerprint`.
     """
     check_password_policy(password)
     user = require_entity(session, User, user_id, "user")
@@ -269,9 +301,12 @@ def change_own_password(
     """Let a signed-in user change their own password (any role, self-service).
 
     The current password must be verified first: it is standard practice and
-    stops a bystander at an unlocked browser from setting a new password. It does
-    not by itself revoke other active sessions or already-issued bearer tokens
-    (those are stateless, D11), so it is not a full account-takeover recovery.
+    stops a bystander at an unlocked browser from setting a new password. Every
+    other session and bearer token for the account stops working here, through
+    the credential fingerprint ``set_password`` changes, so this *is* a way to
+    recover an account someone else has got into — the caller's own browser
+    session being the one exception, re-bound by the route so the change does
+    not sign them out of the request making it.
     Reuses ``set_password`` so the hashing and length checks stay in one place.
     """
     if user.password_hash is None or not verify_password(
