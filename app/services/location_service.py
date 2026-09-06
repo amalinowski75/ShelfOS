@@ -6,6 +6,7 @@ and traversal while preventing cycles.
 
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Final, cast
 
@@ -16,7 +17,7 @@ from app.models.invoice import InvoiceImportLine, InvoiceLine
 from app.models.location import ComponentLocation, Location
 from app.services import audit_service
 from app.services._common import require_entity
-from app.services.errors import ValidationError
+from app.services.errors import NotFoundError, ValidationError
 
 # A physical storage hierarchy is never remotely this deep; the cap keeps the
 # recursive tree render (and any client walk) from a pathological chain.
@@ -153,6 +154,23 @@ def get_children(session: Session, parent_id: int | None) -> list[Location]:
 def format_path(session: Session, location_id: int) -> str:
     """Return a human-readable path such as ``"Lab / Rack A / Shelf 1"``."""
     return " / ".join(loc.name for loc in get_path(session, location_id))
+
+
+def path_or_dash(session: Session, location_id: int | None) -> str:
+    """The location's path, or ``"—"`` when it is gone (or was never set).
+
+    A location can be deleted while rows still name it: ``delete_location``
+    refuses only on non-zero stock, so a branch emptied by a BOM take is
+    immediately deletable, and the ledger already keeps its ``location_id``
+    afterwards by design. Anything rendering a historical reference needs this
+    rather than a 500 — the same shape as ``presenter.build_audit_table``'s
+    suppressed lookup.
+    """
+    if location_id is None:
+        return "—"
+    with suppress(NotFoundError, ValidationError):
+        return format_path(session, location_id)
+    return "—"
 
 
 @dataclass
