@@ -25,6 +25,14 @@ ADMIN_PASSWORD = os.environ.get("SHELFOS_ADMIN_PASSWORD", "admin")
 # JWT access-token lifetime, in hours.
 TOKEN_EXPIRE_HOURS = int(os.environ.get("SHELFOS_TOKEN_EXPIRE_HOURS", "24"))
 
+# Sign-in throttle (brute-force guard): after this many failed sign-ins from one
+# client address within the window, that address is refused (429) until the
+# oldest failure has aged out. Set the count to 0 to turn the throttle off.
+LOGIN_MAX_FAILURES = int(os.environ.get("SHELFOS_LOGIN_MAX_FAILURES", "10"))
+LOGIN_FAILURE_WINDOW_SECONDS = float(
+    os.environ.get("SHELFOS_LOGIN_FAILURE_WINDOW_SECONDS", "900")
+)
+
 # On-disk store for uploaded attachments (spec §10); the DB keeps only metadata
 # and the stored path. Relative to the CWD by default (git-ignored), created
 # lazily on first write. Referenced as ``config.ATTACHMENTS_DIR`` at call time so

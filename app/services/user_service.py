@@ -23,6 +23,13 @@ from app.services.errors import NotFoundError, ValidationError
 # up front instead of silently truncating.
 _MAX_PASSWORD_BYTES = 72
 
+# The floor for a password set through ShelfOS — by an admin creating or
+# resetting an account, or by a user changing their own. Length is the one
+# property of a password worth enforcing: it is what makes guessing slow, and a
+# rule about character classes mostly produces "Password1!". Eight is the
+# common floor (NIST SP 800-63B); the sign-in throttle covers the rest.
+MIN_PASSWORD_LENGTH = 8
+
 # What the audit log calls a user account (spec §19).
 _AUDIT_ENTITY = "user"
 
@@ -32,6 +39,23 @@ def hash_password(password: str) -> str:
     if len(password.encode()) > _MAX_PASSWORD_BYTES:
         raise ValidationError(f"password must be at most {_MAX_PASSWORD_BYTES} bytes")
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+
+def check_password_policy(password: str) -> None:
+    """Refuse a password ShelfOS should not accept for an account.
+
+    Raises :class:`ValidationError` naming the rule that failed. The bcrypt
+    ceiling is checked here too, so the caller gets one message about length
+    whichever bound it crossed, rather than a second one from ``hash_password``.
+    """
+    if not password:
+        raise ValidationError("password must not be empty")
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise ValidationError(
+            f"password must be at least {MIN_PASSWORD_LENGTH} characters"
+        )
+    if len(password.encode()) > _MAX_PASSWORD_BYTES:
+        raise ValidationError(f"password must be at most {_MAX_PASSWORD_BYTES} bytes")
 
 
 def verify_password(password: str, password_hash: str) -> bool:
@@ -55,6 +79,7 @@ def create_user(
     role: UserRole = UserRole.USER,
     is_active: bool = True,
     actor_id: int | None = None,
+    enforce_policy: bool = True,
 ) -> User:
     """Create a user with a hashed password (admin action, D11).
 
@@ -62,10 +87,18 @@ def create_user(
     so its existence is the event, not merely a row. ``None`` is for the seeding
     that runs before anyone can be the actor: the bootstrap admin and the system
     user, which have nobody to attribute them to.
+
+    ``enforce_policy=False`` skips :func:`check_password_policy` (the emptiness
+    check stays). Only the bootstrap admin uses it: its password comes from the
+    environment, where startup already judges it (fatal in production, a
+    warning otherwise), and a development install must still come up on the
+    ``admin``/``admin`` default.
     """
     if not username.strip():
         raise ValidationError("username must not be empty")
-    if not password:
+    if enforce_policy:
+        check_password_policy(password)
+    elif not password:
         raise ValidationError("password must not be empty")
     if get_by_username(session, username) is not None:
         raise ValidationError(f"username {username!r} is already taken")
@@ -212,8 +245,7 @@ def set_password(
     an ``actor_id`` equal to ``user_id`` is someone changing their own, and
     anything else is an admin reset.
     """
-    if not password:
-        raise ValidationError("password must not be empty")
+    check_password_policy(password)
     user = require_entity(session, User, user_id, "user")
     audit_service.record_change(
         session,
@@ -274,4 +306,5 @@ def ensure_admin(session: Session, *, username: str, password: str) -> User:
         username=username,
         password=password,
         role=UserRole.ADMIN,
+        enforce_policy=False,
     )

@@ -772,10 +772,10 @@ def test_invoice_edit_endpoints_forbidden_for_read_only(
 
     client.post(
         "/api/admin/users",
-        json={"username": "viewer", "password": "pw", "role": "read-only"},
+        json={"username": "viewer", "password": "pw-password", "role": "read-only"},
     )
     token = client.post(
-        "/api/auth/token", json={"username": "viewer", "password": "pw"}
+        "/api/auth/token", json={"username": "viewer", "password": "pw-password"}
     ).json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -1005,10 +1005,10 @@ def test_patch_import_line_forbidden_for_read_only(
 ) -> None:
     client.post(
         "/api/admin/users",
-        json={"username": "viewer", "password": "pw", "role": "read-only"},
+        json={"username": "viewer", "password": "pw-password", "role": "read-only"},
     )
     token = client.post(
-        "/api/auth/token", json={"username": "viewer", "password": "pw"}
+        "/api/auth/token", json={"username": "viewer", "password": "pw-password"}
     ).json()["access_token"]
     assert (
         anon_client.patch(
@@ -1057,10 +1057,10 @@ def test_matching_proposal_forbidden_for_read_only(
 ) -> None:
     client.post(
         "/api/admin/users",
-        json={"username": "viewer", "password": "pw", "role": "read-only"},
+        json={"username": "viewer", "password": "pw-password", "role": "read-only"},
     )
     token = client.post(
-        "/api/auth/token", json={"username": "viewer", "password": "pw"}
+        "/api/auth/token", json={"username": "viewer", "password": "pw-password"}
     ).json()["access_token"]
     assert (
         anon_client.post(
@@ -1077,10 +1077,10 @@ def test_import_invoice_forbidden_for_read_only(
 ) -> None:
     client.post(
         "/api/admin/users",
-        json={"username": "viewer", "password": "pw", "role": "read-only"},
+        json={"username": "viewer", "password": "pw-password", "role": "read-only"},
     )
     token = client.post(
-        "/api/auth/token", json={"username": "viewer", "password": "pw"}
+        "/api/auth/token", json={"username": "viewer", "password": "pw-password"}
     ).json()["access_token"]
     resp = anon_client.post(
         "/api/invoices/import",
@@ -1204,10 +1204,10 @@ def test_delete_invoice_forbidden_for_read_only(
     ).json()
     client.post(
         "/api/admin/users",
-        json={"username": "viewer", "password": "pw", "role": "read-only"},
+        json={"username": "viewer", "password": "pw-password", "role": "read-only"},
     )
     token = client.post(
-        "/api/auth/token", json={"username": "viewer", "password": "pw"}
+        "/api/auth/token", json={"username": "viewer", "password": "pw-password"}
     ).json()["access_token"]
     assert (
         anon_client.delete(
@@ -1223,10 +1223,10 @@ def test_dismiss_import_line_forbidden_for_read_only(
 ) -> None:
     client.post(
         "/api/admin/users",
-        json={"username": "viewer", "password": "pw", "role": "read-only"},
+        json={"username": "viewer", "password": "pw-password", "role": "read-only"},
     )
     token = client.post(
-        "/api/auth/token", json={"username": "viewer", "password": "pw"}
+        "/api/auth/token", json={"username": "viewer", "password": "pw-password"}
     ).json()["access_token"]
     assert (
         anon_client.delete(
@@ -2063,10 +2063,10 @@ def _non_admin_token(
 ) -> str:
     client.post(
         "/api/admin/users",
-        json={"username": username, "password": "pw", "role": role},
+        json={"username": username, "password": "pw-password", "role": role},
     )
     return client.post(
-        "/api/auth/token", json={"username": username, "password": "pw"}
+        "/api/auth/token", json={"username": username, "password": "pw-password"}
     ).json()["access_token"]
 
 

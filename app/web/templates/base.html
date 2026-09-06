@@ -74,7 +74,7 @@
           </div>
           <div class="field">
             <label>New password</label>
-            <input class="control" type="password" name="new_password" required autocomplete="new-password" />
+            <input class="control" type="password" name="new_password" required minlength="{{ min_password_length }}" autocomplete="new-password" />
           </div>
           <p id="password-error" class="error" hidden></p>
           <footer>
