@@ -2814,3 +2814,6 @@ def test_the_bom_report_lists_its_past_takes(
     html = client.get(f"/boms/{ready['bom_id']}").text
 
     assert f'href="/bom-takes/{ready["take_id"]}"' in html
+    # In the shared `.stack`, so it is spaced from the lines table above it the
+    # way every other run of cards in the app is.
+    assert '<div class="stack">' in html

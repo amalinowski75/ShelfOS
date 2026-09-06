@@ -38,28 +38,33 @@
   <p class="muted">Loading…</p>
 </div>
 
-<div class="card card-pad">
-  <div id="bom-lines-table" data-bom-id="{{ bom.id }}"></div>
-</div>
+{# The lines and the takes of them, spaced by `.stack`'s gap — the same 20px the
+   summary above puts under itself, and the same mechanism component_detail uses
+   for its own run of cards. #}
+<div class="stack">
+  <div class="card card-pad">
+    <div id="bom-lines-table" data-bom-id="{{ bom.id }}"></div>
+  </div>
 
-{% if takes %}
-{# Server-rendered: a past take never changes, so there is nothing for a feed to
-   keep up with — and a snapshot has to be reachable from the BOM it came from. #}
-<div class="card card-pad">
-  <h2>Past takes</h2>
-  <ul class="take-list">
-    {% for take in takes %}
-    <li>
-      <a href="/bom-takes/{{ take.id }}">{{ take.name }}</a>
-      <span class="muted">{{ take.boards }} board(s)</span>
-      {% if take.reversed_at %}
-      <span class="badge b-danger"><span class="dot"></span>reversed</span>
-      {% endif %}
-    </li>
-    {% endfor %}
-  </ul>
+  {% if takes %}
+  {# Server-rendered: a past take never changes, so there is nothing for a feed to
+     keep up with — and a snapshot has to be reachable from the BOM it came from. #}
+  <div class="card card-pad">
+    <h2>Past takes</h2>
+    <ul class="take-list">
+      {% for take in takes %}
+      <li>
+        <a href="/bom-takes/{{ take.id }}">{{ take.name }}</a>
+        <span class="muted">{{ take.boards }} board(s)</span>
+        {% if take.reversed_at %}
+        <span class="badge b-danger"><span class="dot"></span>reversed</span>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
 </div>
-{% endif %}
 
 {% if can_write %}
 {# "Add to inventory" on a line nothing in inventory answers opens this shared
