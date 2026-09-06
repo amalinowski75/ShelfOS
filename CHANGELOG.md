@@ -9,6 +9,27 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## Taking a BOM off the shelves
+
+Building a board meant walking the BOM by hand — find the part, find where it
+lives, remove the right count, sixty times — and nothing afterwards recorded what
+was taken. Now one button does the walk in one transaction and leaves a snapshot
+behind.
+
+- **#TBD** — *Take parts…* on a BOM report. Set the board count, say which
+  temporary location the parts were gathered into, adjust a quantity where the
+  BOM is wrong, and confirm. The gathering branch is drained before any ordinary
+  shelf; what it cannot cover falls back — silently when there is one place, as a
+  question when there are several. A part that is short does not stop the run: it
+  is taken as far as it goes and the shortfall is recorded.
+- **#TBD** — Every run leaves a snapshot named after the BOM and the moment, and
+  every stock movement's note carries that name and links to it. The link lives in
+  a table of its own rather than a column on the ledger, because the schema has no
+  migrations and a new column would mean recreating the database.
+- **#TBD** — A take can be undone with a written reason, which is required. The
+  parts go back exactly where they came from and the snapshot stays on record,
+  marked as reversed — a double-clicked Undo cannot return the same stock twice.
+
 ## A BOM line has to name its part
 
 The BOM report used to resolve a line by looking its MPN up in inventory. An MPN

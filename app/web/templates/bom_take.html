@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% set can_write = current_user.role.value != "read-only" %}
+{% block title %}{{ take.name }} — BOM — ShelfOS{% endblock %}
+
+{% block content %}
+<p class="crumb"><a href="/boms/{{ take.bom_id }}">&larr; Back to {{ bom.name }}</a></p>
+
+<div class="head">
+  <div>
+    <h1>{{ take.name }}</h1>
+    <p>
+      {{ take.boards }} board(s), gathered from {{ take.source_path }} ·
+      taken {{ take.created_at[:16].replace("T", " ") }}
+    </p>
+  </div>
+  {# Undo is only ever offered once: a reversed take shows its reason instead. #}
+  {% if can_write and not take.reversed_at %}
+  <div class="head-actions">
+    <button type="button" class="btn btn-secondary btn-sm" id="take-undo">Undo this take</button>
+  </div>
+  {% endif %}
+</div>
+
+{% if take.reversed_at %}
+<p class="card card-pad take-reversed">
+  <span class="badge b-danger"><span class="dot"></span>reversed</span>
+  {{ take.reversal_reason }}
+  <span class="muted">— {{ take.reversed_at[:16].replace("T", " ") }}</span>
+</p>
+{% endif %}
+
+<div class="card card-pad">
+  <div class="table-wrap">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>References</th><th>Component</th>
+          <th style="text-align:right">Wanted</th>
+          <th style="text-align:right">Taken</th>
+          <th>From</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for line in take.lines %}
+        {% set component = components.get(line.component_id) %}
+        <tr>
+          <td class="mono">{{ line.references }}</td>
+          <td>
+            <a class="cell-mono" href="/components/{{ line.component_id }}">
+              {{ component.mpn or "#" ~ line.component_id if component else "#" ~ line.component_id }}
+            </a>
+          </td>
+          <td class="num">{{ line.requested }}</td>
+          <td class="num">
+            {{ line.taken }}
+            {% if line.shortfall %}
+            <span class="badge b-warn"><span class="dot"></span>{{ line.shortfall }} short</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if line.sources %}
+            {% for source in line.sources %}{% if not loop.first %} · {% endif %}{{ source.path }} ×{{ source.quantity }}{% endfor %}
+            {% else %}
+            <span class="muted">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if can_write and not take.reversed_at %}
+{# The reason is required, so the dialog cannot be confirmed without one — a
+   reversal that does not say what happened to the board is a hole in exactly the
+   record this page keeps. #}
+<dialog id="take-undo-dialog" data-take-id="{{ take.id }}">
+  <article>
+    <header>
+      <strong>Undo this take</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <p class="muted">
+      Everything goes back where it came from. The take stays on record, marked as
+      reversed.
+    </p>
+    <label class="field">
+      <span>Why?</span>
+      <textarea class="control" id="take-undo-reason" rows="3"
+                aria-label="Why this take is being reversed"></textarea>
+    </label>
+    <p class="error-row" id="take-undo-error-row" role="alert" hidden>
+      <span id="take-undo-error" class="error"></span>
+    </p>
+    <footer>
+      <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+      <button type="button" class="btn btn-primary" id="take-undo-confirm" disabled>
+        Put it all back
+      </button>
+    </footer>
+  </article>
+</dialog>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if can_write and not take.reversed_at %}
+<script src="/static/bom_take_undo.js?v={{ static_version() }}"></script>
+{% endif %}
+{% endblock %}

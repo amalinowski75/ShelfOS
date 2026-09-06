@@ -25,6 +25,10 @@
     {% endif %}
     <a class="btn btn-ghost btn-sm" href="/api/attachments/{{ csv_attachment.id }}/download">Download CSV</a>
     {% endif %}
+    {% if can_write %}
+    {# The whole point of the page for someone about to build: take the parts. #}
+    <button type="button" class="btn btn-primary btn-sm" id="bom-take">Take parts…</button>
+    {% endif %}
   </div>
 </div>
 
@@ -38,10 +42,31 @@
   <div id="bom-lines-table" data-bom-id="{{ bom.id }}"></div>
 </div>
 
+{% if takes %}
+{# Server-rendered: a past take never changes, so there is nothing for a feed to
+   keep up with — and a snapshot has to be reachable from the BOM it came from. #}
+<div class="card card-pad">
+  <h2>Past takes</h2>
+  <ul class="take-list">
+    {% for take in takes %}
+    <li>
+      <a href="/bom-takes/{{ take.id }}">{{ take.name }}</a>
+      <span class="muted">{{ take.boards }} board(s)</span>
+      {% if take.reversed_at %}
+      <span class="badge b-danger"><span class="dot"></span>reversed</span>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 {% if can_write %}
 {# "Add to inventory" on a line nothing in inventory answers opens this shared
    dialog, pre-filled. #}
 {% include "_component_dialog.html" %}
+
+{% include "_bom_take_dialog.html" %}
 
 {# "Assign…" on a line opens this picker: the BOM line's facts on the left, the
    inventory (pre-filtered to the line's type) on the right. Confirming stores
@@ -103,6 +128,7 @@
 {% block scripts %}
 {% if can_write %}
 <script src="/static/bom_pick.js?v={{ static_version() }}"></script>
+<script src="/static/bom_take.js?v={{ static_version() }}"></script>
 {% endif %}
 <script src="/static/boms_report.js?v={{ static_version() }}"></script>
 {% endblock %}

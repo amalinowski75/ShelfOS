@@ -37,6 +37,7 @@ from app.models.user import User
 from app.services import attachment_service as ats
 from app.services import audit_service, shops
 from app.services import bom_service as boms_svc
+from app.services import bom_take_service as bts
 from app.services import component_service as cs
 from app.services import invoice_import_service as imp
 from app.services import invoice_service as inv
@@ -636,6 +637,39 @@ def bom_report_page(
                 cs.list_types(session) if user.role != UserRole.READ_ONLY else []
             ),
             "mounting_types": [mt.value for mt in MountingType],
+            # For the take dialog's gathering-location picker; skipped for a
+            # read-only account, which cannot take anything, exactly as `types` is.
+            "location_tree": (
+                ls.location_tree(session) if user.role != UserRole.READ_ONLY else []
+            ),
+            "takes": bts.list_takes(session, bom_id),
+        },
+    )
+
+
+@router.get("/bom-takes/{take_id}", response_class=HTMLResponse)
+def bom_take_page(
+    take_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_web_user),
+) -> HTMLResponse:
+    """One take, as it happened (§21). Server-rendered: a snapshot is a fixed
+    record, so there is nothing for a feed to keep up with."""
+    detail = bts.take_detail(session, take_id)  # raises NotFound → 404
+    bom = boms_svc.get_bom(session, cast(int, detail["bom_id"]))
+    lines = cast("list[dict[str, object]]", detail["lines"])
+    components = bts.components_by_id(
+        session, {cast(int, line["component_id"]) for line in lines}
+    )
+    return templates.TemplateResponse(
+        request,
+        "bom_take.html",
+        {
+            "take": detail,
+            "bom": bom,
+            "components": components,
+            "current_user": user,
         },
     )
 
@@ -798,6 +832,11 @@ def component_detail(
     # one lookup for the whole table beats a join that would have to be threaded
     # through the service's return type for this one caller.
     movement_authors = us.names_by_id(session, (m.user_id for m in movements))
+    # Which movements belong to a BOM take, so their note can be a link. One
+    # batched query however long the list is — and no column on the ledger.
+    movement_takes = bts.takes_by_movement(
+        session, (cast(int, m.id) for m in movements)
+    )
 
     # For the Add/Take stock dialog and the "New location" it can reach inline.
     # A deleted component is out of use, so it gets no write affordances at all —
@@ -825,6 +864,7 @@ def component_detail(
             "history": history,
             "movements": movements,
             "movement_authors": movement_authors,
+            "movement_takes": movement_takes,
             "location_tree": tree,
             "location_types": [lt.value for lt in LocationType] if can_write else [],
             "location_options": _location_options(tree) if can_write else [],

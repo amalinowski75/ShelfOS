@@ -6,8 +6,6 @@ not make or reverse one.
 
 from __future__ import annotations
 
-from typing import cast
-
 from fastapi import APIRouter, Depends, status
 from sqlmodel import Session
 
@@ -16,7 +14,6 @@ from app.api.schemas import BomTakeRead, BomTakeRequest, BomTakeReverse
 from app.auth.deps import current_user_id
 from app.models.bom_take import BomTake
 from app.services import bom_take_service as svc
-from app.services import location_service as ls
 
 router = APIRouter(tags=["bom takes"])
 
@@ -133,7 +130,7 @@ def get_take(
     take_id: int, session: Session = Depends(get_session)
 ) -> dict[str, object]:
     """One snapshot: header, lines, and where each part came from."""
-    return take_detail(session, take_id)
+    return svc.take_detail(session, take_id)
 
 
 @router.post("/api/bom-takes/{take_id}/reverse", response_model=BomTakeRead)
@@ -147,52 +144,3 @@ def reverse_take(
     return svc.reverse_take(
         session, take_id, reason=payload.reason, user_id=user_id
     )
-
-
-def take_detail(session: Session, take_id: int) -> dict[str, object]:
-    """The snapshot as the page and the API both want it.
-
-    Location paths are resolved defensively: `delete_location` refuses only on
-    non-zero stock, so the gathering tree is deletable the moment a take empties
-    it, and a snapshot must survive that as "—" rather than a 500.
-    """
-    take = svc.get_take(session, take_id)
-    lines = svc.take_lines(session, take_id)
-    allocations = svc.take_allocations(session, take_id)
-    by_line: dict[int, list[dict[str, object]]] = {}
-    for allocation in allocations:
-        by_line.setdefault(allocation.take_line_id, []).append(
-            {
-                "location_id": allocation.location_id,
-                "path": ls.path_or_dash(session, allocation.location_id),
-                "quantity": allocation.quantity,
-                "movement_id": allocation.movement_id,
-                "reversal_movement_id": allocation.reversal_movement_id,
-            }
-        )
-    return {
-        "id": take.id,
-        "bom_id": take.bom_id,
-        "name": take.name,
-        "boards": take.boards,
-        "source_path": (
-            ls.path_or_dash(session, take.source_location_id)
-            if take.source_location_id is not None
-            else "—"
-        ),
-        "created_at": take.created_at.isoformat(),
-        "reversed_at": take.reversed_at.isoformat() if take.reversed_at else None,
-        "reversal_reason": take.reversal_reason,
-        "lines": [
-            {
-                "id": line.id,
-                "references": line.references,
-                "component_id": line.component_id,
-                "requested": line.requested_quantity,
-                "taken": line.taken_quantity,
-                "shortfall": line.requested_quantity - line.taken_quantity,
-                "sources": by_line.get(cast(int, line.id), []),
-            }
-            for line in lines
-        ],
-    }

@@ -911,6 +911,40 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, .82); }
 .bom-summary { margin-bottom: 20px; }
 /* The remedies for an unresolved count, on the line below it. Only rendered
    while there is something unresolved, so it has no empty state. */
+/* The take dialog: its two controls on one row, and a table tall enough to show
+   a real BOM without the dialog itself scrolling. */
+.take-controls {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  margin-bottom: 12px;
+}
+
+.take-source { min-width: 320px; }
+
+.take-table-wrap { max-height: 50vh; overflow-y: auto; }
+
+.take-qty { width: 90px; }
+
+.take-choice { min-width: 220px; }
+
+/* A line that cannot be taken is still listed — seeing which ones stop the run is
+   the point — but it reads as inert rather than as something to edit. */
+.take-blocked { opacity: 0.6; }
+
+.take-blockers { margin-bottom: 12px; }
+
+/* The reversal banner and the past-takes list on a snapshot / a BOM report. */
+.take-reversed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.take-list { margin: 0; padding-left: 18px; }
+.take-list li { margin: 4px 0; }
+
 .bom-summary-actions {
   display: flex;
   gap: 8px;
