@@ -16,7 +16,9 @@ def _seed_admin(session) -> None:  # type: ignore[no-untyped-def]
     from app.models.enums import UserRole
     from app.services import user_service as us
 
-    us.create_user(session, username="admin", password="admin", role=UserRole.ADMIN)
+    us.create_user(
+        session, username="admin", password="admin-password", role=UserRole.ADMIN
+    )
 
 
 def _csrf_from_page(html: str) -> str:
@@ -28,7 +30,7 @@ def _csrf_from_page(html: str) -> str:
 def test_cookie_write_requires_csrf_token(session, anon_client: TestClient) -> None:  # type: ignore[no-untyped-def]
     """Session-cookie writes need a matching CSRF token; bearer writes don't (M4)."""
     _seed_admin(session)
-    anon_client.post("/login", data={"username": "admin", "password": "admin"})
+    anon_client.post("/login", data={"username": "admin", "password": "admin-password"})
 
     # Cookie-authenticated write without the token is rejected.
     resp = anon_client.post("/api/types", json={"name": "resistor"})
@@ -65,8 +67,8 @@ def test_change_password_via_cookie_requires_csrf(
     token is actually required.
     """
     _seed_admin(session)
-    anon_client.post("/login", data={"username": "admin", "password": "admin"})
-    body = {"current_password": "admin", "new_password": "newpassword"}
+    anon_client.post("/login", data={"username": "admin", "password": "admin-password"})
+    body = {"current_password": "admin-password", "new_password": "newpassword"}
 
     assert anon_client.post("/api/auth/change-password", json=body).status_code == 403
 
@@ -177,9 +179,9 @@ def test_read_only_can_read_but_not_write(
 ) -> None:
     client.post(
         "/api/admin/users",
-        json={"username": "viewer", "password": "pw", "role": "read-only"},
+        json={"username": "viewer", "password": "pw-password", "role": "read-only"},
     )
-    token = _login(anon_client, "viewer", "pw")
+    token = _login(anon_client, "viewer", "pw-password")
 
     # GET is allowed for read-only accounts.
     assert anon_client.get("/api/locations", headers=_bearer(token)).status_code == 200
@@ -195,9 +197,9 @@ def test_regular_user_can_write_but_not_admin(
 ) -> None:
     client.post(
         "/api/admin/users",
-        json={"username": "worker", "password": "pw", "role": "user"},
+        json={"username": "worker", "password": "pw-password", "role": "user"},
     )
-    token = _login(anon_client, "worker", "pw")
+    token = _login(anon_client, "worker", "pw-password")
 
     # A normal user can create catalog data.
     created = anon_client.post(
@@ -220,7 +222,7 @@ def test_regular_user_can_write_but_not_admin(
 def test_admin_user_management_flow(client: TestClient) -> None:
     created = client.post(
         "/api/admin/users",
-        json={"username": "sam", "password": "pw", "role": "user"},
+        json={"username": "sam", "password": "pw-password", "role": "user"},
     )
     assert created.status_code == 201
     body = created.json()
@@ -252,11 +254,52 @@ def test_disabled_user_cannot_log_in(
 ) -> None:
     created = client.post(
         "/api/admin/users",
-        json={"username": "gone", "password": "pw", "role": "user"},
+        json={"username": "gone", "password": "pw-password", "role": "user"},
     ).json()
     client.put(f"/api/admin/users/{created['id']}/active", json={"is_active": False})
 
     resp = anon_client.post(
-        "/api/auth/token", json={"username": "gone", "password": "pw"}
+        "/api/auth/token", json={"username": "gone", "password": "pw-password"}
     )
     assert resp.status_code == 401
+
+
+def test_production_refuses_short_admin_password(monkeypatch) -> None:
+    """The bootstrap admin skips the policy at seed time, so it is enforced here."""
+    from app import config
+    from app.main import _check_insecure_defaults
+
+    monkeypatch.setattr(config, "ENV", "production")
+    monkeypatch.setattr(config, "SECRET_KEY", "a-real-production-secret-value-32b")
+    monkeypatch.setattr(config, "ADMIN_PASSWORD", "short")
+    with pytest.raises(RuntimeError, match="at least"):
+        _check_insecure_defaults()
+
+
+def test_admin_user_endpoints_enforce_password_policy(client: TestClient) -> None:
+    resp = client.post(
+        "/api/admin/users", json={"username": "u", "password": "short", "role": "user"}
+    )
+    assert resp.status_code == 422
+    assert "at least" in resp.json()["detail"]
+    created = client.post(
+        "/api/admin/users",
+        json={"username": "u", "password": "long-enough", "role": "user"},
+    ).json()
+    resp = client.put(
+        f"/api/admin/users/{created['id']}/password", json={"password": "short"}
+    )
+    assert resp.status_code == 422
+
+
+def test_change_own_password_enforces_policy(session, anon_client: TestClient) -> None:  # type: ignore[no-untyped-def]
+    _seed_admin(session)
+    anon_client.post("/login", data={"username": "admin", "password": "admin-password"})
+    csrf = _csrf_from_page(anon_client.get("/").text)
+    resp = anon_client.post(
+        "/api/auth/change-password",
+        json={"current_password": "admin-password", "new_password": "short"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert resp.status_code == 422
+    assert "at least" in resp.json()["detail"]

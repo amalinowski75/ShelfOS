@@ -37,6 +37,7 @@ from app.api.routes import (
     types,
 )
 from app.auth.deps import require_access, require_admin, require_csrf
+from app.auth.throttle import LoginThrottle
 from app.db import engine, init_db
 from app.seed import ensure_system_user
 from app.services import label_printer, match_rule_service
@@ -183,6 +184,21 @@ def _check_insecure_defaults() -> None:
             "Bootstrap admin uses the default password; "
             "set SHELFOS_ADMIN_PASSWORD and change it."
         )
+    elif len(config.ADMIN_PASSWORD) < us.MIN_PASSWORD_LENGTH:
+        # The bootstrap admin is seeded past the password policy (it has to
+        # be, for the development default above), so the policy is applied to
+        # its source here instead: the one account an attacker knows exists
+        # should not be the one with the weakest password.
+        if config.is_production():
+            raise RuntimeError(
+                "Refusing to start: SHELFOS_ADMIN_PASSWORD must be at least "
+                f"{us.MIN_PASSWORD_LENGTH} characters when SHELFOS_ENV=production."
+            )
+        _logger.warning(
+            "SHELFOS_ADMIN_PASSWORD is shorter than %d characters; "
+            "set a longer one before exposing this instance.",
+            us.MIN_PASSWORD_LENGTH,
+        )
 
 
 def create_app(*, create_tables: bool = True) -> FastAPI:
@@ -201,6 +217,12 @@ def create_app(*, create_tables: bool = True) -> FastAPI:
         yield
 
     app = FastAPI(title="ShelfOS", version="1.0.0", lifespan=lifespan)
+    # Failed sign-in counters live on the app, not the module, so every app
+    # instance (each test's included) starts with a clean slate.
+    app.state.login_throttle = LoginThrottle(
+        limit=config.LOGIN_MAX_FAILURES,
+        window=config.LOGIN_FAILURE_WINDOW_SECONDS,
+    )
     # The session cookie must never travel over plain HTTP in production; keep it
     # SameSite=Lax so cross-site POSTs don't carry it (defence alongside the CSRF
     # token enforced by require_csrf).

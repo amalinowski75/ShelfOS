@@ -72,14 +72,17 @@ def client(engine: Engine) -> Iterator[object]:
     app = _build_app(engine)
     with Session(engine) as setup_session:
         us.create_user(
-            setup_session, username="admin", password="admin", role=UserRole.ADMIN
+            setup_session,
+            username="admin",
+            password="admin-password",
+            role=UserRole.ADMIN,
         )
         # Mirror the app's startup seed so the matching engine has its defaults.
         mrs.seed_default_rules(setup_session)
 
     with TestClient(app) as test_client:
         token = test_client.post(
-            "/api/auth/token", json={"username": "admin", "password": "admin"}
+            "/api/auth/token", json={"username": "admin", "password": "admin-password"}
         ).json()["access_token"]
         test_client.headers["Authorization"] = f"Bearer {token}"
         yield test_client

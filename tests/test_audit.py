@@ -459,10 +459,10 @@ def test_audit_endpoint_forbidden_for_non_admin(
     """A normal (non-admin) user is rejected with 403 by the router guard."""
     client.post(
         "/api/admin/users",
-        json={"username": "worker", "password": "pw", "role": "user"},
+        json={"username": "worker", "password": "pw-password", "role": "user"},
     )
     token = anon_client.post(
-        "/api/auth/token", json={"username": "worker", "password": "pw"}
+        "/api/auth/token", json={"username": "worker", "password": "pw-password"}
     ).json()["access_token"]
 
     resp = anon_client.get(

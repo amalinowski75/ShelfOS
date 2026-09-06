@@ -80,10 +80,10 @@ def test_stats_strip_shown_to_read_only_users(client: TestClient) -> None:
     """Reading the shelf is exactly what a read-only account is for."""
     client.post(
         "/api/admin/users",
-        json={"username": "viewer2", "password": "pw", "role": "read-only"},
+        json={"username": "viewer2", "password": "pw-password", "role": "read-only"},
     )
     token = client.post(
-        "/api/auth/token", json={"username": "viewer2", "password": "pw"}
+        "/api/auth/token", json={"username": "viewer2", "password": "pw-password"}
     ).json()["access_token"]
     html = client.get("/", headers={"Authorization": f"Bearer {token}"}).text
     assert 'id="component-stats"' in html
@@ -144,10 +144,10 @@ def test_index_shows_new_component_control_for_writer(client: TestClient) -> Non
 def test_new_component_control_hidden_for_read_only(client: TestClient) -> None:
     client.post(
         "/api/admin/users",
-        json={"username": "viewer", "password": "pw", "role": "read-only"},
+        json={"username": "viewer", "password": "pw-password", "role": "read-only"},
     )
     token = client.post(
-        "/api/auth/token", json={"username": "viewer", "password": "pw"}
+        "/api/auth/token", json={"username": "viewer", "password": "pw-password"}
     ).json()["access_token"]
     html = client.get("/", headers={"Authorization": f"Bearer {token}"}).text
     assert 'id="new-component-btn"' not in html
@@ -171,7 +171,9 @@ def test_require_web_user_heals_missing_csrf_token(session) -> None:  # type: ig
     from app.web.routes import require_web_user
     from starlette.requests import Request
 
-    user = us.create_user(session, username="stale", password="pw", role=UserRole.USER)
+    user = us.create_user(
+        session, username="stale", password="pw-password", role=UserRole.USER
+    )
     # A session that authenticates (user_id) but predates CSRF (no token).
     sess: dict[str, object] = {"user_id": user.id}
     scope = {
@@ -196,8 +198,10 @@ def test_create_type_via_web_session_requires_csrf(
     from app.models.enums import UserRole
     from app.services import user_service as us
 
-    us.create_user(session, username="admin", password="admin", role=UserRole.ADMIN)
-    anon_client.post("/login", data={"username": "admin", "password": "admin"})
+    us.create_user(
+        session, username="admin", password="admin-password", role=UserRole.ADMIN
+    )
+    anon_client.post("/login", data={"username": "admin", "password": "admin-password"})
 
     html = anon_client.get("/").text
     token = re.search(r'name="csrf-token" content="([^"]*)"', html).group(1)  # type: ignore[union-attr]
@@ -227,8 +231,10 @@ def test_create_type_accepts_builder_shaped_payload(
     from app.models.enums import UserRole
     from app.services import user_service as us
 
-    us.create_user(session, username="admin", password="admin", role=UserRole.ADMIN)
-    anon_client.post("/login", data={"username": "admin", "password": "admin"})
+    us.create_user(
+        session, username="admin", password="admin-password", role=UserRole.ADMIN
+    )
+    anon_client.post("/login", data={"username": "admin", "password": "admin-password"})
     token = re.search(  # type: ignore[union-attr]
         r'name="csrf-token" content="([^"]*)"', anon_client.get("/").text
     ).group(1)
@@ -270,10 +276,10 @@ def test_new_type_control_hidden_for_read_only(client: TestClient) -> None:
     """A read-only account cannot write, so the create-type control is absent."""
     client.post(
         "/api/admin/users",
-        json={"username": "viewer", "password": "pw", "role": "read-only"},
+        json={"username": "viewer", "password": "pw-password", "role": "read-only"},
     )
     token = client.post(
-        "/api/auth/token", json={"username": "viewer", "password": "pw"}
+        "/api/auth/token", json={"username": "viewer", "password": "pw-password"}
     ).json()["access_token"]
 
     html = client.get("/", headers={"Authorization": f"Bearer {token}"}).text
@@ -823,7 +829,9 @@ def _seed_admin(session) -> None:  # type: ignore[no-untyped-def]
     from app.models.enums import UserRole
     from app.services import user_service as us
 
-    us.create_user(session, username="admin", password="admin", role=UserRole.ADMIN)
+    us.create_user(
+        session, username="admin", password="admin-password", role=UserRole.ADMIN
+    )
 
 
 def test_web_pages_require_login(anon_client: TestClient) -> None:
@@ -842,7 +850,7 @@ def test_login_flow_grants_access(session, anon_client: TestClient) -> None:  # 
     _seed_admin(session)
     resp = anon_client.post(
         "/login",
-        data={"username": "admin", "password": "admin"},
+        data={"username": "admin", "password": "admin-password"},
         follow_redirects=False,
     )
     assert resp.status_code == 303
@@ -858,7 +866,7 @@ def test_login_invalid_credentials(session, anon_client: TestClient) -> None:  #
 
 def test_logout_clears_session(session, anon_client: TestClient) -> None:  # type: ignore[no-untyped-def]
     _seed_admin(session)
-    anon_client.post("/login", data={"username": "admin", "password": "admin"})
+    anon_client.post("/login", data={"username": "admin", "password": "admin-password"})
     anon_client.post("/logout", follow_redirects=False)
     assert anon_client.get("/", follow_redirects=False).status_code == 303
 
@@ -1223,10 +1231,10 @@ def _read_only_headers(client: TestClient) -> dict[str, str]:
     """Create a read-only account and return its bearer auth header."""
     client.post(
         "/api/admin/users",
-        json={"username": "viewer", "password": "pw", "role": "read-only"},
+        json={"username": "viewer", "password": "pw-password", "role": "read-only"},
     )
     token = client.post(
-        "/api/auth/token", json={"username": "viewer", "password": "pw"}
+        "/api/auth/token", json={"username": "viewer", "password": "pw-password"}
     ).json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
 
@@ -1237,8 +1245,7 @@ def test_authenticated_pages_load_shared_js(client: TestClient) -> None:
     assert "/static/shared.js" in client.get("/").text
     assert "/static/shared.js" in client.get("/invoices").text
     assert (
-        "/static/shared.js"
-        in client.get(f"/invoices/{invoice['id']}").text  # type: ignore[index]
+        "/static/shared.js" in client.get(f"/invoices/{invoice['id']}").text  # type: ignore[index]
     )
 
 
@@ -1706,9 +1713,7 @@ def test_boms_list_offers_delete_to_a_writer_only(
     assert "data-bom-delete" not in html  # …but not its delete control
 
 
-def test_bom_report_page_renders(
-    client: TestClient, tmp_path, monkeypatch
-) -> None:  # type: ignore[no-untyped-def]
+def test_bom_report_page_renders(client: TestClient, tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     bom_id = _upload_bom(client, tmp_path, monkeypatch)
     html = client.get(f"/boms/{bom_id}").text
     # A shell page: the header + the Tabulator mount + the feed hook. The lines and
@@ -1759,9 +1764,7 @@ def test_bom_report_unknown_returns_404(client: TestClient) -> None:
     assert client.get("/boms/9999").status_code == 404
 
 
-def test_bom_report_escapes_bom_name(
-    client: TestClient, tmp_path, monkeypatch
-) -> None:  # type: ignore[no-untyped-def]
+def test_bom_report_escapes_bom_name(client: TestClient, tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr(config, "ATTACHMENTS_DIR", tmp_path)
     bom_id = client.post(
         "/api/boms",
@@ -2046,7 +2049,8 @@ def test_types_pages_require_login(anon_client: TestClient) -> None:
 
 
 def test_locations_page_offers_printing_only_with_a_printer(
-    client: TestClient, monkeypatch  # type: ignore[no-untyped-def]
+    client: TestClient,
+    monkeypatch,  # type: ignore[no-untyped-def]
 ) -> None:
     """No printer configured, no print affordances: the dialog would have
     nothing to offer and the button nothing to do."""
@@ -2070,7 +2074,8 @@ def test_locations_page_offers_printing_only_with_a_printer(
 
 
 def test_labels_page_offers_the_label_printer_with_its_own_csrf_token(
-    client: TestClient, monkeypatch  # type: ignore[no-untyped-def]
+    client: TestClient,
+    monkeypatch,  # type: ignore[no-untyped-def]
 ) -> None:
     """This page is standalone — no base.html — so the token a print needs has
     to be put there by hand, or the button 403s and looks broken."""
@@ -2404,7 +2409,7 @@ def test_both_tables_offer_the_same_two_edits(
     assert html.count(">Edit line</button>") == 2
     assert ">Edit</button>" not in html
     # The staged row carries what that dialog fills in.
-    assert 'data-unit-price=' in html
+    assert "data-unit-price=" in html
 
 
 def test_a_line_that_has_a_location_is_not_offered_a_blank_one(
@@ -2590,7 +2595,9 @@ def test_a_read_only_invoice_drops_the_actions_column_from_the_grid_too(
 
 
 def test_both_dialogs_announce_a_failed_load_and_offer_the_action(
-    client: TestClient, tmp_path, monkeypatch  # type: ignore[no-untyped-def]
+    client: TestClient,
+    tmp_path,
+    monkeypatch,  # type: ignore[no-untyped-def]
 ) -> None:
     """The message is the only instruction left, so it has to be announced.
 

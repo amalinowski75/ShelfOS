@@ -9,6 +9,24 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## Sign-in hardening
+
+A public instance is only as safe as its weakest password and the number of
+guesses an attacker gets at it. Both now have a floor.
+
+- **Sign-ins are throttled** per client address: ten failures in fifteen minutes
+  and the address is refused (429, `Retry-After`) until the oldest failure has
+  aged out — before the password is checked, so a locked-out address costs no
+  bcrypt work either. Per address rather than per account, so guessing at a name
+  cannot lock its owner out. Every failure is logged with the name and the
+  address, in the shape a fail2ban filter matches. `SHELFOS_LOGIN_MAX_FAILURES`
+  and `SHELFOS_LOGIN_FAILURE_WINDOW_SECONDS` tune it; 0 turns it off.
+- **Passwords must be at least 8 characters** — created, reset, or changed by
+  their owner; the dialogs say so up front with `minlength`. The bootstrap
+  admin's password comes from the environment and is judged at startup instead:
+  fatal in production, a warning otherwise, so a development install still comes
+  up on `admin`/`admin`.
+
 ## A BOM line has to name its part
 
 The BOM report used to resolve a line by looking its MPN up in inventory. An MPN
