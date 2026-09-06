@@ -13,6 +13,8 @@ from app.auth.throttle import LoginThrottle, log_name, throttle_key
 from app.services import user_service as us
 from fastapi.testclient import TestClient
 
+from tests.conftest import web_login
+
 
 class _Clock:
     def __init__(self) -> None:
@@ -187,10 +189,9 @@ def test_api_token_endpoint_is_throttled(session, anon_client: TestClient) -> No
 def test_web_login_is_throttled(session, anon_client: TestClient) -> None:  # type: ignore[no-untyped-def]
     _seed_admin(session)
     _tighten(anon_client, limit=2)
-    bad = {"username": "admin", "password": "wrong-password"}
     for _ in range(2):
-        assert anon_client.post("/login", data=bad).status_code == 401
-    resp = anon_client.post("/login", data=bad)
+        assert web_login(anon_client, "admin", "wrong-password").status_code == 401
+    resp = web_login(anon_client, "admin", "wrong-password")
     assert resp.status_code == 429
     assert "Too many failed sign-in attempts" in resp.text
     assert "Retry-After" in resp.headers

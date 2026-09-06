@@ -15,6 +15,8 @@ from app.services import user_service as us
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
+from tests.conftest import web_login
+
 
 def _bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
@@ -128,7 +130,7 @@ def test_changing_your_password_in_the_browser_keeps_you_signed_in(
 ) -> None:
     """Otherwise the change would sign you out of the request that made it."""
     _seed_admin(session)
-    anon_client.post("/login", data={"username": "admin", "password": "admin-password"})
+    web_login(anon_client, "admin", "admin-password")
     csrf = _csrf_from_page(anon_client.get("/").text)
     resp = anon_client.post(
         "/api/auth/change-password",
@@ -149,7 +151,7 @@ def test_admin_reset_signs_the_target_out_of_the_browser(
         "/api/admin/users",
         json={"username": "dave", "password": "first-password", "role": "user"},
     )
-    anon_client.post("/login", data={"username": "dave", "password": "first-password"})
+    web_login(anon_client, "dave", "first-password")
     assert anon_client.get("/", follow_redirects=False).status_code == 200
 
     victim = us.get_by_username(session, "dave")
@@ -234,7 +236,7 @@ def test_the_users_feed_marks_your_own_row(
 ) -> None:
     """So the table can leave the Password action off the row that refuses it."""
     _seed_admin(session)
-    anon_client.post("/login", data={"username": "admin", "password": "admin-password"})
+    web_login(anon_client, "admin", "admin-password")
     us.create_user(session, username="other", password="other-password")
     rows = anon_client.get("/web/api/users").json()["data"]
     by_name = {row["name"]: row for row in rows}

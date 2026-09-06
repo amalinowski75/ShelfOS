@@ -6,6 +6,8 @@ management. There is no self-registration: accounts are created by an admin.
 
 from __future__ import annotations
 
+import functools
+import secrets
 from collections.abc import Iterable
 from typing import cast
 
@@ -64,6 +66,26 @@ def verify_password(password: str, password_hash: str) -> bool:
         return bcrypt.checkpw(password.encode(), password_hash.encode())
     except ValueError:
         return False
+
+
+@functools.cache
+def _absent_password_hash() -> str:
+    """A hash to check a password against when there is no account to check.
+
+    Without it, a wrong password for a real account costs a bcrypt round and a
+    guess at a name nobody has costs none, and the difference is large enough
+    to read off the response time — which turns the sign-in form into a way to
+    ask whether a username exists. Verifying against this instead makes both
+    answers cost the same.
+
+    Hashed from a random value, so no password can ever match it, and computed
+    on first use rather than at import: it costs one bcrypt round, once, and
+    only on an instance that is actually asked about a missing account. Derived
+    through :func:`hash_password` so it tracks the cost factor the real hashes
+    are made with — a constant baked in here would drift the moment that
+    changed, and take the timing back apart.
+    """
+    return hash_password(secrets.token_urlsafe(32))
 
 
 def get_by_username(session: Session, username: str) -> User | None:
@@ -133,9 +155,14 @@ def create_user(
 
 
 def authenticate(session: Session, username: str, password: str) -> User | None:
-    """Return the user if credentials are valid and the account is active."""
+    """Return the user if credentials are valid and the account is active.
+
+    Every rejection costs one bcrypt verification, whether or not there was an
+    account to verify against — see :func:`_absent_password_hash`.
+    """
     user = get_by_username(session, username)
     if user is None or not user.is_active or user.password_hash is None:
+        verify_password(password, _absent_password_hash())
         return None
     if not verify_password(password, user.password_hash):
         return None
