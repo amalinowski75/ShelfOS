@@ -360,10 +360,13 @@ describe("component_dialog.js — you may already have this part", () => {
     type_name: "ic",
   };
 
-  // `manufacturer` is what the SERVER echoes back: the name it was given, resolved
-  // through the alias table. With no alias that is the name itself — so the stub
-  // echoes the query rather than returning a fixed string the endpoint could never
-  // have produced for that input. Pass `resolvesTo` to stand in for a known alias.
+  // Two things the SERVER decides, which the stub therefore states rather than
+  // computes. `manufacturer` is the name it was given, resolved through the alias
+  // table — with no alias, the name itself, so the stub echoes the query rather
+  // than a fixed string the endpoint could never produce for that input.
+  // `records_alias` is per candidate: whether adopting it would ALSO store the
+  // spelling. That test is `normalize` (accents, punctuation, a hand-written fold
+  // table), which is why it is answered server-side and asserted here as data.
   function conflictFetch(candidates, seen = [], resolvesTo = null) {
     return (url, opts) => {
       seen.push({ url, opts });
@@ -426,21 +429,44 @@ describe("component_dialog.js — you may already have this part", () => {
     expect(styleOf(".mfr-conflict-list .btn").flex).toBe("0 0 auto");
   });
 
-  it("says what picking one will teach it, before the click", async () => {
+  it("says what picking one will teach it, on the row it is true of", async () => {
     // The confusion this caused: "This is it" quietly created a global rule that
     // changed how later imports read a manufacturer's name, and nothing said so.
     // It has to be said BEFORE — the components page navigates away the instant a
-    // part is chosen, so anything reported afterwards is never read.
+    // part is chosen, so anything reported afterwards is never read. And on the
+    // ROW, since it is a claim about one particular button.
     const page = loadPage(dialogFixture(), SCRIPTS, {
-      fetchImpl: conflictFetch([CANDIDATE]),
+      fetchImpl: conflictFetch([{ ...CANDIDATE, records_alias: true }]),
     });
     open(page, () => {}, { mpn: "MCP2200", manufacturer: "MICROCHIP" });
     await tick();
 
+    const mark = page.document.querySelector("#mfr-conflict-list .mfr-conflict-teaches");
+    expect(mark).toBeTruthy();
+    expect(mark.textContent).toContain("MICROCHIP");
+    // …and the note below explains what that mark costs.
     const note = page.document.getElementById("mfr-conflict-note");
     expect(note.hidden).toBe(false);
-    expect(note.textContent).toContain("MICROCHIP");
-    expect(note.textContent).toContain("records");
+    expect(note.textContent).toContain("same component");
+  });
+
+  it("marks only the candidates that would actually record something", async () => {
+    // The quantifier this replaces: `some` over the list put one sentence under
+    // every row, so with two candidates it was routinely true of one button and
+    // false of the other — and the user reads it next to whichever they click.
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: conflictFetch([
+        { ...CANDIDATE, id: 1, manufacturer: "Microchip Technology", records_alias: false },
+        { ...CANDIDATE, id: 2, manufacturer: "Micro Crystal", records_alias: true },
+      ]),
+    });
+    open(page, () => {}, { mpn: "MCP2200", manufacturer: "MICROCHIP" });
+    await tick();
+
+    const rows = [...page.document.querySelectorAll("#mfr-conflict-list li")];
+    expect(rows.length).toBe(2);
+    expect(rows[0].querySelector(".mfr-conflict-teaches")).toBe(null);
+    expect(rows[1].querySelector(".mfr-conflict-teaches")).toBeTruthy();
   });
 
   it("promises no such thing when nothing would be recorded", async () => {
@@ -466,29 +492,31 @@ describe("component_dialog.js — you may already have this part", () => {
     // its own alias and finds there is nothing left to write. Claiming otherwise
     // describes a rule the button will not create.
     const page = loadPage(dialogFixture(), SCRIPTS, {
-      fetchImpl: conflictFetch(
-        [{ ...CANDIDATE, manufacturer: "ON Semiconductor" }],
-        [],
-        "ON Semiconductor", // what the alias table makes of "ONSEMI"
-      ),
+      // records_alias false: the server has resolved ONSEMI through the alias
+      // table and found it already means this maker, so there is nothing to store.
+      fetchImpl: conflictFetch([
+        { ...CANDIDATE, manufacturer: "ON Semiconductor", records_alias: false },
+      ]),
     });
     open(page, () => {}, { mpn: "MCP2200", manufacturer: "ONSEMI" });
     await tick();
 
     expect(warning(page).hidden).toBe(false); // still says you own the part
+    expect(page.document.querySelector(".mfr-conflict-teaches")).toBe(null);
     expect(page.document.getElementById("mfr-conflict-note").hidden).toBe(true);
   });
 
-  it("still promises it when the spelling really is new", async () => {
+  it("still marks it when the spelling really is new", async () => {
     const page = loadPage(dialogFixture(), SCRIPTS, {
-      fetchImpl: conflictFetch([{ ...CANDIDATE, manufacturer: "ON Semiconductor" }]),
+      fetchImpl: conflictFetch([
+        { ...CANDIDATE, manufacturer: "ON Semiconductor", records_alias: true },
+      ]),
     });
     open(page, () => {}, { mpn: "MCP2200", manufacturer: "ONSEMI" });
     await tick();
 
-    const note = page.document.getElementById("mfr-conflict-note");
-    expect(note.hidden).toBe(false);
-    expect(note.textContent).toContain("ONSEMI");
+    const mark = page.document.querySelector("#mfr-conflict-list .mfr-conflict-teaches");
+    expect(mark.textContent).toContain("ONSEMI");
   });
 
   it("says nothing when the part number matches nothing", async () => {
