@@ -255,12 +255,17 @@ describe("bom_take.js — the preview", () => {
     ]);
   });
 
-  it("names the lines that stop the run and refuses to confirm", async () => {
+  it("counts what stops the run, and marks it on the rows themselves", async () => {
+    // Naming the lines in the panel duplicated the table right below it, where
+    // they are now tinted — and a BOM can name dozens of them.
     const blocked = () =>
       plan({
         can_run: false,
         blocked_references: ["U7", "U8"],
-        lines: [{ ...plan().lines[0], blocked: "unassigned", sources: [] }],
+        lines: [
+          { ...plan().lines[0], blocked: "unassigned", sources: [] },
+          { ...plan().lines[0], line_id: 12, references: "U8", blocked: null },
+        ],
       });
     const { impl } = server(blocked);
     const { document } = loadPage(bomTakeFixture(), SCRIPTS, { fetchImpl: impl });
@@ -269,8 +274,36 @@ describe("bom_take.js — the preview", () => {
     await tick();
 
     expect(document.getElementById("take-blockers").hidden).toBe(false);
-    expect(document.getElementById("take-blockers-text").textContent).toContain("U7, U8");
+    const text = document.getElementById("take-blockers-text").textContent;
+    expect(text).toContain("2 lines");
+    expect(text).not.toContain("U7"); // the table says which, not this
+    // Only the blocked row is marked, and it says why rather than "not taken".
+    const marked = document.querySelectorAll("#take-rows tr.take-blocked");
+    expect(marked).toHaveLength(1);
+    expect(marked[0].textContent).toContain("no component assigned");
     expect(document.getElementById("take-confirm").disabled).toBe(true);
+  });
+
+  it("says which of the two reasons a line cannot be taken", async () => {
+    const retired = () =>
+      plan({
+        can_run: false,
+        blocked_references: ["R1,R2"],
+        lines: [{ ...plan().lines[0], blocked: "component_retired", sources: [] }],
+      });
+    const { impl } = server(retired);
+    const { document } = loadPage(bomTakeFixture(), SCRIPTS, { fetchImpl: impl });
+    document.getElementById("bom-take").click();
+    pickGathering(document);
+    await tick();
+
+    expect(document.querySelector("tr.take-blocked").textContent).toContain(
+      "no longer in use",
+    );
+    // One line, so the count reads as one.
+    expect(document.getElementById("take-blockers-text").textContent).toContain(
+      "1 line cannot",
+    );
   });
 
   it("says how short the run will be", async () => {
@@ -535,21 +568,15 @@ describe("app.css — the take dialog's table", () => {
     expect(style.gap).toBe("14px");
   });
 
-  it("breaks the blocked-line list instead of widening the dialog", () => {
-    // A designator group is one unbroken token — the CSV writes "R1,R2,R3" with no
-    // spaces — so there is nowhere for the browser to break it on its own, and the
-    // sentence ran off the panel and scrolled the whole dialog sideways.
+  it("tints a row that cannot be taken, the way an unfilled field is tinted", () => {
+    // The same tint the component dialog puts behind a field an import left
+    // unfilled — the problem marked where the problem is, rather than named in a
+    // panel above the table.
     const style = styleOf(
-      '<div class="take-blockers"><p id="p"></p></div>',
-      "p",
+      '<table><tbody><tr class="take-blocked"><td id="c"></td></tr></tbody></table>',
+      "c",
     );
-    expect(style.overflowWrap).toBe("anywhere");
-  });
-
-  it("keeps a long list of blocked lines from pushing the table off screen", () => {
-    const style = styleOf('<div class="take-blockers" id="b"></div>', "b");
-    expect(style.overflowY).toBe("auto");
-    expect(style.maxHeight).toBe("20vh");
+    expect(style.backgroundColor).toBe("var(--unfilled-tint)");
   });
 
   it("gives the dialog room for five columns", () => {

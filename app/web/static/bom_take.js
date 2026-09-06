@@ -4,6 +4,13 @@
 // is, only the server knows, so every edit re-asks it for the plan rather than
 // recomputing anything here.
 
+// Why a line cannot be taken, in the words of the person reading it rather than
+// the service's own. The tinted row says THAT something is wrong; this says what.
+const BLOCKED_REASON = {
+  unassigned: "no component assigned",
+  component_retired: "the assigned part is no longer in use",
+};
+
 function takeSnapshotUrl(takeId) {
   return `/bom-takes/${Number(takeId)}`;
 }
@@ -95,7 +102,7 @@ if (takeDialog && takeTableEl) {
           <td class="num"><input class="control take-qty" type="number" min="0" step="1"
               value="${Number(line.requested)}" data-line="${Number(line.line_id)}"
               aria-label="How many of ${esc(line.references)} to take"></td>
-          <td>${line.blocked ? '<span class="muted">not taken</span>' : sourcesCell(line)}</td>
+          <td>${line.blocked ? esc(BLOCKED_REASON[line.blocked] || "not taken") : sourcesCell(line)}</td>
           <td class="num">${
             line.shortfall
               ? `<span class="badge b-warn"><span class="dot"></span>${Number(
@@ -107,12 +114,14 @@ if (takeDialog && takeTableEl) {
       )
       .join("");
 
+    // The count, not the list. Naming the lines here duplicated the table right
+    // below it — where the rows are now tinted — and a BOM can name dozens.
     const blocked = plan.blocked_references || [];
     blockers.hidden = blocked.length === 0;
     if (blocked.length) {
       blockersText.textContent =
-        `These lines do not name a component yet, so nothing can be taken for ` +
-        `them: ${blocked.join(", ")}. Assign one on the report first.`;
+        `${blocked.length} line${blocked.length === 1 ? "" : "s"} cannot be taken, ` +
+        "marked below. Assign a component to them on the report first.";
     }
     confirmBtn.disabled = !plan.can_run;
     summary.textContent = plan.total_shortfall

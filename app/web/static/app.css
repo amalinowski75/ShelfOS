@@ -960,16 +960,18 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, .82); }
 .take-choice { min-width: 220px; }
 
 /* A line that cannot be taken is still listed — seeing which ones stop the run is
-   the point — but it reads as inert rather than as something to edit. */
-.take-blocked { opacity: 0.6; }
+   the point — and tinted, the same tint the component dialog puts behind a field
+   an import left unfilled. It carries further than a dimmed row or a name in a
+   panel: the problem is marked where the problem is.
 
-/* The lines that stop the run, named. A designator group is one unbroken token
-   ("R1,R2,R3,…" — the CSV writes no spaces), so without `anywhere` the browser
-   cannot break it anywhere at all: the sentence ran off the panel and put a
-   horizontal scrollbar on the whole dialog. A long BOM can name dozens, so the
-   panel scrolls itself rather than pushing the table it is about off the screen. */
-.take-blockers { margin-bottom: 12px; max-height: 20vh; overflow-y: auto; }
-.take-blockers p { overflow-wrap: anywhere; }
+   On the cells rather than the row: a <tr> background sits behind its cells, so
+   anything the table paints on a td would cover it. */
+.take-blocked > td { background-color: var(--unfilled-tint); }
+
+/* One short sentence now that the panel counts rather than names — the guards
+   against an unbreakable designator group and against a wall of them went with
+   the list they were protecting. */
+.take-blockers { margin-bottom: 12px; }
 
 /* The reversal banner and the past-takes list on a snapshot / a BOM report. */
 .take-reversed {
