@@ -1064,8 +1064,9 @@ html.bom-pick-open, html.bom-pick-open body { overflow: hidden; }
    concerned, and plainly visible on screen with stale content.
 
    `!important` because `[hidden]` is specificity (0,1,0): being last beats a
-   single class, but still loses to any two-class selector (`.error-row .btn` is
-   one). Only the important form actually holds in a browser.
+   single class, but still loses to any two-class selector that sets `display` —
+   `.user .who` and `.login .card-pad` are the two here. Only the important form
+   actually holds in a browser.
 
    LAST because jsdom's cascade is source-order only and ignores `!important`
    outright — verified, not assumed — so the same rule at the top of this file
@@ -1073,8 +1074,18 @@ html.bom-pick-open, html.bom-pick-open body { overflow: hidden; }
    that exist to guard it. Those checks are the only thing that can see this
    class of bug, so the rule goes where they can see it too.
 
-   Nothing here has a legitimate reason to out-rank the attribute: an element
-   that must show while carrying `hidden` is a contradiction, not a design. No
-   script in this app writes `style.display`, so there is no inline `display` for
-   this to overrule either. */
-[hidden] { display: none !important; }
+   Nothing here has a legitimate reason to out-rank the attribute — an element
+   that must show while carrying `hidden` is a contradiction, not a design —
+   with ONE standardised exception, which is why the selector is not a bare
+   `[hidden]`. `hidden="until-found"` marks a collapsed region that deliberately
+   stays in the layout tree so find-in-page can reach it; the browser then fires
+   `beforematch` and drops the attribute to reveal it. It still matches
+   `[hidden]`, so the blanket form would pin it to `display: none` — and being
+   important, no author rule could take that back. The section would simply never
+   appear, with nothing in the stylesheet to explain it: the same silent failure
+   this rule exists to end, pointed the other way. Nothing uses it today; the
+   next collapsible section is exactly where someone would reach for it.
+
+   No script in this app writes `style.display`, so there is no inline `display`
+   for this to overrule either. */
+[hidden]:not([hidden="until-found"]) { display: none !important; }

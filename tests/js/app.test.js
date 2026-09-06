@@ -323,11 +323,24 @@ describe("app.css — `hidden` means hidden", () => {
     // file — and a browser is the only place the real semantics can be tested.
     // They were, across nine pages and 89 hidden elements.
     //
-    // What a test CAN do is stop the two properties this depends on being quietly
-    // dropped: the rule is !important, and it is last.
+    // The same goes for the `until-found` carve-out, for a second reason: jsdom's
+    // own UA sheet is a bare `[hidden] { display: none }` with no such exception,
+    // where a real browser's has one — so `hidden="until-found"` reads as hidden
+    // here whatever this stylesheet says. Measured in Chrome instead: plain
+    // hidden `none`, until-found `block`.
+    //
+    // What a test CAN do is stop the three properties this depends on being
+    // quietly dropped: the rule is !important, it is last, and it spares
+    // until-found.
     const text = css();
-    expect(text).toContain("[hidden] { display: none !important; }");
-    expect(text.trimEnd().endsWith("[hidden] { display: none !important; }")).toBe(true);
+    expect(text).toContain(
+      '[hidden]:not([hidden="until-found"]) { display: none !important; }',
+    );
+    expect(
+      text
+        .trimEnd()
+        .endsWith('[hidden]:not([hidden="until-found"]) { display: none !important; }'),
+    ).toBe(true);
   });
 
   it("still hides each of the nine that used to carry its own rule", () => {
@@ -347,14 +360,6 @@ describe("app.css — `hidden` means hidden", () => {
     for (const [name, markup] of Object.entries(cases)) {
       expect(`${name}: ${displayOf(markup)}`).toBe(`${name}: none`);
     }
-  });
-
-  it("beats a two-class selector, which is why it is !important", () => {
-    // `[hidden]` is specificity (0,1,0): last-in-file beats one class, and still
-    // loses to two. `.error-row .btn` is a real selector in this stylesheet.
-    expect(
-      displayOf('<p class="error-row"><button class="btn" id="x" hidden>a</button></p>'),
-    ).toBe("none");
   });
 
   it("leaves anything without the attribute alone", () => {
