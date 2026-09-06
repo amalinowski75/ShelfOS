@@ -508,6 +508,58 @@ export function bomPickFixture(types = [{ id: 3, name: "capacitor" }]) {
     </dialog>`;
 }
 
+// The "Take parts" dialog (mirrors _bom_take_dialog.html) on top of the report
+// shell, since bom_take.js reads the report's own #bom-lines-table for the BOM id
+// and #bom-boards for the board count.
+export function bomTakeFixture() {
+  return `
+    ${bomReportFixture()}
+    <button type="button" id="bom-take">Take parts…</button>
+    <dialog id="bom-take-dialog">
+      <input type="number" id="take-boards" min="1" step="1" value="1" />
+      <div class="loc-picker">
+        <input type="hidden" name="take_source" value="" />
+        <button type="button" class="loc-picker-toggle">
+          <span class="loc-picker-label">Select a location…</span>
+        </button>
+        <div class="loc-picker-menu" hidden>
+          <ul class="loc-picker-list">
+            <li><div class="loc-picker-row">
+              <button type="button" class="loc-picker-node" data-loc-id="4"
+                      data-loc-path="Kontroler CNC">Kontroler CNC</button></div></li>
+          </ul>
+        </div>
+      </div>
+      <div id="take-blockers" hidden><p id="take-blockers-text"></p></div>
+      <table id="take-table"><tbody id="take-rows"></tbody></table>
+      <p class="error-row" id="take-error-row" role="alert" hidden>
+        <span id="take-error"></span>
+      </p>
+      <span id="take-summary"></span>
+      <button type="button" data-close>Cancel</button>
+      <button type="button" id="take-confirm" disabled>Take them off the shelves</button>
+    </dialog>`;
+}
+
+// The snapshot page's Tabulator mount (mirrors bom_take.html).
+export function bomTakeLinesFixture() {
+  return `<div id="take-lines-table" data-take-id="12"></div>`;
+}
+
+// The snapshot page's undo dialog (mirrors bom_take.html).
+export function bomTakeUndoFixture() {
+  return `
+    <button type="button" id="take-undo">Undo this take</button>
+    <dialog id="take-undo-dialog" data-take-id="12">
+      <button type="button" data-close>Cancel</button>
+      <textarea id="take-undo-reason"></textarea>
+      <p class="error-row" id="take-undo-error-row" hidden>
+        <span id="take-undo-error"></span>
+      </p>
+      <button type="button" id="take-undo-confirm" disabled>Put it all back</button>
+    </dialog>`;
+}
+
 // The BOM list page shell (mirrors boms_list.html): the server-rendered rows with
 // their per-row Delete button, plus the upload dialog.
 export function bomListFixture() {

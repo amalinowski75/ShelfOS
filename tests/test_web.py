@@ -2638,3 +2638,234 @@ def test_no_page_ships_a_front_end_library_nothing_uses(client: TestClient) -> N
     assert "<html" in html and "appbar" in html  # really the full layout
     assert "tabulator" in html  # …and a library it does use, so this can fail
     assert "htmx" not in html
+
+
+# --- taking a BOM off the shelves -------------------------------------------
+
+
+def _take_ready(client: TestClient, tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
+    """A BOM whose one line is assigned, with stock in a gathering drawer."""
+    monkeypatch.setattr(config, "ATTACHMENTS_DIR", tmp_path)
+    gathering = client.post(
+        "/api/locations", json={"type": "box", "name": "Kontroler CNC"}
+    ).json()
+    drawer = client.post(
+        "/api/locations",
+        json={"type": "drawer", "name": "Rezystory", "parent_id": gathering["id"]},
+    ).json()
+    ctype = client.post("/api/types", json={"name": "IC"}).json()
+    component = client.post(
+        "/api/components", json={"name": "A", "type_id": ctype["id"], "mpn": "PART-A"}
+    ).json()
+    client.post(
+        "/api/stock/add",
+        json={
+            "component_id": component["id"],
+            "location_id": drawer["id"],
+            "quantity": 100,
+        },
+    )
+    bom = client.post(
+        "/api/boms",
+        files={
+            "file": ("b.csv", b"Reference,Qty,Value,MPN\nU1,2,x,PART-A\n", "text/csv")
+        },
+        data={"name": "Kontroler CNC"},
+    ).json()
+    client.post(f"/api/boms/{bom['id']}/assign-obvious")
+    take = client.post(
+        f"/api/boms/{bom['id']}/takes",
+        json={"boards": 3, "source_location_id": gathering["id"]},
+    ).json()
+    return {
+        "bom_id": bom["id"],
+        "take_id": take["id"],
+        "component_id": component["id"],
+        "gathering_id": gathering["id"],
+        "drawer_id": drawer["id"],
+    }
+
+
+def test_take_page_carries_its_header_and_the_table_mount(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    take_id = _take_ready(client, tmp_path, monkeypatch)["take_id"]
+
+    html = client.get(f"/bom-takes/{take_id}").text
+
+    # The header is server-rendered; the lines come from the feed below.
+    assert "Kontroler CNC" in html  # the snapshot's name, and the gathering path
+    assert f'data-take-id="{take_id}"' in html
+    assert "bom_take_lines.js" in html
+    assert 'id="take-undo"' in html
+
+
+def test_take_lines_feed_says_what_came_off_which_shelf(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    take_id = _take_ready(client, tmp_path, monkeypatch)["take_id"]
+
+    rows = client.get(f"/web/api/bom-takes/{take_id}/lines").json()
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["references"] == "U1"
+    assert row["mpn"] == "PART-A"
+    assert (row["requested"], row["taken"], row["shortfall"]) == (6, 6, 0)
+    assert row["from"].endswith("Rezystory ×6")  # 2 per board × 3 boards
+
+
+def test_take_lines_feed_on_an_unknown_take_is_404(client: TestClient) -> None:
+    assert client.get("/web/api/bom-takes/9999/lines").status_code == 404
+
+
+def test_the_take_dialogs_carry_the_body_wrapper(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """Neither dialog has a <form>, and `dialog form` is where the inset lives."""
+    ready = _take_ready(client, tmp_path, monkeypatch)
+
+    report = client.get(f"/boms/{ready['bom_id']}").text
+    assert 'class="dialog-body"' in report  # the take dialog
+    snapshot = client.get(f"/bom-takes/{ready['take_id']}").text
+    assert 'class="dialog-body"' in snapshot  # the undo dialog
+
+
+def test_an_unknown_take_is_404(client: TestClient) -> None:
+    assert client.get("/bom-takes/9999").status_code == 404
+
+
+def test_a_reversed_take_shows_the_reason_and_drops_undo(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    take_id = _take_ready(client, tmp_path, monkeypatch)["take_id"]
+    client.post(
+        f"/api/bom-takes/{take_id}/reverse", json={"reason": "board scrapped"}
+    )
+
+    html = client.get(f"/bom-takes/{take_id}").text
+
+    assert "board scrapped" in html
+    assert 'id="take-undo"' not in html  # offered once, and it has been used
+    assert "bom_take_undo.js" not in html
+
+
+def test_a_read_only_account_sees_the_record_but_no_undo(
+    client: TestClient, anon_client: TestClient, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    take_id = _take_ready(client, tmp_path, monkeypatch)["take_id"]
+    token = _non_admin_token(client, role="read-only", username="viewer")
+
+    headers = {"Authorization": f"Bearer {token}"}
+    html = anon_client.get(f"/bom-takes/{take_id}", headers=headers).text
+
+    assert "Kontroler CNC" in html  # the record itself is readable…
+    assert 'id="take-undo"' not in html  # …but there is nothing to press
+    # Including its lines: reading a take is not a write.
+    rows = anon_client.get(
+        f"/web/api/bom-takes/{take_id}/lines", headers=headers
+    ).json()
+    assert rows[0]["from"].endswith("Rezystory ×6")
+
+
+def test_the_take_survives_its_gathering_location_being_deleted(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """`delete_location` refuses only on non-zero stock, so an emptied gathering
+    branch is deletable the moment the take is done."""
+    ready = _take_ready(client, tmp_path, monkeypatch)
+    client.post(
+        "/api/stock/remove",
+        json={
+            "component_id": ready["component_id"],
+            "location_id": ready["drawer_id"],
+            "quantity": 94,
+        },
+    )
+    assert client.delete(
+        f"/api/locations/{ready['gathering_id']}?recursive=true"
+    ).status_code in (200, 204)
+    take_id = ready["take_id"]
+
+    assert client.get(f"/bom-takes/{take_id}").status_code == 200
+    rows = client.get(f"/web/api/bom-takes/{take_id}/lines").json()
+
+    # The path it can no longer resolve reads as a dash, not as a 500.
+    assert rows[0]["from"].startswith("—")
+
+
+def test_the_snapshot_survives_its_bom_being_deleted(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """A reversed take outlives its BOM, and is still the record of what happened.
+
+    Without this the page 404s — and every movement note linking to it becomes a
+    link to that 404, which is the audit trail quietly going dead.
+    """
+    ready = _take_ready(client, tmp_path, monkeypatch)
+    # Standing takes hold the BOM in place; reverse it first, as the user must.
+    assert client.delete(f"/api/boms/{ready['bom_id']}").status_code == 422
+    client.post(
+        f"/api/bom-takes/{ready['take_id']}/reverse", json={"reason": "scrapped"}
+    )
+    assert client.delete(f"/api/boms/{ready['bom_id']}").status_code == 204
+
+    resp = client.get(f"/bom-takes/{ready['take_id']}")
+
+    assert resp.status_code == 200
+    assert "has been deleted" in resp.text
+    # And its lines still read.
+    rows = client.get(f"/web/api/bom-takes/{ready['take_id']}/lines").json()
+    assert rows[0]["references"] == "U1"
+
+
+def test_a_take_movement_links_its_note_to_the_snapshot(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """The user's "ideally the note links to the snapshot" — with no new column."""
+    ready = _take_ready(client, tmp_path, monkeypatch)
+    take_id, component_id = ready["take_id"], ready["component_id"]
+
+    html = client.get(f"/components/{component_id}").text
+
+    assert f'href="/bom-takes/{take_id}"' in html
+
+
+def test_an_ordinary_movement_note_is_not_a_link(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(config, "ATTACHMENTS_DIR", tmp_path)
+    ctype = client.post("/api/types", json={"name": "IC"}).json()
+    component = client.post(
+        "/api/components", json={"name": "B", "type_id": ctype["id"]}
+    ).json()
+    drawer = client.post(
+        "/api/locations", json={"type": "drawer", "name": "D9"}
+    ).json()
+    client.post(
+        "/api/stock/add",
+        json={
+            "component_id": component["id"],
+            "location_id": drawer["id"],
+            "quantity": 5,
+            "note": "from the parts bin",
+        },
+    )
+
+    html = client.get(f"/components/{component['id']}").text
+
+    assert "from the parts bin" in html
+    assert "/bom-takes/" not in html
+
+
+def test_the_bom_report_lists_its_past_takes(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    ready = _take_ready(client, tmp_path, monkeypatch)
+
+    html = client.get(f"/boms/{ready['bom_id']}").text
+
+    assert f'href="/bom-takes/{ready["take_id"]}"' in html
+    # In the shared `.stack`, so it is spaced from the lines table above it the
+    # way every other run of cards in the app is.
+    assert '<div class="stack">' in html

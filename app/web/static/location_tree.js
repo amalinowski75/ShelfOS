@@ -81,6 +81,11 @@
       const node = event.target.closest(".loc-picker-node");
       if (node) {
         selectNode(node.dataset.locId, node.dataset.locPath);
+        // A native <select> fires `change` when someone picks; this one is a
+        // hidden input written by script, so nothing would. Only on a real click,
+        // not on the programmatic selectNode calls (reset, filter drop) — those
+        // are the page talking to itself, not a person choosing.
+        input.dispatchEvent(new Event("change", { bubbles: true }));
         close();
       }
     });

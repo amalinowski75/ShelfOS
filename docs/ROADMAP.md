@@ -76,6 +76,20 @@ Priorities set by the user on 2026-07-08.
     lightweight `checks` gate (`needs: [python, web]`) preserves the existing
     required status check, so no ruleset change was needed.
 
+Known gap, not yet closed: `delete_location` refuses only on non-zero stock, so
+the temporary branch a BOM take gathered from is deletable the moment the take
+empties it. Nothing breaks (SQLite does not enforce the key here, and the pages
+render such a location as "—"), but undoing that take then fails, naming the
+location it can no longer find. Teaching `delete_location` to refuse while an
+un-reversed take references the branch is the fix — the shape `delete_bom` already
+uses, which refuses while a take of that BOM has not been reversed.
+
+A take whose part was later taken out of use cannot be reversed at all —
+`add_stock` refuses a retired component, and putting stock back into one would
+contradict what "out of use" means. `reverse_take` now refuses up front, naming
+the lines, rather than failing mid-loop; actually undoing such a take would mean
+restoring the component first, which is a decision for a person.
+
 Deferred / unscheduled: BOM & KiCad integration (§22), Playwright UI tests,
 `app.js` JS test coverage (stock dialogs + New Type builder — needs a
 `window.Tabulator` stub).

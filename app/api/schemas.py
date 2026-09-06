@@ -692,6 +692,43 @@ class BomOrderedRead(BaseModel):
     ordered: bool
 
 
+class BomTakeLineInput(BaseModel):
+    """One line's answers: what to take, and from where when it was asked."""
+
+    line_id: int
+    quantity: int | None = None  # None = whatever the board count works out to
+    source_location_id: int | None = None  # only when the line needed a choice
+
+
+class BomTakeRequest(BaseModel):
+    """What the client is allowed to say about a take.
+
+    Never the allocations themselves: where the stock actually is, is a question
+    only the server can answer, and it re-answers it when the take runs.
+    """
+
+    boards: int = 1
+    source_location_id: int
+    lines: list[BomTakeLineInput] = []
+
+
+class BomTakeReverse(BaseModel):
+    reason: str
+
+
+class BomTakeRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    bom_id: int
+    name: str
+    boards: int
+    source_location_id: int | None
+    created_at: datetime
+    reversed_at: datetime | None
+    reversal_reason: str | None
+
+
 class BomAssignmentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

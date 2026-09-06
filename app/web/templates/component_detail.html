@@ -199,7 +199,18 @@
             <td>{{ movement_authors.get(m.user_id) or "#%d" | format(m.user_id) }}</td>
             <td class="num">{{ "%+d" | format(m.delta_quantity) }}</td>
             <td><span class="badge b-neutral">{{ m.reason.value }}</span></td>
-            <td>{{ m.note or "" }}</td>
+            {# A movement made by a BOM take links to that take's snapshot. The
+               link comes from bom_take_allocations, not from a column on the
+               ledger — see app/models/bom_take.py for why there is no column. #}
+            {% set take = movement_takes.get(m.id) %}
+            <td>
+              {% if take %}
+              <a href="/bom-takes/{{ take.id }}">{{ m.note }}</a>
+              {% if take.reversed_at %}
+              <span class="badge b-danger"><span class="dot"></span>reversed</span>
+              {% endif %}
+              {% else %}{{ m.note or "" }}{% endif %}
+            </td>
           </tr>
           {% endfor %}
         </tbody>

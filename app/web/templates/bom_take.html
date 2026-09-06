@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% set can_write = current_user.role.value != "read-only" %}
+{% block title %}{{ take.name }} — BOM — ShelfOS{% endblock %}
+
+{% block content %}
+{# The BOM can be gone: a reversed take outlives it, and the snapshot is still
+   the record of what happened. #}
+{% if bom %}
+<p class="crumb"><a href="/boms/{{ take.bom_id }}">&larr; Back to {{ bom.name }}</a></p>
+{% else %}
+<p class="crumb"><a href="/boms">&larr; Back to BOMs</a> <span class="muted">— that BOM has been deleted</span></p>
+{% endif %}
+
+<div class="head">
+  <div>
+    <h1>{{ take.name }}</h1>
+    <p>
+      {{ take.boards }} board(s), gathered from {{ take.source_path }} ·
+      taken {{ take.created_at[:16].replace("T", " ") }}
+    </p>
+  </div>
+  {# Undo is only ever offered once: a reversed take shows its reason instead. #}
+  {% if can_write and not take.reversed_at %}
+  <div class="head-actions">
+    <button type="button" class="btn btn-secondary btn-sm" id="take-undo">Undo this take</button>
+  </div>
+  {% endif %}
+</div>
+
+{% if take.reversed_at %}
+<p class="card card-pad take-reversed">
+  <span class="badge b-danger"><span class="dot"></span>reversed</span>
+  {{ take.reversal_reason }}
+  <span class="muted">— {{ take.reversed_at[:16].replace("T", " ") }}</span>
+</p>
+{% endif %}
+
+<div class="card card-pad">
+  {# A feed + Tabulator, like every other data table here: a take of a 240-line
+     board is exactly where sorting and per-column filters earn their keep. #}
+  <div id="take-lines-table" data-take-id="{{ take.id }}"></div>
+</div>
+
+{% if can_write and not take.reversed_at %}
+{# The reason is required, so the dialog cannot be confirmed without one — a
+   reversal that does not say what happened to the board is a hole in exactly the
+   record this page keeps. #}
+<dialog id="take-undo-dialog" data-take-id="{{ take.id }}">
+  <article>
+    <header>
+      <strong>Undo this take</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <div class="dialog-body">
+    <p class="muted">
+      Everything goes back where it came from. The take stays on record, marked as
+      reversed.
+    </p>
+    <label class="field">
+      <span>Why?</span>
+      <textarea class="control" id="take-undo-reason" rows="3"
+                aria-label="Why this take is being reversed"></textarea>
+    </label>
+    <p class="error-row" id="take-undo-error-row" role="alert" hidden>
+      <span id="take-undo-error" class="error"></span>
+    </p>
+    <footer>
+      <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+      <button type="button" class="btn btn-primary" id="take-undo-confirm" disabled>
+        Put it all back
+      </button>
+    </footer>
+    </div>
+  </article>
+</dialog>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/bom_take_lines.js?v={{ static_version() }}"></script>
+{% if can_write and not take.reversed_at %}
+<script src="/static/bom_take_undo.js?v={{ static_version() }}"></script>
+{% endif %}
+{% endblock %}

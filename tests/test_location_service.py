@@ -424,3 +424,23 @@ def test_delete_location_cleans_cache_and_invoice_lines(session: Session) -> Non
     assert line.location_id is None
     movement = session.exec(select(StockMovement)).one()
     assert movement.location_id == drawer.id
+
+
+def test_subtree_ids_returns_the_root_and_every_descendant(session: Session) -> None:
+    """The BOM take asks "is this part inside the tree I gathered it into?"."""
+    board = ls.create_location(session, type=LocationType.BOX, name="Kontroler CNC")
+    resistors = ls.create_location(
+        session, type=LocationType.SHELF, name="Rezystory", parent_id=board.id
+    )
+    small = ls.create_location(
+        session, type=LocationType.DRAWER, name="0402", parent_id=resistors.id
+    )
+    elsewhere = ls.create_location(session, type=LocationType.BOX, name="Regal")
+
+    ids = ls.subtree_ids(session, board.id)
+
+    assert set(ids) == {board.id, resistors.id, small.id}
+    assert ids[0] == board.id  # parents before children
+    assert elsewhere.id not in ids
+    # A leaf is its own subtree, which is what makes "gather into one drawer" work.
+    assert ls.subtree_ids(session, small.id) == [small.id]

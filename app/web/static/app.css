@@ -259,13 +259,19 @@ select.control {
 .btn:active { transform: translateY(1px); }
 .btn svg { width: 16px; height: 16px; }
 .btn-primary { background: var(--accent); color: var(--on-accent); box-shadow: var(--shadow-sm); }
-.btn-primary:hover { background: var(--accent-strong); }
+.btn-primary:hover:not(:disabled) { background: var(--accent-strong); }
 .btn-secondary { background: var(--surface); color: var(--text); border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
-.btn-secondary:hover { background: var(--surface-2); border-color: var(--faint); }
+.btn-secondary:hover:not(:disabled) { background: var(--surface-2); border-color: var(--faint); }
 .btn-ghost { background: transparent; color: var(--muted); }
-.btn-ghost:hover { background: var(--surface-2); color: var(--text); }
+.btn-ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
 .btn-danger { background: transparent; color: var(--danger); border-color: color-mix(in srgb, var(--danger) 32%, transparent); }
-.btn-danger:hover { background: var(--danger-soft); }
+.btn-danger:hover:not(:disabled) { background: var(--danger-soft); }
+/* A disabled button has to LOOK disabled. `disabled` already blocks the click,
+   but until now nothing said so on screen: pressing a live-looking button and
+   having nothing happen reads as the page ignoring you, not as "not yet". The
+   hover rules above are narrowed for the same reason — a button that lights up
+   under the pointer is promising something it will not do. */
+.btn:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; }
 .btn-sm { min-height: 30px; padding: 4px 11px; font-size: 12.5px; border-radius: 7px; }
 .btn-block { width: 100%; }
 
@@ -481,6 +487,13 @@ dialog header {
 }
 dialog header strong { font-size: 16px; }
 dialog form { display: flex; flex-direction: column; gap: 14px; padding: 18px 20px; margin: 0; }
+/* A dialog that carries no <form> still needs the inset a form would have given
+   it: `dialog` itself is padding: 0, and every dialog until now took its
+   breathing room from the rule above. Same numbers, so the two kinds of dialog
+   cannot drift apart. */
+.dialog-body {
+  display: flex; flex-direction: column; gap: 14px; padding: 18px 20px;
+}
 dialog footer {
   display: flex; justify-content: flex-end; gap: 10px;
   padding: 4px 0 0; border: none; margin: 4px 0 0;
@@ -911,6 +924,72 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, .82); }
 .bom-summary { margin-bottom: 20px; }
 /* The remedies for an unresolved count, on the line below it. Only rendered
    while there is something unresolved, so it has no empty state. */
+/* The take dialog. Three times the standard dialog width: this one carries a
+   five-column table of the whole BOM, and at 440px the columns had nothing left
+   to share. */
+#bom-take-dialog { width: min(1320px, calc(100vw - 32px)); }
+
+/* Fixed layout so the starting widths below actually hold — with `auto`, one long
+   designator group sets the column width for the whole table. `resize` on the
+   header keeps them a starting point rather than a decision: which column matters
+   depends on the BOM in front of you. */
+#take-table { table-layout: fixed; width: 100%; }
+#take-table th { resize: horizontal; overflow: hidden; }
+.take-col-refs { width: 220px; }
+.take-col-mpn { width: 180px; }
+.take-col-qty { width: 110px; }
+.take-col-short { width: 90px; }
+/* "From" takes what is left: it is the one column whose content is genuinely
+   variable (a path, or several), and the only one worth giving the slack to. */
+
+/* A designator group runs to whatever the board needs; show what fits and put the
+   rest in the hover, exactly as the BOM report's References column does. */
+.take-refs {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* The take dialog: its two controls on one row, and a table tall enough to show
+   a real BOM without the dialog itself scrolling. */
+.take-controls {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  margin-bottom: 12px;
+}
+
+.take-source { min-width: 320px; }
+
+.take-table-wrap { max-height: 50vh; overflow-y: auto; }
+
+.take-qty { width: 90px; }
+
+.take-choice { min-width: 220px; }
+
+/* A line that cannot be taken is still listed — seeing which ones stop the run is
+   the point — and tinted, the same tint the component dialog puts behind a field
+   an import left unfilled. It carries further than a dimmed row or a name in a
+   panel: the problem is marked where the problem is.
+
+   On the cells rather than the row: a <tr> background sits behind its cells, so
+   anything the table paints on a td would cover it. */
+.take-blocked > td { background-color: var(--unfilled-tint); }
+
+/* One short sentence now that the panel counts rather than names — the guards
+   against an unbreakable designator group and against a wall of them went with
+   the list they were protecting. */
+.take-blockers { margin-bottom: 12px; }
+
+/* The reversal banner and the past-takes list on a snapshot / a BOM report. */
+.take-reversed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.take-list { margin: 0; padding-left: 18px; }
+.take-list li { margin: 4px 0; }
+
 .bom-summary-actions {
   display: flex;
   gap: 8px;
@@ -1078,10 +1157,6 @@ html.bom-pick-open, html.bom-pick-open body { overflow: hidden; }
   color: var(--muted); background: var(--surface-2);
   border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
 }
-/* A disabled choice still has to be readable — it is carrying the explanation of
-   why it is disabled in the note underneath. */
-.scan-choice-actions .btn:disabled { opacity: .5; cursor: not-allowed; }
-.scan-choice-actions .btn:disabled:hover { background: var(--surface); border-color: var(--border-strong); }
 
 /* --- Label printing (§7) --------------------------------------------------- */
 /* The preview is the bitmap the printer would receive, so it is shown at the

@@ -1,0 +1,71 @@
+{% from "_location_picker.html" import location_picker %}
+{# Taking the whole BOM off the shelves. The table is a plain one, not Tabulator:
+   its rows carry number inputs and selects, which Tabulator makes awkward, and a
+   plain table can be driven for real under jsdom in the tests. #}
+<dialog id="bom-take-dialog">
+  <article>
+    <header>
+      <strong>Take parts for this board</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+
+    <div class="dialog-body">
+    <div class="take-controls">
+      <label class="field">
+        <span>Boards</span>
+        <input class="control" type="number" id="take-boards" min="1" step="1" value="1"
+               aria-label="How many boards to take parts for" />
+      </label>
+      <label class="field take-source">
+        {# The temporary tree the parts were gathered into. Drained first; the
+           ordinary shelves only cover what it cannot. #}
+        <span>Gathered in</span>
+        {{ location_picker(location_tree, name="take_source", creatable=false) }}
+      </label>
+    </div>
+
+    {# Lines that cannot be taken at all, and the way out of each. Confirm stays
+       disabled while any of them is listed. #}
+    <div class="card card-pad take-blockers" id="take-blockers" hidden>
+      <p class="error" id="take-blockers-text"></p>
+    </div>
+
+    <div class="table-wrap take-table-wrap">
+      <table class="data" id="take-table">
+        {# Fixed widths, because a designator group ("R1, R2, R3, … R48") is as
+           wide as the board is big and would otherwise squeeze everything else
+           off the table. Each header can be dragged wider — the columns are only
+           a starting point, and which one matters depends on the BOM. #}
+        <colgroup>
+          <col class="take-col-refs" />
+          <col class="take-col-mpn" />
+          <col class="take-col-qty" />
+          <col class="take-col-from" />
+          <col class="take-col-short" />
+        </colgroup>
+        <thead>
+          <tr>
+            <th>References</th><th>MPN</th>
+            <th style="text-align:right">Needed</th>
+            <th>From</th>
+            <th style="text-align:right">Short</th>
+          </tr>
+        </thead>
+        <tbody id="take-rows"></tbody>
+      </table>
+    </div>
+
+    <p class="error-row" id="take-error-row" role="alert" hidden>
+      <span id="take-error" class="error"></span>
+    </p>
+
+    <footer>
+      <span class="muted" id="take-summary"></span>
+      <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+      <button type="button" class="btn btn-primary" id="take-confirm" disabled>
+        Take them off the shelves
+      </button>
+    </footer>
+    </div>
+  </article>
+</dialog>
