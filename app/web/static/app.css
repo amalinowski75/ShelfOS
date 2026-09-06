@@ -670,6 +670,43 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 .check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
 .check input { accent-color: var(--accent); }
 
+/* ---------- per-parameter matchers panel ---------- */
+/* Wider than the default dialog, and a flex column so the two sections scroll as one
+   body while the header and footer stay put. */
+#param-matchers-dialog { width: min(620px, calc(100vw - 32px)); max-height: calc(100vh - 48px); }
+#param-matchers-dialog > article {
+  display: flex; flex-direction: column; max-height: calc(100vh - 48px); min-height: 0;
+}
+#param-matchers-dialog article > header { flex: none; }
+.pm-body { overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.pm-section + .pm-section { border-top: 6px solid var(--surface-2); }
+.pm-heading {
+  margin: 0; padding: 14px 20px 6px; font-size: 13px; font-weight: 600;
+}
+.pm-heading .muted { font-weight: 400; }
+.pm-sub { padding: 2px 20px 10px; margin: 0; font-size: 13px; }
+.pm-list { list-style: none; margin: 0; padding: 0; }
+.pm-row, .pm-add {
+  display: flex; align-items: center; gap: 10px; padding: 7px 20px;
+}
+.pm-row { border-top: 1px solid var(--border); }
+.pm-row:first-child { border-top: none; }
+.pm-add { border-top: 1px solid var(--border); }
+/* min-width:0 lets these flex children shrink below their content — without it a
+   <select> stretches to its longest option and squeezes the alias to nothing. The
+   alias takes the slack; the value picker is capped. */
+.pm-alias { flex: 1 1 auto; min-width: 0; }
+.pm-arrow { flex: none; }
+.pm-target { flex: 0 1 40%; min-width: 0; }
+.pm-del, .pm-add .btn { flex: none; }
+#param-matchers-error { padding: 10px 20px 0; margin: 0; }
+#param-matchers-dialog footer {
+  padding: 12px 20px; margin: 0; border-top: 1px solid var(--border); flex: none;
+  justify-content: space-between; align-items: center;
+}
+.pm-status { margin: 0; font-size: 13px; }
+.pm-status-ok { color: var(--accent); }
+
 /* ---------- login ---------- */
 .login { max-width: 380px; margin: 8vh auto 0; }
 .login .card-pad { padding: 30px 28px; display: flex; flex-direction: column; gap: 18px; }

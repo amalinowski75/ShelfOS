@@ -316,6 +316,28 @@ export function typesAdminPageFixture() {
       <p id="param-add-error" hidden></p>
       <button type="submit"></button>
     </form></dialog>
+    <dialog id="param-matchers-dialog">
+      <span id="param-matchers-title"></span>
+      <section id="pm-value-section" hidden>
+        <ul id="pm-value-list"></ul>
+        <p id="pm-value-empty" hidden></p>
+        <div class="pm-add">
+          <input id="pm-value-alias" />
+          <select id="pm-value-target"></select>
+          <button type="button" id="pm-value-add"></button>
+        </div>
+      </section>
+      <section id="pm-name-section">
+        <ul id="pm-name-list"></ul>
+        <p id="pm-name-empty" hidden></p>
+        <div class="pm-add">
+          <input id="pm-name-alias" />
+          <button type="button" id="pm-name-add"></button>
+        </div>
+      </section>
+      <p id="param-matchers-error" hidden></p>
+      <p id="param-matchers-status"></p>
+    </dialog>
     ${_typeBuilderMarkup("")}`;
 }
 
@@ -748,6 +770,7 @@ function _typeBuilderMarkup(options) {
         <div class="param-enum" hidden><input name="p-enum" /></div>
         <label><input type="checkbox" name="p-table" /></label>
         <label><input type="checkbox" name="p-filter" /></label>
+        <button type="button" class="param-create-matcher" hidden></button>
         <button type="button" class="param-remove"></button>
       </div>
     </template>`;
@@ -854,6 +877,7 @@ export function typePageFixture(types = [{ id: 1, name: "resistor" }]) {
         <div class="param-enum" hidden><input name="p-enum" /></div>
         <label><input type="checkbox" name="p-table" /></label>
         <label><input type="checkbox" name="p-filter" /></label>
+        <button type="button" class="param-create-matcher" hidden></button>
         <button type="button" class="param-remove"></button>
       </div>
     </template>`;

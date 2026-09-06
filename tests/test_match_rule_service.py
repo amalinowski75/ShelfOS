@@ -296,3 +296,41 @@ def test_match_rules_survive_reset_db_keep_types() -> None:
     from scripts import reset_db
 
     assert "match_rules" in reset_db._KEEP_TABLES
+
+
+def test_an_alias_cannot_contain_a_comma(session: Session) -> None:
+    """Every surface writes a target's aliases as one comma-separated field.
+
+    So a stored alias with a comma in it is indistinguishable from two — and any
+    unrelated edit of that row would split it, killing the rule that matched the
+    whole phrase. A param_name alias is exactly where a distributor's category text
+    lands ("Capacitors, Ceramic"), so this is not hypothetical. Refused at the door,
+    which is what keeps the one-row-per-target display honest rather than resting on
+    a client-side split.
+    """
+    with pytest.raises(ValidationError, match="cannot contain a comma"):
+        mrs.create_rule(
+            session,
+            domain=MatchDomain.PACKAGE,
+            alias="Capacitors, Ceramic",
+            canonical="C_0402",
+            user_id=1,
+        )
+
+
+def test_a_rename_cannot_smuggle_a_comma_in_either(session: Session) -> None:
+    """The other way one could get in, and the one the panel makes easy."""
+    rule = mrs.create_rule(
+        session,
+        domain=MatchDomain.PACKAGE,
+        alias="Ceramic",
+        canonical="C_0402",
+        user_id=1,
+    )
+
+    with pytest.raises(ValidationError, match="cannot contain a comma"):
+        mrs.update_rule(session, rule.id, alias="Capacitors, Ceramic", user_id=1)
+
+    # …and the rule it would have replaced is untouched.
+    session.refresh(rule)
+    assert rule.alias == "Ceramic"

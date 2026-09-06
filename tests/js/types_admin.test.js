@@ -341,4 +341,30 @@ describe("types_admin.js — parameter writes", () => {
     await tick();
     expect(document.querySelectorAll("#type-params-list li").length).toBe(2);
   });
+
+  it("opens the matchers panel scoped to a parameter, when it's available", () => {
+    const { window, document } = loadPage(typesAdminPageFixture(), SCRIPTS);
+    // The matchers panel is only present for admins; stub its opener before render.
+    window.openParamMatchers = vi.fn();
+    window.openParamsDialog(RESISTOR); // renders DIELECTRIC (id 9), type id 3
+    const matcher = [
+      ...document.querySelectorAll("#type-params-list li button"),
+    ].find((b) => b.textContent === "Matchers");
+    expect(matcher).toBeTruthy();
+    matcher.click();
+    // The parameter, and only the parameter: the panel scopes itself by its id and
+    // reads the rest off the feed. It used to be handed the type id as well, which
+    // openParamMatchers has never taken.
+    expect(window.openParamMatchers).toHaveBeenCalledWith(RESISTOR.parameters[0]);
+  });
+
+  it("omits the matchers button when the panel isn't on the page", () => {
+    const { window, document } = loadPage(typesAdminPageFixture(), SCRIPTS);
+    // No window.openParamMatchers (non-admin) → no button.
+    window.openParamsDialog(RESISTOR);
+    const labels = [
+      ...document.querySelectorAll("#type-params-list li button"),
+    ].map((b) => b.textContent);
+    expect(labels).not.toContain("Matchers");
+  });
 });

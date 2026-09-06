@@ -3,9 +3,12 @@
 // and a create dialog adds rules — scoped domains (param_name, enum_value) also pick
 // the parameter they apply to. Writes go through /api/admin/match-rules… (admin +
 // CSRF). `csrfToken`, `esc`, `errorMessage` and `frameTable` come from shared.js.
-
-// The two domains that attach a rule to a single parameter definition.
-const SCOPED_DOMAINS = new Set(["param_name", "enum_value"]);
+//
+// ONE ROW PER TARGET, not per rule: the feed's rules are grouped by (domain, target,
+// scope) and their aliases shown as one comma-separated list, so a target's whole
+// vocabulary is read and edited in one field. The engine still holds a rule per alias
+// — the grouping is `groupRulesByTarget` in shared.js, and every edit below writes to
+// each rule the row stands for.
 
 // Existing type names, cached for the in-place Target editor of a type rule (the
 // list is fetched once at load; the create dialog refreshes it when it opens).
@@ -43,14 +46,6 @@ function targetEditorParams(cell) {
   return { values: [], autocomplete: true, freetext: true, listOnEmpty: true };
 }
 
-async function sendRuleWrite(url, method, payload) {
-  return fetch(url, {
-    method,
-    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-    body: payload === undefined ? undefined : JSON.stringify(payload),
-  });
-}
-
 // Give a column the same live text header filter the other tables use: a
 // case-insensitive substring match applied as you type, ANDed across columns.
 function ruleFilter(column) {
@@ -64,30 +59,40 @@ function ruleFilter(column) {
   };
 }
 
-// Push one inline cell edit to the API; on failure, revert the cell and say why —
-// this is what surfaces the "alias already used" guard instead of silently keeping
-// a value the server rejected.
+// Push an inline Target/Order edit to every rule the row stands for — both fields
+// belong to the target, not to one of its aliases, so they move together. On failure,
+// revert the cell and say why: this is what surfaces the server's guards instead of
+// silently keeping a value it rejected.
 async function saveCellEdit(cell, field) {
   const row = cell.getRow().getData();
   const value = field === "sort_order" ? Number(cell.getValue()) : cell.getValue();
-  try {
-    const resp = await sendRuleWrite(
-      `/api/admin/match-rules/${row.id}`,
-      "PATCH",
-      { [field]: value },
-    );
-    if (resp.ok) {
-      // Reload so a server-normalised value (e.g. a mounting target folded to its
-      // exact enum spelling) is what the row shows, not the raw text just typed.
-      await loadRules();
-    } else {
-      alert(await errorMessage(resp));
-      cell.restoreOldValue();
-    }
-  } catch {
-    alert("Could not reach the server.");
+  const { failure } = await runMatchRuleWrites(
+    row.rules.map((rule) => ({
+      method: "PATCH",
+      id: rule.id,
+      body: { [field]: value },
+    })),
+  );
+  // Reload either way: a server-normalised value (a mounting target folded to its
+  // exact enum spelling) must be what the row shows, and a run that stopped partway
+  // leaves the earlier rules already written.
+  await loadRules();
+  if (failure) alert(failure);
+}
+
+// Save an edited alias list: the field holds the target's whole vocabulary, so the
+// diff against what the row already had becomes renames, removals and additions.
+async function saveAliasList(cell) {
+  const row = cell.getRow().getData();
+  const writes = aliasListWrites(row, cell.getValue());
+  if (!writes) {
+    alert("A target needs at least one alias — use Delete to remove it entirely.");
     cell.restoreOldValue();
+    return;
   }
+  const { failure } = await runMatchRuleWrites(writes);
+  await loadRules();
+  if (failure) alert(failure);
 }
 
 function ruleColumns() {
@@ -96,10 +101,12 @@ function ruleColumns() {
     // them by deleting and re-adding) — but both still sort and filter.
     ruleFilter({ title: "Domain", field: "domain", width: 140 }),
     ruleFilter({
-      title: "Alias",
+      // Every alias for this target, comma-separated: what is typed here IS the set,
+      // so removing one from the list removes its rule.
+      title: "Aliases",
       field: "alias",
       editor: "input",
-      cellEdited: (cell) => saveCellEdit(cell, "alias"),
+      cellEdited: saveAliasList,
       formatter: (cell) => `<span class="cell-mono">${esc(cell.getValue())}</span>`,
     }),
     ruleFilter({
@@ -178,7 +185,9 @@ async function loadRules() {
     ? "Could not load match rules"
     : "No match rules";
   try {
-    await rulesTable.setData(rows);
+    // Grouped by target, so a value's aliases read as one row and one list rather
+    // than one row per alias. One rule per alias is still what is stored.
+    await rulesTable.setData(groupRulesByTarget(rows));
   } finally {
     frameTable(rulesTable);
   }
@@ -200,188 +209,26 @@ function makeGuard() {
 }
 
 const guardDelete = makeGuard();
+// Delete the whole target — every alias the row lists. The prompt counts them, since
+// one row can stand for a dozen rules and the button gives no other hint of that.
 function deleteRule(row) {
-  if (!confirm(`Delete rule "${row.alias}" → "${row.canonical}"?`)) return;
+  const count = row.rules.length;
+  const what = count === 1 ? `"${row.alias}"` : `all ${count} aliases`;
+  if (!confirm(`Delete ${what} → "${row.canonical}"?`)) return;
   guardDelete(async () => {
-    try {
-      const resp = await sendRuleWrite(
-        `/api/admin/match-rules/${row.id}`,
-        "DELETE",
-      );
-      if (resp.ok) await loadRules();
-      else alert(await errorMessage(resp));
-    } catch {
-      alert("Could not reach the server.");
-    }
+    const { failure } = await runMatchRuleWrites(
+      row.rules.map((rule) => ({ method: "DELETE", id: rule.id })),
+    );
+    await loadRules();
+    if (failure) alert(failure);
   });
 }
 
-// --- create ---
-const newRuleBtn = document.getElementById("rule-new-btn");
-if (newRuleBtn) {
-  const dialog = document.getElementById("rule-new-dialog");
-  const form = document.getElementById("rule-new-form");
-  const error = document.getElementById("rule-new-error");
-  const typeField = document.getElementById("rule-scope-type");
-  const paramField = document.getElementById("rule-scope-param");
-  const typeSelect = form.elements.type;
-  const paramSelect = form.elements.parameter;
-  // The four possible "Target" controls; only the one matching the domain shows
-  // (the free-text one serves both param_name and package).
-  const targetTypeSelect = form.elements.canonical_type; // type rule → a type name
-  const targetMountingSelect = form.elements.canonical_mounting; // mounting → enum
-  const targetEnumSelect = form.elements.canonical_enum; // enum_value → allowed value
-  const targetTextInput = form.elements.canonical_text; // param_name/package → text
-  // The selected type's parameter definitions (with data_type + enum_values), cached
-  // so the parameter picker and the enum-target dropdown can be built without refetch.
-  let dialogParams = [];
-
-  function isScoped() {
-    return SCOPED_DOMAINS.has(form.elements.domain.value);
-  }
-
-  // Reflect the chosen domain: show its scope pickers (param/enum only) and the one
-  // Target control that fits — an existing-type list, the mounting enum, the chosen
-  // parameter's allowed values, or free text — so a bad target can't be entered.
-  async function syncFields() {
-    const domain = form.elements.domain.value;
-    const scoped = isScoped();
-    typeField.hidden = !scoped;
-    paramField.hidden = !scoped;
-    targetTypeSelect.hidden = domain !== "type";
-    targetMountingSelect.hidden = domain !== "mounting";
-    targetEnumSelect.hidden = domain !== "enum_value";
-    targetTextInput.hidden = domain !== "param_name" && domain !== "package";
-    // Same input, two very different things to type into it — say which.
-    targetTextInput.placeholder =
-      domain === "package" ? "e.g. SOT-23" : "e.g. resistance";
-    // Refetch the type list (and, for a scoped domain, its parameters) every time this
-    // runs — on dialog reopen `form.reset()` snaps Type back to its first option WITHOUT
-    // firing `change`, so without a reload the parameter picker would still hold the
-    // previous type's params and the rule would bind to the wrong parameter. Reloading
-    // also surfaces a type added since the page loaded.
-    if (scoped || domain === "type") {
-      await loadTypes(); // ends by calling loadParams -> populateParams for scoped
-    }
-  }
-
-  async function loadTypes() {
-    try {
-      const types = await fetch("/api/types").then((r) => r.json());
-      // Scope picker keys by id (which parameter's owner); the target select stores
-      // the type NAME, which is what a type rule's canonical is matched against.
-      typeSelect.innerHTML = types
-        .map((t) => `<option value="${t.id}">${esc(t.name)}</option>`)
-        .join("");
-      targetTypeSelect.innerHTML = types
-        .map((t) => `<option value="${esc(t.name)}">${esc(t.name)}</option>`)
-        .join("");
-      cachedTypeNames = types.map((t) => t.name); // keep the inline editor in sync
-      await loadParams();
-    } catch {
-      error.textContent = "Could not load types.";
-      error.hidden = false;
-    }
-  }
-
-  async function loadParams() {
-    const typeId = typeSelect.value;
-    try {
-      dialogParams = typeId
-        ? await fetch(`/api/types/${typeId}/parameters`).then((r) => r.json())
-        : [];
-    } catch {
-      dialogParams = [];
-    }
-    populateParams();
-  }
-
-  // Fill the parameter picker; an enum_value rule only makes sense for an enum
-  // parameter, so those are all it offers.
-  function populateParams() {
-    const enumOnly = form.elements.domain.value === "enum_value";
-    const choices = enumOnly
-      ? dialogParams.filter((p) => p.data_type === "enum")
-      : dialogParams;
-    paramSelect.innerHTML = choices
-      .map((p) => `<option value="${p.id}">${esc(p.label)}</option>`)
-      .join("");
-    populateEnumTarget();
-  }
-
-  // For an enum_value rule, the Target is the chosen parameter's allowed values —
-  // the tokens defined when the type was built — so it can't be free-typed wrong.
-  function populateEnumTarget() {
-    if (form.elements.domain.value !== "enum_value") return;
-    const chosen = dialogParams.find((p) => String(p.id) === paramSelect.value);
-    targetEnumSelect.innerHTML = (chosen?.enum_values || [])
-      .map((v) => `<option value="${esc(v)}">${esc(v)}</option>`)
-      .join("");
-  }
-
-  // The target value comes from whichever control the domain exposes.
-  function currentTarget() {
-    const domain = form.elements.domain.value;
-    if (domain === "type") return targetTypeSelect.value;
-    if (domain === "mounting") return targetMountingSelect.value;
-    if (domain === "enum_value") return targetEnumSelect.value;
-    return targetTextInput.value.trim(); // param_name, package
-  }
-
-  form.elements.domain.addEventListener("change", syncFields);
-  typeSelect.addEventListener("change", loadParams);
-  paramSelect.addEventListener("change", populateEnumTarget);
-
-  newRuleBtn.addEventListener("click", async () => {
-    form.reset();
-    error.hidden = true;
-    await syncFields();
-    dialog.showModal();
-  });
-
-  const guardNew = makeGuard();
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    guardNew(async () => {
-      const scoped = isScoped();
-      const payload = {
-        domain: form.elements.domain.value,
-        alias: form.elements.alias.value.trim(),
-        canonical: currentTarget(),
-        sort_order: Number(form.elements.sort_order.value) || 0,
-        parameter_definition_id:
-          scoped && paramSelect.value ? Number(paramSelect.value) : null,
-      };
-      if (scoped && payload.parameter_definition_id === null) {
-        error.textContent = "Pick the parameter this rule applies to.";
-        error.hidden = false;
-        return;
-      }
-      if (!payload.canonical) {
-        error.textContent = "Pick or enter a target.";
-        error.hidden = false;
-        return;
-      }
-      try {
-        const resp = await sendRuleWrite(
-          "/api/admin/match-rules",
-          "POST",
-          payload,
-        );
-        if (resp.ok) {
-          dialog.close();
-          await loadRules();
-        } else {
-          error.textContent = await errorMessage(resp);
-          error.hidden = false;
-        }
-      } catch {
-        error.textContent = "Could not reach the server.";
-        error.hidden = false;
-      }
-    });
-  });
-}
+// The create dialog lives in match_rule_dialog.js (shared so the type builder and a
+// type's parameter list can open it too); wire the admin "New rule" button to it.
+document.getElementById("rule-new-btn")?.addEventListener("click", () => {
+  window.openMatcherDialog?.(loadRules);
+});
 
 rulesTable.on("tableBuilt", loadRules);
 loadTypeNames(); // ready the type list for the inline Target editor
@@ -438,7 +285,7 @@ function forgetAlias(row) {
   if (!ok) return;
   aliasGuard(async () => {
     try {
-      const resp = await sendRuleWrite(
+      const resp = await sendAdminWrite(
         `/api/manufacturers/aliases/${row.id}`,
         "DELETE",
       );

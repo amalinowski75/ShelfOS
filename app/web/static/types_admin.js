@@ -236,6 +236,19 @@ function renderParams(row) {
     meta.append(label, detail);
     const actions = document.createElement("span");
     actions.className = "param-list-actions";
+    // Manage this parameter's matchers without leaving for the match-rules page:
+    // list/edit/delete + rapid-add in one panel. Present only when it's on the page
+    // (admin), so it self-hides for non-admins.
+    if (typeof window.openParamMatchers === "function") {
+      const matcher = document.createElement("button");
+      matcher.className = "btn btn-secondary btn-sm";
+      matcher.textContent = "Matchers";
+      // One argument: the panel scopes itself by the parameter's own id, and reads
+      // everything else off the feed. The type id it used to be handed was never a
+      // parameter of openParamMatchers.
+      matcher.addEventListener("click", () => window.openParamMatchers(param));
+      actions.append(matcher);
+    }
     const edit = document.createElement("button");
     edit.className = "btn btn-secondary btn-sm";
     edit.textContent = "Edit";
