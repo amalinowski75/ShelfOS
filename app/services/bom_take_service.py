@@ -44,6 +44,10 @@ from app.services.errors import ValidationError
 BLOCKED_UNASSIGNED = "unassigned"
 BLOCKED_RETIRED = "component_retired"
 
+# SQLite allows 999 bound variables by default and `takes_by_movement` binds each
+# id twice, so this is half of that with room to spare.
+_MOVEMENT_CHUNK = 400
+
 
 @dataclass
 class PlannedSource:
@@ -126,6 +130,15 @@ def _slots_by_component(
     for row in rows:
         slots.setdefault(row.component_id, []).append(row)
     return slots
+
+
+def _has_slot(
+    slots: dict[int, list[ComponentLocation]], component_id: int, location_id: int
+) -> bool:
+    """Whether this part was ever stocked here — before other lines claimed it."""
+    return any(
+        slot.location_id == location_id for slot in slots.get(component_id, [])
+    )
 
 
 def _by_biggest_bin(source: PlannedSource) -> tuple[int, int]:
@@ -250,28 +263,41 @@ def plan_take(
             remaining -= claim(candidate, min(remaining, candidate.available))
 
         if remaining > 0 and outside:
+            # Offered whenever there is a real choice to make, answered or not:
+            # the answer has to be revisable, and a picker that vanishes the
+            # moment it is used cannot be corrected without starting over.
+            if len(outside) > 1:
+                entry.candidates = outside
             chosen_id = choices.get(line_id)
             if chosen_id is not None:
                 picked = next(
                     (c for c in outside if c.location_id == chosen_id), None
                 )
-                if picked is None:
+                if picked is None and not _has_slot(
+                    slots, component_id, chosen_id
+                ):
+                    # The location never held this part at all — a client sending
+                    # something the plan never offered, not a person's answer.
                     raise ValidationError(
                         f"'{line.references}' does not have stock at the location "
                         "chosen for it"
                     )
-                # An explicit choice is honoured for that location ALONE — spilling
-                # the rest into the bins the user did not pick would answer a
-                # different question than the one they were asked.
-                entry.sources.append(picked)
-                remaining -= claim(picked, min(remaining, picked.available))
+                if picked is not None:
+                    # An explicit choice is honoured for that location ALONE —
+                    # spilling the rest into the bins the user did not pick would
+                    # answer a different question than the one they were asked.
+                    entry.sources.append(picked)
+                    remaining -= claim(picked, min(remaining, picked.available))
+                # `picked is None` with a slot that exists means an earlier line
+                # took the lot. That is a shortfall on this line, the same as any
+                # other, and not a reason to refuse the whole run: the answer was
+                # true when it was given.
             elif len(outside) == 1:
                 only = outside[0]
                 entry.sources.append(only)
                 remaining -= claim(only, min(remaining, only.available))
             else:
                 entry.needs_choice = True
-                entry.candidates = outside
 
         # Not an error, and not a refusal: take what is there and record the rest.
         # "I am short 40 of these" is exactly what the snapshot is for.
@@ -558,19 +584,25 @@ def takes_by_movement(
     ids = list(movement_ids)
     if not ids:
         return {}
-    rows = session.exec(
-        select(BomTakeAllocation, BomTake)
-        .where(BomTakeAllocation.take_id == BomTake.id)
-        .where(
-            col(BomTakeAllocation.movement_id).in_(ids)
-            | col(BomTakeAllocation.reversal_movement_id).in_(ids)
-        )
-    ).all()
     found: dict[int, BomTake] = {}
     wanted = set(ids)
-    for allocation, take in rows:
-        if allocation.movement_id in wanted:
-            found[allocation.movement_id] = take
-        if allocation.reversal_movement_id in wanted:
-            found[allocation.reversal_movement_id] = take
+    # Every id is bound TWICE — once per arm of the OR — and the caller is the
+    # component page, which passes an uncapped movement list. So chunk against
+    # half the ceiling rather than the whole of it, or a part with a long history
+    # takes the page down with "too many SQL variables".
+    for start in range(0, len(ids), _MOVEMENT_CHUNK):
+        chunk = ids[start : start + _MOVEMENT_CHUNK]
+        rows = session.exec(
+            select(BomTakeAllocation, BomTake)
+            .where(BomTakeAllocation.take_id == BomTake.id)
+            .where(
+                col(BomTakeAllocation.movement_id).in_(chunk)
+                | col(BomTakeAllocation.reversal_movement_id).in_(chunk)
+            )
+        ).all()
+        for allocation, take in rows:
+            if allocation.movement_id in wanted:
+                found[allocation.movement_id] = take
+            if allocation.reversal_movement_id in wanted:
+                found[allocation.reversal_movement_id] = take
     return found

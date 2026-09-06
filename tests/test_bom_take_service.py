@@ -250,6 +250,61 @@ def test_a_choice_naming_a_location_without_stock_is_refused(  # type: ignore[no
         )
 
 
+def test_a_choice_another_line_drained_is_a_shortfall_not_a_refusal(
+    session: Session, shop
+) -> None:  # type: ignore[no-untyped-def]
+    """The answer was true when it was given; a later line taking the lot is not
+    the user being wrong, and refusing the whole run over it blocks the preview."""
+    part = shop.part("PART-A")
+    shop.stock(part, shop.shelf_a_id, 10)  # exactly one line's worth
+    shop.stock(part, shop.shelf_b_id, 50)
+    bom = shop.bom("R1,10,x,PART-A\nR2,10,x,PART-A\n")
+    shop.assign(cast(int, bom.id), "R1", part)
+    shop.assign(cast(int, bom.id), "R2", part)
+    lines = bs.get_bom_lines(session, cast(int, bom.id))
+    both_on_a = {cast(int, ln.id): shop.shelf_a_id for ln in lines}
+
+    plan = bts.plan_take(
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+        choices=both_on_a,
+    )
+
+    assert [(s.location_id, s.quantity) for s in plan.lines[0].sources] == [
+        (shop.shelf_a_id, 10)
+    ]
+    assert plan.lines[1].sources == []  # A is empty, and R1's answer stands
+    assert plan.lines[1].shortfall == 10
+    assert plan.can_run  # …and the run is still possible for everything else
+
+
+def test_the_candidates_stay_offered_after_the_choice_is_made(
+    session: Session, shop
+) -> None:  # type: ignore[no-untyped-def]
+    """A picker that vanishes the moment it is used cannot be corrected."""
+    bom, part = _one_line(
+        session, shop, stocked={shop.shelf_a_id: 50, shop.shelf_b_id: 50}, qty=10
+    )
+    line_id = _line_id(session, bom)
+
+    answered = bts.plan_take(
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+        choices={line_id: shop.shelf_b_id},
+    )
+
+    line = answered.lines[0]
+    assert line.needs_choice is False  # the question is answered…
+    assert {c.location_id for c in line.candidates} == {
+        shop.shelf_a_id,
+        shop.shelf_b_id,
+    }  # …but still askable
+
+
 def test_nothing_anywhere_is_a_shortfall_not_an_error(  # type: ignore[no-untyped-def]
     session: Session, shop
 ) -> None:
@@ -674,6 +729,41 @@ def test_reversing_an_unknown_take_is_not_found(  # type: ignore[no-untyped-def]
 # --- finding the snapshot from a movement -----------------------------------
 
 
+def test_takes_by_movement_asks_in_chunks(
+    session: Session, shop, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """Each id is bound TWICE — once per arm of the OR — so the bind ceiling
+    arrives at half the movement count it looks like.
+
+    The caller is the component page, whose movement list is uncapped: without
+    chunking, a well-used part takes the whole page down with "too many SQL
+    variables" rather than just losing its note links. Asserted by counting the
+    queries with the chunk shrunk to 2, because the ceiling itself is a property
+    of whichever SQLite the machine has (999 on older builds, 32766 since 3.32) —
+    a test that fed it 1500 ids would pass here and fail on a colleague's laptop.
+    """
+    bom, part = _one_line(session, shop, stocked={shop.resistors_id: 10}, qty=1)
+    take = bts.execute_take(
+        session, cast(int, bom.id), boards=1,
+        source_location_id=shop.gathering_id, user_id=1,
+    )
+    real = bts.take_allocations(session, cast(int, take.id))[0].movement_id
+    monkeypatch.setattr(bts, "_MOVEMENT_CHUNK", 2)
+    queries = []
+    real_exec = session.exec
+
+    def counting_exec(*args, **kwargs):  # type: ignore[no-untyped-def]
+        queries.append(1)
+        return real_exec(*args, **kwargs)
+
+    monkeypatch.setattr(session, "exec", counting_exec)
+
+    found = bts.takes_by_movement(session, [*range(10_000, 10_007), real])
+
+    assert len(queries) == 4  # eight ids, two at a time
+    assert list(found) == [real]  # …and the one real id is still found
+
+
 def test_a_movement_maps_back_to_its_snapshot_both_ways(
     session: Session, shop
 ) -> None:  # type: ignore[no-untyped-def]
@@ -710,3 +800,40 @@ def test_a_movement_maps_back_to_its_snapshot_both_ways(
     assert reversal_only[cast(int, allocation.reversal_movement_id)].id == take.id
     assert cast(int, ordinary.id) not in found  # an ordinary movement links nowhere
     assert bts.takes_by_movement(session, []) == {}
+
+
+# --- the BOM behind the snapshot --------------------------------------------
+
+
+def test_a_bom_cannot_be_deleted_while_a_take_of_it_stands(
+    session: Session, shop
+) -> None:  # type: ignore[no-untyped-def]
+    """Those parts are off the shelves, and the snapshot is the only way back."""
+    bom, part = _one_line(session, shop, stocked={shop.resistors_id: 10}, qty=4)
+    take = bts.execute_take(
+        session, cast(int, bom.id), boards=1,
+        source_location_id=shop.gathering_id, user_id=1,
+    )
+
+    with pytest.raises(ValidationError, match=take.name):
+        bs.delete_bom(session, cast(int, bom.id))
+
+    assert bs.get_bom(session, cast(int, bom.id)) is not None
+    assert bts.take_lines(session, cast(int, take.id)) != []
+
+
+def test_a_reversed_take_no_longer_holds_its_bom(
+    session: Session, shop
+) -> None:  # type: ignore[no-untyped-def]
+    """Nothing is off the shelves any more, so the BOM is free to go — and the
+    snapshot stays behind as the record of what happened."""
+    bom, part = _one_line(session, shop, stocked={shop.resistors_id: 10}, qty=4)
+    take = bts.execute_take(
+        session, cast(int, bom.id), boards=1,
+        source_location_id=shop.gathering_id, user_id=1,
+    )
+    bts.reverse_take(session, cast(int, take.id), reason="scrapped", user_id=1)
+
+    bs.delete_bom(session, cast(int, bom.id))
+
+    assert bts.get_take(session, cast(int, take.id)).name == take.name

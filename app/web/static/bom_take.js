@@ -75,28 +75,40 @@ if (takeDialog && takeTableEl) {
     };
   }
 
-  function sourcesCell(line) {
-    if (line.needs_choice) {
-      const options = line.candidates
-        .map(
-          (c) =>
-            `<option value="${Number(c.location_id)}">${esc(c.path)} (${Number(
-              c.available,
-            )})</option>`,
-        )
-        .join("");
-      // A blank first option so an unanswered question looks unanswered, rather
-      // than looking like a choice nobody made on purpose.
-      return (
-        `<select class="control take-choice" data-line="${Number(line.line_id)}"` +
-        ` aria-label="Where to take ${esc(line.references)} from">` +
-        `<option value="">Choose a location…</option>${options}</select>`
-      );
-    }
+  function plannedSources(line) {
     if (!line.sources.length) return '<span class="muted">—</span>';
     return line.sources
       .map((s) => `${esc(s.path)} ×${Number(s.quantity)}`)
       .join(" · ");
+  }
+
+  function sourcesCell(line) {
+    // The picker stays on the row for as long as there is a choice to make —
+    // answered or not. One that vanished the moment it was used could only be
+    // corrected by cancelling the whole dialog, which throws away every quantity
+    // edited on a long BOM to fix one mis-clicked shelf.
+    if (!line.candidates.length) return plannedSources(line);
+    const chosen = choices[line.line_id];
+    const options = line.candidates
+      .map(
+        (c) =>
+          `<option value="${Number(c.location_id)}"${
+            Number(chosen) === Number(c.location_id) ? " selected" : ""
+          }>${esc(c.path)} (${Number(c.available)})</option>`,
+      )
+      .join("");
+    // A blank first option so an unanswered question looks unanswered, rather
+    // than looking like a choice nobody made on purpose. Once answered it is
+    // gone: "choose a location" is not one of the places the parts can come from.
+    const blank = chosen
+      ? ""
+      : '<option value="">Choose a location…</option>';
+    const select =
+      `<select class="control take-choice" data-line="${Number(line.line_id)}"` +
+      ` aria-label="Where to take ${esc(line.references)} from">` +
+      `${blank}${options}</select>`;
+    // What the answer actually bought, beside the answer itself.
+    return line.sources.length ? `${select} ${plannedSources(line)}` : select;
   }
 
   function renderPlan(plan) {

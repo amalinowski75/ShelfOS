@@ -2794,6 +2794,31 @@ def test_the_take_survives_its_gathering_location_being_deleted(
     assert rows[0]["from"].startswith("—")
 
 
+def test_the_snapshot_survives_its_bom_being_deleted(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """A reversed take outlives its BOM, and is still the record of what happened.
+
+    Without this the page 404s — and every movement note linking to it becomes a
+    link to that 404, which is the audit trail quietly going dead.
+    """
+    ready = _take_ready(client, tmp_path, monkeypatch)
+    # Standing takes hold the BOM in place; reverse it first, as the user must.
+    assert client.delete(f"/api/boms/{ready['bom_id']}").status_code == 422
+    client.post(
+        f"/api/bom-takes/{ready['take_id']}/reverse", json={"reason": "scrapped"}
+    )
+    assert client.delete(f"/api/boms/{ready['bom_id']}").status_code == 204
+
+    resp = client.get(f"/bom-takes/{ready['take_id']}")
+
+    assert resp.status_code == 200
+    assert "has been deleted" in resp.text
+    # And its lines still read.
+    rows = client.get(f"/web/api/bom-takes/{ready['take_id']}/lines").json()
+    assert rows[0]["references"] == "U1"
+
+
 def test_a_take_movement_links_its_note_to_the_snapshot(
     client: TestClient, tmp_path, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]

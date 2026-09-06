@@ -3,7 +3,13 @@
 {% block title %}{{ take.name }} — BOM — ShelfOS{% endblock %}
 
 {% block content %}
+{# The BOM can be gone: a reversed take outlives it, and the snapshot is still
+   the record of what happened. #}
+{% if bom %}
 <p class="crumb"><a href="/boms/{{ take.bom_id }}">&larr; Back to {{ bom.name }}</a></p>
+{% else %}
+<p class="crumb"><a href="/boms">&larr; Back to BOMs</a> <span class="muted">— that BOM has been deleted</span></p>
+{% endif %}
 
 <div class="head">
   <div>

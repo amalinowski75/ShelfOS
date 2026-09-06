@@ -256,6 +256,58 @@ describe("bom_take.js — the preview", () => {
     ]);
   });
 
+  it("leaves the location picker on the row so the answer can be changed", async () => {
+    // A picker that vanished the moment it was used could only be corrected by
+    // cancelling the dialog, which throws away every quantity edited on the way.
+    const answered = () =>
+      plan({
+        lines: [
+          {
+            ...plan().lines[0],
+            needs_choice: false,
+            sources: [
+              {
+                location_id: 9,
+                path: "Regal B",
+                available: 20,
+                quantity: 2,
+                inside: false,
+              },
+            ],
+            candidates: [
+              { location_id: 8, path: "Regal A", available: 50, quantity: 0, inside: false },
+              { location_id: 9, path: "Regal B", available: 20, quantity: 0, inside: false },
+            ],
+          },
+        ],
+      });
+    const { impl, calls } = server(answered);
+    const { document } = loadPage(bomTakeFixture(), SCRIPTS, { fetchImpl: impl });
+    document.getElementById("bom-take").click();
+    pickGathering(document);
+    await tick();
+    // Answer once…
+    const first = document.querySelector(".take-choice");
+    first.value = "9";
+    first.dispatchEvent(new document.defaultView.Event("change", { bubbles: true }));
+    await tick();
+
+    // …and the picker is still there, showing the answer, beside what it bought.
+    const select = document.querySelector(".take-choice");
+    expect(select).not.toBeNull();
+    expect(select.value).toBe("9");
+    expect(select.querySelector('option[value=""]')).toBeNull(); // answered
+    expect(document.querySelector("#take-rows tr").textContent).toContain("Regal B ×2");
+
+    // And it can be changed.
+    select.value = "8";
+    select.dispatchEvent(new document.defaultView.Event("change", { bubbles: true }));
+    await tick();
+    expect(calls.at(-1)[2].lines).toEqual([
+      { line_id: 11, quantity: null, source_location_id: 8 },
+    ]);
+  });
+
   it("counts what stops the run, and marks it on the rows themselves", async () => {
     // Naming the lines in the panel duplicated the table right below it, where
     // they are now tinted — and a BOM can name dozens of them.

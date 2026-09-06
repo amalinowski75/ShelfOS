@@ -30,6 +30,7 @@ from app.auth.deps import (
     issue_csrf_token,
 )
 from app.auth.throttle import attempt_login
+from app.models.bom import Bom
 from app.models.component import ComponentType, ParameterDefinition
 from app.models.enums import (
     AttachmentKind,
@@ -56,7 +57,7 @@ from app.services import match_rule_service as mrs
 from app.services import stock_service as ss
 from app.services import user_service as us
 from app.services._common import require_entity
-from app.services.errors import ValidationError
+from app.services.errors import NotFoundError, ValidationError
 from app.web.presenter import (
     build_audit_table,
     build_component_table,
@@ -841,7 +842,14 @@ def bom_take_page(
     """One take, as it happened (§21). Server-rendered: a snapshot is a fixed
     record, so there is nothing for a feed to keep up with."""
     detail = bts.take_detail(session, take_id)  # raises NotFound → 404
-    bom = boms_svc.get_bom(session, cast(int, detail["bom_id"]))
+    # A reversed take can outlive its BOM — nothing is off the shelves any more,
+    # so `delete_bom` allows that — and the snapshot is still the record of what
+    # happened. A missing BOM reads as a missing name, not as a 404, the same way
+    # take_detail already handles a location that has been deleted.
+    try:
+        bom: Bom | None = boms_svc.get_bom(session, cast(int, detail["bom_id"]))
+    except NotFoundError:
+        bom = None
     return templates.TemplateResponse(
         request,
         "bom_take.html",

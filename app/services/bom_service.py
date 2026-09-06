@@ -19,6 +19,7 @@ from sqlmodel import Session, col, select
 
 from app import config
 from app.models.bom import Bom, BomLine, BomLineAssignment, BomLineOrdered
+from app.models.bom_take import BomTake
 from app.models.component import (
     Component,
     ComponentParameter,
@@ -285,8 +286,25 @@ def get_bom_lines(session: Session, bom_id: int) -> list[BomLine]:
 
 
 def delete_bom(session: Session, bom_id: int) -> None:
-    """Delete a BOM, its lines, its assignments and its stored CSV attachment."""
+    """Delete a BOM, its lines, its assignments and its stored CSV attachment.
+
+    Refused while a take of it is still standing: those parts are off the shelves,
+    and the snapshot is the only record of where they came from — the only place
+    they can be put back from, too. Deleting the BOM would leave that record
+    reachable by nothing and undoable by nobody. Reverse the take first, or leave
+    the BOM where it is.
+    """
     bom = get_bom(session, bom_id)
+    standing = session.exec(
+        select(BomTake)
+        .where(BomTake.bom_id == bom_id)
+        .where(col(BomTake.reversed_at).is_(None))
+    ).first()
+    if standing is not None:
+        raise ValidationError(
+            f"'{standing.name}' has not been reversed — its parts are still off "
+            "the shelves. Undo it before deleting this BOM."
+        )
     attachment_service.delete_attachments_for(
         session, entity_type="bom", entity_id=bom_id
     )
