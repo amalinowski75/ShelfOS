@@ -263,6 +263,69 @@ def test_nothing_anywhere_is_a_shortfall_not_an_error(  # type: ignore[no-untype
     assert plan.can_run  # the rest of the board can still be picked
 
 
+def test_two_lines_sharing_a_component_do_not_plan_the_same_bin_twice(
+    session: Session, shop
+) -> None:  # type: ignore[no-untyped-def]
+    """An assignment is unique per designator group, not per component.
+
+    Two groups pointing at the same part each used to plan against the bin's full
+    quantity: the preview promised a run it was 20 short for, and the second
+    removal then raised mid-take and rolled the whole thing back with the very
+    stock error the plan had ruled out.
+    """
+    part = shop.part("PART-A")
+    shop.stock(part, shop.resistors_id, 100)
+    bom = shop.bom("R1,60,x,PART-A\nR2,60,x,PART-A\n")
+    shop.assign(cast(int, bom.id), "R1", part)
+    shop.assign(cast(int, bom.id), "R2", part)
+
+    plan = bts.plan_take(
+        session, cast(int, bom.id), boards=1, source_location_id=shop.gathering_id
+    )
+
+    first, second = plan.lines
+    assert [(s.location_id, s.quantity) for s in first.sources] == [
+        (shop.resistors_id, 60)
+    ]
+    assert [(s.location_id, s.quantity) for s in second.sources] == [
+        (shop.resistors_id, 40)  # what is LEFT, not what the shelf started with
+    ]
+    assert second.shortfall == 20
+
+    take = bts.execute_take(
+        session, cast(int, bom.id), boards=1,
+        source_location_id=shop.gathering_id, user_id=1,
+    )
+
+    assert ss.get_quantity(session, part, shop.resistors_id) == 0
+    lines = bts.take_lines(session, cast(int, take.id))
+    assert [ln.taken_quantity for ln in lines] == [60, 40]
+
+
+def test_a_bin_emptied_by_an_earlier_line_is_not_offered_again(
+    session: Session, shop
+) -> None:  # type: ignore[no-untyped-def]
+    """…and the second line falls through to the shelf, rather than to nothing."""
+    part = shop.part("PART-A")
+    shop.stock(part, shop.resistors_id, 10)
+    shop.stock(part, shop.shelf_a_id, 50)
+    bom = shop.bom("R1,10,x,PART-A\nR2,5,x,PART-A\n")
+    shop.assign(cast(int, bom.id), "R1", part)
+    shop.assign(cast(int, bom.id), "R2", part)
+
+    plan = bts.plan_take(
+        session, cast(int, bom.id), boards=1, source_location_id=shop.gathering_id
+    )
+
+    assert [(s.location_id, s.quantity) for s in plan.lines[0].sources] == [
+        (shop.resistors_id, 10)
+    ]
+    assert [(s.location_id, s.quantity) for s in plan.lines[1].sources] == [
+        (shop.shelf_a_id, 5)
+    ]
+    assert plan.total_shortfall == 0
+
+
 # --- what is asked for ------------------------------------------------------
 
 
@@ -561,6 +624,44 @@ def test_reversing_twice_returns_the_stock_once(  # type: ignore[no-untyped-def]
         bts.reverse_take(session, cast(int, take.id), reason="again", user_id=1)
 
     assert ss.get_quantity(session, part, shop.resistors_id) == 10
+
+
+def test_a_reversal_blocked_by_a_retired_part_says_which_line(
+    session: Session, shop
+) -> None:  # type: ignore[no-untyped-def]
+    """`add_stock` refuses a retired component, so this must be caught up front.
+
+    Hit mid-loop it would roll back the reversal — the mark included — leaving the
+    other lines off the shelves and a message naming neither the take nor the line.
+    """
+    good = shop.part("PART-A")
+    doomed = shop.part("PART-B")
+    shop.stock(good, shop.resistors_id, 100)
+    shop.stock(doomed, shop.resistors_id, 100)
+    bom = shop.bom("U1,5,x,PART-A\nU2,5,x,PART-B\n")
+    shop.assign(cast(int, bom.id), "U1", good)
+    shop.assign(cast(int, bom.id), "U2", doomed)
+    take = bts.execute_take(
+        session, cast(int, bom.id), boards=1,
+        source_location_id=shop.gathering_id, user_id=1,
+    )
+    # Emptying the drawer is what the service demands before a part goes out of
+    # use, and it is the real order of events after a take anyway.
+    ss.remove_stock(
+        session,
+        component_id=doomed,
+        location_id=shop.resistors_id,
+        quantity=95,
+        user_id=1,
+    )
+    cs.soft_delete_component(session, doomed, user_id=1)
+
+    with pytest.raises(ValidationError, match="U2"):
+        bts.reverse_take(session, cast(int, take.id), reason="scrapped", user_id=1)
+
+    # Nothing half-done: the mark is not set and the live part stays taken.
+    assert bts.get_take(session, cast(int, take.id)).reversed_at is None
+    assert ss.get_quantity(session, good, shop.resistors_id) == 95
 
 
 def test_reversing_an_unknown_take_is_not_found(  # type: ignore[no-untyped-def]

@@ -9,8 +9,13 @@ function takeSnapshotUrl(takeId) {
 }
 
 const takeDialog = document.getElementById("bom-take-dialog");
-if (takeDialog && typeof bomTableEl !== "undefined" && bomTableEl) {
-  const takeBomId = bomTableEl.dataset.bomId;
+// Resolved here rather than borrowed from boms_report.js: that file's top-level
+// `const` only exists once its own script has run, and the template loads this one
+// FIRST. Reaching across for it left the whole dialog unwired in the browser while
+// the tests, which loaded the scripts the other way round, stayed green.
+const takeTableEl = document.getElementById("bom-lines-table");
+if (takeDialog && takeTableEl) {
+  const takeBomId = takeTableEl.dataset.bomId;
   const boardsInput = document.getElementById("take-boards");
   const sourceInput = takeDialog.querySelector('input[name="take_source"]');
   const rows = document.getElementById("take-rows");
@@ -70,6 +75,17 @@ if (takeDialog && typeof bomTableEl !== "undefined" && bomTableEl) {
   }
 
   function renderPlan(plan) {
+    // The replan lands mid-edit: a 300 ms pause between two digits is ordinary,
+    // and rebuilding the tbody replaces the very <input> the caret is in — focus
+    // goes to the document and the rest of the number is typed into nothing.
+    // Remember which field was being edited, and put the caret back afterwards.
+    const editing = document.activeElement;
+    const editingLine =
+      editing && editing.classList.contains("take-qty")
+        ? editing.dataset.line
+        : null;
+    const caret = editingLine ? editing.selectionStart : null;
+
     rows.innerHTML = plan.lines
       .map(
         (line) => `<tr${line.blocked ? ' class="take-blocked"' : ""}>
@@ -101,6 +117,18 @@ if (takeDialog && typeof bomTableEl !== "undefined" && bomTableEl) {
     summary.textContent = plan.total_shortfall
       ? `${plan.total_shortfall} part(s) short of what this run wants.`
       : "";
+
+    if (editingLine === null) return;
+    const restored = rows.querySelector(`.take-qty[data-line="${editingLine}"]`);
+    if (!restored) return;
+    restored.focus();
+    // The plan echoes back the quantity we sent, so the value is the same string
+    // — but setSelectionRange still has to be re-applied to the new element.
+    try {
+      restored.setSelectionRange(caret, caret);
+    } catch {
+      /* a number input in some browsers refuses a selection; the focus is what matters */
+    }
   }
 
   async function refreshPlan() {
@@ -141,6 +169,10 @@ if (takeDialog && typeof bomTableEl !== "undefined" && bomTableEl) {
 
   rows.addEventListener("input", (e) => {
     if (!e.target.classList.contains("take-qty")) return;
+    // An empty field is someone midway through retyping a number, not a request
+    // for zero. Recording 0 and replanning would stamp a literal "0" back into
+    // the box they just cleared.
+    if (e.target.value.trim() === "") return;
     quantities[e.target.dataset.line] = Math.max(
       0,
       Math.floor(Number(e.target.value) || 0),

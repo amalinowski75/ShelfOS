@@ -7,7 +7,10 @@ import {
   bomTakeUndoFixture,
 } from "./harness.js";
 
-const SCRIPTS = ["shared.js", "location_tree.js", "boms_report.js", "bom_take.js"];
+// The order bom_report.html loads them in, not a convenient one: bom_take.js runs
+// BEFORE boms_report.js there, and a test that reversed the two hid a dialog that
+// never wired itself up at all.
+const SCRIPTS = ["shared.js", "location_tree.js", "bom_take.js", "boms_report.js"];
 
 // A plan the server would answer with: one line, satisfied from the gathering
 // drawer.
@@ -137,6 +140,47 @@ describe("bom_take.js — the preview", () => {
     expect(previews.at(-1)[2].lines).toEqual([
       { line_id: 11, quantity: 120, source_location_id: null },
     ]);
+  });
+
+  it("keeps the caret in the field being edited when the plan comes back", async () => {
+    // A 300ms pause between two digits is ordinary; rebuilding the tbody replaces
+    // the very input the caret is in, and the rest of the number goes nowhere.
+    const { impl } = server(() => plan({ lines: [{ ...plan().lines[0], requested: 12 }] }));
+    const { document } = loadPage(bomTakeFixture(), SCRIPTS, { fetchImpl: impl });
+    document.getElementById("bom-take").click();
+    pickGathering(document);
+    await tick();
+
+    const qty = document.querySelector(".take-qty");
+    qty.focus();
+    qty.value = "12";
+    qty.dispatchEvent(new document.defaultView.Event("input", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 350));
+    await tick();
+
+    // A NEW element — the table was rebuilt — but it is the one holding focus.
+    const after = document.querySelector(".take-qty");
+    expect(document.activeElement).toBe(after);
+    expect(after.value).toBe("12");
+  });
+
+  it("treats a cleared field as mid-edit, not as a request for zero", async () => {
+    const { impl, calls } = server(plan);
+    const { document } = loadPage(bomTakeFixture(), SCRIPTS, { fetchImpl: impl });
+    document.getElementById("bom-take").click();
+    pickGathering(document);
+    await tick();
+    const before = calls.filter((c) => c[0].includes("/take/preview")).length;
+
+    const qty = document.querySelector(".take-qty");
+    qty.value = "";
+    qty.dispatchEvent(new document.defaultView.Event("input", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 350));
+    await tick();
+
+    // No replan, so nothing stamps a "0" back into the box they just cleared.
+    expect(calls.filter((c) => c[0].includes("/take/preview")).length).toBe(before);
+    expect(document.querySelector(".take-qty").value).toBe("");
   });
 
   it("does not let a stale plan overwrite a newer one", async () => {

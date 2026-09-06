@@ -170,6 +170,17 @@ def plan_take(
         session,
         {c.id for c in components.values() if c.deleted_at is None and c.id},
     )
+    # What each slot has LEFT as the plan walks the lines. Two designator groups
+    # can be assigned to the same component (the assignment is unique per
+    # references, not per component), and without this each of them would plan
+    # against the bin's full quantity — the preview would promise a run it is
+    # short for, and the second removal would raise mid-take and roll the whole
+    # thing back with a stock error the plan had just ruled out.
+    unclaimed = {
+        (slot.component_id, slot.location_id): slot.quantity
+        for rows in slots.values()
+        for slot in rows
+    }
     paths: dict[int, str] = {}
 
     def path_of(location_id: int) -> str:
@@ -203,15 +214,26 @@ def plan_take(
             continue
 
         entry.component_id = component.id
+        component_id = cast(int, component.id)
+
+        def claim(source: PlannedSource, amount: int, part: int = component_id) -> int:
+            """Take ``amount`` from this slot and keep the running total honest."""
+            source.quantity += amount
+            unclaimed[(part, source.location_id)] -= amount
+            return amount
+
         candidates = [
             PlannedSource(
                 location_id=slot.location_id,
                 path=path_of(slot.location_id),
-                available=slot.quantity,
+                # What is left after earlier lines, not what the shelf started
+                # with. A slot another line has already emptied is not a candidate.
+                available=unclaimed[(component_id, slot.location_id)],
                 quantity=0,
                 inside=slot.location_id in inside_ids,
             )
-            for slot in slots.get(cast(int, component.id), [])
+            for slot in slots.get(component_id, [])
+            if unclaimed[(component_id, slot.location_id)] > 0
         ]
         inside = sorted([c for c in candidates if c.inside], key=_by_biggest_bin)
         outside = sorted([c for c in candidates if not c.inside], key=_by_biggest_bin)
@@ -224,10 +246,8 @@ def plan_take(
         for candidate in inside:
             if remaining <= 0:
                 break
-            take = min(remaining, candidate.available)
-            candidate.quantity = take
             entry.sources.append(candidate)
-            remaining -= take
+            remaining -= claim(candidate, min(remaining, candidate.available))
 
         if remaining > 0 and outside:
             chosen_id = choices.get(line_id)
@@ -243,14 +263,12 @@ def plan_take(
                 # An explicit choice is honoured for that location ALONE — spilling
                 # the rest into the bins the user did not pick would answer a
                 # different question than the one they were asked.
-                picked.quantity = min(remaining, picked.available)
                 entry.sources.append(picked)
-                remaining -= picked.quantity
+                remaining -= claim(picked, min(remaining, picked.available))
             elif len(outside) == 1:
                 only = outside[0]
-                only.quantity = min(remaining, only.available)
                 entry.sources.append(only)
-                remaining -= only.quantity
+                remaining -= claim(only, min(remaining, only.available))
             else:
                 entry.needs_choice = True
                 entry.candidates = outside
@@ -414,6 +432,29 @@ def reverse_take(
     if not reason:
         raise ValidationError("say why this take is being reversed")
 
+    # Checked BEFORE the claim, for the reason plan_take checks before the take:
+    # `add_stock` refuses a retired component, so hitting it mid-loop would roll
+    # back the reversal — including the mark — and the message would name neither
+    # the take nor the line. One retired part must not silently mean "the other
+    # nine stay off the shelves and you cannot find out why".
+    lines = {cast(int, ln.id): ln for ln in take_lines(session, take_id)}
+    allocations = take_allocations(session, take_id)
+    moved = {lines[a.take_line_id].component_id for a in allocations}
+    live = components_by_id(session, moved)
+    retired = sorted(
+        {
+            lines[a.take_line_id].references
+            for a in allocations
+            if (part := live.get(lines[a.take_line_id].component_id)) is None
+            or part.deleted_at is not None
+        }
+    )
+    if retired:
+        raise ValidationError(
+            "these lines were built from parts that are no longer in use, so "
+            "their stock cannot be put back: " + ", ".join(retired)
+        )
+
     now = datetime.now(UTC)
     # Claim the reversal atomically, the way finalize_invoice claims an invoice: a
     # double-clicked Undo must not return the same stock twice.
@@ -432,8 +473,7 @@ def reverse_take(
         raise ValidationError("this take has already been reversed")
 
     try:
-        lines = {cast(int, ln.id): ln for ln in take_lines(session, take_id)}
-        for allocation in take_allocations(session, take_id):
+        for allocation in allocations:
             line = lines[allocation.take_line_id]
             movement = ss.add_stock(
                 session,

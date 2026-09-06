@@ -83,6 +83,12 @@ render such a location as "—"), but undoing that take then fails, naming the
 location it can no longer find. Teaching `delete_location` to refuse while an
 un-reversed take references the branch is the fix.
 
+A take whose part was later taken out of use cannot be reversed at all —
+`add_stock` refuses a retired component, and putting stock back into one would
+contradict what "out of use" means. `reverse_take` now refuses up front, naming
+the lines, rather than failing mid-loop; actually undoing such a take would mean
+restoring the component first, which is a decision for a person.
+
 Deferred / unscheduled: BOM & KiCad integration (§22), Playwright UI tests,
 `app.js` JS test coverage (stock dialogs + New Type builder — needs a
 `window.Tabulator` stub).
