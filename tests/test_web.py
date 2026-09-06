@@ -2697,6 +2697,18 @@ def test_take_page_shows_what_came_off_which_shelf(
     assert 'id="take-undo"' in html
 
 
+def test_the_take_dialogs_carry_the_body_wrapper(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """Neither dialog has a <form>, and `dialog form` is where the inset lives."""
+    ready = _take_ready(client, tmp_path, monkeypatch)
+
+    report = client.get(f"/boms/{ready['bom_id']}").text
+    assert 'class="dialog-body"' in report  # the take dialog
+    snapshot = client.get(f"/bom-takes/{ready['take_id']}").text
+    assert 'class="dialog-body"' in snapshot  # the undo dialog
+
+
 def test_an_unknown_take_is_404(client: TestClient) -> None:
     assert client.get("/bom-takes/9999").status_code == 404
 

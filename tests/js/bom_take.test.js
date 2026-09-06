@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { JSDOM } from "jsdom";
 import { describe, it, expect, vi } from "vitest";
 import {
   loadPage,
@@ -287,6 +289,23 @@ describe("bom_take.js — the preview", () => {
     expect(document.querySelector("#take-rows .badge").textContent).toContain("40");
   });
 
+  it("shows what fits of a designator group and the whole of it on hover", async () => {
+    // "R1, R2, … R48" is as wide as the board is big; the cell would otherwise set
+    // the column width for the entire table.
+    const long = "R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R11, R12";
+    const { impl } = server(() =>
+      plan({ lines: [{ ...plan().lines[0], references: long }] }),
+    );
+    const { document } = loadPage(bomTakeFixture(), SCRIPTS, { fetchImpl: impl });
+    document.getElementById("bom-take").click();
+    pickGathering(document);
+    await tick();
+
+    const refs = document.querySelector(".take-refs");
+    expect(refs.textContent).toBe(long);
+    expect(refs.getAttribute("title")).toBe(long); // the rest is in the hover
+  });
+
   it("escapes the references, MPN and location paths", async () => {
     // All three come from an uploaded CSV or a free-text location name.
     const nasty = () =>
@@ -464,5 +483,60 @@ describe("bom_take_undo.js", () => {
       "already been reversed",
     );
     expect(document.getElementById("take-undo-error-row").hidden).toBe(false);
+  });
+});
+
+describe("app.css — the take dialog's table", () => {
+  const styleOf = (markup, id) => {
+    const css = readFileSync(
+      new URL("../../app/web/static/app.css", import.meta.url),
+      "utf8",
+    );
+    const dom = new JSDOM(`<style>${css}</style>${markup}`);
+    return dom.window.getComputedStyle(dom.window.document.getElementById(id));
+  };
+
+  it("fixes the layout, so one long cell cannot set every column's width", () => {
+    // With `auto`, a designator group running to forty designators decides the
+    // width of the whole table and squeezes the rest off the side.
+    const style = styleOf('<table id="take-table"></table>', "take-table");
+    expect(style.tableLayout).toBe("fixed");
+  });
+
+  it("leaves the widths draggable rather than decided", () => {
+    // Which column matters depends on the BOM in front of you, so the starting
+    // widths are a starting point. `overflow` is what makes `resize` apply at all.
+    const style = styleOf(
+      '<table id="t" style="table-layout:fixed"><thead><tr><th id="h"></th></tr></thead></table>'.replace(
+        'id="t"',
+        'id="take-table"',
+      ),
+      "h",
+    );
+    expect(style.resize).toBe("horizontal");
+    expect(style.overflow).toBe("hidden");
+  });
+
+  it("clips a long designator group instead of widening its column", () => {
+    const style = styleOf('<span class="take-refs" id="r"></span>', "r");
+    expect(style.textOverflow).toBe("ellipsis");
+    expect(style.overflow).toBe("hidden");
+    expect(style.whiteSpace).toBe("nowrap");
+    // text-overflow does nothing on an inline span — the same trap cell-desc has.
+    expect(style.display).toBe("block");
+  });
+
+  it("insets a form-less dialog the way a form would have", () => {
+    // `dialog` itself is padding: 0 — every other dialog gets its breathing room
+    // from `dialog form`, and these two carry no form, so their controls sat flush
+    // against the frame.
+    const style = styleOf('<div class="dialog-body" id="b"></div>', "b");
+    expect(style.padding).toBe("18px 20px");
+    expect(style.gap).toBe("14px");
+  });
+
+  it("gives the dialog room for five columns", () => {
+    const style = styleOf('<dialog id="bom-take-dialog"></dialog>', "bom-take-dialog");
+    expect(style.width).toContain("1320px");
   });
 });

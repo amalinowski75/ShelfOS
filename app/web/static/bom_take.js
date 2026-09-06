@@ -89,7 +89,8 @@ if (takeDialog && takeTableEl) {
     rows.innerHTML = plan.lines
       .map(
         (line) => `<tr${line.blocked ? ' class="take-blocked"' : ""}>
-          <td class="mono">${esc(line.references)}</td>
+          <td class="mono"><span class="take-refs" title="${esc(line.references)}"
+              >${esc(line.references)}</span></td>
           <td class="cell-mono">${esc(line.mpn || "—")}</td>
           <td class="num"><input class="control take-qty" type="number" min="0" step="1"
               value="${Number(line.requested)}" data-line="${Number(line.line_id)}"

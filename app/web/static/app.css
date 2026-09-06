@@ -481,6 +481,13 @@ dialog header {
 }
 dialog header strong { font-size: 16px; }
 dialog form { display: flex; flex-direction: column; gap: 14px; padding: 18px 20px; margin: 0; }
+/* A dialog that carries no <form> still needs the inset a form would have given
+   it: `dialog` itself is padding: 0, and every dialog until now took its
+   breathing room from the rule above. Same numbers, so the two kinds of dialog
+   cannot drift apart. */
+.dialog-body {
+  display: flex; flex-direction: column; gap: 14px; padding: 18px 20px;
+}
 dialog footer {
   display: flex; justify-content: flex-end; gap: 10px;
   padding: 4px 0 0; border: none; margin: 4px 0 0;
@@ -911,6 +918,30 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, .82); }
 .bom-summary { margin-bottom: 20px; }
 /* The remedies for an unresolved count, on the line below it. Only rendered
    while there is something unresolved, so it has no empty state. */
+/* The take dialog. Three times the standard dialog width: this one carries a
+   five-column table of the whole BOM, and at 440px the columns had nothing left
+   to share. */
+#bom-take-dialog { width: min(1320px, calc(100vw - 32px)); }
+
+/* Fixed layout so the starting widths below actually hold — with `auto`, one long
+   designator group sets the column width for the whole table. `resize` on the
+   header keeps them a starting point rather than a decision: which column matters
+   depends on the BOM in front of you. */
+#take-table { table-layout: fixed; width: 100%; }
+#take-table th { resize: horizontal; overflow: hidden; }
+.take-col-refs { width: 220px; }
+.take-col-mpn { width: 180px; }
+.take-col-qty { width: 110px; }
+.take-col-short { width: 90px; }
+/* "From" takes what is left: it is the one column whose content is genuinely
+   variable (a path, or several), and the only one worth giving the slack to. */
+
+/* A designator group runs to whatever the board needs; show what fits and put the
+   rest in the hover, exactly as the BOM report's References column does. */
+.take-refs {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 /* The take dialog: its two controls on one row, and a table tall enough to show
    a real BOM without the dialog itself scrolling. */
 .take-controls {

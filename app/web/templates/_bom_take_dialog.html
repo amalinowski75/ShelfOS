@@ -9,6 +9,7 @@
       <button class="close" aria-label="Close" data-close></button>
     </header>
 
+    <div class="dialog-body">
     <div class="take-controls">
       <label class="field">
         <span>Boards</span>
@@ -31,6 +32,17 @@
 
     <div class="table-wrap take-table-wrap">
       <table class="data" id="take-table">
+        {# Fixed widths, because a designator group ("R1, R2, R3, … R48") is as
+           wide as the board is big and would otherwise squeeze everything else
+           off the table. Each header can be dragged wider — the columns are only
+           a starting point, and which one matters depends on the BOM. #}
+        <colgroup>
+          <col class="take-col-refs" />
+          <col class="take-col-mpn" />
+          <col class="take-col-qty" />
+          <col class="take-col-from" />
+          <col class="take-col-short" />
+        </colgroup>
         <thead>
           <tr>
             <th>References</th><th>MPN</th>
@@ -54,5 +66,6 @@
         Take them off the shelves
       </button>
     </footer>
+    </div>
   </article>
 </dialog>
