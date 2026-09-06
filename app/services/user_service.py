@@ -14,6 +14,7 @@ from typing import cast
 import bcrypt
 from sqlmodel import Session, col, select
 
+from app.config import DEFAULT_ADMIN_PASSWORD
 from app.models.enums import UserRole
 from app.models.user import User
 from app.services import audit_service
@@ -218,10 +219,30 @@ def set_role(session: Session, user_id: int, role: UserRole, *, actor_id: int) -
 def set_active(
     session: Session, user_id: int, is_active: bool, *, actor_id: int
 ) -> User:
-    """Enable or disable a user account, recording who did it (§19)."""
+    """Enable or disable a user account, recording who did it (§19).
+
+    Enabling an account that still has the public default password is refused.
+    Startup checks the *active* admins, so a disabled one holding it is invisible
+    there — and turning it back on from the users page would put the instance on
+    the default password immediately, while arming a boot failure for whenever
+    it is next restarted, over an account nobody touched at that moment. Keeping
+    the refusal at the action keeps the cause next to the effect. Checked for any
+    role, not only admins as startup does: that sweep is narrowed by what a
+    bcrypt round per account would cost, and here there is exactly one.
+    """
     user = require_entity(session, User, user_id, "user")
     if not is_active and _is_last_login_admin(session, user):
         raise ValidationError("cannot disable the last active admin")
+    if (
+        is_active
+        and not user.is_active
+        and user.password_hash is not None
+        and verify_password(DEFAULT_ADMIN_PASSWORD, user.password_hash)
+    ):
+        raise ValidationError(
+            "cannot enable an account that still has the default password; "
+            "set a new one for it first"
+        )
     if user.is_active != is_active:
         audit_service.record_change(
             session,
@@ -315,6 +336,23 @@ def change_own_password(
         raise ValidationError("current password is incorrect")
     own_id = cast(int, user.id)
     return set_password(session, own_id, new_password, actor_id=own_id)
+
+
+def has_login_capable_admin(session: Session) -> bool:
+    """Whether any admin in this database can sign in.
+
+    What decides whether ``ensure_admin`` will seed one, and so whether
+    ``SHELFOS_ADMIN_PASSWORD`` is about to be read at all.
+    """
+    return (
+        session.exec(
+            select(User).where(
+                User.role == UserRole.ADMIN,
+                col(User.password_hash).is_not(None),
+            )
+        ).first()
+        is not None
+    )
 
 
 def admins_with_password(session: Session, password: str) -> list[User]:

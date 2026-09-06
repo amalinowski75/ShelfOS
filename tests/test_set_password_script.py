@@ -49,6 +49,10 @@ def _run(url: str, *args: str, new_password: str | None = None):  # type: ignore
         [sys.executable, str(_SCRIPT), *args],
         capture_output=True,
         text=True,
+        # Explicit, not inherited: under `pytest -s` the parent's stdin is a real
+        # terminal, and the no-terminal test would then hand the script one, so
+        # it would prompt with getpass and block the whole run forever.
+        stdin=subprocess.DEVNULL,
         env={**env, "PYTHONPATH": str(_SCRIPT.parents[1])},
     )
 

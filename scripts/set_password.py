@@ -22,8 +22,12 @@ Usage::
     python scripts/set_password.py admin --list     # show accounts and exit
     SHELFOS_NEW_PASSWORD=... python scripts/set_password.py admin   # unattended
 
-Targets the same database as the app: ``DATABASE_URL`` (default
-``data/shelfos.db``).
+Targets the same database as the app: ``DATABASE_URL`` (default the *relative*
+``data/shelfos.db``), and says which one it opened before it changes anything —
+this is the tool reached for on a box that will not boot, where it is unlikely to
+be run from the project directory. It refuses a database that does not exist
+rather than creating an empty one and then reporting the account missing, which
+on a bad day reads as the accounts having been lost.
 """
 
 from __future__ import annotations
@@ -32,14 +36,36 @@ import argparse
 import getpass
 import os
 import sys
+from pathlib import Path
 
 import app.models  # noqa: F401  (registers every table on SQLModel.metadata)
-from app.db import engine, init_db
+from app.db import engine
 from app.models.user import User
 from app.seed import SYSTEM_USER_NAME
 from app.services import user_service as us
 from app.services.errors import ValidationError
 from sqlmodel import Session, col, select
+
+
+def _require_existing_database() -> None:
+    """Refuse a database that is not there, and say which one was looked for.
+
+    The app creates its schema on first start; this tool only ever edits an
+    account that already exists, so a missing file is a wrong path — a wrong
+    working directory, most likely — and not an empty install. Creating one
+    would answer "No account named 'admin'", which is the wrong answer to a
+    question nobody asked, and would leave a stray database behind for whoever
+    next runs from that directory.
+    """
+    url = engine.url
+    print(f"Database: {url}", file=sys.stderr)
+    if url.drivername.startswith("sqlite") and url.database not in (None, ":memory:"):
+        path = Path(url.database)
+        if not path.exists():
+            raise SystemExit(
+                f"No database at {path.resolve()}. Run this from the ShelfOS "
+                "directory, or set DATABASE_URL to the one the app uses."
+            )
 
 
 def _accounts(session: Session) -> list[User]:
@@ -74,7 +100,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    init_db()  # a database that does not exist yet is an empty one, not an error
+    _require_existing_database()
     with Session(engine) as session:
         if args.list or not args.username:
             for account in _accounts(session):

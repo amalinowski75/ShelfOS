@@ -26,9 +26,22 @@ way the README asked.
   variable did not.
 - **`scripts/set_password.py`** is the way out, because there had to be one — the
   refusal is unfixable through the UI, which needs the app to be running. It
-  prompts without echoing (or takes `SHELFOS_NEW_PASSWORD` when unattended), and
-  applies the same password policy the app does. It doubles as the answer to an
-  admin locked out of their own account, which had none.
+  prompts without echoing (or takes `SHELFOS_NEW_PASSWORD` when unattended),
+  applies the same password policy the app does, and says which database it
+  opened before changing anything — it refuses one that is not there rather than
+  creating an empty database and then reporting the account missing, which on a
+  box that will not boot reads as the accounts having been lost. It doubles as
+  the answer to an admin locked out of their own account, which had none.
+- `SHELFOS_ADMIN_PASSWORD` is now judged only where it is about to be read: on a
+  database with no admin yet. It was refusing production whenever it was unset,
+  which after the paragraph above would have met the operator who fixed the real
+  account and then dropped the variable the README calls pointless — told to set
+  a decoy value that no account uses.
+- Enabling an account that still has the default password is refused. Startup
+  looks at active admins, so a disabled one holding it is invisible there, and
+  turning it back on from the users page would put the instance on the public
+  default at once while arming a boot failure for the next restart — over an
+  account nobody touched at that moment.
 - The README now says plainly that those two variables seed a first admin and
   do nothing afterwards.
 

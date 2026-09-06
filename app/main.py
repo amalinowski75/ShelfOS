@@ -76,6 +76,7 @@ def _bootstrap() -> None:
     init_db()
     with Session(engine) as session:
         ensure_system_user(session)
+        _check_admin_password_source(session)
         us.ensure_admin(
             session,
             username=config.ADMIN_USERNAME,
@@ -83,6 +84,48 @@ def _bootstrap() -> None:
         )
         _check_seeded_admin_password(session)
         match_rule_service.seed_default_rules(session)
+
+
+def _check_admin_password_source(session: Session) -> None:
+    """Judge ``SHELFOS_ADMIN_PASSWORD``, but only where it is about to be used.
+
+    It is the password of an admin this startup is about to create, and nothing
+    else: ``ensure_admin`` seeds only when no login-capable admin exists, so on
+    every later start the variable is inert. Refusing production over an inert
+    setting would mean an operator who fixed the real account and then dropped
+    the pointless variable — which is what the README now tells them it is —
+    could not boot until they set a decoy value no account uses. Where it will
+    not be read, it is not worth an opinion; the account is judged either way
+    by :func:`_check_seeded_admin_password`.
+    """
+    if us.has_login_capable_admin(session):
+        return
+    if config.is_using_default_admin_password():
+        if config.is_production():
+            raise RuntimeError(
+                "Refusing to start: SHELFOS_ADMIN_PASSWORD must be set when "
+                "SHELFOS_ENV=production, because this database has no admin yet "
+                "and the default password is public."
+            )
+        _logger.warning(
+            "Bootstrap admin will use the default password; "
+            "set SHELFOS_ADMIN_PASSWORD and change it."
+        )
+    elif len(config.ADMIN_PASSWORD) < us.MIN_PASSWORD_LENGTH:
+        # The bootstrap admin is seeded past the password policy (it has to be,
+        # for the development default above), so the policy is applied to its
+        # source here instead: the one account an attacker knows exists should
+        # not be the one with the weakest password.
+        if config.is_production():
+            raise RuntimeError(
+                "Refusing to start: SHELFOS_ADMIN_PASSWORD must be at least "
+                f"{us.MIN_PASSWORD_LENGTH} characters when SHELFOS_ENV=production."
+            )
+        _logger.warning(
+            "SHELFOS_ADMIN_PASSWORD is shorter than %d characters; "
+            "set a longer one before exposing this instance.",
+            us.MIN_PASSWORD_LENGTH,
+        )
 
 
 def _check_seeded_admin_password(session: Session) -> None:
@@ -100,18 +143,23 @@ def _check_seeded_admin_password(session: Session) -> None:
     if not exposed:
         return
     names = ", ".join(sorted(user.name for user in exposed))
-    remedy = (
-        "Sign in and use Change password, or run "
-        "`python scripts/set_password.py <username>`."
-    )
     if config.is_production():
+        # The script first, and only the script: this branch stops the app from
+        # starting, so there is no instance to sign in to and no Change password
+        # button to reach. Naming that remedy first would send the reader to a
+        # port with nothing listening on it.
         raise RuntimeError(
             f"Refusing to start: admin account(s) {names} still have the default "
-            f"password, which is public. {remedy} Setting SHELFOS_ADMIN_PASSWORD "
-            "does not change an account that already exists."
+            "password, which is public. With the app stopped, run "
+            "`python scripts/set_password.py <username>`. Setting "
+            "SHELFOS_ADMIN_PASSWORD does not change an account that already exists."
         )
+    # Here the app does start, so the ordinary way round is the ordinary advice.
     _logger.warning(
-        "Admin account(s) %s still have the default password. %s", names, remedy
+        "Admin account(s) %s still have the default password. Sign in and use "
+        "Change password, or stop the app and run "
+        "`python scripts/set_password.py <username>`.",
+        names,
     )
 
 
@@ -207,32 +255,6 @@ def _check_insecure_defaults() -> None:
         _logger.warning(
             "Using the default SECRET_KEY; set SHELFOS_SECRET_KEY in production."
         )
-    if config.is_using_default_admin_password():
-        if config.is_production():
-            raise RuntimeError(
-                "Refusing to start: SHELFOS_ADMIN_PASSWORD must be set when "
-                "SHELFOS_ENV=production (the default admin password is public)."
-            )
-        _logger.warning(
-            "Bootstrap admin uses the default password; "
-            "set SHELFOS_ADMIN_PASSWORD and change it."
-        )
-    elif len(config.ADMIN_PASSWORD) < us.MIN_PASSWORD_LENGTH:
-        # The bootstrap admin is seeded past the password policy (it has to
-        # be, for the development default above), so the policy is applied to
-        # its source here instead: the one account an attacker knows exists
-        # should not be the one with the weakest password.
-        if config.is_production():
-            raise RuntimeError(
-                "Refusing to start: SHELFOS_ADMIN_PASSWORD must be at least "
-                f"{us.MIN_PASSWORD_LENGTH} characters when SHELFOS_ENV=production."
-            )
-        _logger.warning(
-            "SHELFOS_ADMIN_PASSWORD is shorter than %d characters; "
-            "set a longer one before exposing this instance.",
-            us.MIN_PASSWORD_LENGTH,
-        )
-
 
 def create_app(*, create_tables: bool = True) -> FastAPI:
     """Build and configure the ShelfOS FastAPI application.
