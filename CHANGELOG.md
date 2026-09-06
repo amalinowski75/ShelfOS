@@ -36,6 +36,27 @@ catalog ask the same question, through one shared rule.
   test folds accents and punctuation, so a client comparing lowercased strings
   promised rules that would never be created.
 
+## Matchers within reach
+
+Teaching the import engine a word meant leaving whatever you were doing, going to
+the admin match-rules page, and re-picking domain → type → parameter from scratch.
+
+- **#98** — A parameter carries its own **Matchers** panel: the rules scoped to it,
+  listed in two sections (a shop's word for one of the allowed values, and a shop's
+  label for the parameter itself), editable and deletable in place, with a quick-add
+  row that stays open so a run of aliases goes in one after another rather than one
+  modal per word. The new-type builder gets the same reach — its "Create matcher"
+  saves the type first, then opens the matcher scoped to the fresh parameter.
+
+  Aliases are now written as one comma-separated list per target, so a value that
+  six shop spellings map onto is one row and one field rather than six rows. One
+  rule per alias is still what is stored — that is what keeps the duplicate guard,
+  the ordering and the audit trail per alias — and an alias may no longer contain a
+  comma, since it would be read as two.
+
+  The create dialog moved out of the admin page into `openMatcherDialog`, so all
+  three callers open the same one.
+
 ## Farnell
 
 - **#115** — A Farnell bag is recognised by the `3P` order code on its label.

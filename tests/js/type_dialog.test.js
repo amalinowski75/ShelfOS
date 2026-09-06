@@ -196,3 +196,35 @@ describe("type_dialog.js + component_dialog.js (invoice-style, no app.js)", () =
     expect(select.value).toBe("7"); // the new type is selected in the component dialog
   });
 });
+
+describe("type_dialog.js — the matcher scope that cannot be found", () => {
+  it("says the type was created rather than appearing to do nothing", async () => {
+    // The one branch with no feedback: the type IS created and the dialog has
+    // closed, so silence reads as the whole click having failed. It should not
+    // happen — both sides trim the name — but "should not" is exactly when a user
+    // is owed a sentence.
+    const created = { id: 9, name: "cap", parameters: [{ id: 42, name: "something else" }] };
+    const fetchImpl = (url, opts) =>
+      url === "/api/types" && opts?.method === "POST"
+        ? Promise.resolve({ ok: true, json: async () => created })
+        : Promise.resolve({ ok: true, json: async () => ({}) });
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS, { fetchImpl });
+    window.openMatcherDialog = vi.fn(() => Promise.resolve());
+
+    window.openTypeDialog(() => {});
+    document.querySelector('[name="type-name"]').value = "cap";
+    document.getElementById("add-param").click();
+    const row = document.querySelector("#params .param-row");
+    row.querySelector('[name="p-name"]').value = "esr";
+    row.querySelector('[name="p-label"]').value = "ESR";
+    row.querySelector(".param-create-matcher").click();
+    await tick();
+    await tick();
+
+    expect(window.openMatcherDialog).not.toHaveBeenCalled(); // nothing to scope
+    const toast = document.querySelector(".toast");
+    expect(toast).toBeTruthy();
+    expect(toast.textContent).toContain("cap"); // the type that WAS created
+    expect(toast.textContent).toContain("esr"); // and the parameter it looked for
+  });
+});

@@ -352,7 +352,10 @@ describe("types_admin.js — parameter writes", () => {
     ].find((b) => b.textContent === "Matchers");
     expect(matcher).toBeTruthy();
     matcher.click();
-    expect(window.openParamMatchers).toHaveBeenCalledWith(RESISTOR.parameters[0], 3);
+    // The parameter, and only the parameter: the panel scopes itself by its id and
+    // reads the rest off the feed. It used to be handed the type id as well, which
+    // openParamMatchers has never taken.
+    expect(window.openParamMatchers).toHaveBeenCalledWith(RESISTOR.parameters[0]);
   });
 
   it("omits the matchers button when the panel isn't on the page", () => {

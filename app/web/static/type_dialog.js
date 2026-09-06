@@ -242,12 +242,21 @@
     if (!created) return;
     const param = (created.parameters || []).find((p) => p.name === rowName);
     await finishCreate(created);
-    if (param) {
-      await window.openMatcherDialog(null, {
-        domain: "param_name",
-        typeId: created.id,
-        parameterDefinitionId: param.id,
-      });
+    if (!param) {
+      // The type IS created and the dialog has closed, so silence here would read as
+      // the whole click having done nothing. It should not happen — both sides trim
+      // the name — but "should not" is exactly when a user is owed a sentence, and
+      // the recovery is on the page they are now looking at.
+      showToast(
+        `“${created.name}” was created, but its “${rowName}” parameter could not be ` +
+          "found to scope a matcher — add one from its Matchers panel.",
+      );
+      return;
     }
+    await window.openMatcherDialog(null, {
+      domain: "param_name",
+      typeId: created.id,
+      parameterDefinitionId: param.id,
+    });
   }
 })();

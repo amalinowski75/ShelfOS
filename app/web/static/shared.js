@@ -348,6 +348,7 @@ async function sendAdminWrite(url, method, payload) {
 // caller must reload rather than trust the text that was typed — a stop halfway
 // through leaves the earlier writes done, and the list has to show that.
 async function runMatchRuleWrites(writes) {
+  let landed = 0;
   for (const write of writes) {
     const url = write.id
       ? `/api/admin/match-rules/${write.id}`
@@ -356,9 +357,10 @@ async function runMatchRuleWrites(writes) {
     try {
       resp = await sendAdminWrite(url, write.method, write.body);
     } catch {
-      return "Could not reach the server.";
+      return { failure: "Could not reach the server.", landed };
     }
-    if (!resp.ok) return await errorMessage(resp);
+    if (!resp.ok) return { failure: await errorMessage(resp), landed };
+    landed += 1;
   }
-  return null;
+  return { failure: null, landed };
 }

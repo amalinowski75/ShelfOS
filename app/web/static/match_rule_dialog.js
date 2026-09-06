@@ -155,13 +155,6 @@
   }
   window.openMatcherDialog = openMatcherDialog;
 
-  async function sendRuleWrite(url, method, payload) {
-    return fetch(url, {
-      method,
-      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-      body: payload === undefined ? undefined : JSON.stringify(payload),
-    });
-  }
 
   // Ignore a re-entrant submit while a write is in flight (stops a double-click
   // sending a duplicate request).
@@ -203,7 +196,7 @@
         let landed = 0;
         let refused = null;
         for (const alias of aliases) {
-          const resp = await sendRuleWrite("/api/admin/match-rules", "POST", {
+          const resp = await sendAdminWrite("/api/admin/match-rules", "POST", {
             ...base,
             alias,
           });

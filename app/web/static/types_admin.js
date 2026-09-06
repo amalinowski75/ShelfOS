@@ -243,9 +243,10 @@ function renderParams(row) {
       const matcher = document.createElement("button");
       matcher.className = "btn btn-secondary btn-sm";
       matcher.textContent = "Matchers";
-      matcher.addEventListener("click", () =>
-        window.openParamMatchers(param, openParamsTypeId),
-      );
+      // One argument: the panel scopes itself by the parameter's own id, and reads
+      // everything else off the feed. The type id it used to be handed was never a
+      // parameter of openParamMatchers.
+      matcher.addEventListener("click", () => window.openParamMatchers(param));
       actions.append(matcher);
     }
     const edit = document.createElement("button");

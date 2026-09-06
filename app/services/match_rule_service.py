@@ -179,6 +179,19 @@ def create_rule(
     canonical = canonical.strip()
     if not alias or not canonical:
         raise ValidationError("a matching rule needs both an alias and a target")
+    # No comma. Every surface now writes a target's aliases as ONE comma-separated
+    # field, so a stored alias containing a comma is indistinguishable from two —
+    # and any unrelated edit of that row (appending a synonym, fixing a typo in
+    # another word) would silently split it, killing the rule that matched the whole
+    # phrase. That matters here rather than in the abstract: a param_name alias is
+    # exactly where a distributor's category text lands ("Capacitors, Ceramic").
+    # Refusing it at the door keeps the one-row-per-target display unambiguous by
+    # construction, instead of resting on a client-side split.
+    if "," in alias:
+        raise ValidationError(
+            "an alias cannot contain a comma — aliases are written as a "
+            "comma-separated list, so one would be read as two"
+        )
     scoped = domain in (MatchDomain.PARAM_NAME, MatchDomain.ENUM_VALUE)
     if scoped and parameter_definition_id is None:
         raise ValidationError(f"{domain.value} rules must name a parameter definition")
@@ -252,6 +265,13 @@ def update_rule(
         alias = alias.strip()
         if not alias:
             raise ValidationError("a matching rule needs an alias")
+        # Same rule as create_rule's, and for the same reason: a rename is the other
+        # way a comma could get in.
+        if "," in alias:
+            raise ValidationError(
+                "an alias cannot contain a comma — aliases are written as a "
+                "comma-separated list, so one would be read as two"
+            )
         clash = _find_duplicate(
             session, rule.domain, alias, rule.parameter_definition_id
         )

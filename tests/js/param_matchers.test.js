@@ -326,3 +326,110 @@ describe("param_matchers.js — one row per target", () => {
     expect(aliasFields(valueRows(document))).toEqual(["NP0, COG, X7R-ish"]);
   });
 });
+
+describe("param_matchers.js — two writes at once", () => {
+  // The panel invites overlap by design: Enter adds and stays, so a second press
+  // lands while the first is still open.
+  function guarded() {
+    let nextId = 100;
+    const rows = feed().data.map((r) => ({ ...r }));
+    const posts = [];
+    const ok = (b) => Promise.resolve({ ok: true, json: async () => b });
+    const impl = (url, opts) => {
+      if (url === "/web/api/match-rules") return ok({ data: rows.map((r) => ({ ...r })) });
+      if (url.startsWith("/api/admin/match-rules") && opts?.method === "POST") {
+        const body = JSON.parse(opts.body);
+        posts.push(body.alias);
+        // The server's duplicate guard, which is what turned a dropped race into a
+        // red error over a save that had in fact succeeded.
+        if (rows.some((r) => r.domain === body.domain && r.alias.toLowerCase() === body.alias.toLowerCase())) {
+          return Promise.resolve({
+            ok: false, status: 422,
+            json: async () => ({ detail: `the alias '${body.alias}' already exists` }),
+          });
+        }
+        rows.push({ enum_values: [], sort_order: 0, ...body, id: nextId++ });
+        return ok(rows[rows.length - 1]);
+      }
+      return ok({});
+    };
+    return { impl, posts };
+  }
+
+  it("sends one POST for a double press, and renders one row", async () => {
+    const { impl, posts } = guarded();
+    const page = loadPage(typesAdminPageFixture(), SCRIPTS, { fetchImpl: impl });
+    await page.window.openParamMatchers(ENUM_PARAM);
+    await tick();
+
+    page.document.getElementById("pm-name-alias").value = "Nowy";
+    page.document.getElementById("pm-name-add").click();
+    page.document.getElementById("pm-name-add").click(); // before the first settles
+    await tick();
+    await tick();
+    await tick();
+
+    expect(posts).toEqual(["Nowy"]);
+    // And the list is not doubled: loadLists used to empty both lists BEFORE its
+    // await, so two overlapping loads each cleared and each appended.
+    expect(nameRows(page.document).length).toBe(1);
+    expect(aliasFields(nameRows(page.document))).toEqual(["Dielektryk, Nowy"]);
+  });
+
+  it("keeps only the aliases that still have to go in", async () => {
+    // Everything before the refusal is already stored. Leaving the whole line means
+    // the retry re-POSTs those and dies on the duplicate guard at the first word,
+    // naming an alias that is not the problem and stranding the rest for good.
+    const { impl, posts } = guarded();
+    const page = loadPage(typesAdminPageFixture(), SCRIPTS, { fetchImpl: impl });
+    await page.window.openParamMatchers(ENUM_PARAM);
+    await tick();
+
+    const field = page.document.getElementById("pm-name-alias");
+    field.value = "Nowy, Dielektryk, Trzeci"; // the middle one already exists
+    page.document.getElementById("pm-name-add").click();
+    await tick();
+    await tick();
+
+    expect(posts).toEqual(["Nowy", "Dielektryk"]); // stops at the refusal
+    expect(field.value).toBe("Dielektryk, Trzeci"); // and offers exactly the remainder
+    expect(page.document.getElementById("param-matchers-error").hidden).toBe(false);
+  });
+
+  it("a dropped press leaves the field alone, including what was typed since", async () => {
+    // The dropped press is not a refusal, so it must not touch the text — someone
+    // typing the next alias while the first save is open would otherwise have it
+    // rewritten or cleared under them.
+    let release;
+    const held = new Promise((r) => (release = r));
+    const page = loadPage(typesAdminPageFixture(), SCRIPTS, {
+      fetchImpl: (url, opts) => {
+        if (url === "/web/api/match-rules") {
+          return Promise.resolve({ ok: true, json: async () => feed() });
+        }
+        if (opts?.method === "POST") {
+          return held.then(() => ({ ok: true, json: async () => ({ id: 100 }) }));
+        }
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      },
+    });
+    await page.window.openParamMatchers(ENUM_PARAM);
+    await tick();
+
+    const field = page.document.getElementById("pm-name-alias");
+    field.value = "Nowy";
+    page.document.getElementById("pm-name-add").click(); // in flight, held open
+    await tick();
+    // Spacing the split does NOT preserve, so "left alone" is distinguishable from
+    // "rewritten from its own parse" — which is what any handling of the dropped
+    // press would do, and which reads as the field editing itself under the user.
+    field.value = "Drugi ,  Trzeci";
+    page.document.getElementById("pm-name-add").click(); // dropped
+    await tick();
+
+    expect(field.value).toBe("Drugi ,  Trzeci"); // untouched, not re-joined
+    release();
+    await tick();
+  });
+});
+

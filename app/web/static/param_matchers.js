@@ -16,6 +16,9 @@
 // list back into the rule writes that make it true.
 
 (function () {
+  // Returned when a write is dropped because another is still open — not a refusal,
+  // so the field must not be touched for it.
+  const BUSY = Symbol("busy");
   const dialog = document.getElementById("param-matchers-dialog");
   if (!dialog) return; // not the types admin page
 
@@ -133,18 +136,31 @@
   // A row stands for several rules now, so a write is a batch and the lists reload
   // after it: a batch that stops at a refusal leaves the earlier writes done, and the
   // panel has to show that rather than whatever was typed. Returns the refusal, if any.
+  // One write at a time. This panel invites overlap on purpose — Enter adds and
+  // stays, so a second press lands while the first is still open — and without a
+  // latch both runs POST the same alias: the second is refused by the duplicate
+  // guard, painting a red error over a save that in fact succeeded. Dropping the
+  // second press is right here, unlike the inline location pickers, because it IS
+  // the same action twice rather than two different rows.
+  let writing = false;
   async function runWrites(writes) {
+    if (writing) return BUSY;
+    writing = true;
     setError("");
     setStatus("Saving…");
-    const failure = await runMatchRuleWrites(writes);
-    await loadLists();
-    if (failure) {
-      setError(failure);
-      setStatus(SAVE_HINT);
-    } else {
+    try {
+      const { failure, landed } = await runMatchRuleWrites(writes);
+      await loadLists();
+      if (failure) {
+        setError(failure);
+        setStatus(SAVE_HINT);
+        return { failure, landed };
+      }
       setStatus("Saved ✓", "ok");
+      return null;
+    } finally {
+      writing = false;
     }
-    return failure;
   }
 
   // One alias, or a comma-separated run of them onto the same target — the whole
@@ -164,9 +180,16 @@
         },
       })),
     );
-    // Keep the text on a refusal so it can be fixed; focus never leaves either way,
-    // so a run of aliases still goes in one after another.
+    // Keep only what still has to go in. The aliases before the refusal are already
+    // stored, so leaving the whole line means the retry re-POSTs them and dies on the
+    // duplicate guard at the first word — naming an alias that is not the problem and
+    // stranding the rest for good. (match_rule_dialog.js slices the same way, for the
+    // same reason.) Focus never leaves either way, so a run of aliases still goes in
+    // one after another.
     if (!failure) input.value = "";
+    else if (failure !== BUSY) {
+      input.value = aliases.slice(failure.landed).join(ALIAS_SEPARATOR);
+    }
     input.focus();
   }
 
@@ -177,9 +200,13 @@
   // A name alias maps onto the parameter's own name.
   const addName = () => addAliases(nameAlias, PARAM_NAME, param.name);
 
+  // Newest answer wins, and the lists are emptied only once one arrives. Clearing
+  // BEFORE the await let two overlapping loads each clear and each append, so every
+  // rule rendered twice. (loadInheritedParams in type_dialog.js guards the same shape
+  // the same way.)
+  let loadToken = 0;
   async function loadLists() {
-    valueList.replaceChildren();
-    nameList.replaceChildren();
+    const token = (loadToken += 1);
     let rows = [];
     try {
       const payload = await fetch("/web/api/match-rules").then((r) => r.json());
@@ -187,8 +214,12 @@
         (r) => r.parameter_definition_id === param.id,
       );
     } catch {
+      if (token !== loadToken) return;
       setError("Could not load matchers.");
     }
+    if (token !== loadToken) return; // a later load already owns the lists
+    valueList.replaceChildren();
+    nameList.replaceChildren();
     // The domain is part of the grouping key, so a value group and a name group never
     // merge into each other however their targets read.
     for (const group of groupRulesByTarget(rows)) {

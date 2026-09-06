@@ -66,7 +66,7 @@ function ruleFilter(column) {
 async function saveCellEdit(cell, field) {
   const row = cell.getRow().getData();
   const value = field === "sort_order" ? Number(cell.getValue()) : cell.getValue();
-  const failure = await runMatchRuleWrites(
+  const { failure } = await runMatchRuleWrites(
     row.rules.map((rule) => ({
       method: "PATCH",
       id: rule.id,
@@ -90,7 +90,7 @@ async function saveAliasList(cell) {
     cell.restoreOldValue();
     return;
   }
-  const failure = await runMatchRuleWrites(writes);
+  const { failure } = await runMatchRuleWrites(writes);
   await loadRules();
   if (failure) alert(failure);
 }
@@ -216,7 +216,7 @@ function deleteRule(row) {
   const what = count === 1 ? `"${row.alias}"` : `all ${count} aliases`;
   if (!confirm(`Delete ${what} → "${row.canonical}"?`)) return;
   guardDelete(async () => {
-    const failure = await runMatchRuleWrites(
+    const { failure } = await runMatchRuleWrites(
       row.rules.map((rule) => ({ method: "DELETE", id: rule.id })),
     );
     await loadRules();
