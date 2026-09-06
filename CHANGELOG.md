@@ -9,6 +9,39 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## Changing a password now ends the sessions made with the old one
+
+Until this, it did not. Both ways in outlive the password they were issued
+against — an access token is stateless and a session cookie is signed, so
+neither has a server-side record to delete — which made "change your password"
+no answer at all to the situation it exists for: someone else has your
+credentials. A leaked token stayed good for its full 24 hours, and a stolen
+cookie indefinitely.
+
+- Each sign-in now carries a fingerprint of the password it was made with, and
+  it is checked on every request. Setting a new password changes the hash,
+  which changes the fingerprint, which retires every sign-in issued before it.
+  The fingerprint is an HMAC keyed by the app secret, not the bcrypt hash: it
+  travels in a JWT payload, which is signed but readable. (Django calls the
+  same mechanism the session auth hash.) No schema change and no session store,
+  which matters in a project with no migrations.
+- An admin resetting an account's password signs that account out everywhere.
+  A user changing their own in the browser stays signed in there — the change
+  would otherwise sign them out of the request making it — and loses their
+  other sessions and tokens.
+- The admin route now refuses to reset **your own** password, and the Users
+  table drops the action from your own row; *Change password* in the top bar is
+  the way. That route asks for the current password first, which is what stops
+  a bystander at an unlocked browser from taking the account over — a
+  protection an admin was until now the only person unable to have, by
+  resetting themselves through the admin route instead.
+- **Everyone signs in once more after this deploy**: a session or token from
+  before carries no fingerprint, and treating a missing one as acceptable would
+  make the check optional at the caller's choosing.
+- `report.json`, a BOM report dumped while working on the report code, is no
+  longer tracked. It is one project's parts list; the repo need not carry it or
+  keep its history.
+
 ## Sign-in hardening
 
 A public instance is only as safe as its weakest password and the number of

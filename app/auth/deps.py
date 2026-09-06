@@ -16,7 +16,7 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlmodel import Session
 
 from app.api.deps import get_session
-from app.auth.tokens import decode_token
+from app.auth.tokens import CREDENTIAL_CLAIM, credential_fingerprint, decode_token
 from app.models.enums import UserRole
 from app.models.user import User
 
@@ -33,9 +33,18 @@ def get_optional_user(
     Records how the request authenticated on ``request.state.auth_via``
     (``"bearer"`` or ``"session"``) so CSRF enforcement can target only the
     ambient-cookie path (see :func:`require_csrf`).
+
+    Both mechanisms must also present the credential fingerprint they were
+    issued with (see :func:`app.auth.tokens.credential_fingerprint`), so a
+    token or cookie minted against a password that has since been changed no
+    longer authenticates. A sign-in from before this check existed carries none
+    and is refused: a one-off re-login, and the alternative — treating a
+    missing fingerprint as acceptable — would be a way to opt out of the check
+    by omitting a field.
     """
     user_id: int | None = None
     auth_via: str | None = None
+    presented: object = None
 
     header = request.headers.get("Authorization", "")
     if header.lower().startswith("bearer "):
@@ -45,6 +54,7 @@ def get_optional_user(
             try:
                 user_id = int(sub)
                 auth_via = "bearer"
+                presented = claims.get(CREDENTIAL_CLAIM) if claims else None
             except (TypeError, ValueError):
                 # A validly-signed token with a non-numeric subject is malformed,
                 # not authenticated -- treat it as anonymous instead of a 500.
@@ -56,6 +66,7 @@ def get_optional_user(
             user_id = session_scope.get("user_id")
             if user_id is not None:
                 auth_via = "session"
+                presented = session_scope.get(CREDENTIAL_CLAIM)
 
     request.state.auth_via = auth_via
 
@@ -65,7 +76,24 @@ def get_optional_user(
     user = session.get(User, user_id)
     if user is None or not user.is_active:
         return None
+    expected = credential_fingerprint(user)
+    if expected is None or not isinstance(presented, str):
+        return None
+    if not secrets.compare_digest(presented, expected):
+        return None
     return user
+
+
+def bind_session_to_credentials(request: Request, user: User) -> None:
+    """Record in the session which password it was established against.
+
+    Called at login, and again when a user changes their own password through
+    the browser — without that second call the change would sign them out of
+    the very request that made it.
+    """
+    fingerprint = credential_fingerprint(user)
+    if fingerprint is not None:
+        request.session[CREDENTIAL_CLAIM] = fingerprint
 
 
 def get_current_user(user: User | None = Depends(get_optional_user)) -> User:

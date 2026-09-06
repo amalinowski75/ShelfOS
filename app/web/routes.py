@@ -21,7 +21,11 @@ from sqlmodel import Session
 
 from app import config
 from app.api.deps import get_session
-from app.auth.deps import get_optional_user, issue_csrf_token
+from app.auth.deps import (
+    bind_session_to_credentials,
+    get_optional_user,
+    issue_csrf_token,
+)
 from app.auth.throttle import attempt_login
 from app.models.component import ComponentType, ParameterDefinition
 from app.models.enums import (
@@ -187,6 +191,7 @@ def login_submit(
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
     request.session["user_id"] = user.id
+    bind_session_to_credentials(request, user)
     issue_csrf_token(request)
     return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -381,6 +386,11 @@ def users_feed(
                 "name": account.name,
                 "role": account.role.value,
                 "is_active": account.is_active,
+                # So the table can leave off the Password action on your own
+                # row: that is the one account this page cannot reset (see
+                # api.routes.admin.set_password), and the top bar's Change
+                # password is where it is done instead.
+                "is_self": account.id == user.id,
             }
             for account in us.list_users(session)
         ]

@@ -166,6 +166,7 @@ def test_require_web_user_heals_missing_csrf_token(session) -> None:  # type: ig
     Guards the regression where a pre-CSRF (or older-build) session cookie kept
     authenticating but left the meta token empty, so every browser write 403'd.
     """
+    from app.auth.tokens import CREDENTIAL_CLAIM, credential_fingerprint
     from app.models.enums import UserRole
     from app.services import user_service as us
     from app.web.routes import require_web_user
@@ -174,8 +175,12 @@ def test_require_web_user_heals_missing_csrf_token(session) -> None:  # type: ig
     user = us.create_user(
         session, username="stale", password="pw-password", role=UserRole.USER
     )
-    # A session that authenticates (user_id) but predates CSRF (no token).
-    sess: dict[str, object] = {"user_id": user.id}
+    # A session that authenticates (user_id + the credential binding) but
+    # predates CSRF (no token).
+    sess: dict[str, object] = {
+        "user_id": user.id,
+        CREDENTIAL_CLAIM: credential_fingerprint(user),
+    }
     scope = {
         "type": "http",
         "method": "GET",
