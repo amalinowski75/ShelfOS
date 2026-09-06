@@ -29,6 +29,12 @@ cookie indefinitely.
   A user changing their own in the browser stays signed in there — the change
   would otherwise sign them out of the request making it — and loses their
   other sessions and tokens.
+- The admin route now refuses to reset **your own** password, and the Users
+  table drops the action from your own row; *Change password* in the top bar is
+  the way. That route asks for the current password first, which is what stops
+  a bystander at an unlocked browser from taking the account over — a
+  protection an admin was until now the only person unable to have, by
+  resetting themselves through the admin route instead.
 - **Everyone signs in once more after this deploy**: a session or token from
   before carries no fingerprint, and treating a missing one as acceptable would
   make the check optional at the caller's choosing.

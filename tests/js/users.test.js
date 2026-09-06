@@ -42,6 +42,20 @@ describe("users.js — columns", () => {
     expect(actions.formatter(cell(null, { is_active: false }))).toContain("Enable");
   });
 
+  it("leaves the Password action off your own row", () => {
+    // The admin API refuses a self-reset: doing it here would ask for no
+    // current password and would sign this browser out of its own request.
+    const { window } = loadPage(usersPageFixture(), SCRIPTS);
+    const actions = window.userColumns()[3];
+    const own = actions.formatter(cell(null, { is_active: true, is_self: true }));
+    expect(own).not.toContain('data-act="password"');
+    // The other actions stay, and every other row keeps all three.
+    expect(own).toContain('data-act="role"');
+    expect(own).toContain('data-act="toggle"');
+    const other = actions.formatter(cell(null, { is_active: true, is_self: false }));
+    expect(other).toContain('data-act="password"');
+  });
+
   it("routes row-action clicks to the right handler", () => {
     const { window, document } = loadPage(usersPageFixture(), SCRIPTS);
     const actions = window.userColumns()[3];

@@ -212,3 +212,31 @@ def test_a_wrong_fingerprint_is_refused(
         algorithm="HS256",
     )
     assert anon_client.get("/api/locations", headers=_bearer(forged)).status_code == 401
+
+
+def test_admin_cannot_reset_their_own_password_through_the_admin_route(
+    session: Session, client: TestClient
+) -> None:
+    """It would neither ask for the current password nor keep the caller in."""
+    admin = us.get_by_username(session, "admin")
+    assert admin is not None
+    resp = client.put(
+        f"/api/admin/users/{admin.id}/password", json={"password": "second-password"}
+    )
+    assert resp.status_code == 422
+    assert "change-password" in resp.json()["detail"]
+    # The password is untouched, so the caller is still signed in.
+    assert client.get("/api/auth/me").status_code == 200
+
+
+def test_the_users_feed_marks_your_own_row(
+    session: Session, anon_client: TestClient
+) -> None:
+    """So the table can leave the Password action off the row that refuses it."""
+    _seed_admin(session)
+    anon_client.post("/login", data={"username": "admin", "password": "admin-password"})
+    us.create_user(session, username="other", password="other-password")
+    rows = anon_client.get("/web/api/users").json()["data"]
+    by_name = {row["name"]: row for row in rows}
+    assert by_name["admin"]["is_self"] is True
+    assert by_name["other"]["is_self"] is False

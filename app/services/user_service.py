@@ -244,6 +244,11 @@ def set_password(
     the old hash. What the entry says is that it changed and who changed it;
     an ``actor_id`` equal to ``user_id`` is someone changing their own, and
     anything else is an admin reset.
+
+    This is where sign-ins are invalidated, though nothing here does it: every
+    token and session carries a fingerprint of the password it was issued
+    against, so replacing the hash retires all of them by itself. See
+    :func:`app.auth.tokens.credential_fingerprint`.
     """
     check_password_policy(password)
     user = require_entity(session, User, user_id, "user")
@@ -269,9 +274,12 @@ def change_own_password(
     """Let a signed-in user change their own password (any role, self-service).
 
     The current password must be verified first: it is standard practice and
-    stops a bystander at an unlocked browser from setting a new password. It does
-    not by itself revoke other active sessions or already-issued bearer tokens
-    (those are stateless, D11), so it is not a full account-takeover recovery.
+    stops a bystander at an unlocked browser from setting a new password. Every
+    other session and bearer token for the account stops working here, through
+    the credential fingerprint ``set_password`` changes, so this *is* a way to
+    recover an account someone else has got into — the caller's own browser
+    session being the one exception, re-bound by the route so the change does
+    not sign them out of the request making it.
     Reuses ``set_password`` so the hashing and length checks stay in one place.
     """
     if user.password_hash is None or not verify_password(

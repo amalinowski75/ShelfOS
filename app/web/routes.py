@@ -386,6 +386,11 @@ def users_feed(
                 "name": account.name,
                 "role": account.role.value,
                 "is_active": account.is_active,
+                # So the table can leave off the Password action on your own
+                # row: that is the one account this page cannot reset (see
+                # api.routes.admin.set_password), and the top bar's Change
+                # password is where it is done instead.
+                "is_self": account.id == user.id,
             }
             for account in us.list_users(session)
         ]

@@ -53,9 +53,16 @@ function userColumns() {
       formatter: (cell) => {
         const row = cell.getRow().getData();
         const toggle = row.is_active ? "Disable" : "Enable";
+        // No Password action on your own row: the admin API refuses a
+        // self-reset, because doing it here would neither ask for the current
+        // password nor keep this browser signed in. The top bar's Change
+        // password does both.
+        const password = row.is_self
+          ? ""
+          : `<button class="btn btn-secondary btn-sm" data-act="password">Password</button>`;
         return `<div class="row-actions">
            <button class="btn btn-secondary btn-sm" data-act="role">Role</button>
-           <button class="btn btn-secondary btn-sm" data-act="password">Password</button>
+           ${password}
            <button class="btn btn-ghost btn-sm" data-act="toggle">${toggle}</button>
          </div>`;
       },
