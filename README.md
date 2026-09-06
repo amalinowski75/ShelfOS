@@ -6,11 +6,15 @@ ShelfOS manages an inventory of electronic components: parametric search,
 purchase/invoice tracking, hierarchical storage locations, and stock movements.
 It is intentionally **not** an ERP, accounting, or advanced warehouse system.
 
+Recent changes are in [CHANGELOG.md](CHANGELOG.md).
+
 ## Tech stack
 
 - **Backend:** Python 3.12+, FastAPI, SQLModel / SQLAlchemy
 - **Database:** SQLite (initial), PostgreSQL (future)
-- **Frontend:** Jinja2, HTMX, vanilla JavaScript, Tabulator, Pico.css
+- **Frontend:** Jinja2, vanilla JavaScript, Tabulator, and a token-based CSS
+  design system (no UI framework — Pico.css was removed). HTMX is still fetched
+  on every page, though no template uses it.
 
 ## Documentation
 

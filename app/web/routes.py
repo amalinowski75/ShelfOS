@@ -1,8 +1,9 @@
 """Server-rendered web UI routes (spec §11-12, §14-15).
 
-The pages use Pico.css for styling, Tabulator for the component table, and small
-vanilla-JS helpers for the stock dialogs. Data-mutating actions reuse the JSON
-API (``/api/stock/*``) via ``fetch`` from the browser.
+The pages use the token-based CSS in ``app.css`` for styling (no UI framework),
+Tabulator for the component table, and small vanilla-JS helpers for the dialogs.
+Data-mutating actions reuse the JSON API (``/api/stock/*``) via ``fetch`` from the
+browser.
 """
 
 from __future__ import annotations
