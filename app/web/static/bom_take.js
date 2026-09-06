@@ -11,6 +11,24 @@ const BLOCKED_REASON = {
   component_retired: "the assigned part is no longer in use",
 };
 
+// Why the take cannot run yet, for the confirm button's tooltip. Both reasons can
+// hold at once, and saying only the first would send someone to fix one thing and
+// find the button still dead.
+function blockedTitle(blocked, unanswered) {
+  const reasons = [];
+  if (blocked.length) {
+    reasons.push(
+      `${blocked.length} line${blocked.length === 1 ? "" : "s"} without a component`,
+    );
+  }
+  if (unanswered.length) {
+    reasons.push(
+      `${unanswered.length} line${unanswered.length === 1 ? "" : "s"} needing a location`,
+    );
+  }
+  return reasons.length ? `Not yet: ${reasons.join(", and ")}.` : "";
+}
+
 function takeSnapshotUrl(takeId) {
   return `/bom-takes/${Number(takeId)}`;
 }
@@ -124,6 +142,17 @@ if (takeDialog && takeTableEl) {
         "marked below. Assign a component to them on the report first.";
     }
     confirmBtn.disabled = !plan.can_run;
+    // Says what is in the way when the button will not go. The panel and the
+    // tinted rows already say it too, but the tooltip answers where the question
+    // is actually asked — on the button someone just pressed.
+    const why = plan.can_run
+      ? ""
+      : blockedTitle(
+          plan.blocked_references || [],
+          plan.unanswered_references || [],
+        );
+    if (why) confirmBtn.title = why;
+    else confirmBtn.removeAttribute("title");
     summary.textContent = plan.total_shortfall
       ? `${plan.total_shortfall} part(s) short of what this run wants.`
       : "";

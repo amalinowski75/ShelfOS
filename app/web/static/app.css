@@ -259,13 +259,19 @@ select.control {
 .btn:active { transform: translateY(1px); }
 .btn svg { width: 16px; height: 16px; }
 .btn-primary { background: var(--accent); color: var(--on-accent); box-shadow: var(--shadow-sm); }
-.btn-primary:hover { background: var(--accent-strong); }
+.btn-primary:hover:not(:disabled) { background: var(--accent-strong); }
 .btn-secondary { background: var(--surface); color: var(--text); border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
-.btn-secondary:hover { background: var(--surface-2); border-color: var(--faint); }
+.btn-secondary:hover:not(:disabled) { background: var(--surface-2); border-color: var(--faint); }
 .btn-ghost { background: transparent; color: var(--muted); }
-.btn-ghost:hover { background: var(--surface-2); color: var(--text); }
+.btn-ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
 .btn-danger { background: transparent; color: var(--danger); border-color: color-mix(in srgb, var(--danger) 32%, transparent); }
-.btn-danger:hover { background: var(--danger-soft); }
+.btn-danger:hover:not(:disabled) { background: var(--danger-soft); }
+/* A disabled button has to LOOK disabled. `disabled` already blocks the click,
+   but until now nothing said so on screen: pressing a live-looking button and
+   having nothing happen reads as the page ignoring you, not as "not yet". The
+   hover rules above are narrowed for the same reason — a button that lights up
+   under the pointer is promising something it will not do. */
+.btn:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; }
 .btn-sm { min-height: 30px; padding: 4px 11px; font-size: 12.5px; border-radius: 7px; }
 .btn-block { width: 100%; }
 
@@ -1151,10 +1157,6 @@ html.bom-pick-open, html.bom-pick-open body { overflow: hidden; }
   color: var(--muted); background: var(--surface-2);
   border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
 }
-/* A disabled choice still has to be readable — it is carrying the explanation of
-   why it is disabled in the note underneath. */
-.scan-choice-actions .btn:disabled { opacity: .5; cursor: not-allowed; }
-.scan-choice-actions .btn:disabled:hover { background: var(--surface); border-color: var(--border-strong); }
 
 /* --- Label printing (§7) --------------------------------------------------- */
 /* The preview is the bitmap the printer would receive, so it is shown at the

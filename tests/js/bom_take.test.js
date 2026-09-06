@@ -281,7 +281,46 @@ describe("bom_take.js — the preview", () => {
     const marked = document.querySelectorAll("#take-rows tr.take-blocked");
     expect(marked).toHaveLength(1);
     expect(marked[0].textContent).toContain("no component assigned");
-    expect(document.getElementById("take-confirm").disabled).toBe(true);
+    const confirm = document.getElementById("take-confirm");
+    expect(confirm.disabled).toBe(true);
+    // …and says so on the button itself, where the question was asked.
+    expect(confirm.title).toContain("2 lines without a component");
+  });
+
+  it("says both reasons when both hold, so one fix is not a surprise", async () => {
+    const both = () =>
+      plan({
+        can_run: false,
+        blocked_references: ["U7"],
+        unanswered_references: ["R1,R2"],
+        lines: [{ ...plan().lines[0], needs_choice: true, sources: [] }],
+      });
+    const { impl } = server(both);
+    const { window, document } = loadPage(bomTakeFixture(), SCRIPTS, {
+      fetchImpl: impl,
+    });
+    document.getElementById("bom-take").click();
+    pickGathering(document);
+    await tick();
+
+    const title = document.getElementById("take-confirm").title;
+    expect(title).toContain("1 line without a component");
+    expect(title).toContain("1 line needing a location");
+    // No reasons, no sentence — rather than the "Not yet: ." that naive joining
+    // would produce.
+    expect(window.blockedTitle([], [])).toBe("");
+  });
+
+  it("drops the tooltip once the run is possible", async () => {
+    const { impl } = server(plan);
+    const { document } = loadPage(bomTakeFixture(), SCRIPTS, { fetchImpl: impl });
+    document.getElementById("bom-take").click();
+    pickGathering(document);
+    await tick();
+
+    const confirm = document.getElementById("take-confirm");
+    expect(confirm.disabled).toBe(false);
+    expect(confirm.hasAttribute("title")).toBe(false);
   });
 
   it("says which of the two reasons a line cannot be taken", async () => {
@@ -577,6 +616,17 @@ describe("app.css — the take dialog's table", () => {
       "c",
     );
     expect(style.backgroundColor).toBe("var(--unfilled-tint)");
+  });
+
+  it("makes a disabled button look disabled", () => {
+    // Until this rule, `disabled` blocked the click and said nothing on screen:
+    // pressing a live-looking button and getting nothing reads as being ignored.
+    const style = styleOf(
+      '<button class="btn btn-primary" id="b" disabled></button>',
+      "b",
+    );
+    expect(style.opacity).toBe("0.5");
+    expect(style.cursor).toBe("not-allowed");
   });
 
   it("gives the dialog room for five columns", () => {
