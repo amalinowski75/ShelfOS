@@ -306,6 +306,69 @@ describe("app.js — table formatting", () => {
   });
 });
 
+describe("app.css — `hidden` means hidden", () => {
+  const css = () =>
+    readFileSync(new URL("../../app/web/static/app.css", import.meta.url), "utf8");
+
+  const displayOf = (markup, id = "x") => {
+    const dom = new JSDOM(`<style>${css()}</style>${markup}`);
+    return dom.window.getComputedStyle(dom.window.document.getElementById(id)).display;
+  };
+
+  it("keeps the rule in the form that actually holds", () => {
+    // A TEXT check, deliberately, because jsdom cannot see what this is about:
+    // its cascade is source-order only and ignores `!important` outright
+    // (verified, not assumed). The style checks below therefore pass in jsdom for
+    // the wrong reason — those class declarations happen to come earlier in the
+    // file — and a browser is the only place the real semantics can be tested.
+    // They were, across nine pages and 89 hidden elements.
+    //
+    // The same goes for the `until-found` carve-out, for a second reason: jsdom's
+    // own UA sheet is a bare `[hidden] { display: none }` with no such exception,
+    // where a real browser's has one — so `hidden="until-found"` reads as hidden
+    // here whatever this stylesheet says. Measured in Chrome instead: plain
+    // hidden `none`, until-found `block`.
+    //
+    // What a test CAN do is stop the three properties this depends on being
+    // quietly dropped: the rule is !important, it is last, and it spares
+    // until-found.
+    const text = css();
+    expect(text).toContain(
+      '[hidden]:not([hidden="until-found"]) { display: none !important; }',
+    );
+    expect(
+      text
+        .trimEnd()
+        .endsWith('[hidden]:not([hidden="until-found"]) { display: none !important; }'),
+    ).toBe(true);
+  });
+
+  it("still hides each of the nine that used to carry its own rule", () => {
+    // They lost their bespoke resets in the same change; this is what replaced
+    // them, so it has to cover every one.
+    const cases = {
+      field: '<div class="field" id="x" hidden><label>a</label></div>',
+      btn: '<button class="btn btn-primary" id="x" hidden>a</button>',
+      badge: '<span class="badge b-ok" id="x" hidden>a</span>',
+      "loc-picker-new": '<button class="loc-picker-new" id="x" hidden>a</button>',
+      "loc-picker-caret": '<span class="loc-picker-caret" id="x" hidden>a</span>',
+      "loc-picker-showall": '<div class="loc-picker-showall" id="x" hidden>a</div>',
+      "loc-picker-nomatch": '<p class="loc-picker-nomatch" id="x" hidden>a</p>',
+      "mfr-conflict": '<div class="field mfr-conflict" id="x" hidden>a</div>',
+      "error-row": '<p class="error-row" id="x" hidden><span class="error">a</span></p>',
+    };
+    for (const [name, markup] of Object.entries(cases)) {
+      expect(`${name}: ${displayOf(markup)}`).toBe(`${name}: none`);
+    }
+  });
+
+  it("leaves anything without the attribute alone", () => {
+    expect(displayOf('<button class="btn btn-primary" id="x">a</button>')).not.toBe(
+      "none",
+    );
+  });
+});
+
 describe("app.js — header stats", () => {
   // Rows in the shape the feed sends them (presenter.build_component_table).
   const row = (over) => ({
