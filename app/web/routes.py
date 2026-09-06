@@ -22,6 +22,7 @@ from sqlmodel import Session
 from app import config
 from app.api.deps import get_session
 from app.auth.deps import get_optional_user, issue_csrf_token
+from app.auth.throttle import attempt_login
 from app.models.component import ComponentType, ParameterDefinition
 from app.models.enums import (
     AttachmentKind,
@@ -102,6 +103,9 @@ templates.env.globals["format_money"] = format_money
 # Build a distributor product-page link from an invoice line's shop + part number,
 # so the review row can hand it to the New Component dialog's "open in shop" button.
 templates.env.globals["shop_product_url"] = shops.product_url
+# So the password fields can say the floor up front (``minlength``) instead of
+# the server saying it after a round trip; the server still enforces it.
+templates.env.globals["min_password_length"] = us.MIN_PASSWORD_LENGTH
 
 router = APIRouter(tags=["web"])
 
@@ -158,7 +162,24 @@ def login_submit(
     password: str = Form(),
     session: Session = Depends(get_session),
 ) -> HTMLResponse | RedirectResponse:
-    user = us.authenticate(session, username, password)
+    attempt = attempt_login(
+        request,
+        lambda: us.authenticate(session, username, password),
+        username=username,
+    )
+    if attempt.retry_after is not None:
+        minutes = max(1, math.ceil(attempt.retry_after / 60))
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {
+                "error": "Too many failed sign-in attempts. "
+                f"Try again in {minutes} minute{'s' if minutes != 1 else ''}."
+            },
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            headers={"Retry-After": str(attempt.retry_after)},
+        )
+    user = attempt.user
     if user is None:
         return templates.TemplateResponse(
             request,

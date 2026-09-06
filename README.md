@@ -80,6 +80,45 @@ export SHELFOS_ADMIN_USERNAME="admin"
 export SHELFOS_ADMIN_PASSWORD="change-me"
 ```
 
+Passwords set through ShelfOS — an admin creating or resetting an account, a user
+changing their own — must be at least 8 characters. The bootstrap admin's comes
+from the environment instead, so that rule is applied at startup: with
+`SHELFOS_ENV=production` a shorter `SHELFOS_ADMIN_PASSWORD` (or the default) refuses
+to start; otherwise it is a warning.
+
+Sign-ins are throttled per client address: after 10 failed attempts within
+15 minutes, further attempts from that address get a 429 (with `Retry-After`) until
+the oldest failure is 15 minutes old. The password is not checked while throttled,
+so a locked-out address costs no bcrypt work either. An attempt counts from the
+moment it starts, and its slot is given back only if the password turns out right,
+so opening many connections at once does not buy more guesses than the limit.
+Counting is per address, not per account, so nobody can lock a real user out by
+guessing at their name. IPv6 addresses share an allowance per /64, since a single
+host is normally given a whole one and could otherwise use a fresh address per
+request.
+
+```bash
+export SHELFOS_LOGIN_MAX_FAILURES="10"           # 0 turns the throttle off
+export SHELFOS_LOGIN_FAILURE_WINDOW_SECONDS="900"
+```
+
+Every failed attempt is logged as `Failed login for 'name' from <address>` (and a
+throttled one as `Login refused for 'name' from <address>: …`), which is the line a
+fail2ban filter can match to block the source at the firewall. That shape is fixed:
+control characters and quotes are stripped from the name first, so no username can
+break the delimiter a filter anchors on and slip past it.
+
+The address is what uvicorn reports: behind a reverse proxy on the same host that is
+the real client only because uvicorn trusts `X-Forwarded-For` from 127.0.0.1 by
+default (`--forwarded-allow-ips`); a proxy elsewhere needs that option set to its
+address, or every visitor shares one allowance. A transport that reports no client
+address at all (a unix socket, say) turns the throttle off and says so once at
+startup, rather than putting every visitor in one bucket where ten failures from
+anyone would lock out everybody.
+
+The counters are in memory and per process, which is right for the single-worker
+uvicorn ShelfOS runs under.
+
 ### Shop integrations (optional)
 
 "Import from a shop URL or a scanned code" in the New Component dialog looks a part

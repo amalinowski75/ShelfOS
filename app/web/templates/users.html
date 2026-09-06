@@ -31,7 +31,7 @@
       </div>
       <div class="field">
         <label>Password</label>
-        <input class="control" type="password" name="password" required autocomplete="new-password" />
+        <input class="control" type="password" name="password" required minlength="{{ min_password_length }}" autocomplete="new-password" />
       </div>
       <div class="field">
         <label>Role</label>
@@ -81,7 +81,7 @@
       <p class="muted">Account: <strong id="user-password-name"></strong></p>
       <div class="field">
         <label>New password</label>
-        <input class="control" type="password" name="password" required autocomplete="new-password" />
+        <input class="control" type="password" name="password" required minlength="{{ min_password_length }}" autocomplete="new-password" />
       </div>
       <p id="user-password-error" class="error" hidden></p>
       <footer>

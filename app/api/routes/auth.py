@@ -6,12 +6,13 @@ clients; ``GET /api/auth/me`` returns the current account.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlmodel import Session
 
 from app.api.deps import get_session
 from app.auth.deps import get_current_user, require_csrf
+from app.auth.throttle import attempt_login
 from app.auth.tokens import create_access_token
 from app.models.enums import UserRole
 from app.models.user import User
@@ -43,16 +44,26 @@ class ChangePasswordRequest(BaseModel):
 
 @router.post("/token", response_model=TokenResponse)
 def login_for_token(
-    payload: LoginRequest, session: Session = Depends(get_session)
+    payload: LoginRequest, request: Request, session: Session = Depends(get_session)
 ) -> TokenResponse:
-    user = us.authenticate(session, payload.username, payload.password)
-    if user is None:
+    attempt = attempt_login(
+        request,
+        lambda: us.authenticate(session, payload.username, payload.password),
+        username=payload.username,
+    )
+    if attempt.retry_after is not None:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="too many failed sign-in attempts; try again later",
+            headers={"Retry-After": str(attempt.retry_after)},
+        )
+    if attempt.user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return TokenResponse(access_token=create_access_token(user))
+    return TokenResponse(access_token=create_access_token(attempt.user))
 
 
 @router.get("/me", response_model=MeResponse)
