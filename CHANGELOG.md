@@ -1,10 +1,10 @@
 # Changelog
 
-Notable changes, newest group first, and within a group in whatever order reads
-best — the manufacturer-name work runs oldest first, since each step builds on the
-one before. This file starts at **#112 (2026-08-28)**; the 111 pull requests before
-it are in `git log`, and the entries are grouped by the work rather than by release
-— the project has no releases yet.
+Notable changes, newest group first. Inside a group the order is whichever reads
+best rather than a strict chronology — where one change builds on the last, they
+run oldest first. This file starts at **#112 (2026-08-28)**; the 111 pull requests
+before it are in `git log`, and the entries are grouped by the work rather than by
+release — the project has no releases yet.
 
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
@@ -80,7 +80,8 @@ have no components" is a claim, and a failure must not make it.
 - **#129** — HTMX is gone. It was fetched from a CDN on every page load and no
   template ever carried an `hx-` attribute; what the pages actually use is
   server-rendered HTML plus small vanilla-JS modules talking to the JSON API.
-
+- **#128** — This file. It starts at #112 because reconstructing the 111 before it
+  from commit subjects would read as authoritative without being so.
 - **#126** — Nine bespoke `[hidden]` resets become one rule, with the `until-found`
   exception. Author `display` beat the UA rule, so an element could be hidden as
   far as its `hidden` property and every test were concerned, and visible on screen.
