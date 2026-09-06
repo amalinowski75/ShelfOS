@@ -566,3 +566,65 @@ def test_move_stock_carries_the_packaging_to_the_new_slot(
         ).all()
     }
     assert slots[shelf.id].container_type is ContainerType.REEL
+
+
+def test_remove_stock_can_stay_in_the_callers_transaction(
+    fixture_ids, session: Session
+) -> None:
+    """`commit=False` leaves BOTH the ledger row and the cache undone by a rollback.
+
+    A BOM take empties dozens of locations in one run; if each removal committed
+    itself, a failure halfway through would leave a half-emptied shelf and no
+    record of which half.
+    """
+    component_id, location_id, user_id = fixture_ids
+    ss.add_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=100,
+        user_id=user_id,
+    )
+
+    ss.remove_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=30,
+        user_id=user_id,
+        commit=False,
+    )
+    # Visible inside the transaction: the caller can go on to plan the next line
+    # against what it has already taken.
+    assert ss.get_quantity(session, component_id, location_id) == 70
+
+    session.rollback()
+
+    assert ss.get_quantity(session, component_id, location_id) == 100
+    assert ss.quantity_from_movements(session, component_id, location_id) == 100
+
+
+def test_remove_stock_commits_on_its_own_by_default(
+    fixture_ids, session: Session
+) -> None:
+    """Every existing caller relies on this; the new parameter must not flip it."""
+    component_id, location_id, user_id = fixture_ids
+    ss.add_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=100,
+        user_id=user_id,
+    )
+    ss.remove_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=30,
+        user_id=user_id,
+    )
+
+    session.rollback()  # nothing to undo — it was already committed
+
+    assert ss.get_quantity(session, component_id, location_id) == 70
+    assert ss.quantity_from_movements(session, component_id, location_id) == 70

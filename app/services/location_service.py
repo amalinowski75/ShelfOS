@@ -358,9 +358,14 @@ def update_location(
     return location
 
 
-def _subtree_ids(session: Session, location_id: int) -> list[int]:
+def subtree_ids(session: Session, location_id: int) -> list[int]:
     """Every id in the subtree rooted at ``location_id``, parents before
-    children. One ``list_all`` query; a visited set guards a cyclic row."""
+    children. One ``list_all`` query; a visited set guards a cyclic row.
+
+    Public because a BOM take asks "is this part inside the tree I gathered it
+    into?" — but it walks the WHOLE table per call, so callers resolve the branch
+    once and test against a set, never once per line.
+    """
     children: dict[int | None, list[int]] = {}
     for loc in list_all(session):
         children.setdefault(loc.parent_id, []).append(cast(int, loc.id))
@@ -415,7 +420,7 @@ def delete_location(
         raise ValidationError(
             "location still has child locations; delete or move them first"
         )
-    ids = _subtree_ids(session, location_id) if recursive else [location_id]
+    ids = subtree_ids(session, location_id) if recursive else [location_id]
     slots = list(
         session.exec(
             select(ComponentLocation).where(col(ComponentLocation.location_id).in_(ids))

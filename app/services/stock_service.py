@@ -70,8 +70,15 @@ def remove_stock(
     user_id: int,
     reason: StockReason = StockReason.USAGE,
     note: str | None = None,
+    commit: bool = True,
 ) -> StockMovement:
-    """Take ``quantity`` units of a component from a location (spec §15)."""
+    """Take ``quantity`` units of a component from a location (spec §15).
+
+    Pass ``commit=False`` to keep the movement in the caller's open transaction,
+    as :func:`add_stock` already allows. A BOM take empties dozens of locations in
+    one run, and committing each one on its own would leave a half-emptied shelf
+    behind any mid-run failure — with no record of which half.
+    """
     if quantity <= 0:
         raise ValidationError("remove_stock quantity must be positive")
     return _record_movement(
@@ -82,6 +89,7 @@ def remove_stock(
         reason=reason,
         user_id=user_id,
         note=note,
+        commit=commit,
     )
 
 
