@@ -13,8 +13,7 @@ Recent changes are in [CHANGELOG.md](CHANGELOG.md).
 - **Backend:** Python 3.12+, FastAPI, SQLModel / SQLAlchemy
 - **Database:** SQLite (initial), PostgreSQL (future)
 - **Frontend:** Jinja2, vanilla JavaScript, Tabulator, and a token-based CSS
-  design system (no UI framework — Pico.css was removed). HTMX is still fetched
-  on every page, though no template uses it.
+  design system — no UI framework and no front-end library beyond the table.
 
 ## Documentation
 

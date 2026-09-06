@@ -158,6 +158,21 @@ database is missing — otherwise an index added to a model would reach new
 installations only, working on the developer's fresh database and not on the one
 that has the rows.
 
+## D14. HTMX is not used  [2026-09-06]
+
+D8 planned `app/web/` as "Jinja2 / HTMX". The Jinja2 half happened; the HTMX half
+never did. Every page fetched `htmx.org` from a CDN and no template ever carried
+an `hx-` attribute — no `htmx.` call, no `htmx:` listener, no `HX-` response
+header anywhere in the tree. The script tag is removed.
+
+What replaced it is not a decision so much as what the pages turned out to need:
+server-rendered HTML, and small vanilla-JS modules that talk to the JSON API with
+`fetch` where a page has to change without reloading. Reaching for HTMX now would
+mean a second way of doing the thing those modules already do.
+
+D8 is left as written. It records what was decided before implementation started,
+which is what that file is for.
+
 ## D13. Deleting a component is soft  [2026-08-18]
 
 `DELETE /api/admin/components/{id}` marks the row (`deleted_at`, `deleted_by`,

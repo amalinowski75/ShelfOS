@@ -77,6 +77,10 @@ have no components" is a claim, and a failure must not make it.
 
 ## Elsewhere
 
+- **#129** — HTMX is gone. It was fetched from a CDN on every page load and no
+  template ever carried an `hx-` attribute; what the pages actually use is
+  server-rendered HTML plus small vanilla-JS modules talking to the JSON API.
+
 - **#126** — Nine bespoke `[hidden]` resets become one rule, with the `until-found`
   exception. Author `display` beat the UA rule, so an element could be hidden as
   far as its `hidden` property and every test were concerned, and visible on screen.
