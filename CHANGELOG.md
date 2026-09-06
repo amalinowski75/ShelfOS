@@ -1,8 +1,10 @@
 # Changelog
 
-Notable changes, newest first. This file starts at **#112 (2026-08-28)**; the 111
-pull requests before it are in `git log`, and the entries below are grouped by the
-work rather than by release — the project has no releases yet.
+Notable changes, newest group first, and within a group in whatever order reads
+best — the manufacturer-name work runs oldest first, since each step builds on the
+one before. This file starts at **#112 (2026-08-28)**; the 111 pull requests before
+it are in `git log`, and the entries are grouped by the work rather than by release
+— the project has no releases yet.
 
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
@@ -58,9 +60,9 @@ you could do with them, and in what they were called.
 
 ## Failures that used to be silent
 
-Every `/web/api/*` reader mapped its payload without a catch. An HTTP failure
-parses as JSON perfectly well and simply has no data, so the map threw — usually
-out of an async event handler with nobody to catch it.
+Three `/web/api/*` readers mapped their payload with no usable catch around it.
+An HTTP failure parses as JSON perfectly well and simply has no data, so the map
+threw — usually out of an async event handler with nobody to catch it.
 
 - **#123** — A failed component list no longer makes *Add line* a dead button.
 - **#124** — The components table empties and says so rather than leaving the
