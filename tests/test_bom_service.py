@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 from app import config
@@ -109,7 +110,18 @@ def _inventory(session: Session):  # type: ignore[no-untyped-def]
     return resistor
 
 
-def test_report_matches_by_mpn_and_suggests_substitutes(
+def _resolve(session: Session, bom_id: int) -> int:
+    """Assign every line whose MPN admits one part, as the page's button does.
+
+    The report describes stock only for a line someone has assigned a component
+    to, so any test about stock has to resolve its lines first. Going through the
+    real function rather than writing assignments by hand keeps these tests honest
+    about what a user would actually have had to do.
+    """
+    return bs.assign_all_obvious(session, bom_id, user_id=1)
+
+
+def test_report_reports_stock_once_a_line_is_resolved(
     session: Session, store
 ) -> None:  # type: ignore[no-untyped-def]
     resistor = _inventory(session)
@@ -124,6 +136,21 @@ def test_report_matches_by_mpn_and_suggests_substitutes(
         b"R3,5,4.7k,\n"  # value exists but only out-of-stock → no substitute
     )
     bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+
+    # Before anything is assigned, even the line whose MPN matches exactly one
+    # part in stock is unresolved: a lookup is a candidate, not a decision.
+    unresolved = bs.build_bom_report(session, bom.id)
+    assert {ln["status"] for ln in unresolved["lines"]} == {"unresolved"}
+    assert unresolved["summary"]["buildable"] == 0
+    # …and it is offered no alternatives: unresolved or not, a line whose only
+    # candidate is sitting on the shelf in quantity does not need a list of
+    # near-values. Substitutes answer "what else could go here?", which is a
+    # question about supply, not about identity.
+    by_ref = {ln["references"]: ln for ln in unresolved["lines"]}
+    assert by_ref["R1"]["substitutes"] == []
+    assert [s["mpn"] for s in by_ref["R2"]["substitutes"]] == ["RES-1K", "RES-1K1"]
+
+    assert _resolve(session, bom.id) == 1  # only R1 names an MPN
     report = bs.build_bom_report(session, bom.id)
     lines = {line["references"]: line for line in report["lines"]}
 
@@ -134,7 +161,7 @@ def test_report_matches_by_mpn_and_suggests_substitutes(
     assert [s["mpn"] for s in subs] == ["RES-1K", "RES-1K1"]  # exact first, then near
     assert subs[0]["exact"] is True and subs[1]["exact"] is False
 
-    assert lines["R3"]["status"] == "no_mpn"
+    assert lines["R3"]["status"] == "unresolved"
     assert lines["R3"]["substitutes"] == []  # the only 4.7k is out of stock
 
 
@@ -150,6 +177,7 @@ def test_buildable_is_the_limiting_line(
         b"R2,4,2k,RES-2K\n"  # 12 // 4 = 3  → limits the board
     )
     bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+    _resolve(session, bom.id)
     summary = bs.build_bom_report(session, bom.id)["summary"]
     assert summary["ok"] == 2 and summary["buildable"] == 3
 
@@ -165,9 +193,31 @@ def test_buildable_is_zero_when_a_line_is_unavailable(
         b"R2,5,2k,RES-NOPE\n"  # MPN not in inventory → missing
     )
     bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+    _resolve(session, bom.id)  # settles R1; nothing carries RES-NOPE
     summary = bs.build_bom_report(session, bom.id)["summary"]
-    assert summary["missing"] == 1
-    assert summary["buildable"] == 0  # a missing line caps true buildability
+    assert summary["unresolved"] == 1
+    assert summary["buildable"] == 0  # one unresolved line caps true buildability
+
+
+def test_buildable_counts_only_lines_someone_has_resolved(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """Stock on the shelf is not buildability until the line names that part."""
+    resistor = _inventory(session)
+    resistor("RES-1K", 1000, 50)  # 50 // 10 = 5 boards' worth, once it counts
+    data = b"Reference,Qty,Value,MPN\nR1,10,1k,RES-1K\n"
+    bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+
+    before = bs.build_bom_report(session, bom.id)["lines"][0]
+    assert before["boards_possible"] == 0
+    assert bs.build_bom_report(session, bom.id)["summary"]["buildable"] == 0
+
+    _resolve(session, bom.id)
+
+    after = bs.build_bom_report(session, bom.id)
+    assert after["lines"][0]["boards_possible"] == 5
+    assert after["summary"]["buildable"] == 5
+    assert after["summary"]["unresolved"] == 0
 
 
 def test_mpn_match_is_case_insensitive(
@@ -177,6 +227,7 @@ def test_mpn_match_is_case_insensitive(
     resistor("ABC-1K", 1000, 50)
     data = b"Reference,Qty,Value,MPN\nR1,10,1k,abc-1k\n"  # lower-case in the BOM
     bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+    assert _resolve(session, bom.id) == 1  # the case difference is no obstacle
     lines = bs.build_bom_report(session, bom.id)["lines"]
     assert lines[0]["status"] == "ok"
 
@@ -385,7 +436,7 @@ def test_assignment_stands_in_for_the_mpn_lookup(
     bom, line, other, resistor = _assignable(session)
     # Without an assignment the line has nothing to match on.
     before = bs.build_bom_report(session, bom.id)["lines"][0]
-    assert before["status"] == "no_mpn" and before["stock"] == 0
+    assert before["status"] == "unresolved" and before["stock"] == 0
 
     bs.assign_component(
         session, bom.id, line.id, component_id=other.id, user_id=1
@@ -471,7 +522,9 @@ def test_substitutes_stay_suppressed_when_the_assigned_part_is_retired(
     cs.soft_delete_component(session, picked.id, user_id=1)
 
     report = bs.build_bom_report(session, bom.id)["lines"][0]
-    assert report["status"] == "missing" and report["assigned"]["deleted"] is True
+    assert (
+        report["status"] == "unresolved" and report["assigned"]["deleted"] is True
+    )
     assert report["substitutes"] == []
 
 
@@ -483,7 +536,7 @@ def test_unassign_returns_the_line_to_mpn_matching(
     bs.unassign_component(session, bom.id, line.id)
 
     report = bs.build_bom_report(session, bom.id)["lines"][0]
-    assert report["assigned"] is None and report["status"] == "no_mpn"
+    assert report["assigned"] is None and report["status"] == "unresolved"
     with pytest.raises(NotFoundError):  # nothing left to remove
         bs.unassign_component(session, bom.id, line.id)
 
@@ -536,7 +589,7 @@ def test_a_component_retired_after_assignment_still_shows_but_holds_no_stock(
     report = bs.build_bom_report(session, bom.id)["lines"][0]
     assert report["assigned"]["component_id"] == other.id
     assert report["assigned"]["deleted"] is True
-    assert report["status"] == "missing" and report["stock"] == 0
+    assert report["status"] == "unresolved" and report["stock"] == 0
 
 
 def test_assignments_survive_a_reimport_that_keeps_the_designators(
@@ -627,6 +680,7 @@ def test_ordered_says_nothing_about_stock(
     resistor("RES-1K", 1000, 3)  # 3 in stock against the 10 the line needs
     data = b"Reference,Qty,Value,MPN\nR1,10,1k,RES-1K\n"
     bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+    _resolve(session, bom.id)
     line = bs.get_bom_lines(session, bom.id)[0]
 
     bs.set_line_ordered(session, bom.id, line.id, ordered=True, user_id=1)
@@ -697,6 +751,7 @@ def test_boards_multiply_what_each_line_needs(
     resistor("RES-1K", 1000, 50)
     data = b"Reference,Qty,Value,MPN\nR1,10,1k,RES-1K\n"
     bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+    _resolve(session, bom.id)
 
     one = bs.build_bom_report(session, bom.id)["lines"][0]
     assert one["status"] == "ok" and one["total_quantity"] == 10
@@ -722,8 +777,183 @@ def test_boards_do_not_change_how_many_are_buildable(
         b"R2,4,2k,RES-2K\n"  # 12 //  4 = 3 → the limiting line
     )
     bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+    _resolve(session, bom.id)
 
     for boards in (1, 3, 20):
         summary = bs.build_bom_report(session, bom.id, boards=boards)["summary"]
         assert summary["buildable"] == 3
         assert summary["boards"] == boards  # echoed for the UI
+
+
+# --- assigning the obvious lines in one go ----------------------------------
+
+
+def _parts(session: Session):  # type: ignore[no-untyped-def]
+    """A type plus a factory for bare components (mpn + manufacturer, no stock)."""
+    ctype = cs.create_type(session, "ic")
+
+    def part(mpn: str, manufacturer: str | None = None) -> int:
+        component = cs.create_component_with_values(
+            session, ctype.id, mpn=mpn, manufacturer=manufacturer
+        )
+        return cast(int, component.id)
+
+    return part
+
+
+def _bom_of(session: Session, rows: str):  # type: ignore[no-untyped-def]
+    header = b"Reference,Qty,Value,MPN,Manufacturer\n"
+    return bs.create_bom(
+        session,
+        name="b",
+        filename="b.csv",
+        data=header + rows.encode(),
+        user_id=1,
+    )
+
+
+def test_assign_all_obvious_settles_only_the_lines_with_one_candidate(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    part = _parts(session)
+    solo = part("SOLO")
+    part("TWIN")  # two components carry this MPN — a question for a person
+    part("TWIN")
+    bom = _bom_of(
+        session,
+        "U1,1,x,SOLO,\nU2,1,x,TWIN,\nU3,1,x,,\n",  # one, two, and no candidate
+    )
+
+    assert bs.assign_all_obvious(session, bom.id, user_id=1) == 1
+
+    report = bs.build_bom_report(session, bom.id)
+    lines = {ln["references"]: ln for ln in report["lines"]}
+    assert lines["U1"]["assigned"]["component_id"] == solo
+    assert lines["U1"]["resolved"] is True
+    assert lines["U2"]["assigned"] is None  # two candidates: left for a person
+    assert lines["U3"]["assigned"] is None  # nothing to look up at all
+    assert report["summary"]["unresolved"] == 2
+
+
+def test_assign_all_obvious_refuses_a_line_whose_manufacturer_disagrees(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """An MPN is not unique across makers — a stated one that contradicts is a stop."""
+    part = _parts(session)
+    part("MCP2200", "Microchip")
+    bom = _bom_of(session, "U1,1,x,MCP2200,Acme Semiconductor\n")
+
+    assert bs.assign_all_obvious(session, bom.id, user_id=1) == 0
+    assert bs.build_bom_report(session, bom.id)["lines"][0]["assigned"] is None
+
+
+def test_assign_all_obvious_treats_a_silent_manufacturer_as_agreement(
+    session: Session, store
+) -> None:
+    """Most BOMs carry no manufacturer column; reading that as a contradiction
+    would settle nothing at all. Case and spacing are folded, as everywhere else."""
+    part = _parts(session)
+    part("PART-A", "Microchip")
+    part("PART-B", None)
+    part("PART-C", "onsemi")
+    bom = _bom_of(
+        session,
+        "U1,1,x,PART-A,\nU2,1,x,PART-B,Microchip\nU3,1,x,PART-C,ONSEMI\n",
+    )
+
+    assert bs.assign_all_obvious(session, bom.id, user_id=1) == 3
+
+
+def test_assign_all_obvious_never_overwrites_a_decision_made_by_hand(
+    session: Session, store
+) -> None:
+    part = _parts(session)
+    chosen = part("SOMETHING-ELSE")
+    part("PART-A")  # what the MPN would have picked
+    bom = _bom_of(session, "U1,1,x,PART-A,\n")
+    line = bs.get_bom_lines(session, bom.id)[0]
+    bs.assign_component(session, bom.id, line.id, component_id=chosen, user_id=1)
+
+    assert bs.assign_all_obvious(session, bom.id, user_id=1) == 0
+    report = bs.build_bom_report(session, bom.id)["lines"][0]
+    assert report["assigned"]["component_id"] == chosen
+
+
+def test_assign_all_obvious_ignores_a_retired_component(
+    session: Session, store
+) -> None:
+    """A part taken out of use is not a candidate, so the line stays for a person."""
+    part = _parts(session)
+    retired = part("PART-A")
+    cs.soft_delete_component(session, retired, user_id=1)
+    bom = _bom_of(session, "U1,1,x,PART-A,\n")
+
+    assert bs.assign_all_obvious(session, bom.id, user_id=1) == 0
+
+
+def test_assign_all_obvious_on_an_unknown_bom_raises(
+    session: Session, store
+) -> None:
+    with pytest.raises(NotFoundError):
+        bs.assign_all_obvious(session, 9999, user_id=1)
+
+
+def test_assign_all_obvious_refuses_a_repeated_designator_group(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """Assignments are keyed by designator group, so a repeated one is ambiguous.
+
+    Settling the first of two "U1" lines would make the second read as resolved to
+    a part its own MPN was never looked up against — and a bulk take would then
+    pull that part twice.
+    """
+    part = _parts(session)
+    part("AAA")
+    part("BBB")
+    bom = _bom_of(session, "U1,1,x,AAA,\nU1,1,x,BBB,\n")
+
+    assert bs.assign_all_obvious(session, bom.id, user_id=1) == 0
+
+    report = bs.build_bom_report(session, bom.id)
+    assert [ln["assigned"] for ln in report["lines"]] == [None, None]
+    assert report["summary"]["unresolved"] == 2
+
+
+def test_assign_all_obvious_replaces_an_assignment_whose_part_was_retired(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """The line reads as unresolved, so the button must be able to settle it."""
+    part = _parts(session)
+    gone = part("PART-A")
+    bom = _bom_of(session, "U1,1,x,PART-A,\n")
+    line = bs.get_bom_lines(session, bom.id)[0]
+    bs.assign_component(session, bom.id, line.id, component_id=gone, user_id=1)
+    cs.soft_delete_component(session, gone, user_id=1)
+    replacement = part("PART-A")  # the only live component carrying that MPN now
+
+    assert bs.build_bom_report(session, bom.id)["summary"]["unresolved"] == 1
+    assert bs.assign_all_obvious(session, bom.id, user_id=1) == 1
+
+    report = bs.build_bom_report(session, bom.id)["lines"][0]
+    assert report["assigned"]["component_id"] == replacement
+    assert report["resolved"] is True
+
+
+def test_assign_all_obvious_folds_an_alias_on_the_stored_side_too(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """A component created before an alias existed still stores the old spelling.
+
+    ``record_alias`` never rewrites stored components, so canonicalising only the
+    BOM's spelling would read one company as two and silently skip the line.
+    """
+    from app.services import manufacturer_service as mfs
+
+    part = _parts(session)
+    stored = part("PART-A", "ON Semiconductor")
+    mfs.record_alias(session, alias="ON Semiconductor", canonical="onsemi")
+    bom = _bom_of(session, "U1,1,x,PART-A,ON Semiconductor\n")
+
+    assert bs.assign_all_obvious(session, bom.id, user_id=1) == 1
+    report = bs.build_bom_report(session, bom.id)["lines"][0]
+    assert report["assigned"]["component_id"] == stored

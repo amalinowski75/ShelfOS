@@ -132,6 +132,16 @@ export function loadPage(
     getHeaderFilters() {
       return window.Tabulator.filters;
     }
+    // A page can set a header filter itself (the BOM report's "show only
+    // unresolved" does). Recorded on the CLASS beside the filters a test sets by
+    // hand, so both arrive the same way.
+    setHeaderFilterValue(field, value) {
+      window.Tabulator.headerFilterSet.push({ field, value });
+      window.Tabulator.headerFilterValues[field] = value;
+    }
+    getHeaderFilterValue(field) {
+      return window.Tabulator.headerFilterValues[field];
+    }
     clearHeaderFilter() {
       window.Tabulator.filters = [];
       window.Tabulator.handlers.dataFiltering?.([]);
@@ -145,6 +155,11 @@ export function loadPage(
     static handlers = {};
     static rows = [];
     static filters = [];
+    // Header filters the PAGE set (as opposed to `filters`, which a test sets
+    // to model someone typing in a header).
+    static headerFilterSet = [];
+    // What each header filter currently holds, whoever set it.
+    static headerFilterValues = {};
     static refilters = 0;
     static columns = [];
     // Every table built on the page, in construction order.
@@ -465,7 +480,7 @@ export function bomReportFixture() {
       <input type="number" id="bom-boards" min="1" step="1" value="1" />
     </label>
     <button type="button" id="bom-reload"></button>
-    <p id="bom-reload-status" hidden></p>
+    <p id="bom-status" hidden></p>
     <div id="bom-summary"><p class="muted">Loading…</p></div>
     <div id="bom-lines-table" data-bom-id="7"></div>`;
 }

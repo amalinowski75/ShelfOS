@@ -909,6 +909,13 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, .82); }
 
 /* ---------- BOM report (§21) ---------- */
 .bom-summary { margin-bottom: 20px; }
+/* The remedies for an unresolved count, on the line below it. Only rendered
+   while there is something unresolved, so it has no empty state. */
+.bom-summary-actions {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0 0;
+}
 /* Per-line actions on the BOM report. Deliberately always visible, unlike the
    hover-only `.row-actions` on the components table: "Assign…" is the point of
    the row, not a shortcut for something reachable elsewhere. */
@@ -994,7 +1001,7 @@ html.bom-pick-open, html.bom-pick-open body { overflow: hidden; }
   width: 88px; min-height: 30px; padding: 4px 10px;
   font-size: 12.5px; border-radius: 7px;
 }
-#bom-reload-status { margin: 0 0 12px; }
+#bom-status { margin: 0 0 12px; }
 /* Substitutes stay on one line (uniform row height keeps Tabulator fast); links
    are dot-separated and the cell truncates, with full detail in the tooltip. */
 .subs-inline a + a { margin-left: 2px; }

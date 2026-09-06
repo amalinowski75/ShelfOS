@@ -11,6 +11,7 @@ from __future__ import annotations
 import csv
 import io
 import re
+from collections import Counter
 from dataclasses import dataclass
 from typing import cast
 
@@ -27,6 +28,7 @@ from app.models.component import (
 from app.models.enums import AttachmentKind, ParameterDataType
 from app.services import attachment_service, link_service
 from app.services import component_service as cs
+from app.services import manufacturer_service as mfs
 from app.services import stock_service as ss
 from app.services._common import require_entity
 from app.services.errors import NotFoundError, ValidationError
@@ -363,6 +365,92 @@ def assign_component(
     return assignment
 
 
+def assign_all_obvious(session: Session, bom_id: int, *, user_id: int) -> int:
+    """Assign every line whose MPN leaves no room for doubt. Returns how many.
+
+    "No doubt" is deliberately narrow: the line names an MPN, exactly ONE live
+    component carries it, and the line's manufacturer does not contradict that
+    component's. Two candidates, or a maker that disagrees, is a question for a
+    person — this is the machine clearing the boring majority so the human is left
+    with the handful that actually need judging, not a best-guess matcher.
+
+    A manufacturer either side leaves blank is not a contradiction. That is
+    :func:`manufacturer_service.agrees_with`'s three-state rule, and it matters
+    here because a component that arrived on a Farnell invoice has no maker stored
+    at all, so reading that silence as a contradiction would settle nothing for a
+    whole class of perfectly good parts. Note this is a WEAKER test than the
+    invoice import's auto-match, which requires maker and MPN to agree outright and
+    falls back to the unique MPN only for a line that names no maker: here the sole
+    candidate is the only candidate, and the assignment it makes is visible in the
+    Assigned column and undone with one click, which the invoice's is not.
+
+    Never overwrites a decision someone made by hand — but a decision whose part
+    has since been retired is not one this can leave alone: the line reads as
+    unresolved, so a button that then refuses to settle it would be lying about
+    what it does.
+    """
+    get_bom(session, bom_id)
+    lines = get_bom_lines(session, bom_id)
+    existing = {a.references: a for a in list_assignments(session, bom_id)}
+    live_component_ids = {
+        cast(int, c.id)
+        for c in _components_by_id(
+            session, {a.component_id for a in existing.values()}
+        )
+        if c.deleted_at is None
+    }
+    # Assignments are keyed by designator group, so two lines sharing one are not
+    # two lines as far as an assignment is concerned: settling the first would make
+    # the second read as resolved to a part its own MPN was never looked up
+    # against. A repeated group is a question for a person (and, until the parser
+    # refuses to produce one, a reason to look at the CSV).
+    repeated = {
+        refs for refs, n in Counter(ln.references for ln in lines).items() if n > 1
+    }
+    count = 0
+    for line in lines:
+        if not line.mpn or line.references in repeated:
+            continue
+        assignment = existing.get(line.references)
+        if assignment is not None and assignment.component_id in live_component_ids:
+            continue  # already settled, by hand or by an earlier run
+        candidates = cs.find_components_by_mpn(session, line.mpn)
+        if len(candidates) != 1:
+            continue
+        component = candidates[0]
+        # Both sides through canonical_name: an alias recorded after a component
+        # was created never rewrites what that component stores, so folding only
+        # the BOM's spelling would read two spellings of one company as two
+        # companies — and skip the line.
+        if (
+            mfs.agrees_with(
+                mfs.canonical_name(session, line.manufacturer),
+                mfs.canonical_name(session, component.manufacturer),
+            )
+            is False
+        ):
+            continue
+        if assignment is None:
+            assignment = BomLineAssignment(
+                bom_id=bom_id,
+                references=line.references,
+                component_id=cast(int, component.id),
+                created_by=user_id,
+            )
+            existing[line.references] = assignment
+        else:
+            # Replacing a retired part's assignment, exactly as assign_component
+            # does — the unique (bom_id, references) constraint allows no second row.
+            assignment.component_id = cast(int, component.id)
+            assignment.created_by = user_id
+        session.add(assignment)
+        live_component_ids.add(cast(int, component.id))
+        count += 1
+    if count:
+        session.commit()
+    return count
+
+
 def list_ordered(session: Session, bom_id: int) -> list[BomLineOrdered]:
     """The lines on this BOM whose parts have been marked as ordered."""
     return list(
@@ -539,10 +627,18 @@ def build_bom_report(
     stay measured in whole boards, so they answer "how many boards will these parts
     make?" whatever number was asked for.
 
-    ``summary.buildable`` counts whole boards from parts that are actually resolved —
-    an exact MPN match, or a component someone assigned — so a line with no MPN
-    (common while designing) and no assignment, or one missing from inventory, caps
-    it at 0. Substitutes are surfaced per line but not counted toward buildability.
+    A line is *resolved* when a person has assigned a live component to it, and
+    that is the only thing this report accepts as knowing what a line is built
+    from. An MPN matching one inventory entry is a candidate, not an answer: an MPN
+    is not unique across manufacturers, so a line resolved by lookup can name the
+    wrong part — and the bulk take that follows would empty the wrong bin. So
+    ``status`` is ``unresolved`` until someone says which component it is, and
+    ``ok``/``short``/``out`` describe stock for resolved lines only.
+
+    ``summary.buildable`` therefore counts whole boards from resolved lines alone,
+    and one unresolved line caps it at 0. MPN candidates (``matched``) and
+    substitutes are still reported per line — they are what the picker offers —
+    but neither counts toward buildability.
     """
     boards = max(1, boards)
     bom = get_bom(session, bom_id)
@@ -562,7 +658,10 @@ def build_bom_report(
         session, {ln.category for ln in lines if ln.category in _VALUE_CATEGORIES}
     )
 
-    counts = {"ok": 0, "short": 0, "out": 0, "missing": 0, "no_mpn": 0}
+    # "unresolved" is both a status and the number the page acts on: it is what
+    # "Assign the obvious ones" drives to zero, and what a bulk take will demand
+    # be zero. It reaches `summary` through the `**counts` splat below.
+    counts = {"ok": 0, "short": 0, "out": 0, "unresolved": 0}
     buildable: int | None = None
     report_lines: list[dict[str, object]] = []
 
@@ -579,6 +678,12 @@ def build_bom_report(
         assigned_live = (
             assigned_component is not None and assigned_component.deleted_at is None
         )
+        # The whole of the line's identity, in one flag: a person has pointed this
+        # line at a component that is still in use. A retired assignment counts as
+        # unresolved too — it has to be made again before anything can be built
+        # from it — but it stays visible in ``assigned`` so it can be seen and
+        # changed rather than silently vanishing.
+        resolved = assigned_live
 
         if assigned_live:
             matched = [cast(Component, assigned_component)]
@@ -590,12 +695,12 @@ def build_bom_report(
         # What the whole run needs, not just one board.
         required = line.quantity * boards
 
-        if assignment is not None and not assigned_live:
-            status = "missing"  # assigned to a part that is no longer in use
-        elif assignment is None and not line.mpn:
-            status = "no_mpn"
-        elif not matched:
-            status = "missing"
+        # Stock is only ever described for a resolved line. Saying "in stock" about
+        # a line whose part nobody has confirmed is the report answering a question
+        # it was never asked — and it is how a BOM comes to look ready to build
+        # while half its lines have never been looked at.
+        if not resolved:
+            status = "unresolved"
         elif matched_stock >= required:
             status = "ok"
         elif matched_stock > 0:
@@ -609,13 +714,19 @@ def build_bom_report(
         # asked for more. "Buildable boards" is then the limiting line across the
         # WHOLE BOM: a line with no matched stock (missing / no MPN) caps it at 0,
         # so the number reflects true buildability, not just the resolved lines.
-        per_line = matched_stock // line.quantity if line.quantity else 0
+        per_line = (
+            matched_stock // line.quantity if resolved and line.quantity else 0
+        )
         buildable = per_line if buildable is None else min(buildable, per_line)
 
         # Substitutes answer "what else could go here?" — a question already
         # answered once a component has been assigned.
         substitutes: list[dict[str, object]] = []
-        if status != "ok" and assignment is None:
+        # Spelled out rather than keyed off ``status``, which no longer says
+        # whether an unassigned line's candidates could cover it: unassigned lines
+        # all read "unresolved" now, and offering alternatives to a part that is
+        # sitting on the shelf in quantity is noise.
+        if assignment is None and (not matched or matched_stock < required):
             substitutes = _find_substitutes(
                 line,
                 stock,
@@ -638,6 +749,10 @@ def build_bom_report(
                 "total_quantity": required,  # for the whole run
                 "boards_possible": per_line,  # what the stock on hand covers
                 "status": status,
+                # Split out from ``status`` because the two answer different
+                # questions: whether we know what this line is, and whether the
+                # shelf can supply it. Only the first gates a bulk take.
+                "resolved": resolved,
                 # A note that something has been done about this line, not a claim
                 # about stock: an ordered line stays short until the parts land.
                 "ordered": line.references in ordered_refs,

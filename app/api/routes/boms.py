@@ -100,6 +100,20 @@ def bom_report(
     return svc.build_bom_report(session, bom_id, boards=boards)
 
 
+@router.post("/{bom_id}/assign-obvious")
+def assign_obvious(
+    bom_id: int,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> dict[str, int]:
+    """Assign every line whose MPN matches exactly one component (writers).
+
+    Returns how many it settled, which is the only useful answer: the report is
+    reloaded afterwards and shows the rest.
+    """
+    return {"assigned": svc.assign_all_obvious(session, bom_id, user_id=user_id)}
+
+
 @router.delete("/{bom_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_bom(bom_id: int, session: Session = Depends(get_session)) -> None:
     """Delete a BOM, its lines and its stored CSV (writers)."""

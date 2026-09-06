@@ -14,22 +14,21 @@ describe("boms_report.js — rendering", () => {
   it("fills the summary banner from the report summary", () => {
     const { window, document } = loadPage(bomReportFixture(), SCRIPTS);
     window.renderBomSummary({
-      buildable: 3, ok: 2, short: 1, out: 4, missing: 5, no_mpn: 6,
+      buildable: 3, ok: 2, short: 1, out: 4, unresolved: 6,
     });
     const html = document.getElementById("bom-summary").innerHTML;
     expect(html).toContain("<strong>3</strong>");
     expect(html).toContain("buildable");
-    expect(html).toContain("without");
-    // An assigned line feeds this figure too, and may carry no MPN at all, so the
-    // headline must not still claim the count comes from MPN matches.
-    expect(html).not.toContain("exact MPN matches");
-    expect(html).toContain("matched and assigned");
+    expect(html).toContain("6 unresolved");
+    // Only assigned lines feed the buildable figure now; the headline must not
+    // claim a kind of match it no longer rests on.
+    expect(html).not.toContain("matched and assigned");
   });
 
-  it("shows 0 buildable when the count is null (no exact matches)", () => {
+  it("shows 0 buildable when the count is null (nothing resolved)", () => {
     const { window, document } = loadPage(bomReportFixture(), SCRIPTS);
     window.renderBomSummary({
-      buildable: null, ok: 0, short: 0, out: 0, missing: 0, no_mpn: 3,
+      buildable: null, ok: 0, short: 0, out: 0, unresolved: 3,
     });
     expect(document.getElementById("bom-summary").innerHTML).toContain(
       "<strong>0</strong>",
@@ -40,25 +39,31 @@ describe("boms_report.js — rendering", () => {
     const { window } = loadPage(bomReportFixture(), SCRIPTS);
     expect(window.bomStatusFormatter(fakeCell("ok"))).toContain("b-ok");
     expect(window.bomStatusFormatter(fakeCell("ok"))).toContain("in stock");
-    expect(window.bomStatusFormatter(fakeCell("missing"))).toContain(
-      "not in inventory",
-    );
-    expect(window.bomStatusFormatter(fakeCell("no_mpn"))).toContain("b-neutral");
+    const unresolved = window.bomStatusFormatter(fakeCell("unresolved"));
+    expect(unresolved).toContain("b-neutral");
+    expect(unresolved).toContain("unresolved");
   });
 
-  it("renders a stock dash for a line without an MPN", () => {
-    const { window } = loadPage(bomReportFixture(), SCRIPTS);
-    expect(window.bomStockFormatter(fakeCell(0, { mpn: null }))).toBe("—");
-    expect(window.bomStockFormatter(fakeCell(12, { mpn: "R-1" }))).toBe("12");
-  });
-
-  it("shows a real stock figure for an assigned line, MPN or not", () => {
-    // The dash means "nothing was looked up"; an assignment IS the lookup, so its
+  it("shows a real stock figure for a resolved line, MPN or not", () => {
+    // The dash means "we are not saying"; an assignment IS the lookup, so its
     // stock is a number — including a genuine 0.
     const { window } = loadPage(bomReportFixture(), SCRIPTS);
     const assigned = { component_id: 8, mpn: "GRM188" };
-    expect(window.bomStockFormatter(fakeCell(900, { mpn: null, assigned }))).toBe("900");
-    expect(window.bomStockFormatter(fakeCell(0, { mpn: null, assigned }))).toBe("0");
+    const row = { mpn: null, assigned, resolved: true };
+    expect(window.bomStockFormatter(fakeCell(900, row))).toBe("900");
+    expect(window.bomStockFormatter(fakeCell(0, row))).toBe("0");
+    expect(window.bomStockFormatter(fakeCell(12, { mpn: "R-1", resolved: true }))).toBe(
+      "12",
+    );
+  });
+
+  it("refuses to print a stock figure for an unresolved line", () => {
+    // The feed's number is the sum over every component sharing the MPN, across
+    // manufacturers. Printing it beside an "unresolved" badge is the claim the
+    // whole status change exists to stop — and the row is not even clickable.
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    expect(window.bomStockFormatter(fakeCell(40, { mpn: "MCP2200" }))).toBe("—");
+    expect(window.bomStockFormatter(fakeCell(0, { mpn: null }))).toBe("—");
   });
 
   it("links each substitute (single line) to its component", () => {
@@ -148,13 +153,13 @@ describe("boms_report.js — rendering", () => {
 });
 
 describe("boms_report.js — add to inventory", () => {
-  it("offers the action only on unmatched lines", () => {
+  it("offers the action only when nothing in inventory answers the line", () => {
     const { window } = loadPage(bomReportFixture(), SCRIPTS);
-    expect(window.bomCanAdd("missing")).toBe(true);
-    expect(window.bomCanAdd("no_mpn")).toBe(true);
-    expect(window.bomCanAdd("ok")).toBe(false);
-    expect(window.bomCanAdd("short")).toBe(false);
-    expect(window.bomCanAdd("out")).toBe(false);
+    expect(window.bomCanAdd({ matched: [] })).toBe(true); // MPN nothing carries
+    expect(window.bomCanAdd({})).toBe(true); // no MPN to look up at all
+    // An unresolved line with candidates is a choice to make, not a part to
+    // create — offering "Add to inventory" here is how duplicates get made.
+    expect(window.bomCanAdd({ matched: [{ component_id: 8 }] })).toBe(false);
   });
 
   it("seeds the prefill from a line, with a numeric value only for passives", () => {
@@ -208,14 +213,18 @@ describe("boms_report.js — assigned component", () => {
   it("offers Assign on every line, and Change/Remove once one is assigned", () => {
     const { window } = loadPage(bomReportFixture(), SCRIPTS);
     // A line that already matches its MPN can still be built from something else.
-    const ok = window.bomActionButtons({ status: "ok", assigned: null });
+    const ok = window.bomActionButtons({
+      status: "ok",
+      assigned: null,
+      matched: [{ component_id: 8 }],
+    });
     expect(ok).toContain('data-act="assign-component"');
     expect(ok).toContain("Assign");
     expect(ok).not.toContain("add-component"); // nothing missing to add
     expect(ok).not.toContain("unassign-component");
 
-    const missing = window.bomActionButtons({ status: "missing", assigned: null });
-    expect(missing).toContain('data-act="add-component"');
+    const unknown = window.bomActionButtons({ status: "unresolved", matched: [] });
+    expect(unknown).toContain('data-act="add-component"');
 
     const assigned = window.bomActionButtons({
       status: "ok",
@@ -227,16 +236,22 @@ describe("boms_report.js — assigned component", () => {
     expect(assigned).not.toContain("add-component");
   });
 
-  it("drops Add to inventory on an assigned line even when its status invites it", () => {
-    // The status that offers "Add to inventory" AND an assignment at once: an
-    // assigned part retired since, which reports `missing`. Asserting it against a
-    // status that never offers the button would prove nothing about the assignment.
+  it("drops Add to inventory on an assigned line even when nothing matched", () => {
+    // The one shape that would offer "Add to inventory" AND carry an assignment:
+    // a line whose MPN matches nothing, assigned by hand to a part since retired.
+    // Asserting it against a row that never offers the button would prove nothing
+    // about the assignment.
     const { window } = loadPage(bomReportFixture(), SCRIPTS);
-    const stillOffered = window.bomActionButtons({ status: "missing", assigned: null });
+    const stillOffered = window.bomActionButtons({
+      status: "unresolved",
+      matched: [],
+      assigned: null,
+    });
     expect(stillOffered).toContain("add-component");
 
     const html = window.bomActionButtons({
-      status: "missing",
+      status: "unresolved",
+      matched: [],
       assigned: { component_id: 8, mpn: "X", deleted: true },
     });
     expect(html).not.toContain("add-component"); // the way out is Change / Remove
@@ -247,7 +262,11 @@ describe("boms_report.js — assigned component", () => {
   it("keeps the actions visible rather than hiding them behind a hover", () => {
     // `.row-actions` is hover-only in app.css; Assign is the point of the row.
     const { window } = loadPage(bomReportFixture(), SCRIPTS);
-    const html = window.bomActionButtons({ status: "ok", assigned: null });
+    const html = window.bomActionButtons({
+      status: "ok",
+      assigned: null,
+      matched: [{ component_id: 8 }],
+    });
     expect(html).toContain("bom-row-actions");
     expect(html).not.toContain('class="row-actions"');
   });
@@ -423,12 +442,20 @@ describe("boms_report.js — ordered", () => {
 });
 
 describe("boms_report.js — row navigation", () => {
-  it("targets the first matched component's detail page, else null", () => {
+  it("targets a RESOLVED line's component, and nothing else", () => {
     const { window } = loadPage(bomReportFixture(), SCRIPTS);
     expect(
-      window.bomRowTarget({ matched: [{ component_id: 8 }, { component_id: 9 }] }),
+      window.bomRowTarget({
+        resolved: true,
+        matched: [{ component_id: 8 }, { component_id: 9 }],
+      }),
     ).toBe("/components/8");
-    expect(window.bomRowTarget({ matched: [] })).toBe(null); // no match → not clickable
+    // An unresolved line's candidates are exactly what the report refuses to
+    // claim is this line's part; sending someone there is the guess we removed.
+    expect(
+      window.bomRowTarget({ resolved: false, matched: [{ component_id: 8 }] }),
+    ).toBe(null);
+    expect(window.bomRowTarget({ resolved: true, matched: [] })).toBe(null);
     expect(window.bomRowTarget({})).toBe(null);
   });
 });
@@ -436,7 +463,7 @@ describe("boms_report.js — row navigation", () => {
 describe("boms_report.js — loadReport", () => {
   it("fills the summary and sets the rows on success", async () => {
     const report = {
-      summary: { buildable: 2, ok: 1, short: 0, out: 0, missing: 0, no_mpn: 0 },
+      summary: { buildable: 2, ok: 1, short: 0, out: 0, unresolved: 0 },
       lines: [{ references: "R1" }],
     };
     const fetchImpl = () =>
@@ -548,7 +575,7 @@ describe("boms_report.js — loadReport", () => {
 
 describe("boms_report.js — building several boards", () => {
   const okReport = {
-    summary: { buildable: 2, ok: 1, short: 0, out: 0, missing: 0, no_mpn: 0, boards: 1 },
+    summary: { buildable: 2, ok: 1, short: 0, out: 0, unresolved: 0, boards: 1 },
     lines: [{ references: "R1" }],
   };
   const okFetch = () =>
@@ -621,9 +648,9 @@ describe("boms_report.js — building several boards", () => {
     expect(short).toContain("short");
     expect(short).toContain("enough for 5");
 
-    // The other statuses need no such note: "ok" covers the run, out/missing are
-    // zero by definition, and a line with no MPN was never matched.
-    for (const status of ["ok", "out", "missing", "no_mpn"]) {
+    // The other statuses need no such note: "ok" covers the run, "out" is zero by
+    // definition, and an unresolved line has no stock figure to speak of.
+    for (const status of ["ok", "out", "unresolved"]) {
       expect(
         window.bomStatusFormatter(fakeCell(status, { mpn: "RES-1K", boards_possible: 0 })),
       ).not.toContain("enough for");
@@ -666,8 +693,8 @@ describe("boms_report.js — reload from CSV", () => {
 
     expect(calls[0]).toEqual(["/api/boms/7/reimport", "POST"]);
     expect(calls[1][0]).toContain("/api/boms/7/report");
-    expect(document.getElementById("bom-reload-status").hidden).toBe(false);
-    expect(document.getElementById("bom-reload-status").textContent).toContain(
+    expect(document.getElementById("bom-status").hidden).toBe(false);
+    expect(document.getElementById("bom-status").textContent).toContain(
       "rebuilt",
     );
   });
@@ -686,9 +713,198 @@ describe("boms_report.js — reload from CSV", () => {
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
 
-    const status = document.getElementById("bom-reload-status");
+    const status = document.getElementById("bom-status");
     expect(status.hidden).toBe(false);
     expect(status.className).toBe("error");
     expect(status.textContent).toContain("no longer stored");
+  });
+});
+
+describe("boms_report.js — resolving the unresolved lines", () => {
+  const summaryWith = (unresolved) => ({
+    buildable: 0, ok: 1, short: 0, out: 0, unresolved, boards: 1,
+  });
+
+  it("offers the two remedies only while something is unresolved", () => {
+    const { window, document } = loadPage(bomReportFixture(), SCRIPTS);
+    window.renderBomSummary(summaryWith(4));
+    const html = () => document.getElementById("bom-summary").innerHTML;
+    expect(html()).toContain('data-act="assign-obvious"');
+    expect(html()).toContain('data-act="show-unresolved"');
+
+    // A BOM with nothing left to assign shows no buttons at all — the remedy
+    // disappears with the problem rather than sitting there doing nothing.
+    window.renderBomSummary(summaryWith(0));
+    expect(html()).not.toContain('data-act="assign-obvious"');
+    expect(html()).not.toContain('data-act="show-unresolved"');
+  });
+
+  it("hides the assign button from a read-only account", () => {
+    const { window, document } = loadPage(bomReportFixture(), SCRIPTS, {
+      role: "read-only",
+    });
+    window.renderBomSummary(summaryWith(4));
+    const html = document.getElementById("bom-summary").innerHTML;
+    expect(html).not.toContain('data-act="assign-obvious"');
+    // Looking at what is unresolved is not a write, so that one stays.
+    expect(html).toContain('data-act="show-unresolved"');
+  });
+
+  it("posts, reloads the report, then says what it settled", async () => {
+    const calls = [];
+    const fetchImpl = (url, opts) => {
+      calls.push([url, opts?.method || "GET", opts?.headers]);
+      return url.endsWith("/assign-obvious")
+        ? Promise.resolve({ ok: true, json: async () => ({ assigned: 3 }) })
+        : Promise.resolve({
+            ok: true,
+            json: async () => ({ summary: summaryWith(1), lines: [] }),
+          });
+    };
+    const { window, document } = loadPage(bomReportFixture(), SCRIPTS, { fetchImpl });
+    window.renderBomSummary(summaryWith(4));
+    document.querySelector('[data-act="assign-obvious"]').click();
+    await tick();
+    await tick();
+
+    expect(calls[0][0]).toBe("/api/boms/7/assign-obvious");
+    expect(calls[0][1]).toBe("POST");
+    expect(calls[0][2]["X-CSRF-Token"]).toBe(CSRF);
+    // The report is re-read before anything is said: what is LEFT is a number
+    // only the fresh report knows.
+    expect(calls[1][0]).toContain("/api/boms/7/report");
+    const status = document.getElementById("bom-status");
+    expect(status.hidden).toBe(false);
+    expect(status.textContent).toContain("Assigned 3");
+  });
+
+  it("says so plainly when nothing could be settled", async () => {
+    const fetchImpl = (url) =>
+      url.endsWith("/assign-obvious")
+        ? Promise.resolve({ ok: true, json: async () => ({ assigned: 0 }) })
+        : Promise.resolve({
+            ok: true,
+            json: async () => ({ summary: summaryWith(4), lines: [] }),
+          });
+    const { window, document } = loadPage(bomReportFixture(), SCRIPTS, { fetchImpl });
+    window.renderBomSummary(summaryWith(4));
+    document.querySelector('[data-act="assign-obvious"]').click();
+    await tick();
+    await tick();
+
+    expect(document.getElementById("bom-status").textContent).toContain(
+      "Nothing could be assigned",
+    );
+  });
+
+  it("reports a refusal and leaves the button usable", async () => {
+    const fetchImpl = () =>
+      Promise.resolve({
+        ok: false,
+        status: 403,
+        json: async () => ({ detail: "read-only accounts cannot write" }),
+      });
+    const { window, document } = loadPage(bomReportFixture(), SCRIPTS, { fetchImpl });
+    window.renderBomSummary(summaryWith(4));
+    const button = document.querySelector('[data-act="assign-obvious"]');
+    button.click();
+    await tick();
+    await tick();
+
+    const status = document.getElementById("bom-status");
+    expect(status.className).toBe("error");
+    expect(status.textContent).toContain("read-only accounts cannot write");
+    // Nothing was reloaded, so this button is still the one on the page: leaving
+    // it disabled would strand the user on a failure they could just retry.
+    expect(button.disabled).toBe(false);
+  });
+
+  it("filters the table through the Status column's own header filter", () => {
+    const { window, document } = loadPage(bomReportFixture(), SCRIPTS);
+    window.renderBomSummary(summaryWith(4));
+    document.querySelector('[data-act="show-unresolved"]').click();
+
+    expect(window.Tabulator.headerFilterSet).toEqual([
+      { field: "status", value: "unresolved" },
+    ]);
+  });
+});
+
+describe("boms_report.js — when the reload after a write fails", () => {
+  const summaryWith = (unresolved) => ({
+    buildable: 0, ok: 1, short: 0, out: 0, unresolved, boards: 1,
+  });
+
+  it("says the assignments were stored even though the report is not there", async () => {
+    // Silence, or a plain "Assigned 3" under a "Could not load the report"
+    // summary, both invite the user to run a write that already happened.
+    const fetchImpl = (url) =>
+      url.endsWith("/assign-obvious")
+        ? Promise.resolve({ ok: true, json: async () => ({ assigned: 3 }) })
+        : Promise.resolve({ ok: false, status: 500, json: async () => ({}) });
+    const { window, document } = loadPage(bomReportFixture(), SCRIPTS, { fetchImpl });
+    window.renderBomSummary(summaryWith(4));
+    document.querySelector('[data-act="assign-obvious"]').click();
+    await tick();
+    await tick();
+
+    const status = document.getElementById("bom-status");
+    expect(status.className).toBe("error");
+    expect(status.textContent).toContain("Assigned 3");
+    expect(status.textContent).toContain("could not be re-read");
+  });
+
+  it("tells loadReport's callers whether the report actually arrived", async () => {
+    const ok = { summary: summaryWith(0), lines: [] };
+    const { window } = loadPage(bomReportFixture(), SCRIPTS, {
+      fetchImpl: () => Promise.resolve({ ok: true, json: async () => ok }),
+    });
+    const table = { setData: vi.fn(() => Promise.resolve()) };
+    expect(await window.loadReport(table, "7")).toBe(true);
+
+    const { window: w2 } = loadPage(bomReportFixture(), SCRIPTS, {
+      fetchImpl: () => Promise.resolve({ ok: false, json: async () => ({}) }),
+    });
+    expect(await w2.loadReport({ setData: vi.fn(() => Promise.resolve()) }, "7")).toBe(
+      false,
+    );
+  });
+
+  it("clears its own unresolved filter once nothing is unresolved", async () => {
+    // Otherwise the table shows "No lines" under a summary reporting stock, with
+    // the button that set the filter no longer on the page to explain it.
+    const report = { summary: summaryWith(0), lines: [{ references: "R1" }] };
+    const { window } = loadPage(bomReportFixture(), SCRIPTS, {
+      fetchImpl: () => Promise.resolve({ ok: true, json: async () => report }),
+    });
+    window.Tabulator.headerFilterValues.status = "unresolved";
+    const table = window.Tabulator.instances[0];
+    table.setData = vi.fn(() => Promise.resolve());
+    await window.loadReport(table, "7");
+    expect(window.Tabulator.headerFilterValues.status).toBe("");
+  });
+
+  it("leaves a filter alone while lines are still unresolved", async () => {
+    const report = { summary: summaryWith(2), lines: [{ references: "R1" }] };
+    const { window } = loadPage(bomReportFixture(), SCRIPTS, {
+      fetchImpl: () => Promise.resolve({ ok: true, json: async () => report }),
+    });
+    window.Tabulator.headerFilterValues.status = "unresolved";
+    const table = window.Tabulator.instances[0];
+    table.setData = vi.fn(() => Promise.resolve());
+    await window.loadReport(table, "7");
+    expect(window.Tabulator.headerFilterValues.status).toBe("unresolved");
+  });
+
+  it("does not touch a filter the user set to something else", async () => {
+    const report = { summary: summaryWith(0), lines: [] };
+    const { window } = loadPage(bomReportFixture(), SCRIPTS, {
+      fetchImpl: () => Promise.resolve({ ok: true, json: async () => report }),
+    });
+    window.Tabulator.headerFilterValues.status = "short";
+    const table = window.Tabulator.instances[0];
+    table.setData = vi.fn(() => Promise.resolve());
+    await window.loadReport(table, "7");
+    expect(window.Tabulator.headerFilterValues.status).toBe("short");
   });
 });

@@ -57,8 +57,41 @@ def test_get_bom_returns_parsed_lines(client: TestClient) -> None:
 def test_report_has_summary_and_lines(client: TestClient) -> None:
     bom_id = _upload(client).json()["id"]
     report = client.get(f"/api/boms/{bom_id}/report").json()
-    assert set(report["summary"]) >= {"lines", "ok", "missing", "no_mpn", "buildable"}
+    assert set(report["summary"]) >= {
+        "lines", "ok", "short", "out", "unresolved", "buildable",
+    }
     assert len(report["lines"]) == report["summary"]["lines"]
+    # A freshly uploaded BOM has been assigned nothing, so nothing is resolved —
+    # whatever its MPNs happen to match.
+    assert report["summary"]["unresolved"] == report["summary"]["lines"]
+
+
+def test_assign_obvious_settles_the_unambiguous_lines(client: TestClient) -> None:
+    """One request clears every line whose MPN admits only one component."""
+    bom_id = _upload(client).json()["id"]
+    mpns = {
+        line["mpn"] for line in client.get(f"/api/boms/{bom_id}").json()["lines"]
+    }
+    mpn = next(m for m in mpns if m)
+    ctype = client.post("/api/types", json={"name": "Resistor"}).json()
+    client.post(
+        "/api/components",
+        json={"name": "R", "type_id": ctype["id"], "mpn": mpn},
+    )
+
+    resp = client.post(f"/api/boms/{bom_id}/assign-obvious")
+    assert resp.status_code == 200 and resp.json() == {"assigned": 1}
+
+    report = client.get(f"/api/boms/{bom_id}/report").json()
+    resolved = [ln for ln in report["lines"] if ln["resolved"]]
+    assert [ln["mpn"] for ln in resolved] == [mpn]
+    # Running it again settles nothing new — there is only ever one component
+    # carrying that MPN, and the line it answers already has an assignment.
+    assert client.post(f"/api/boms/{bom_id}/assign-obvious").json() == {"assigned": 0}
+
+
+def test_assign_obvious_on_an_unknown_bom_is_404(client: TestClient) -> None:
+    assert client.post("/api/boms/9999/assign-obvious").status_code == 404
 
 
 def test_reimport_rebuilds_the_lines_from_the_stored_csv(client: TestClient) -> None:
@@ -254,6 +287,10 @@ def test_read_only_can_read_but_not_write(
         headers=headers,
     )
     assert ordered.status_code == 403
+    obvious = anon_client.post(
+        f"/api/boms/{bom_id}/assign-obvious", headers=headers
+    )
+    assert obvious.status_code == 403
     # ...but reading the list, the detail and the report works.
     assert anon_client.get("/api/boms", headers=headers).status_code == 200
     assert anon_client.get(f"/api/boms/{bom_id}", headers=headers).status_code == 200
