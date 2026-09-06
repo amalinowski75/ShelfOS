@@ -28,7 +28,7 @@
   </div>
 </div>
 
-<p id="bom-reload-status" class="muted" hidden></p>
+<p id="bom-status" class="muted" hidden></p>
 
 <div id="bom-summary" class="card card-pad bom-summary">
   <p class="muted">Loading…</p>
@@ -39,7 +39,8 @@
 </div>
 
 {% if can_write %}
-{# "Add to inventory" on a missing line opens this shared dialog, pre-filled. #}
+{# "Add to inventory" on a line nothing in inventory answers opens this shared
+   dialog, pre-filled. #}
 {% include "_component_dialog.html" %}
 
 {# "Assign…" on a line opens this picker: the BOM line's facts on the left, the

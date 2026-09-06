@@ -9,6 +9,26 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## A BOM line has to name its part
+
+The BOM report used to resolve a line by looking its MPN up in inventory. An MPN
+is not unique across manufacturers, so that answer can be the wrong part — and it
+was good enough to make a BOM read as ready to build while nobody had ever
+confirmed half its lines. The report now describes stock only for a line someone
+has assigned a component to, which is the groundwork for taking a whole BOM off
+the shelves in one go.
+
+- **#TBD** — Lines are `unresolved` until a person assigns a component to them;
+  `in stock` / `short` / `out` are reserved for lines that have one, and one
+  unresolved line caps *buildable boards* at 0. The statuses `not in inventory`
+  and `no MPN` are gone: they said different things about the same situation, and
+  the answer to all of them was the same — assign a component. **Existing BOMs
+  will look worse before they look better**, which is the point.
+- **#TBD** — *Assign the obvious ones* settles, in one request, every line whose
+  MPN admits exactly one component and whose manufacturer does not contradict it,
+  leaving a person only the lines that genuinely need judging. Beside it, *Show
+  only unresolved* drives the Status column's own filter.
+
 ## Manufacturer names — one part, however it is spelled
 
 An MPN does not identify a part: two companies really do print the same number on

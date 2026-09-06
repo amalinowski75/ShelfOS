@@ -10,12 +10,18 @@
 // cell's hover tooltip.
 
 // status → [badge class, label]. Labels are a fixed set (safe to inline).
+// Three of them describe the shelf and are only ever reached once a line is
+// resolved; the fourth says the line has not been resolved at all, whatever the
+// reason (no MPN, an MPN nothing carries, an MPN two parts carry, or an
+// assignment to a part since retired). The distinction the report used to draw
+// between those cases said nothing about what to do next — it is always the same
+// thing, assign a component — and it let a BOM read as ready to build on the
+// strength of a lookup nobody had confirmed.
 const BOM_STATUS = {
   ok: ["b-ok", "in stock"],
   short: ["b-warn", "short"],
   out: ["b-danger", "out of stock"],
-  missing: ["b-danger", "not in inventory"],
-  no_mpn: ["b-neutral", "no MPN"],
+  unresolved: ["b-neutral", "unresolved"],
 };
 
 function bomStatusFormatter(cell) {
@@ -108,14 +114,25 @@ function renderBomSummary(summary) {
   // "3 of 10" is the answer to the question the Boards box just posed.
   const boards = n(summary.boards) || 1;
   const of = boards > 1 ? ` of ${boards} requested` : "";
+  const unresolved = n(summary.unresolved);
   el.innerHTML =
-    // "matched and assigned", not "exact MPN matches": an assigned line feeds this
-    // number too, and it may have no MPN at all — the headline can't claim a kind of
-    // match the figure no longer comes only from.
-    `<p><strong>${n(summary.buildable)}</strong> buildable board(s)${of} from matched and assigned parts — ` +
+    // "assigned parts", not "matched": nothing else counts toward this number now,
+    // and the headline must not claim a kind of match it no longer rests on.
+    `<p><strong>${n(summary.buildable)}</strong> buildable board(s)${of} from assigned parts — ` +
     `${n(summary.ok)} in&nbsp;stock · ${n(summary.short)} short · ` +
-    `${n(summary.out)} out · ${n(summary.missing)} not&nbsp;in&nbsp;inventory · ` +
-    `${n(summary.no_mpn)} without&nbsp;MPN</p>`;
+    `${n(summary.out)} out · ${unresolved} unresolved</p>` +
+    // The remedy sits with the number it answers, and disappears with it: a BOM
+    // with nothing left to assign shows no buttons at all.
+    (unresolved
+      ? '<p class="bom-summary-actions">' +
+        (canWrite
+          ? '<button type="button" class="btn btn-secondary btn-sm" data-act="assign-obvious">' +
+            "Assign the obvious ones</button>"
+          : "") +
+        '<button type="button" class="btn btn-ghost btn-sm" data-act="show-unresolved">' +
+        "Show only unresolved</button>" +
+        '<span class="muted" id="bom-assign-status"></span></p>'
+      : "");
 }
 
 // A text header filter matching the app-wide pattern (placeholder + aria-label).
@@ -184,8 +201,7 @@ function bomReportColumns() {
           ok: "in stock",
           short: "short",
           out: "out of stock",
-          missing: "not in inventory",
-          no_mpn: "no MPN",
+          unresolved: "unresolved",
         },
       },
     },
@@ -299,10 +315,14 @@ function restoreScroll(holder, scrollTop) {
   }, 0);
 }
 
-// A line can be turned into a new inventory component when nothing matches it:
-// a missing MPN, or no MPN yet (still designing).
-function bomCanAdd(status) {
-  return status === "missing" || status === "no_mpn";
+// A line can be turned into a new inventory component when there is nothing to
+// assign it to: no MPN yet (still designing), or an MPN no component carries.
+// Takes the row rather than the status because the status no longer distinguishes
+// those cases from "several candidates, pick one" — and offering "Add to
+// inventory" for a part that is already in inventory twice over is how duplicates
+// get made.
+function bomCanAdd(row) {
+  return !(row.matched && row.matched.length);
 }
 
 // The per-line actions. "Assign" is offered on EVERY line, not just an unmatched
@@ -310,7 +330,7 @@ function bomCanAdd(status) {
 // that's a decision the CSV has no way to carry.
 function bomActionButtons(row) {
   const buttons = [];
-  if (bomCanAdd(row.status) && !row.assigned) {
+  if (bomCanAdd(row) && !row.assigned) {
     buttons.push(
       '<button class="btn btn-secondary btn-sm" data-act="add-component">Add to inventory</button>',
     );
@@ -375,6 +395,50 @@ async function bomSetOrdered(bomId, lineId, ordered, checkbox) {
   return false;
 }
 
+// The page's one "what just happened" line. Shared rather than per-action: two
+// of these can't be running at once, and a second line would only compete with
+// the first for the same glance.
+function bomSay(text, isError) {
+  const el = document.getElementById("bom-status");
+  if (!el) return;
+  el.textContent = text;
+  el.className = isError ? "error" : "muted";
+  el.hidden = false;
+}
+
+// "Assign the obvious ones": settle every line whose MPN admits only one part, in
+// one request. What it could not settle is left for a person — that is the point,
+// not a shortfall — so the report is reloaded before the message is written, and
+// the message names both numbers.
+async function bomAssignObvious(bomId, button, onDone) {
+  button.disabled = true;
+  let assigned = null;
+  let failure = null;
+  try {
+    const resp = await fetch(`/api/boms/${bomId}/assign-obvious`, {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+    });
+    if (resp.ok) assigned = Number((await resp.json()).assigned) || 0;
+    else failure = await errorMessage(resp);
+  } catch {
+    failure = "Could not reach the server.";
+  }
+  if (failure) {
+    bomSay(failure, true);
+    button.disabled = false; // the button is still on the page; let it be tried again
+    return;
+  }
+  // Reload first: "how many are left" is a number only the fresh report knows,
+  // and the button this was clicked on may not survive the redraw.
+  if (onDone) await onDone();
+  bomSay(
+    assigned
+      ? `Assigned ${assigned} line(s) by MPN. The rest need a person.`
+      : "Nothing could be assigned by MPN alone — every remaining line needs a person.",
+  );
+}
+
 async function bomUnassign(bomId, lineId, onDone) {
   try {
     const resp = await fetch(`/api/boms/${bomId}/lines/${lineId}/component`, {
@@ -406,9 +470,12 @@ function bomAddPrefill(row) {
   };
 }
 
-// The component-detail URL for a matched line (ok/short/out → a matched part), or
-// null when nothing is in inventory (missing/no_mpn) so the row isn't clickable.
+// The component-detail URL for a RESOLVED line, or null so the row isn't
+// clickable. Deliberately not offered for an unresolved line even when its MPN
+// matches something: sending someone to a part the report itself refuses to claim
+// is this line's part is the guess the whole status change exists to stop.
 function bomRowTarget(row) {
+  if (!row.resolved) return null;
   const matched = row.matched && row.matched[0];
   return matched && matched.component_id
     ? `/components/${matched.component_id}`
@@ -491,19 +558,13 @@ if (bomTableEl) {
   // re-read the report. Stock matching is already live, so only the parsed fields
   // change — which is why this says what it did rather than looking like a no-op.
   const reloadBtn = document.getElementById("bom-reload");
-  const reloadStatus = document.getElementById("bom-reload-status");
   if (reloadBtn) {
     let reloading = false;
     reloadBtn.addEventListener("click", () => {
       if (reloading) return;
       reloading = true;
       reloadBtn.disabled = true;
-      const say = (text, isError) => {
-        if (!reloadStatus) return;
-        reloadStatus.textContent = text;
-        reloadStatus.className = isError ? "error" : "muted";
-        reloadStatus.hidden = false;
-      };
+      const say = bomSay;
       say("Re-reading the stored CSV…");
       (async () => {
         try {
@@ -524,6 +585,23 @@ if (bomTableEl) {
           reloadBtn.disabled = false;
         }
       })();
+    });
+  }
+
+  // The summary's buttons are rewritten on every load, so the listener lives on
+  // the card that survives them.
+  const summaryEl = document.getElementById("bom-summary");
+  if (summaryEl) {
+    summaryEl.addEventListener("click", (e) => {
+      const act = e.target.dataset?.act;
+      if (act === "assign-obvious") {
+        bomAssignObvious(bomId, e.target, () => loadReport(table, bomId));
+      } else if (act === "show-unresolved") {
+        // Drives the Status column's own header filter rather than a second,
+        // private one — so the dropdown shows what is being filtered, and
+        // clearing it there works the way it does for every other column.
+        table.setHeaderFilterValue("status", "unresolved");
+      }
     });
   }
 
