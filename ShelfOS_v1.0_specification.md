@@ -38,14 +38,13 @@ Future:
 ## Frontend
 
 - Jinja2
-- HTMX
 - Vanilla JavaScript
 - Tabulator
 
 ## Styling
 
-- Pico.css preferred
-- Minimal custom CSS
+- A token-based CSS design system (`app/web/static/app.css`)
+- No UI framework
 
 ---
 

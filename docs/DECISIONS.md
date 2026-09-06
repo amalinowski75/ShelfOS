@@ -171,7 +171,13 @@ server-rendered HTML, and small vanilla-JS modules that talk to the JSON API wit
 mean a second way of doing the thing those modules already do.
 
 D8 is left as written. It records what was decided before implementation started,
-which is what that file is for.
+which is what that file is for — and that argument is about THIS file, not about
+planning documents generally. The v1.0 specification listed HTMX and preferred
+Pico.css too, and was corrected rather than annotated: it carries no decision
+date, the README presents it as the product/architecture spec, 74 docstrings cite
+its section numbers as live references, and it has already been edited once
+during implementation (#59). It describes the system, so it has to be right about
+it.
 
 ## D13. Deleting a component is soft  [2026-08-18]
 

@@ -2613,3 +2613,18 @@ def test_both_dialogs_announce_a_failed_load_and_offer_the_action(
         assert 'role="alert"' in row.group(0), prefix
         assert "hidden" in row.group(0), prefix  # only announced once shown
         assert f'id="{prefix}-retry"' in html, prefix
+
+
+def test_no_page_ships_a_front_end_library_nothing_uses(client: TestClient) -> None:
+    """HTMX was fetched on every page load for months and never used once.
+
+    It went in with the first slice and stayed because nothing pointed at it —
+    the same reasoning that would let it back. The page tests render base.html
+    (they cannot EXECUTE its scripts, which is why removing it was checked in a
+    browser), so this is the cheap half the suite can hold on to.
+    """
+    html = client.get("/").text
+
+    assert "<html" in html and "appbar" in html  # really the full layout
+    assert "tabulator" in html  # …and a library it does use, so this can fail
+    assert "htmx" not in html
