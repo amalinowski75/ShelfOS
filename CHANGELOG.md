@@ -9,6 +9,29 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## The startup check was asking the wrong question
+
+`SHELFOS_ENV=production` refused to start on the default admin password, and it
+was checking `SHELFOS_ADMIN_PASSWORD` — the environment variable. But the
+bootstrap admin is seeded **only when no login-capable admin exists**, so on any
+database past its first run that variable says nothing about the account. Set a
+strong one on an install seeded months ago, and every check passed, the log said
+nothing, and `admin`/`admin` still signed you in. That is precisely the state
+the check exists to prevent, and it was reached by configuring the instance the
+way the README asked.
+
+- Startup now asks the accounts: any active admin whose password is still the
+  public default refuses the boot in production, and warns otherwise. The
+  message names the account, says how to fix it, and says why setting the
+  variable did not.
+- **`scripts/set_password.py`** is the way out, because there had to be one — the
+  refusal is unfixable through the UI, which needs the app to be running. It
+  prompts without echoing (or takes `SHELFOS_NEW_PASSWORD` when unattended), and
+  applies the same password policy the app does. It doubles as the answer to an
+  admin locked out of their own account, which had none.
+- The README now says plainly that those two variables seed a first admin and
+  do nothing afterwards.
+
 ## Taking a BOM off the shelves
 
 Building a board meant walking the BOM by hand — find the part, find where it

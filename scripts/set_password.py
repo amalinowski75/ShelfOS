@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""Set an account's password from the command line.
+
+The way out of the one situation the app cannot talk you out of: it refuses to
+start in production while an admin still has the default password, and changing
+that password through the UI needs the app to be running. This does it against
+the database directly, with the app stopped.
+
+Also the answer to an admin who has locked themselves out — there is no
+password reset by email, and an admin cannot reset their own through the admin
+API by design (that route asks for no current password, so it is not a path
+your own account should have).
+
+The new password is read from the terminal without echoing, or from
+``SHELFOS_NEW_PASSWORD`` when there is no terminal to prompt at. It is subject
+to the same policy the app enforces, so this cannot be used to put an account
+back below it.
+
+Usage::
+
+    python scripts/set_password.py admin
+    python scripts/set_password.py admin --list     # show accounts and exit
+    SHELFOS_NEW_PASSWORD=... python scripts/set_password.py admin   # unattended
+
+Targets the same database as the app: ``DATABASE_URL`` (default
+``data/shelfos.db``).
+"""
+
+from __future__ import annotations
+
+import argparse
+import getpass
+import os
+import sys
+
+import app.models  # noqa: F401  (registers every table on SQLModel.metadata)
+from app.db import engine, init_db
+from app.models.user import User
+from app.seed import SYSTEM_USER_NAME
+from app.services import user_service as us
+from app.services.errors import ValidationError
+from sqlmodel import Session, col, select
+
+
+def _accounts(session: Session) -> list[User]:
+    """Every account that can sign in, so the listing is the useful one."""
+    return list(
+        session.exec(
+            select(User)
+            .where(col(User.password_hash).is_not(None))
+            .order_by(col(User.name))
+        ).all()
+    )
+
+
+def _read_new_password() -> str:
+    """The new password, from the environment or a terminal that does not echo."""
+    from_env = os.environ.get("SHELFOS_NEW_PASSWORD")
+    if from_env:
+        return from_env
+    if not sys.stdin.isatty():
+        raise SystemExit("No terminal to prompt at; set SHELFOS_NEW_PASSWORD instead.")
+    first = getpass.getpass("New password: ")
+    if first != getpass.getpass("Repeat: "):
+        raise SystemExit("The two entries do not match.")
+    return first
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("username", nargs="?", help="the account to change")
+    parser.add_argument(
+        "--list", action="store_true", help="list the accounts and exit"
+    )
+    args = parser.parse_args()
+
+    init_db()  # a database that does not exist yet is an empty one, not an error
+    with Session(engine) as session:
+        if args.list or not args.username:
+            for account in _accounts(session):
+                state = "active" if account.is_active else "disabled"
+                print(f"{account.name}\t{account.role.value}\t{state}")
+            if not args.username and not args.list:
+                raise SystemExit("\nName an account to change its password.")
+            return
+
+        user = us.get_by_username(session, args.username)
+        if user is None:
+            raise SystemExit(f"No account named {args.username!r}.")
+        if user.name == SYSTEM_USER_NAME or user.password_hash is None:
+            raise SystemExit(
+                f"{user.name!r} cannot sign in and has no password to set."
+            )
+
+        try:
+            # actor_id is the account itself: nobody is signed in to attribute
+            # this to, and the audit entry should not claim otherwise.
+            assert user.id is not None
+            us.set_password(session, user.id, _read_new_password(), actor_id=user.id)
+        except ValidationError as error:
+            raise SystemExit(str(error)) from None
+
+    print(
+        f"Password set for {args.username!r}. "
+        "Every session and API token it had has stopped working."
+    )
+
+
+if __name__ == "__main__":
+    main()

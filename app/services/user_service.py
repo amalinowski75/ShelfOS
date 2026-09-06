@@ -317,6 +317,35 @@ def change_own_password(
     return set_password(session, own_id, new_password, actor_id=own_id)
 
 
+def admins_with_password(session: Session, password: str) -> list[User]:
+    """Every login-capable admin whose password is ``password``.
+
+    For the startup check that no admin is still on the public default. Costs
+    one bcrypt verification per admin, at startup only; admins are few by
+    definition, and the alternative — trusting the environment variable to
+    describe the account — is what let an instance run in production with the
+    seeded ``admin``/``admin`` still working.
+
+    Only admins, and only the default: since passwords set through ShelfOS must
+    clear :func:`check_password_policy`, a password this short cannot be set
+    through any code path any more. An account that has one was seeded with it
+    before that rule existed, which is exactly the bootstrap admin.
+    """
+    admins = session.exec(
+        select(User).where(
+            User.role == UserRole.ADMIN,
+            col(User.is_active).is_(True),
+            col(User.password_hash).is_not(None),
+        )
+    ).all()
+    return [
+        admin
+        for admin in admins
+        if admin.password_hash is not None
+        and verify_password(password, admin.password_hash)
+    ]
+
+
 def ensure_admin(session: Session, *, username: str, password: str) -> User:
     """Seed a bootstrap admin if no login-capable admin exists yet (D11).
 

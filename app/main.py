@@ -81,7 +81,38 @@ def _bootstrap() -> None:
             username=config.ADMIN_USERNAME,
             password=config.ADMIN_PASSWORD,
         )
+        _check_seeded_admin_password(session)
         match_rule_service.seed_default_rules(session)
+
+
+def _check_seeded_admin_password(session: Session) -> None:
+    """Refuse to start in production while an admin still has the default password.
+
+    ``_check_insecure_defaults`` asks whether ``SHELFOS_ADMIN_PASSWORD`` is set,
+    which turns out to answer a different question. ``ensure_admin`` only seeds
+    when there is no login-capable admin yet, so on a database that already has
+    one — every install past its first run — setting the variable changes
+    nothing about the account. An instance could therefore be configured
+    correctly, pass every check, and still be open to ``admin``/``admin``, with
+    the startup log saying nothing at all. So ask the accounts instead.
+    """
+    exposed = us.admins_with_password(session, config.DEFAULT_ADMIN_PASSWORD)
+    if not exposed:
+        return
+    names = ", ".join(sorted(user.name for user in exposed))
+    remedy = (
+        "Sign in and use Change password, or run "
+        "`python scripts/set_password.py <username>`."
+    )
+    if config.is_production():
+        raise RuntimeError(
+            f"Refusing to start: admin account(s) {names} still have the default "
+            f"password, which is public. {remedy} Setting SHELFOS_ADMIN_PASSWORD "
+            "does not change an account that already exists."
+        )
+    _logger.warning(
+        "Admin account(s) %s still have the default password. %s", names, remedy
+    )
 
 
 def _check_scan_separator() -> None:

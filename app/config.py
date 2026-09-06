@@ -18,9 +18,12 @@ ENV = os.environ.get("SHELFOS_ENV", "development").strip().lower()
 _DEFAULT_SECRET = "shelfos-dev-insecure-secret-change-me-in-production"
 SECRET_KEY = os.environ.get("SHELFOS_SECRET_KEY", _DEFAULT_SECRET)
 
-# Bootstrap admin seeded on first startup if no admin exists.
+# Bootstrap admin seeded on first startup if no admin exists. Both the seeding
+# and the startup check that the seeded account is no longer on this password
+# need the default by name, so it is one constant rather than two literals.
+DEFAULT_ADMIN_PASSWORD = "admin"
 ADMIN_USERNAME = os.environ.get("SHELFOS_ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.environ.get("SHELFOS_ADMIN_PASSWORD", "admin")
+ADMIN_PASSWORD = os.environ.get("SHELFOS_ADMIN_PASSWORD", DEFAULT_ADMIN_PASSWORD)
 
 # JWT access-token lifetime, in hours.
 TOKEN_EXPIRE_HOURS = int(os.environ.get("SHELFOS_TOKEN_EXPIRE_HOURS", "24"))
@@ -66,7 +69,7 @@ def is_using_default_secret() -> bool:
 
 def is_using_default_admin_password() -> bool:
     """True when the default admin password is in effect."""
-    return ADMIN_PASSWORD == "admin"
+    return ADMIN_PASSWORD == DEFAULT_ADMIN_PASSWORD
 
 # Server-side fetch of an attachment from a URL (spec §10): connect+read timeout
 # (seconds) and the maximum number of redirects followed (each re-validated).
