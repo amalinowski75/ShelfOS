@@ -143,7 +143,17 @@ def test_a_missing_account_costs_a_bcrypt_round_too(
     the bound is loose enough not to be flaky, and the unfixed code is not
     close to it — an unknown username used to return before hashing anything.
     """
+    from app.auth.throttle import LoginThrottle
+
     _seed_admin(session)
+    # Seven failed sign-ins from one address follow. Pin the throttle rather
+    # than spend the ambient allowance: a deployment that configured a lower
+    # SHELFOS_LOGIN_MAX_FAILURES would have the last of them refused before
+    # authenticate() ran at all, and a refusal returns in microseconds — which
+    # would read here as exactly the timing leak this test exists to catch.
+    anon_client.app.state.login_throttle = LoginThrottle(  # type: ignore[attr-defined]
+        limit=1000, window=600
+    )
     us.get_by_username(session, "admin")
 
     def elapsed(username: str) -> float:
@@ -170,3 +180,80 @@ def test_the_absent_account_hash_is_stable_and_unmatchable(session: Session) -> 
 
     assert _absent_password_hash() == _absent_password_hash()  # cached
     assert not us.verify_password("", _absent_password_hash())
+
+
+def test_the_login_page_is_never_cached(anon_client: TestClient) -> None:
+    """It carries a per-session token, so a cached copy is a stale one."""
+    assert anon_client.get("/login").headers["cache-control"] == "no-store"
+
+
+def test_every_login_rerender_is_uncached(
+    session: Session, anon_client: TestClient
+) -> None:
+    """The 400, 401 and 429 pages carry a token too, and the same hazard."""
+    _seed_admin(session)
+    no_token = anon_client.post(
+        "/login", data={"username": "admin", "password": "admin-password"}
+    )
+    assert no_token.status_code == 400
+    assert no_token.headers["cache-control"] == "no-store"
+    wrong = web_login(anon_client, "admin", "wrong-password")
+    assert wrong.status_code == 401
+    assert wrong.headers["cache-control"] == "no-store"
+
+
+def test_signing_out_and_going_back_does_not_strand_the_form(
+    session: Session, anon_client: TestClient
+) -> None:
+    """The bug no-store prevents: a Back-button login form holding a dead token."""
+    _seed_admin(session)
+    web_login(anon_client, "admin", "admin-password")
+    web_logout(anon_client)
+    # Whatever the browser does with the page, a fresh fetch signs in first try.
+    assert web_login(anon_client, "admin", "admin-password").status_code == 303
+
+
+def _prefixed_client(engine, prefix: str):  # type: ignore[no-untyped-def]
+    """A client whose requests arrive with an ASGI ``root_path``, as they do
+    behind a proxy that mounts ShelfOS under a prefix."""
+    from fastapi.testclient import TestClient
+
+    from tests.conftest import _build_app
+
+    return TestClient(_build_app(engine), root_path=prefix)
+
+
+def test_the_docs_follow_a_root_path_prefix(session: Session, engine) -> None:  # type: ignore[no-untyped-def]
+    """Behind a proxy that mounts ShelfOS under a prefix, the browser must be
+    told the prefixed schema URL — the app's own view of the path is not it."""
+    _seed_admin(session)
+    with _prefixed_client(engine, "/shelfos") as client:
+        web_login(client, "admin", "admin-password")
+        assert "url: '/shelfos/openapi.json'" in client.get("/docs").text
+        assert "/shelfos/openapi.json" in client.get("/redoc").text
+
+
+def test_the_schema_names_the_root_path_as_its_server(
+    session: Session,
+    engine,  # type: ignore[no-untyped-def]
+    anon_client: TestClient,
+) -> None:
+    """Or "Try it out" would post to a URL missing the prefix."""
+    _seed_admin(session)
+    with _prefixed_client(engine, "/shelfos") as client:
+        web_login(client, "admin", "admin-password")
+        schema = client.get("/openapi.json").json()
+    assert schema["servers"][0]["url"] == "/shelfos"
+
+    # Unprefixed, nothing is added.
+    web_login(anon_client, "admin", "admin-password")
+    plain = anon_client.get("/openapi.json").json()
+    assert "servers" not in plain or plain["servers"] == []
+
+
+def test_the_docs_use_plain_paths_without_a_prefix(
+    session: Session, anon_client: TestClient
+) -> None:
+    _seed_admin(session)
+    web_login(anon_client, "admin", "admin-password")
+    assert "url: '/openapi.json'" in anon_client.get("/docs").text

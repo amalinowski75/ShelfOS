@@ -18,13 +18,18 @@ one was a door left open for no reason.
 - **The API docs need an admin now.** `/docs`, `/redoc` and `/openapi.json`
   were public: an inventory of every endpoint, its parameters and its shapes,
   which is as useful to someone looking for a way in as to whoever runs the
-  instance. They sit behind the same session every other page does.
+  instance. They sit behind the same session every other page does, and still
+  follow an ASGI `root_path`, so they keep working under a proxy that mounts
+  ShelfOS at a prefix.
 - **The sign-in and sign-out forms carry a CSRF token.** They were the two
   plain HTML posts, with no header for the existing check to look at. A forged
   sign-out is a small thing to be able to do to someone — dropped work, and a
   login form to phish at the end of it — and a forged sign-in lands them in an
   account the attacker controls. Signing in also starts a fresh session rather
-  than adopting the one the browser arrived with (session fixation).
+  than adopting the one the browser arrived with (session fixation). The login
+  page is sent `no-store`: it now carries a per-session token, so a copy the
+  browser kept is a stale one, and a Back-button form would otherwise reject
+  the first sign-in typed into it.
 - **A sign-in takes the same time whether or not the username exists.** A
   wrong password for a real account cost a bcrypt round and a guess at a name
   nobody had cost none, and the difference is readable off the response time —

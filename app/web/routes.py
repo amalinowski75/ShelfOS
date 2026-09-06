@@ -156,13 +156,33 @@ def require_web_admin(
     return user
 
 
+def _login_page(
+    request: Request, *, error: str | None = None, status_code: int = 200
+) -> HTMLResponse:
+    """Render the sign-in form, with a token, and never from a cache.
+
+    The page carries a per-session secret now, so a cached copy is a stale one:
+    sign out and press Back and the browser would re-show the form holding the
+    token of a session that no longer exists, so the first sign-in attempt
+    after it would be rejected as expired and have to be typed again. ``no-store``
+    also keeps the token out of any cache between here and the browser.
+    """
+    # Minting the token means an anonymous visitor gets a session cookie here.
+    # That is what a form CSRF token needs: somewhere to be remembered that the
+    # attacker's page cannot read.
+    ensure_csrf_token(request)
+    return templates.TemplateResponse(
+        request,
+        "login.html",
+        {"error": error} if error else {},
+        status_code=status_code,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.get("/login", response_class=HTMLResponse)
 def login_form(request: Request) -> HTMLResponse:
-    # Mint the token the form posts back, which means an anonymous visitor gets
-    # a session cookie here. That is what a form CSRF token needs: somewhere to
-    # be remembered that the attacker's page cannot read.
-    ensure_csrf_token(request)
-    return templates.TemplateResponse(request, "login.html", {})
+    return _login_page(request)
 
 
 @router.post("/login", response_model=None)
@@ -178,11 +198,9 @@ def login_submit(
     # must not spend the address's allowance. Nothing is bypassed by leaving
     # the token out — no password is checked either.
     if not form_csrf_ok(request, csrf_token):
-        ensure_csrf_token(request)
-        return templates.TemplateResponse(
+        return _login_page(
             request,
-            "login.html",
-            {"error": "That sign-in form has expired. Please try again."},
+            error="That sign-in form has expired. Please try again.",
             status_code=status.HTTP_400_BAD_REQUEST,
         )
     attempt = attempt_login(
@@ -192,22 +210,19 @@ def login_submit(
     )
     if attempt.retry_after is not None:
         minutes = max(1, math.ceil(attempt.retry_after / 60))
-        return templates.TemplateResponse(
+        page = _login_page(
             request,
-            "login.html",
-            {
-                "error": "Too many failed sign-in attempts. "
-                f"Try again in {minutes} minute{'s' if minutes != 1 else ''}."
-            },
+            error="Too many failed sign-in attempts. "
+            f"Try again in {minutes} minute{'s' if minutes != 1 else ''}.",
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            headers={"Retry-After": str(attempt.retry_after)},
         )
+        page.headers["Retry-After"] = str(attempt.retry_after)
+        return page
     user = attempt.user
     if user is None:
-        return templates.TemplateResponse(
+        return _login_page(
             request,
-            "login.html",
-            {"error": "Invalid username or password."},
+            error="Invalid username or password.",
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
     # Start a fresh session rather than adopting the pre-login one: whoever
@@ -230,24 +245,55 @@ def login_submit(
 _OPENAPI_PATH = "/openapi.json"
 
 
+def _root_path(request: Request) -> str:
+    """The prefix the app is mounted under, if any, with no trailing slash."""
+    root_path = request.scope.get("root_path", "")
+    return str(root_path).rstrip("/")
+
+
+def _schema_url(request: Request) -> str:
+    """Where the docs pages should fetch the schema from.
+
+    Behind a proxy that mounts ShelfOS under a prefix (uvicorn's ``--root-path``,
+    or a proxy setting the ASGI ``root_path``), the app sees ``/openapi.json``
+    but the browser must ask for ``/<prefix>/openapi.json``. FastAPI's own docs
+    routes do exactly this; taking them over means taking this over with them,
+    or the page loads and then reports that it cannot find the definition.
+    """
+    return _root_path(request) + _OPENAPI_PATH
+
+
 @router.get(_OPENAPI_PATH, include_in_schema=False)
 def openapi_schema(
     request: Request, user: User = Depends(require_web_admin)
 ) -> JSONResponse:
     """The OpenAPI schema, for the docs pages below (admin)."""
-    return JSONResponse(request.app.openapi())
+    schema = request.app.openapi()
+    root_path = _root_path(request)
+    if root_path:
+        # Without this the endpoints are documented at the paths the *app* sees,
+        # so "Try it out" posts to a URL that is missing the prefix. Mirrors
+        # FastAPI's ``root_path_in_servers``.
+        servers = schema.get("servers", [])
+        if root_path not in {server.get("url") for server in servers}:
+            schema = {**schema, "servers": [{"url": root_path}, *servers]}
+    return JSONResponse(schema)
 
 
 @router.get("/docs", include_in_schema=False)
-def swagger_ui(user: User = Depends(require_web_admin)) -> HTMLResponse:
+def swagger_ui(
+    request: Request, user: User = Depends(require_web_admin)
+) -> HTMLResponse:
     """Swagger UI over the schema above (admin)."""
-    return get_swagger_ui_html(openapi_url=_OPENAPI_PATH, title="ShelfOS API")
+    return get_swagger_ui_html(
+        openapi_url=_schema_url(request), title="ShelfOS API - Swagger UI"
+    )
 
 
 @router.get("/redoc", include_in_schema=False)
-def redoc_ui(user: User = Depends(require_web_admin)) -> HTMLResponse:
+def redoc_ui(request: Request, user: User = Depends(require_web_admin)) -> HTMLResponse:
     """ReDoc over the same schema (admin)."""
-    return get_redoc_html(openapi_url=_OPENAPI_PATH, title="ShelfOS API")
+    return get_redoc_html(openapi_url=_schema_url(request), title="ShelfOS API - ReDoc")
 
 
 @router.post("/logout")
@@ -783,6 +829,7 @@ def invoice_detail(
     pending_import_subtotal = sum(
         (line.unit_price * line.quantity for line in pending_import), Decimal(0)
     )
+
     # "You may already have this part", per staged line. An invoice line is staged
     # because nothing matched it on manufacturer + MPN — but a component carrying
     # the same NUMBER may still be sitting in the inventory under a maker spelled
