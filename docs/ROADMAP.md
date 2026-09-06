@@ -31,9 +31,9 @@ lint + type-check.
 - Admin delete endpoint (§20).
 
 ## Phase 5 — Web UI
-- Jinja2 + Tabulator + a token-based CSS design system. (Written against
-  Pico.css and HTMX; Pico was replaced by `app/web/static/app.css`, and HTMX
-  is still fetched on every page though no template uses it.)
+- Jinja2 + Tabulator + a token-based CSS design system. (Planned against
+  Pico.css and HTMX; neither survived — Pico was replaced by
+  `app/web/static/app.css`, and HTMX was never used and has been removed.)
 - Generic vs type-specific component views (§11), details view (§12),
   add/take stock dialogs (§14–15), hover row actions.
 
