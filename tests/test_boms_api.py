@@ -58,13 +58,12 @@ def test_report_has_summary_and_lines(client: TestClient) -> None:
     bom_id = _upload(client).json()["id"]
     report = client.get(f"/api/boms/{bom_id}/report").json()
     assert set(report["summary"]) >= {
-        "lines", "ok", "short", "out", "unresolved", "resolved", "buildable",
+        "lines", "ok", "short", "out", "unresolved", "buildable",
     }
     assert len(report["lines"]) == report["summary"]["lines"]
     # A freshly uploaded BOM has been assigned nothing, so nothing is resolved —
     # whatever its MPNs happen to match.
     assert report["summary"]["unresolved"] == report["summary"]["lines"]
-    assert report["summary"]["resolved"] is False
 
 
 def test_assign_obvious_settles_the_unambiguous_lines(client: TestClient) -> None:

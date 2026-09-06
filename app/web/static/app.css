@@ -913,7 +913,6 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, .82); }
    while there is something unresolved, so it has no empty state. */
 .bom-summary-actions {
   display: flex;
-  align-items: center;
   gap: 8px;
   margin: 10px 0 0;
 }

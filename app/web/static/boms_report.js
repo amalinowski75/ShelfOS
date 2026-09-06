@@ -40,11 +40,15 @@ function bomStatusFormatter(cell) {
   return badge;
 }
 
-// "—" means "nothing was looked up", not "zero": a line with no MPN has no match to
-// count. An ASSIGNED line always has one, whatever its MPN says — so it shows a
-// real number, including 0.
+// "—" means "we are not saying", not "zero". A resolved line shows a real number,
+// including 0: an assignment IS the lookup. An unresolved one shows the dash even
+// though the feed carries a figure, because that figure is the sum over every
+// component sharing the MPN — across manufacturers — and this whole change exists
+// to stop the page passing that off as the line's stock. The per-candidate numbers
+// are still in `matched[]`, where the picker shows them beside their part.
 function bomStockFormatter(cell) {
   const row = cell.getRow().getData();
+  if (!row.resolved) return "—";
   return row.mpn || row.assigned ? String(cell.getValue()) : "—";
 }
 
@@ -130,8 +134,7 @@ function renderBomSummary(summary) {
             "Assign the obvious ones</button>"
           : "") +
         '<button type="button" class="btn btn-ghost btn-sm" data-act="show-unresolved">' +
-        "Show only unresolved</button>" +
-        '<span class="muted" id="bom-assign-status"></span></p>'
+        "Show only unresolved</button></p>"
       : "");
 }
 
@@ -278,6 +281,10 @@ function bomBoardsRemember(bomId, boards) {
   }
 }
 
+// Returns whether the report was actually re-read. Callers that just wrote
+// something need to know: writing "Assigned 3 lines" in the plain style under a
+// summary that says "Could not load the report" tells the user the opposite of
+// what happened.
 async function loadReport(table, bomId) {
   let report;
   const boards = bomBoardsValue(bomId);
@@ -289,9 +296,19 @@ async function loadReport(table, bomId) {
     const el = document.getElementById("bom-summary");
     if (el) el.innerHTML = '<p class="error">Could not load the report.</p>';
     await table.setData([]); // clear the "No lines" placeholder — this is an error
-    return;
+    return false;
   }
   renderBomSummary(report.summary);
+  // "Show only unresolved" can outlive what it filtered for: settle every line
+  // and the table would show its "No lines" placeholder under a summary reporting
+  // stock, with the button that set the filter no longer on the page to explain
+  // it. Only ever clears the filter this page set, and only once it is empty.
+  if (
+    !Number(report.summary?.unresolved) &&
+    table.getHeaderFilterValue?.("status") === "unresolved"
+  ) {
+    table.setHeaderFilterValue("status", "");
+  }
   // Assigning a component, ticking Ordered off a refresh, adding to inventory — all
   // of them reload this table, and setData scrolls it back to the top. On a BOM of
   // any size that means hunting for the line you were just on, every single time.
@@ -302,6 +319,7 @@ async function loadReport(table, bomId) {
   await table.setData(report.lines);
   frameTable(table);
   if (holder && scrollTop) restoreScroll(holder, scrollTop);
+  return true;
 }
 
 // Tabulator renders rows asynchronously, so the height the scroll needs may not
@@ -431,7 +449,13 @@ async function bomAssignObvious(bomId, button, onDone) {
   }
   // Reload first: "how many are left" is a number only the fresh report knows,
   // and the button this was clicked on may not survive the redraw.
-  if (onDone) await onDone();
+  const reloaded = onDone ? await onDone() : true;
+  if (!reloaded) {
+    // The assignments were stored; it is the view that failed. Say both, or the
+    // user re-runs a write that already happened against a table that is empty.
+    bomSay(`Assigned ${assigned} line(s), but the report could not be re-read.`, true);
+    return;
+  }
   bomSay(
     assigned
       ? `Assigned ${assigned} line(s) by MPN. The rest need a person.`
@@ -573,8 +597,11 @@ if (bomTableEl) {
             headers: { "X-CSRF-Token": csrfToken },
           });
           if (resp.ok) {
-            await loadReport(table, bomId);
-            say("Lines rebuilt from the stored CSV.");
+            if (await loadReport(table, bomId)) {
+              say("Lines rebuilt from the stored CSV.");
+            } else {
+              say("Lines rebuilt, but the report could not be re-read.", true);
+            }
           } else {
             say(await errorMessage(resp), true);
           }

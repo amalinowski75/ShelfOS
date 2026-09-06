@@ -11,6 +11,7 @@ from __future__ import annotations
 import csv
 import io
 import re
+from collections import Counter
 from dataclasses import dataclass
 from typing import cast
 
@@ -373,38 +374,77 @@ def assign_all_obvious(session: Session, bom_id: int, *, user_id: int) -> int:
     person — this is the machine clearing the boring majority so the human is left
     with the handful that actually need judging, not a best-guess matcher.
 
-    A manufacturer either side leaves blank is not a contradiction; that is
-    :func:`manufacturer_service.agrees_with`'s three-state rule, the same one the
-    bag scan and the invoice import use, and it matters here because a BOM exported
-    without a manufacturer column would otherwise settle nothing at all.
+    A manufacturer either side leaves blank is not a contradiction. That is
+    :func:`manufacturer_service.agrees_with`'s three-state rule, and it matters
+    here because a component that arrived on a Farnell invoice has no maker stored
+    at all, so reading that silence as a contradiction would settle nothing for a
+    whole class of perfectly good parts. Note this is a WEAKER test than the
+    invoice import's auto-match, which requires maker and MPN to agree outright and
+    falls back to the unique MPN only for a line that names no maker: here the sole
+    candidate is the only candidate, and the assignment it makes is visible in the
+    Assigned column and undone with one click, which the invoice's is not.
 
-    Never touches a line that already has an assignment: re-running this must not
-    quietly overwrite a decision someone made by hand.
+    Never overwrites a decision someone made by hand — but a decision whose part
+    has since been retired is not one this can leave alone: the line reads as
+    unresolved, so a button that then refuses to settle it would be lying about
+    what it does.
     """
     get_bom(session, bom_id)
-    settled = {a.references for a in list_assignments(session, bom_id)}
+    lines = get_bom_lines(session, bom_id)
+    existing = {a.references: a for a in list_assignments(session, bom_id)}
+    live_component_ids = {
+        cast(int, c.id)
+        for c in _components_by_id(
+            session, {a.component_id for a in existing.values()}
+        )
+        if c.deleted_at is None
+    }
+    # Assignments are keyed by designator group, so two lines sharing one are not
+    # two lines as far as an assignment is concerned: settling the first would make
+    # the second read as resolved to a part its own MPN was never looked up
+    # against. A repeated group is a question for a person (and, until the parser
+    # refuses to produce one, a reason to look at the CSV).
+    repeated = {
+        refs for refs, n in Counter(ln.references for ln in lines).items() if n > 1
+    }
     count = 0
-    for line in get_bom_lines(session, bom_id):
-        # `settled` grows as we go: two lines can share a designator group, and the
-        # (bom_id, references) unique constraint would fail the whole commit.
-        if not line.mpn or line.references in settled:
+    for line in lines:
+        if not line.mpn or line.references in repeated:
             continue
+        assignment = existing.get(line.references)
+        if assignment is not None and assignment.component_id in live_component_ids:
+            continue  # already settled, by hand or by an earlier run
         candidates = cs.find_components_by_mpn(session, line.mpn)
         if len(candidates) != 1:
             continue
         component = candidates[0]
-        stated = mfs.canonical_name(session, line.manufacturer)
-        if mfs.agrees_with(stated, component.manufacturer) is False:
+        # Both sides through canonical_name: an alias recorded after a component
+        # was created never rewrites what that component stores, so folding only
+        # the BOM's spelling would read two spellings of one company as two
+        # companies — and skip the line.
+        if (
+            mfs.agrees_with(
+                mfs.canonical_name(session, line.manufacturer),
+                mfs.canonical_name(session, component.manufacturer),
+            )
+            is False
+        ):
             continue
-        session.add(
-            BomLineAssignment(
+        if assignment is None:
+            assignment = BomLineAssignment(
                 bom_id=bom_id,
                 references=line.references,
                 component_id=cast(int, component.id),
                 created_by=user_id,
             )
-        )
-        settled.add(line.references)
+            existing[line.references] = assignment
+        else:
+            # Replacing a retired part's assignment, exactly as assign_component
+            # does — the unique (bom_id, references) constraint allows no second row.
+            assignment.component_id = cast(int, component.id)
+            assignment.created_by = user_id
+        session.add(assignment)
+        live_component_ids.add(cast(int, component.id))
         count += 1
     if count:
         session.commit()
@@ -618,6 +658,9 @@ def build_bom_report(
         session, {ln.category for ln in lines if ln.category in _VALUE_CATEGORIES}
     )
 
+    # "unresolved" is both a status and the number the page acts on: it is what
+    # "Assign the obvious ones" drives to zero, and what a bulk take will demand
+    # be zero. It reaches `summary` through the `**counts` splat below.
     counts = {"ok": 0, "short": 0, "out": 0, "unresolved": 0}
     buildable: int | None = None
     report_lines: list[dict[str, object]] = []
@@ -752,11 +795,6 @@ def build_bom_report(
             "lines": len(lines),
             **counts,
             "buildable": buildable,
-            # Equal to counts["unresolved"] by construction, and named again here
-            # because it is the number the page acts on: it is what "Assign the
-            # obvious ones" drives to zero, and what a bulk take demands be zero.
-            "unresolved": counts["unresolved"],
-            "resolved": bool(lines) and counts["unresolved"] == 0,
             "boards": boards,  # echoed so the UI can say "N of M requested"
         },
         "lines": report_lines,

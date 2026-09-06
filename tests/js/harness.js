@@ -137,6 +137,10 @@ export function loadPage(
     // hand, so both arrive the same way.
     setHeaderFilterValue(field, value) {
       window.Tabulator.headerFilterSet.push({ field, value });
+      window.Tabulator.headerFilterValues[field] = value;
+    }
+    getHeaderFilterValue(field) {
+      return window.Tabulator.headerFilterValues[field];
     }
     clearHeaderFilter() {
       window.Tabulator.filters = [];
@@ -154,6 +158,8 @@ export function loadPage(
     // Header filters the PAGE set (as opposed to `filters`, which a test sets
     // to model someone typing in a header).
     static headerFilterSet = [];
+    // What each header filter currently holds, whoever set it.
+    static headerFilterValues = {};
     static refilters = 0;
     static columns = [];
     // Every table built on the page, in construction order.

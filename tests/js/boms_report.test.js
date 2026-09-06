@@ -44,19 +44,26 @@ describe("boms_report.js — rendering", () => {
     expect(unresolved).toContain("unresolved");
   });
 
-  it("renders a stock dash for a line without an MPN", () => {
-    const { window } = loadPage(bomReportFixture(), SCRIPTS);
-    expect(window.bomStockFormatter(fakeCell(0, { mpn: null }))).toBe("—");
-    expect(window.bomStockFormatter(fakeCell(12, { mpn: "R-1" }))).toBe("12");
-  });
-
-  it("shows a real stock figure for an assigned line, MPN or not", () => {
-    // The dash means "nothing was looked up"; an assignment IS the lookup, so its
+  it("shows a real stock figure for a resolved line, MPN or not", () => {
+    // The dash means "we are not saying"; an assignment IS the lookup, so its
     // stock is a number — including a genuine 0.
     const { window } = loadPage(bomReportFixture(), SCRIPTS);
     const assigned = { component_id: 8, mpn: "GRM188" };
-    expect(window.bomStockFormatter(fakeCell(900, { mpn: null, assigned }))).toBe("900");
-    expect(window.bomStockFormatter(fakeCell(0, { mpn: null, assigned }))).toBe("0");
+    const row = { mpn: null, assigned, resolved: true };
+    expect(window.bomStockFormatter(fakeCell(900, row))).toBe("900");
+    expect(window.bomStockFormatter(fakeCell(0, row))).toBe("0");
+    expect(window.bomStockFormatter(fakeCell(12, { mpn: "R-1", resolved: true }))).toBe(
+      "12",
+    );
+  });
+
+  it("refuses to print a stock figure for an unresolved line", () => {
+    // The feed's number is the sum over every component sharing the MPN, across
+    // manufacturers. Printing it beside an "unresolved" badge is the claim the
+    // whole status change exists to stop — and the row is not even clickable.
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    expect(window.bomStockFormatter(fakeCell(40, { mpn: "MCP2200" }))).toBe("—");
+    expect(window.bomStockFormatter(fakeCell(0, { mpn: null }))).toBe("—");
   });
 
   it("links each substitute (single line) to its component", () => {
@@ -820,5 +827,84 @@ describe("boms_report.js — resolving the unresolved lines", () => {
     expect(window.Tabulator.headerFilterSet).toEqual([
       { field: "status", value: "unresolved" },
     ]);
+  });
+});
+
+describe("boms_report.js — when the reload after a write fails", () => {
+  const summaryWith = (unresolved) => ({
+    buildable: 0, ok: 1, short: 0, out: 0, unresolved, boards: 1,
+  });
+
+  it("says the assignments were stored even though the report is not there", async () => {
+    // Silence, or a plain "Assigned 3" under a "Could not load the report"
+    // summary, both invite the user to run a write that already happened.
+    const fetchImpl = (url) =>
+      url.endsWith("/assign-obvious")
+        ? Promise.resolve({ ok: true, json: async () => ({ assigned: 3 }) })
+        : Promise.resolve({ ok: false, status: 500, json: async () => ({}) });
+    const { window, document } = loadPage(bomReportFixture(), SCRIPTS, { fetchImpl });
+    window.renderBomSummary(summaryWith(4));
+    document.querySelector('[data-act="assign-obvious"]').click();
+    await tick();
+    await tick();
+
+    const status = document.getElementById("bom-status");
+    expect(status.className).toBe("error");
+    expect(status.textContent).toContain("Assigned 3");
+    expect(status.textContent).toContain("could not be re-read");
+  });
+
+  it("tells loadReport's callers whether the report actually arrived", async () => {
+    const ok = { summary: summaryWith(0), lines: [] };
+    const { window } = loadPage(bomReportFixture(), SCRIPTS, {
+      fetchImpl: () => Promise.resolve({ ok: true, json: async () => ok }),
+    });
+    const table = { setData: vi.fn(() => Promise.resolve()) };
+    expect(await window.loadReport(table, "7")).toBe(true);
+
+    const { window: w2 } = loadPage(bomReportFixture(), SCRIPTS, {
+      fetchImpl: () => Promise.resolve({ ok: false, json: async () => ({}) }),
+    });
+    expect(await w2.loadReport({ setData: vi.fn(() => Promise.resolve()) }, "7")).toBe(
+      false,
+    );
+  });
+
+  it("clears its own unresolved filter once nothing is unresolved", async () => {
+    // Otherwise the table shows "No lines" under a summary reporting stock, with
+    // the button that set the filter no longer on the page to explain it.
+    const report = { summary: summaryWith(0), lines: [{ references: "R1" }] };
+    const { window } = loadPage(bomReportFixture(), SCRIPTS, {
+      fetchImpl: () => Promise.resolve({ ok: true, json: async () => report }),
+    });
+    window.Tabulator.headerFilterValues.status = "unresolved";
+    const table = window.Tabulator.instances[0];
+    table.setData = vi.fn(() => Promise.resolve());
+    await window.loadReport(table, "7");
+    expect(window.Tabulator.headerFilterValues.status).toBe("");
+  });
+
+  it("leaves a filter alone while lines are still unresolved", async () => {
+    const report = { summary: summaryWith(2), lines: [{ references: "R1" }] };
+    const { window } = loadPage(bomReportFixture(), SCRIPTS, {
+      fetchImpl: () => Promise.resolve({ ok: true, json: async () => report }),
+    });
+    window.Tabulator.headerFilterValues.status = "unresolved";
+    const table = window.Tabulator.instances[0];
+    table.setData = vi.fn(() => Promise.resolve());
+    await window.loadReport(table, "7");
+    expect(window.Tabulator.headerFilterValues.status).toBe("unresolved");
+  });
+
+  it("does not touch a filter the user set to something else", async () => {
+    const report = { summary: summaryWith(0), lines: [] };
+    const { window } = loadPage(bomReportFixture(), SCRIPTS, {
+      fetchImpl: () => Promise.resolve({ ok: true, json: async () => report }),
+    });
+    window.Tabulator.headerFilterValues.status = "short";
+    const table = window.Tabulator.instances[0];
+    table.setData = vi.fn(() => Promise.resolve());
+    await window.loadReport(table, "7");
+    expect(window.Tabulator.headerFilterValues.status).toBe("short");
   });
 });
