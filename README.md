@@ -67,7 +67,9 @@ The server-rendered web UI's browser scripts have their own test suite
 npm test
 ```
 
-Interactive API docs are at `/docs` once it is running.
+Interactive API docs are at `/docs` (and `/redoc`) once it is running, signed in
+as an admin — they and the `/openapi.json` they read list every endpoint and its
+shapes, which is as useful to someone probing the instance as to whoever runs it.
 
 ### Authentication
 

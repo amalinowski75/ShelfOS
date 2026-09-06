@@ -52,6 +52,41 @@ def _build_app(engine: Engine):  # type: ignore[no-untyped-def]
     return app
 
 
+def web_login(client, username: str, password: str):  # type: ignore[no-untyped-def]
+    """Sign in through the HTML form, as a browser does.
+
+    The form carries a CSRF token minted by GET /login, so a POST that skipped
+    the page is refused — which is the point of the check, and the reason every
+    test that signs in has to fetch the page first.
+    """
+    import re
+
+    page = client.get("/login")
+    match = re.search(r'name="csrf-token" content="([^"]*)"', page.text)
+    assert match and match.group(1), "login page did not expose a CSRF token"
+    return client.post(
+        "/login",
+        data={
+            "username": username,
+            "password": password,
+            "csrf_token": match.group(1),
+        },
+        follow_redirects=False,
+    )
+
+
+def web_logout(client):  # type: ignore[no-untyped-def]
+    """Sign out through the form, token and all (see :func:`web_login`)."""
+    import re
+
+    page = client.get("/")
+    match = re.search(r'name="csrf-token" content="([^"]*)"', page.text)
+    assert match and match.group(1), "page did not expose a CSRF token"
+    return client.post(
+        "/logout", data={"csrf_token": match.group(1)}, follow_redirects=False
+    )
+
+
 @pytest.fixture
 def anon_client(engine: Engine) -> Iterator[object]:
     """An unauthenticated TestClient bound to the in-memory engine."""

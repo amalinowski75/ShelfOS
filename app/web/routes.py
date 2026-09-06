@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session
 
@@ -23,6 +24,8 @@ from app import config
 from app.api.deps import get_session
 from app.auth.deps import (
     bind_session_to_credentials,
+    ensure_csrf_token,
+    form_csrf_ok,
     get_optional_user,
     issue_csrf_token,
 )
@@ -155,6 +158,10 @@ def require_web_admin(
 
 @router.get("/login", response_class=HTMLResponse)
 def login_form(request: Request) -> HTMLResponse:
+    # Mint the token the form posts back, which means an anonymous visitor gets
+    # a session cookie here. That is what a form CSRF token needs: somewhere to
+    # be remembered that the attacker's page cannot read.
+    ensure_csrf_token(request)
     return templates.TemplateResponse(request, "login.html", {})
 
 
@@ -163,8 +170,21 @@ def login_submit(
     request: Request,
     username: str = Form(),
     password: str = Form(),
+    csrf_token: str = Form(default=""),
     session: Session = Depends(get_session),
 ) -> HTMLResponse | RedirectResponse:
+    # Before the throttle, and before any password work: a post without our
+    # token is not a wrong guess but a form that did not come from us, so it
+    # must not spend the address's allowance. Nothing is bypassed by leaving
+    # the token out — no password is checked either.
+    if not form_csrf_ok(request, csrf_token):
+        ensure_csrf_token(request)
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"error": "That sign-in form has expired. Please try again."},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
     attempt = attempt_login(
         request,
         lambda: us.authenticate(session, username, password),
@@ -190,14 +210,59 @@ def login_submit(
             {"error": "Invalid username or password."},
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
+    # Start a fresh session rather than adopting the pre-login one: whoever
+    # handed this browser the cookie it arrived with must not still know the
+    # value of the one that is now signed in (session fixation).
+    request.session.clear()
     request.session["user_id"] = user.id
     bind_session_to_credentials(request, user)
     issue_csrf_token(request)
     return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
 
 
+# --- API documentation (admin only) -----------------------------------------
+# FastAPI's own /docs, /redoc and /openapi.json are switched off in main.py and
+# served here instead, so they sit behind the same session every other page
+# does. The schema lists every endpoint, its parameters and its shapes: useful
+# to whoever runs the instance, and equally useful to whoever is looking for a
+# way into it.
+
+_OPENAPI_PATH = "/openapi.json"
+
+
+@router.get(_OPENAPI_PATH, include_in_schema=False)
+def openapi_schema(
+    request: Request, user: User = Depends(require_web_admin)
+) -> JSONResponse:
+    """The OpenAPI schema, for the docs pages below (admin)."""
+    return JSONResponse(request.app.openapi())
+
+
+@router.get("/docs", include_in_schema=False)
+def swagger_ui(user: User = Depends(require_web_admin)) -> HTMLResponse:
+    """Swagger UI over the schema above (admin)."""
+    return get_swagger_ui_html(openapi_url=_OPENAPI_PATH, title="ShelfOS API")
+
+
+@router.get("/redoc", include_in_schema=False)
+def redoc_ui(user: User = Depends(require_web_admin)) -> HTMLResponse:
+    """ReDoc over the same schema (admin)."""
+    return get_redoc_html(openapi_url=_OPENAPI_PATH, title="ShelfOS API")
+
+
 @router.post("/logout")
-def logout(request: Request) -> RedirectResponse:
+def logout(request: Request, csrf_token: str = Form(default="")) -> RedirectResponse:
+    """Sign out, if the request came from our own page.
+
+    Signing someone out is a small thing to be able to do to them from another
+    site, but it is not nothing — dropped work, and a login form to phish at
+    the end of it — and there is no reason to leave it possible.
+    """
+    if not form_csrf_ok(request, csrf_token):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="missing or invalid CSRF token",
+        )
     request.session.clear()
     return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
 

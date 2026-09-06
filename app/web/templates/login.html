@@ -11,6 +11,7 @@
       </div>
       {% if error %}<p class="error">{{ error }}</p>{% endif %}
       <form action="/login" method="post">
+        <input type="hidden" name="csrf_token" value="{{ request.session.get('csrf_token', '') }}" />
         <div class="field">
           <label>Username</label>
           <input class="control" type="text" name="username" autocomplete="username" required autofocus />

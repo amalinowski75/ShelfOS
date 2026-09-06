@@ -154,6 +154,32 @@ def issue_csrf_token(request: Request) -> str:
     return token
 
 
+def ensure_csrf_token(request: Request) -> str:
+    """Return the session's CSRF token, minting one if it has none.
+
+    For pages served *before* anyone is signed in — the login form — which
+    still need a token to post back, and so need a session to keep it in.
+    """
+    existing = request.session.get(_CSRF_SESSION_KEY)
+    if isinstance(existing, str) and existing:
+        return existing
+    return issue_csrf_token(request)
+
+
+def form_csrf_ok(request: Request, provided: str | None) -> bool:
+    """Whether a form posted back the CSRF token held in its session.
+
+    The header check in :func:`require_csrf` covers the JSON API, which the
+    browser reaches with ``fetch``. These are the two plain HTML form posts —
+    sign in and sign out — where there is no header to set, so the token
+    travels in a hidden field instead.
+    """
+    expected = request.session.get(_CSRF_SESSION_KEY)
+    if not isinstance(expected, str) or not expected:
+        return False
+    return secrets.compare_digest(provided or "", expected)
+
+
 def current_user_id(user: User = Depends(get_current_user)) -> int:
     """Return the authenticated user's id (always set after persistence)."""
     assert user.id is not None

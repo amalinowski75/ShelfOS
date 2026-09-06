@@ -216,7 +216,20 @@ def create_app(*, create_tables: bool = True) -> FastAPI:
             _bootstrap()
         yield
 
-    app = FastAPI(title="ShelfOS", version="1.0.0", lifespan=lifespan)
+    # The interactive docs and the schema they read are served by
+    # ``app.web.routes`` instead, behind the admin session — an inventory of
+    # every endpoint and its shape is a map for someone probing the instance,
+    # and it costs an admin nothing to sign in first. Disabled here rather than
+    # guarded because FastAPI builds these routes at construction, with no
+    # dependency of ours on them.
+    app = FastAPI(
+        title="ShelfOS",
+        version="1.0.0",
+        lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
     # Failed sign-in counters live on the app, not the module, so every app
     # instance (each test's included) starts with a clean slate.
     app.state.login_throttle = LoginThrottle(
