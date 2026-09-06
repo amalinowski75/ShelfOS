@@ -2683,18 +2683,37 @@ def _take_ready(client: TestClient, tmp_path, monkeypatch):  # type: ignore[no-u
     }
 
 
-def test_take_page_shows_what_came_off_which_shelf(
+def test_take_page_carries_its_header_and_the_table_mount(
     client: TestClient, tmp_path, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
     take_id = _take_ready(client, tmp_path, monkeypatch)["take_id"]
 
     html = client.get(f"/bom-takes/{take_id}").text
 
+    # The header is server-rendered; the lines come from the feed below.
     assert "Kontroler CNC" in html  # the snapshot's name, and the gathering path
-    assert "Rezystory" in html
-    assert "PART-A" in html
-    assert "&times;6" in html or "×6" in html  # 2 per board × 3 boards
+    assert f'data-take-id="{take_id}"' in html
+    assert "bom_take_lines.js" in html
     assert 'id="take-undo"' in html
+
+
+def test_take_lines_feed_says_what_came_off_which_shelf(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    take_id = _take_ready(client, tmp_path, monkeypatch)["take_id"]
+
+    rows = client.get(f"/web/api/bom-takes/{take_id}/lines").json()
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["references"] == "U1"
+    assert row["mpn"] == "PART-A"
+    assert (row["requested"], row["taken"], row["shortfall"]) == (6, 6, 0)
+    assert row["from"].endswith("Rezystory ×6")  # 2 per board × 3 boards
+
+
+def test_take_lines_feed_on_an_unknown_take_is_404(client: TestClient) -> None:
+    assert client.get("/web/api/bom-takes/9999/lines").status_code == 404
 
 
 def test_the_take_dialogs_carry_the_body_wrapper(
@@ -2734,12 +2753,16 @@ def test_a_read_only_account_sees_the_record_but_no_undo(
     take_id = _take_ready(client, tmp_path, monkeypatch)["take_id"]
     token = _non_admin_token(client, role="read-only", username="viewer")
 
-    html = anon_client.get(
-        f"/bom-takes/{take_id}", headers={"Authorization": f"Bearer {token}"}
-    ).text
+    headers = {"Authorization": f"Bearer {token}"}
+    html = anon_client.get(f"/bom-takes/{take_id}", headers=headers).text
 
-    assert "Rezystory" in html
-    assert 'id="take-undo"' not in html
+    assert "Kontroler CNC" in html  # the record itself is readable…
+    assert 'id="take-undo"' not in html  # …but there is nothing to press
+    # Including its lines: reading a take is not a write.
+    rows = anon_client.get(
+        f"/web/api/bom-takes/{take_id}/lines", headers=headers
+    ).json()
+    assert rows[0]["from"].endswith("Rezystory ×6")
 
 
 def test_the_take_survives_its_gathering_location_being_deleted(
@@ -2761,10 +2784,11 @@ def test_the_take_survives_its_gathering_location_being_deleted(
     ).status_code in (200, 204)
     take_id = ready["take_id"]
 
-    resp = client.get(f"/bom-takes/{take_id}")
+    assert client.get(f"/bom-takes/{take_id}").status_code == 200
+    rows = client.get(f"/web/api/bom-takes/{take_id}/lines").json()
 
-    assert resp.status_code == 200
-    assert "—" in resp.text  # the path it can no longer resolve, not a 500
+    # The path it can no longer resolve reads as a dash, not as a 500.
+    assert rows[0]["from"].startswith("—")
 
 
 def test_a_take_movement_links_its_note_to_the_snapshot(

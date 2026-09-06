@@ -541,6 +541,11 @@ export function bomTakeFixture() {
     </dialog>`;
 }
 
+// The snapshot page's Tabulator mount (mirrors bom_take.html).
+export function bomTakeLinesFixture() {
+  return `<div id="take-lines-table" data-take-id="12"></div>`;
+}
+
 // The snapshot page's undo dialog (mirrors bom_take.html).
 export function bomTakeUndoFixture() {
   return `

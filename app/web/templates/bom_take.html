@@ -30,45 +30,9 @@
 {% endif %}
 
 <div class="card card-pad">
-  <div class="table-wrap">
-    <table class="data">
-      <thead>
-        <tr>
-          <th>References</th><th>Component</th>
-          <th style="text-align:right">Wanted</th>
-          <th style="text-align:right">Taken</th>
-          <th>From</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for line in take.lines %}
-        {% set component = components.get(line.component_id) %}
-        <tr>
-          <td class="mono">{{ line.references }}</td>
-          <td>
-            <a class="cell-mono" href="/components/{{ line.component_id }}">
-              {{ component.mpn or "#" ~ line.component_id if component else "#" ~ line.component_id }}
-            </a>
-          </td>
-          <td class="num">{{ line.requested }}</td>
-          <td class="num">
-            {{ line.taken }}
-            {% if line.shortfall %}
-            <span class="badge b-warn"><span class="dot"></span>{{ line.shortfall }} short</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if line.sources %}
-            {% for source in line.sources %}{% if not loop.first %} · {% endif %}{{ source.path }} ×{{ source.quantity }}{% endfor %}
-            {% else %}
-            <span class="muted">—</span>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+  {# A feed + Tabulator, like every other data table here: a take of a 240-line
+     board is exactly where sorting and per-column filters earn their keep. #}
+  <div id="take-lines-table" data-take-id="{{ take.id }}"></div>
 </div>
 
 {% if can_write and not take.reversed_at %}
@@ -107,6 +71,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/bom_take_lines.js?v={{ static_version() }}"></script>
 {% if can_write and not take.reversed_at %}
 <script src="/static/bom_take_undo.js?v={{ static_version() }}"></script>
 {% endif %}

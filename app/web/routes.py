@@ -668,6 +668,48 @@ def bom_report_page(
     )
 
 
+@router.get("/web/api/bom-takes/{take_id}/lines")
+def bom_take_lines_feed(
+    take_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_web_user),
+) -> list[dict[str, object]]:
+    """Rows for the snapshot's Tabulator table (§21).
+
+    A feed rather than server-rendered markup so the table gets the same sorting
+    and per-column filters as every other data table in the app — a take of a
+    240-line board is exactly where you want to filter for what came up short.
+    """
+    detail = bts.take_detail(session, take_id)  # raises NotFound → 404
+    lines = cast("list[dict[str, object]]", detail["lines"])
+    components = bts.components_by_id(
+        session, {cast(int, line["component_id"]) for line in lines}
+    )
+    rows: list[dict[str, object]] = []
+    for line in lines:
+        component = components.get(cast(int, line["component_id"]))
+        sources = cast("list[dict[str, object]]", line["sources"])
+        rows.append(
+            {
+                "references": line["references"],
+                "component_id": line["component_id"],
+                # The part number as it is TODAY: the snapshot froze the id, which
+                # is the fact that matters, and a renamed part should read as
+                # itself rather than as a number nobody recognises.
+                "mpn": component.mpn if component else None,
+                "requested": line["requested"],
+                "taken": line["taken"],
+                "shortfall": line["shortfall"],
+                # Flattened for the table: one string per line, so it sorts and
+                # filters like any other cell. The detail is all in it.
+                "from": " · ".join(
+                    f"{source['path']} ×{source['quantity']}" for source in sources
+                ),
+            }
+        )
+    return rows
+
+
 @router.get("/bom-takes/{take_id}", response_class=HTMLResponse)
 def bom_take_page(
     take_id: int,
@@ -679,19 +721,10 @@ def bom_take_page(
     record, so there is nothing for a feed to keep up with."""
     detail = bts.take_detail(session, take_id)  # raises NotFound → 404
     bom = boms_svc.get_bom(session, cast(int, detail["bom_id"]))
-    lines = cast("list[dict[str, object]]", detail["lines"])
-    components = bts.components_by_id(
-        session, {cast(int, line["component_id"]) for line in lines}
-    )
     return templates.TemplateResponse(
         request,
         "bom_take.html",
-        {
-            "take": detail,
-            "bom": bom,
-            "components": components,
-            "current_user": user,
-        },
+        {"take": detail, "bom": bom, "current_user": user},
     )
 
 

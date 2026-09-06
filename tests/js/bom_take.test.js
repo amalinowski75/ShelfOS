@@ -7,6 +7,7 @@ import {
   CSRF,
   bomTakeFixture,
   bomTakeUndoFixture,
+  bomTakeLinesFixture,
 } from "./harness.js";
 
 // The order bom_report.html loads them in, not a convenient one: bom_take.js runs
@@ -632,5 +633,103 @@ describe("app.css — the take dialog's table", () => {
   it("gives the dialog room for five columns", () => {
     const style = styleOf('<dialog id="bom-take-dialog"></dialog>', "bom-take-dialog");
     expect(style.width).toContain("1320px");
+  });
+});
+
+describe("bom_take_lines.js — the snapshot's table", () => {
+  const LINES = ["shared.js", "bom_take_lines.js"];
+  const row = (over = {}) => ({
+    references: "R1,R2",
+    component_id: 3,
+    mpn: "RES-1K",
+    requested: 6,
+    taken: 4,
+    shortfall: 2,
+    from: "Kontroler CNC / Rezystory ×4",
+    ...over,
+  });
+
+  it("reads its rows from the feed for the take on the page", async () => {
+    const fetchImpl = vi.fn(() =>
+      Promise.resolve({ ok: true, json: async () => [row()] }),
+    );
+    const { window } = loadPage(bomTakeLinesFixture(), LINES, { fetchImpl });
+    await window.Tabulator.handlers.tableBuilt();
+    await tick();
+
+    expect(fetchImpl.mock.calls[0][0]).toBe("/web/api/bom-takes/12/lines");
+    expect(window.Tabulator.rows).toHaveLength(1);
+  });
+
+  it("offers the same sorting and per-column filters as the BOM report", async () => {
+    const { window } = loadPage(bomTakeLinesFixture(), LINES);
+    const columns = window.takeLinesColumns();
+    const byField = Object.fromEntries(columns.map((c) => [c.field, c]));
+
+    // The three numbers sort as numbers, not as text — "10" before "9" is the
+    // whole point of a column of counts.
+    for (const field of ["requested", "taken", "shortfall"]) {
+      expect(byField[field].sorter).toBe("number");
+    }
+    // The three text columns are filterable, with the app-wide placeholder and
+    // aria-label pattern.
+    for (const field of ["references", "mpn", "from"]) {
+      expect(byField[field].headerFilter).toBe("input");
+      expect(byField[field].headerFilterPlaceholder).toMatch(/^Filter /);
+      expect(
+        byField[field].headerFilterParams.elementAttributes["aria-label"],
+      ).toMatch(/^Filter /);
+    }
+    // Sorting is Tabulator's default; nothing here turns it off.
+    expect(columns.some((c) => c.headerSort === false)).toBe(false);
+  });
+
+  it("links the part as it is named today, and by id when it has no number", () => {
+    const { window } = loadPage(bomTakeLinesFixture(), LINES);
+    const cell = (value, data) => ({
+      getValue: () => value,
+      getRow: () => ({ getData: () => data }),
+    });
+
+    const html = window.takeComponentFormatter(cell("RES-1K", row()));
+    expect(html).toContain('href="/components/3"');
+    expect(html).toContain("RES-1K");
+    // A part with no MPN still has to be reachable.
+    expect(window.takeComponentFormatter(cell(null, row({ mpn: null })))).toContain(
+      "#3",
+    );
+    // The MPN comes from free text and reaches innerHTML.
+    expect(
+      window.takeComponentFormatter(cell("<img src=x>", row())),
+    ).not.toContain("<img src=x>");
+  });
+
+  it("marks a shortfall and says nothing when there is none", () => {
+    const { window } = loadPage(bomTakeLinesFixture(), LINES);
+    const cell = (value) => ({ getValue: () => value });
+    expect(window.takeShortfallFormatter(cell(2))).toContain("b-warn");
+    expect(window.takeShortfallFormatter(cell(2))).toContain("2");
+    expect(window.takeShortfallFormatter(cell(0))).toBe("");
+  });
+
+  it("escapes a location path, and dashes an empty one", () => {
+    const { window } = loadPage(bomTakeLinesFixture(), LINES);
+    const cell = (value) => ({ getValue: () => value });
+    expect(window.takeSourcesFormatter(cell("<b>Regal</b> ×2"))).not.toContain(
+      "<b>",
+    );
+    // A line that moved nothing has no source, and says so.
+    expect(window.takeSourcesFormatter(cell(""))).toContain("—");
+  });
+
+  it("says a failed load failed, rather than showing an empty take", async () => {
+    const fetchImpl = () => Promise.resolve({ ok: false, json: async () => ({}) });
+    const { window } = loadPage(bomTakeLinesFixture(), LINES, { fetchImpl });
+    await window.Tabulator.handlers.tableBuilt();
+    await tick();
+
+    // "No lines" would be a lie about a take that has them.
+    expect(window.Tabulator.options.placeholder).toContain("Could not load");
+    expect(window.Tabulator.rows).toEqual([]);
   });
 });
