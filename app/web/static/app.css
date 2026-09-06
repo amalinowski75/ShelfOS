@@ -963,7 +963,13 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, .82); }
    the point — but it reads as inert rather than as something to edit. */
 .take-blocked { opacity: 0.6; }
 
-.take-blockers { margin-bottom: 12px; }
+/* The lines that stop the run, named. A designator group is one unbroken token
+   ("R1,R2,R3,…" — the CSV writes no spaces), so without `anywhere` the browser
+   cannot break it anywhere at all: the sentence ran off the panel and put a
+   horizontal scrollbar on the whole dialog. A long BOM can name dozens, so the
+   panel scrolls itself rather than pushing the table it is about off the screen. */
+.take-blockers { margin-bottom: 12px; max-height: 20vh; overflow-y: auto; }
+.take-blockers p { overflow-wrap: anywhere; }
 
 /* The reversal banner and the past-takes list on a snapshot / a BOM report. */
 .take-reversed {

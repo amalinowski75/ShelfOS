@@ -535,6 +535,23 @@ describe("app.css — the take dialog's table", () => {
     expect(style.gap).toBe("14px");
   });
 
+  it("breaks the blocked-line list instead of widening the dialog", () => {
+    // A designator group is one unbroken token — the CSV writes "R1,R2,R3" with no
+    // spaces — so there is nowhere for the browser to break it on its own, and the
+    // sentence ran off the panel and scrolled the whole dialog sideways.
+    const style = styleOf(
+      '<div class="take-blockers"><p id="p"></p></div>',
+      "p",
+    );
+    expect(style.overflowWrap).toBe("anywhere");
+  });
+
+  it("keeps a long list of blocked lines from pushing the table off screen", () => {
+    const style = styleOf('<div class="take-blockers" id="b"></div>', "b");
+    expect(style.overflowY).toBe("auto");
+    expect(style.maxHeight).toBe("20vh");
+  });
+
   it("gives the dialog room for five columns", () => {
     const style = styleOf('<dialog id="bom-take-dialog"></dialog>', "bom-take-dialog");
     expect(style.width).toContain("1320px");
