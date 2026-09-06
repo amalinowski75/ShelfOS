@@ -579,11 +579,19 @@
     // components page navigates away the moment a part is chosen, so a message
     // afterwards would never be read — and a global rule created by a button that
     // did not mention it is one nobody knows to look for when it misfires.
+    // Against the RESOLVED name, not the typed one. The server echoes the
+    // manufacturer back through the alias table — what this spelling already
+    // means here — precisely so the caller can tell "this would teach something"
+    // from "this is already known". Compared against what was typed, a spelling
+    // that is ALREADY an alias reads as new, and the note promises a rule that
+    // picking will not create: record_alias resolves the target through its own
+    // alias first and then has nothing to write.
+    const resolved = ((body && body.manufacturer) || spelling || "").trim();
     const teaches =
       spelling &&
       candidates.some(
         (c) =>
-          (c.manufacturer || "").trim().toLowerCase() !== spelling.toLowerCase(),
+          (c.manufacturer || "").trim().toLowerCase() !== resolved.toLowerCase(),
       );
     if (conflictNote) {
       conflictNote.textContent = teaches

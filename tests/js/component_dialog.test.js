@@ -360,11 +360,16 @@ describe("component_dialog.js — you may already have this part", () => {
     type_name: "ic",
   };
 
-  function conflictFetch(candidates, seen = []) {
+  // `manufacturer` is what the SERVER echoes back: the name it was given, resolved
+  // through the alias table. With no alias that is the name itself — so the stub
+  // echoes the query rather than returning a fixed string the endpoint could never
+  // have produced for that input. Pass `resolvesTo` to stand in for a known alias.
+  function conflictFetch(candidates, seen = [], resolvesTo = null) {
     return (url, opts) => {
       seen.push({ url, opts });
       if (url.startsWith("/api/manufacturers/same-mpn")) {
-        return ok({ manufacturer: "MICROCHIP", candidates });
+        const asked = new URLSearchParams(url.split("?")[1] || "").get("manufacturer");
+        return ok({ manufacturer: resolvesTo ?? asked, candidates });
       }
       if (url.endsWith("/parameters")) return ok([]);
       return ok({});
@@ -452,6 +457,38 @@ describe("component_dialog.js — you may already have this part", () => {
 
     expect(warning(page).hidden).toBe(false); // still says you own the part
     expect(page.document.getElementById("mfr-conflict-note").hidden).toBe(true);
+  });
+
+  it("promises nothing when the spelling is ALREADY a known alias", async () => {
+    // The case the server's echoed `manufacturer` exists for, and that comparing
+    // against the typed name gets wrong: "ONSEMI" already means "ON Semiconductor"
+    // here, so picking records nothing — record_alias resolves the target through
+    // its own alias and finds there is nothing left to write. Claiming otherwise
+    // describes a rule the button will not create.
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: conflictFetch(
+        [{ ...CANDIDATE, manufacturer: "ON Semiconductor" }],
+        [],
+        "ON Semiconductor", // what the alias table makes of "ONSEMI"
+      ),
+    });
+    open(page, () => {}, { mpn: "MCP2200", manufacturer: "ONSEMI" });
+    await tick();
+
+    expect(warning(page).hidden).toBe(false); // still says you own the part
+    expect(page.document.getElementById("mfr-conflict-note").hidden).toBe(true);
+  });
+
+  it("still promises it when the spelling really is new", async () => {
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: conflictFetch([{ ...CANDIDATE, manufacturer: "ON Semiconductor" }]),
+    });
+    open(page, () => {}, { mpn: "MCP2200", manufacturer: "ONSEMI" });
+    await tick();
+
+    const note = page.document.getElementById("mfr-conflict-note");
+    expect(note.hidden).toBe(false);
+    expect(note.textContent).toContain("ONSEMI");
   });
 
   it("says nothing when the part number matches nothing", async () => {

@@ -55,10 +55,17 @@ def require_entity[M: SQLModel](
     return entity
 
 
-# Fold a shop's parameter label / value to a comparable key: lowercase, strip accents
-# to their base letter, then drop every non-alphanumeric character. So "Rezystancja",
-# "Resistance (Ω)" and "resistance" fold the same — and, crucially for Polish, so do
-# "wstążkowy" and "wstazkowy" (an accent must not simply vanish and change the word).
+# Fold a name to a comparable key: lowercase, strip accents to their base letter,
+# then drop every non-alphanumeric character. So "Rezystancja", "Resistance (Ω)" and
+# "resistance" fold the same — and, crucially for Polish, so do "wstążkowy" and
+# "wstazkowy" (an accent must not simply vanish and change the word).
+#
+# Written for shop parameter labels and values, and since used for MANUFACTURER
+# names too (`manufacturer_service`), which is why it lives here rather than in
+# `match_rule_service` — the two would otherwise import each other. That second use
+# is the reason the folding has to be this thorough: "ON Semiconductor" and
+# "on-semiconductor" are the same company, and deciding they are not splits a part
+# into two components.
 _NON_ALNUM = re.compile(r"[^a-z0-9]")
 # Letters NFKD does not decompose (they have no combining form), folded by hand.
 _STANDALONE_FOLD = str.maketrans({"ł": "l", "đ": "d", "ø": "o", "ß": "ss", "þ": "th"})
