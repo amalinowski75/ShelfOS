@@ -21,7 +21,11 @@ from sqlmodel import Session
 
 from app import config
 from app.api.deps import get_session
-from app.auth.deps import get_optional_user, issue_csrf_token
+from app.auth.deps import (
+    bind_session_to_credentials,
+    get_optional_user,
+    issue_csrf_token,
+)
 from app.auth.throttle import attempt_login
 from app.models.component import ComponentType, ParameterDefinition
 from app.models.enums import (
@@ -187,6 +191,7 @@ def login_submit(
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
     request.session["user_id"] = user.id
+    bind_session_to_credentials(request, user)
     issue_csrf_token(request)
     return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
 

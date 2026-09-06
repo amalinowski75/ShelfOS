@@ -11,7 +11,11 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from app.api.deps import get_session
-from app.auth.deps import get_current_user, require_csrf
+from app.auth.deps import (
+    bind_session_to_credentials,
+    get_current_user,
+    require_csrf,
+)
 from app.auth.throttle import attempt_login
 from app.auth.tokens import create_access_token
 from app.models.enums import UserRole
@@ -75,6 +79,7 @@ def read_me(user: User = Depends(get_current_user)) -> MeResponse:
 @router.post("/change-password", response_model=MeResponse)
 def change_password(
     payload: ChangePasswordRequest,
+    request: Request,
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
     _csrf: None = Depends(require_csrf),
@@ -84,9 +89,18 @@ def change_password(
     Lives on the auth router, which is not behind the read-only write block, so
     a read-only account can still manage its own credentials; CSRF is enforced
     explicitly for cookie-authenticated browser calls.
+
+    Every other sign-in for this account stops working here — that is the point
+    of changing a password you think someone else has. The browser making the
+    change is carried across (its session is re-bound below) so it is not
+    signed out by its own request; an API client authenticated by a bearer
+    token is not, and asks for a new one, because a token is exactly the kind
+    of credential this is meant to be able to retire.
     """
     updated = us.change_own_password(
         session, user, payload.current_password, payload.new_password
     )
+    if getattr(request.state, "auth_via", None) == "session":
+        bind_session_to_credentials(request, updated)
     assert updated.id is not None
     return MeResponse(id=updated.id, username=updated.name, role=updated.role)
