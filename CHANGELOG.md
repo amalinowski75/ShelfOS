@@ -9,6 +9,22 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## httpx was a test dependency that the app imports to start
+
+`url_fetch` and all four shop providers import `httpx` at module scope, but it
+was declared in the `dev` extra rather than among the runtime dependencies. That
+worked everywhere it was ever tried — `run.sh`, the manual instructions and CI
+all install `.[dev]` — and failed the first time anything installed the runtime
+set alone, which is exactly what a real deploy does. The service came up in a
+restart loop with `ModuleNotFoundError: No module named 'httpx'`.
+
+- `httpx` is a runtime dependency now.
+- CI grows a **Runtime dependencies** job that installs without the extra and
+  starts the app, because nothing else in the suite could have caught this:
+  every other job runs in an environment where the missing package is present
+  for another reason. Importing alone would not do either, so the job starts
+  uvicorn and asks `/health`.
+
 ## One command, whichever thing you are doing
 
 `run.sh` only ever did one of the two things anyone does with this repository.
