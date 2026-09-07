@@ -9,6 +9,7 @@ reaches `sudo`. `deploy/README.md` carries the by-hand checklist for the rest.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -470,3 +471,77 @@ def test_the_installed_code_is_not_owned_by_the_service_user() -> None:
     script = _SCRIPT.read_text()
     assert 'chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"' not in script
     assert 'chown -R root:root "$INSTALL_DIR"' in script
+
+
+def test_password_is_a_command() -> None:
+    """The way out of a start that refuses over a password.
+
+    Without it the app's own advice — run scripts/set_password.py — does not
+    work on a deployed install: the script falls back to a database path
+    relative to the working directory, which on a server is not where the
+    database is.
+    """
+    result = _run("password", "--help")
+    assert result.returncode == 0
+    assert "Usage:" in result.stdout
+    assert "password" in _run("--help").stdout
+
+
+def test_password_names_the_database_for_the_helper() -> None:
+    """Which is the whole reason this wrapper exists rather than a doc line."""
+    script = _SCRIPT.read_text()
+    body = script[script.index("cmd_password() {") :]
+    body = body[: body.index("\n}\n") + 3]
+    assert '"${ENV_ARGS[@]}"' in body
+    assert "set_password.py" in body
+    assert "give_data_back" in body  # it wrote the database as root
+
+
+def test_restore_warns_before_starting_into_a_refusal() -> None:
+    """An archive carries its own accounts, so one from a laptop brings that
+    laptop's admin — and the next start refuses over a password nobody on this
+    machine chose, three steps after the cause."""
+    script = _SCRIPT.read_text()
+    guard = script[script.index("restore_password_guard() {") :]
+    guard = guard[: guard.index("\n}\n") + 3]
+    assert "admins_on_the_default_password" in guard
+    assert "set_password.py" in guard
+    body = script[script.index("cmd_backup() {") :]
+    body = body[: body.index("\n}\n") + 3]
+    assert body.index("restore_password_guard") < body.index(
+        'systemctl start "$SERVICE_NAME"'
+    )
+
+
+def test_every_global_the_script_reads_is_one_it_sets() -> None:
+    """Under `set -u` an unassigned reference is not a style problem, it is a
+    crash — and one shipped this way, in the handback after a restore, where it
+    fired after the database had been replaced and before the service started.
+
+    shellcheck finds it only with check-unassigned-uppercase, which is not on by
+    default; CI enables it, and this fails the suite even if that job does not
+    run.
+    """
+    script = _SCRIPT.read_text()
+    read = set(re.findall(r"\$\{?([A-Z][A-Z0-9_]{2,})[}:#%\[]", script))
+    # Anywhere on a line, not only at the start: several are set in a run of
+    # `A=1; B=2` and a start-anchored pattern would call them unassigned.
+    assigned = set(re.findall(r"(?:^|[;&|\s(])([A-Z][A-Z0-9_]{2,})=", script, re.M))
+    # Set by the environment or by bash itself, not by this file.
+    external = {
+        "HOME",
+        "PATH",
+        "PORT",
+        "PYTHON",
+        "TMPDIR",
+        "SHELFOS_ENV_FILE",
+        "DATABASE_URL",
+        "SHELFOS_ATTACHMENTS_DIR",
+        "SHELFOS_NEW_PASSWORD",
+        "RUNNER_TEMP",
+        "IFS",
+        # Read out of /etc/os-release inside a subshell; not this file's to set.
+        "ID_LIKE",
+    }
+    missing = sorted(read - assigned - external)
+    assert not missing, f"referenced but never assigned: {missing}"

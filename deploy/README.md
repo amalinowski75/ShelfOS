@@ -111,8 +111,13 @@ default password — including a database carried over from a laptop. The journa
 names the account and the fix:
 
 ```bash
-sudo -u shelfos /opt/shelfos/.venv/bin/python /opt/shelfos/scripts/set_password.py admin
+sudo ./shelfos.sh password admin
 ```
+
+The same thing happens to a **restored backup**: an archive carries its own
+accounts, so one taken from a laptop brings that laptop's admin with it. The
+restore says so while the service is still stopped and offers to set a new
+password there and then, which is the only moment the fix is one command away.
 
 **The label printer, if there is one.** The unit's printer block is written for
 the udev rule in the main README, which is not optional here: without it the

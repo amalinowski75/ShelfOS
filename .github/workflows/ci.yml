@@ -101,7 +101,13 @@ jobs:
         run: bash -n shelfos.sh
 
       - name: Lint (shellcheck)
-        run: shellcheck --shell=bash --severity=style shelfos.sh
+        # check-unassigned-uppercase is not on by default and is what catches a
+        # reference to a variable nothing assigns — which under `set -u` is not
+        # a style problem but a crash, and is exactly how a restore came to die
+        # after replacing the database and before starting the service.
+        run: |
+          shellcheck --shell=bash --severity=style \
+            --enable=check-unassigned-uppercase shelfos.sh
 
   # Aggregate gate: the branch ruleset requires a status check named `checks`, so
   # keep one that passes only when every suite passes. `if: always()` ensures it

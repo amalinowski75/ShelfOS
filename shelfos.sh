@@ -1383,6 +1383,141 @@ signing secret and every session invalid — back that file up separately.
 EOF
 }
 
+# Sets PY, SCRIPT_DIR, DEPLOY_DB, DEPLOY_ATT and ENV_ARGS for whichever install
+# is here: the deployed one, or this clone. Every subcommand that runs a helper
+# out of scripts/ needs the same five things, and working them out separately in
+# each is how a helper ends up pointed at a database that is not there.
+PY=""
+SCRIPT_DIR=""
+DEPLOY_DB=""
+DEPLOY_ATT=""
+declare -a ENV_ARGS=()
+
+resolve_install() {
+    if is_deployed; then
+        PY="$INSTALL_DIR/.venv/bin/python"
+        SCRIPT_DIR="$INSTALL_DIR/scripts"
+        DEPLOY_DB=$(env_file_value "$ENV_FILE_SYSTEM" DATABASE_URL)
+        DEPLOY_ATT=$(env_file_value "$ENV_FILE_SYSTEM" SHELFOS_ATTACHMENTS_DIR)
+        DEPLOY_DB=${DEPLOY_DB:-sqlite:///$DATA_DIR/shelfos.db}
+        DEPLOY_ATT=${DEPLOY_ATT:-$DATA_DIR/attachments}
+        ENV_ARGS=("DATABASE_URL=$DEPLOY_DB" "SHELFOS_ATTACHMENTS_DIR=$DEPLOY_ATT")
+        [ -x "$PY" ] || die 1 "no virtualenv at $PY"
+    else
+        PY="$REPO_ROOT/.venv/bin/python"
+        SCRIPT_DIR="$REPO_ROOT/scripts"
+        DEPLOY_DB=""
+        DEPLOY_ATT=""
+        ENV_ARGS=()
+        [ -x "$PY" ] || die 1 "no virtualenv here; run './shelfos.sh devel' once to build it"
+    fi
+}
+
+# Names of the active admins whose password is still the public default — the
+# thing that stops a production start. Asked of the app's own code, so it cannot
+# drift from the check that does the refusing.
+admins_on_the_default_password() {
+    local snippet
+    snippet=$(cat <<'PY_SNIPPET'
+from sqlmodel import Session
+
+from app import config
+from app.db import engine
+from app.services import user_service as us
+
+with Session(engine) as session:
+    for user in us.admins_with_password(session, config.DEFAULT_ADMIN_PASSWORD):
+        print(user.name)
+PY_SNIPPET
+)
+    if is_deployed; then
+        sudo_run env "${ENV_ARGS[@]}" "$PY" -c "$snippet" 2>/dev/null || true
+    else
+        "$PY" -c "$snippet" 2>/dev/null || true
+    fi
+}
+
+usage_password() {
+    cat <<'USAGE_PASSWORD'
+Usage: sudo ./shelfos.sh password [USERNAME]
+       ./shelfos.sh password --list
+
+Set an account's password on whichever install is here, with the app stopped.
+
+This is the way out of a production start that refuses because an admin still
+has the default password — including one that arrived inside a restored backup.
+USAGE_PASSWORD
+}
+
+cmd_password() {
+    local -a args=()
+    while [ $# -gt 0 ]; do
+        case $1 in
+            -h|--help) usage_password; return 0 ;;
+            *)         args+=("$1"); shift ;;
+        esac
+    done
+
+    resolve_install
+    local status=0
+    if is_deployed; then
+        # As root, and with the database named: scripts/set_password.py falls
+        # back to a path relative to the working directory, which on a server is
+        # not where the database is. That is what made the refusal message's own
+        # advice fail for anyone who followed it literally.
+        sudo_run env "${ENV_ARGS[@]}" "$PY" "$SCRIPT_DIR/set_password.py" \
+            "${args[@]+"${args[@]}"}" || status=$?
+    else
+        run "$PY" "$SCRIPT_DIR/set_password.py" "${args[@]+"${args[@]}"}" || status=$?
+    fi
+    [ "$status" = 0 ] || return "$status"
+
+    if is_deployed && [ "$DRY_RUN" = 0 ]; then
+        give_data_back
+        # Close the loop: the reason to be here is usually a service that will
+        # not start, and leaving it stopped after fixing the cause is half an
+        # answer.
+        if [ "$(systemctl is-active "$SERVICE_NAME" 2>/dev/null)" != active ]; then
+            if ask_yes_no "The service is not running. Start it now?" y; then
+                sudo_run systemctl start "$SERVICE_NAME"
+                if health_probe "$(installed_port)" 30; then
+                    info "${C_GREEN}Running.${C_OFF}"
+                else
+                    warn "still not answering; ./shelfos.sh status has the log"
+                fi
+            fi
+        fi
+    fi
+}
+
+# An archive carries its own accounts, and one taken from a laptop carries the
+# admin that laptop was happy with. Restore it onto a production install and the
+# next start refuses, correctly, over a password nobody on this machine ever
+# chose — leaving a service that will not come up and a cause three steps back.
+# Say so while the service is still stopped, which is the only moment the fix is
+# one command away.
+restore_password_guard() {
+    local exposed
+    exposed=$(admins_on_the_default_password)
+    [ -n "$exposed" ] || return 0
+    info ""
+    warn "the restored database has admin account(s) on the default password: $(echo "$exposed" | tr '\n' ' ')"
+    info "  In production ShelfOS refuses to start while that is true, so it would"
+    info "  not come back up. The app is stopped right now, which is when this is"
+    info "  easiest to put right."
+    info ""
+    local name
+    for name in $exposed; do
+        if ask_yes_no "  Set a new password for '$name' now?" y; then
+            sudo_run env "${ENV_ARGS[@]}" "$PY" "$SCRIPT_DIR/set_password.py" "$name" \
+                || warn "could not set it; run: sudo ./shelfos.sh password $name"
+        else
+            warn "leaving '$name' as it is; the service will not start until you run: sudo ./shelfos.sh password $name"
+        fi
+    done
+    give_data_back
+}
+
 # Hand the database and attachments back to the service after root has written
 # them. Paths are resolved first: backup.py deliberately supports an attachments
 # directory that is a symlink to external storage, and `chown -R` on a symlinked
@@ -1402,22 +1537,8 @@ cmd_backup() {
         -h|--help)      usage_backup; return 0 ;;
     esac
 
-    local py script db att
-    local -a env_args=()
-    if is_deployed; then
-        py="$INSTALL_DIR/.venv/bin/python"
-        script="$INSTALL_DIR/scripts/backup.py"
-        db=$(env_file_value "$ENV_FILE_SYSTEM" DATABASE_URL)
-        att=$(env_file_value "$ENV_FILE_SYSTEM" SHELFOS_ATTACHMENTS_DIR)
-        db=${db:-sqlite:///$DATA_DIR/shelfos.db}
-        att=${att:-$DATA_DIR/attachments}
-        env_args=("DATABASE_URL=$db" "SHELFOS_ATTACHMENTS_DIR=$att")
-        [ -x "$py" ] || die 1 "no virtualenv at $py"
-    else
-        py="$REPO_ROOT/.venv/bin/python"
-        script="$REPO_ROOT/scripts/backup.py"
-        [ -x "$py" ] || die 1 "no virtualenv here; run './shelfos.sh devel' once to build it"
-    fi
+    resolve_install
+    local py="$PY" script="$SCRIPT_DIR/backup.py"
 
     # -y is eaten by the global flag parser, so a documented
     # `backup restore snap.tar.gz --yes` would otherwise reach backup.py without
@@ -1485,7 +1606,7 @@ cmd_backup() {
         # it whatever the archive's own mode is. That failure reads as
         # "Permission denied" on a file that is plainly world-readable, and no
         # amount of chmod on it helps.
-        sudo_run env "${env_args[@]}" "$py" "$script" "$action" "$@" || status=$?
+        sudo_run env "${ENV_ARGS[@]}" "$py" "$script" "$action" "$@" || status=$?
     else
         run "$py" "$script" "$action" "$@" || status=$?
     fi
@@ -1496,6 +1617,7 @@ cmd_backup() {
         # the attachments — so the failure path is exactly when root-owned data
         # is left behind, and the one where nobody thinks to check ownership.
         # It costs nothing when nothing changed.
+        [ "$status" = 0 ] && restore_password_guard
         give_data_back
         sudo_run systemctl start "$SERVICE_NAME"
     fi
@@ -1524,6 +1646,7 @@ Usage: ./shelfos.sh <command> [options]
   update    move an installed service forward, backing it up first
   status    what is installed, and whether it is healthy
   backup    create or restore a backup of whichever install is here
+  password  set an account's password, with the app stopped
 
 Options that work anywhere:
   --dry-run   print what would happen and change nothing (never calls sudo)
@@ -1536,6 +1659,7 @@ Options that work anywhere:
   ./shelfos.sh devel --port 9001        a second one, from a second clone
   sudo ./shelfos.sh deploy              a real install, asking what it needs
   sudo ./shelfos.sh deploy --dry-run    the same, previewed
+  sudo ./shelfos.sh password admin      when a start refuses over a password
 EOF
 }
 
@@ -1563,6 +1687,7 @@ main() {
         update)   cmd_update "${rest[@]+"${rest[@]}"}" ;;
         status)   cmd_status "${rest[@]+"${rest[@]}"}" ;;
         backup)   cmd_backup "${rest[@]+"${rest[@]}"}" ;;
+        password) cmd_password "${rest[@]+"${rest[@]}"}" ;;
         *)        usage >&2; die 2 "unknown command: $command" ;;
     esac
 }

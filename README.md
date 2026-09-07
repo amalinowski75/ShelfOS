@@ -45,6 +45,7 @@ instance from a second clone, and give it `--port 9001`.
 | `update` | move an installed service forward, backing it up first |
 | `status` | what is installed, and whether it is healthy |
 | `backup` | create or restore a backup of whichever install is here |
+| `password` | set an account's password, with the app stopped |
 
 `--dry-run` works on any of them: it prints what would happen, changes nothing,
 and never calls `sudo`. `./shelfos.sh <command> --help` has the flags.
