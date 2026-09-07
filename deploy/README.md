@@ -1,10 +1,22 @@
 # Running ShelfOS on a server
 
-`./run.sh` is for a laptop: it rebuilds the virtualenv when needed and runs
-uvicorn with `--reload`. This directory is the other thing — one process under
-systemd, reachable only through a reverse proxy that holds the certificate.
+One command, from a clone, on the machine that will run it:
 
-Three files, each commented in full:
+```bash
+sudo ./shelfos.sh deploy
+```
+
+It asks for a hostname and a first admin password, generates the signing secret
+itself, and performs everything this file describes. Every step reports `ok` or
+`skipped`, so re-running it is how you repair a half-finished install rather than
+something to be afraid of. `--dry-run` prints the whole plan and touches nothing
+— it does not even call `sudo`.
+
+What it deliberately leaves to you: DNS, the firewall, off-host copies of
+`/etc/shelfos/env` (the backups do not contain it), and any schedule for the
+backups themselves.
+
+This directory holds what it installs, each file commented in full:
 
 | File | What it is |
 | --- | --- |
@@ -32,10 +44,12 @@ an unhandled exception becomes a 500 from Starlette's error middleware, which
 wraps the app's own header middleware, so that one response goes out without the
 security headers. Caddy adds them to everything.
 
-## Setting it up
+## Doing it by hand
 
-A system user that owns nothing else, the code in one place and the data in
-another, so replacing the code never touches the database:
+The script does exactly this, and this is the only path on a host it refuses —
+anything that is not Debian or Ubuntu. A system user that owns nothing else, the
+code in one place and the data in another, so replacing the code never touches
+the database:
 
 ```bash
 sudo useradd --system --home-dir /opt/shelfos --shell /usr/sbin/nologin shelfos
@@ -71,9 +85,9 @@ sudo systemctl reload caddy
 **`export` in the environment file.** systemd's `EnvironmentFile` does not
 understand the prefix: `export SHELFOS_ENV=production` sets a variable named
 `export SHELFOS_ENV`, and ShelfOS never sees it. Plain `KEY=value` lines work in
-both places, because `run.sh` sources the file with `set -a`, so one file can
-serve the laptop and the server. Drop the `export`s rather than keeping two
-copies that will drift.
+both places, because `shelfos.sh` parses the file the same way systemd does, so
+one file can serve the laptop and the server. Drop the `export`s rather than
+keeping two copies that will drift.
 
 **Relative data paths under a read-only filesystem.** The unit sets
 `ProtectSystem=strict`, so everything outside `/var/lib/shelfos` is read-only —
@@ -132,10 +146,31 @@ before `--workers` is worth raising.
 **Everyone signs in again after an upgrade** that changes `SHELFOS_SECRET_KEY`,
 and once more after the release that tied sessions to the current password.
 
-**Backups.** `scripts/backup.py` takes the database and attachments together and
-verifies checksums on restore. It does not carry the environment file, which is
-where the secret lives — back that up separately, or a restore comes back with
-every session invalid.
+**The Caddyfile.** `deploy` takes over `/etc/caddy/Caddyfile` only when it is
+absent, empty, or one it wrote itself and still the only site in it — it leaves a
+marker comment on the first line to know. Anything else gets
+`/etc/caddy/sites/shelfos.caddy` and a printed `import` line to add, because
+overwriting a file that serves somebody else's site takes that site off the air.
+
+**Backups.** `./shelfos.sh backup` wraps `scripts/backup.py` with the right paths
+and the right user; it takes the database and attachments together and verifies
+checksums on restore. Neither carries the environment file, which is where the
+secret lives — back that up separately, or a restore comes back with every
+session invalid. `./shelfos.sh update` takes one before it changes anything.
+
+## Checking a change to this by hand
+
+Most of `deploy` cannot be tested in CI: it installs packages, adds an apt
+source, creates a user and talks to systemd and to a certificate authority. On a
+throwaway Ubuntu 24.04 container or VM, in order:
+
+1. `sudo ./shelfos.sh deploy` from a fresh clone, answering the prompts.
+2. `sudo ./shelfos.sh deploy` again — every step must say `skipped`.
+3. `./shelfos.sh status` — service active, health answering, no `replace-me`.
+4. `./shelfos.sh backup create`, then `restore` of that archive.
+5. `sudo ./shelfos.sh update` with nothing new upstream — must say so and stop.
+6. Reboot; the service comes back on its own.
+7. With a Brother QL attached: `/dev/shelfos-label` exists and a test label prints.
 
 ## Behind a different proxy
 

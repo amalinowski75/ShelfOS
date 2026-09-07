@@ -9,6 +9,46 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## One command, whichever thing you are doing
+
+`run.sh` only ever did one of the two things anyone does with this repository.
+Installing it on a server was a dozen commands from `deploy/README.md`, several
+of which fail silently when got wrong — an `export` systemd cannot parse, a
+relative data path under a read-only filesystem, a database moved after the
+first start rather than before it. `shelfos.sh` replaces it with one entry
+point.
+
+- **`devel`** is the old `run.sh` plus the conveniences it never had: a
+  `--port`, a `--reset` that hands off to `reset_db.py` and its own
+  confirmation, and an offer of demo data for an empty database. It still runs
+  in the clone and still keeps its database at `data/shelfos.db`; separate
+  instances are separate clones, and nothing under `data/` or `attachments/` is
+  ever moved, renamed or deleted by the script.
+- **`deploy`** does the whole of `deploy/README.md`: packages, the system user,
+  `/opt/shelfos`, `/var/lib/shelfos`, a generated signing secret, the unit,
+  Caddy and its certificate. It asks everything up front, then works, and every
+  step says `ok` or `skipped` — so re-running it is how a half-finished install
+  is repaired rather than something to be careful of. It refuses to overwrite
+  `/etc/shelfos/env`, refuses to overwrite a `Caddyfile` that serves anything
+  besides the site it wrote there itself, refuses to invent a first admin
+  password when there is no terminal to ask at, and does not roll back on
+  failure, because removing a half-made user or a directory that may hold data
+  is the more dangerous thing to do.
+- **`update`** takes a backup first, refuses to pull over hand-edited files, and
+  restarts only after it has checked the app answers. **`status`** says what is
+  installed and whether it is healthy without ever printing a setting's value.
+  **`backup`** wraps `scripts/backup.py` with the right paths and the right user.
+- **`--dry-run`** works on all of them: it prints what would happen, changes
+  nothing, and never calls `sudo` — which is also what makes a root-privileged
+  installer testable. Secrets are blanked even there.
+- **A behaviour change worth reading twice**: the settings file is now *parsed*
+  rather than sourced, and fills in only what is not already set. So
+  `PORT=8080 ./shelfos.sh devel` finally wins over a `PORT` line in the file, as
+  the README always claimed it did — and shell in that file (`$(…)`, backticks,
+  references to other variables) no longer runs. The script warns when it sees
+  one. This also stops `deploy` from executing a root-owned file in `/etc` as
+  code.
+
 ## The startup check was asking the wrong question
 
 `SHELFOS_ENV=production` refused to start on the default admin password, and it
