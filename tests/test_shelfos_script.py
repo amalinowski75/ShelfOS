@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -523,10 +524,15 @@ def test_every_global_the_script_reads_is_one_it_sets() -> None:
     run.
     """
     script = _SCRIPT.read_text()
-    read = set(re.findall(r"\$\{?([A-Z][A-Z0-9_]{2,})[}:#%\[]", script))
+    # Every reference, not only the ones with a trailing sigil. The earlier
+    # pattern required one, so it saw ${FOO#...} but not "$FOO" — and the crash
+    # it was written for had both on the same line, caught by the accident of
+    # which half came first. Two-character names count too.
+    # A backslash-escaped $ is text the script prints, not a reference it makes.
+    read = set(re.findall(r"(?<!\\)\$\{?([A-Z][A-Z0-9_]+)", script))
     # Anywhere on a line, not only at the start: several are set in a run of
     # `A=1; B=2` and a start-anchored pattern would call them unassigned.
-    assigned = set(re.findall(r"(?:^|[;&|\s(])([A-Z][A-Z0-9_]{2,})=", script, re.M))
+    assigned = set(re.findall(r"(?:^|[;&|\s(])([A-Z][A-Z0-9_]+)=", script, re.M))
     # Set by the environment or by bash itself, not by this file.
     external = {
         "HOME",
@@ -541,7 +547,100 @@ def test_every_global_the_script_reads_is_one_it_sets() -> None:
         "RUNNER_TEMP",
         "IFS",
         # Read out of /etc/os-release inside a subshell; not this file's to set.
+        "ID",
         "ID_LIKE",
     }
     missing = sorted(read - assigned - external)
     assert not missing, f"referenced but never assigned: {missing}"
+
+
+def _guard_probe(tmp_path: Path, *, exposed: str, ok: bool, assume_yes: int) -> str:
+    """Drive restore_password_guard with everything around it stubbed."""
+    script = _SCRIPT.read_text()
+    body = script[script.index("restore_password_guard() {") :]
+    body = body[: body.index("\n}\n") + 3]
+    lister = (
+        f"admins_on_the_default_password() {{ printf '%s' {shlex.quote(exposed)}; }}"
+        if ok
+        else "admins_on_the_default_password() { return 1; }"
+    )
+    probe = tmp_path / "guard.sh"
+    probe.write_text(
+        "\n".join(
+            [
+                "set -euo pipefail",
+                f"ASSUME_YES={assume_yes}",
+                "QUIET=0; C_YELLOW=''; C_OFF=''; C_DIM=''",
+                'warn() { printf "warning: %s\\n" "$*" >&2; }',
+                'info() { printf "%s\\n" "$*" >&2; }',
+                "have_tty() { return 1; }",
+                "give_data_back() { :; }",
+                'ask_yes_no() { echo "PROMPTED" >&2; return 0; }',
+                lister,
+                body,
+                "restore_password_guard",
+                "",
+            ]
+        )
+    )
+    result = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    return result.stderr
+
+
+def test_the_guard_keeps_a_username_whole(tmp_path: Path) -> None:
+    """A username is free text — user_service only refuses an empty one — so
+    splitting on whitespace would prompt for half a name and then try to set the
+    password of an account that does not exist."""
+    out = _guard_probe(tmp_path, exposed="Ala Kowalska\nbob\n", ok=True, assume_yes=1)
+    assert "password 'Ala Kowalska'" in out
+    assert "password 'Ala'" not in out
+
+
+def test_the_guard_does_not_prompt_when_nobody_asked(tmp_path: Path) -> None:
+    """--yes and no terminal both mean unattended, and set_password.py reads the
+    new password from a terminal — so offering would block a scripted restore
+    with the service still stopped."""
+    out = _guard_probe(tmp_path, exposed="admin\n", ok=True, assume_yes=1)
+    assert "PROMPTED" not in out
+    assert "shelfos.sh password 'admin'" in out
+
+
+def test_a_failed_check_is_not_a_clean_bill_of_health(tmp_path: Path) -> None:
+    """A broken venv, an unreadable database and a refused sudo all produce no
+    output; reading that as "no exposed admins" would let the one safety net
+    between a restore and a dead service report all clear."""
+    out = _guard_probe(tmp_path, exposed="", ok=False, assume_yes=1)
+    assert "could not check" in out
+
+
+def test_the_guard_runs_whatever_the_restore_returned() -> None:
+    """backup.py swaps the database before the attachments, so a part-way
+    failure has usually already installed the archive's accounts."""
+    script = _SCRIPT.read_text()
+    body = script[script.index("cmd_backup() {") :]
+    body = body[: body.index("\n}\n") + 3]
+    tail = body[body.index("restore_password_guard") - 400 :]
+    assert '[ "$status" = 0 ] && restore_password_guard' not in tail
+
+
+def test_listing_accounts_changes_nothing() -> None:
+    """--list exits 0 without writing, and used to fall into the chown and the
+    offer to start the service."""
+    script = _SCRIPT.read_text()
+    body = script[script.index("cmd_password() {") :]
+    body = body[: body.index("\n}\n") + 3]
+    assert "--list|-l) listing=1" in body
+    assert '[ "$listing" = 0 ]' in body
+
+
+def test_a_clone_names_its_database_absolutely() -> None:
+    """The script is meant to run from anywhere — resolve_repo_root follows a
+    symlink into ~/bin — and the helpers resolve a relative DATABASE_URL against
+    the working directory."""
+    script = _SCRIPT.read_text()
+    body = script[script.index("resolve_install() {") :]
+    body = body[: body.index("\n}\n") + 3]
+    assert 'DEPLOY_DB="sqlite:///$REPO_ROOT/data/shelfos.db"' in body
+    assert "${DATABASE_URL:-$DEPLOY_DB}" in body  # a caller's value still wins
