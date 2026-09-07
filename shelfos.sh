@@ -470,7 +470,17 @@ cmd_devel() {
             note "Virtualenv built."
         fi
     fi
-    [ -x "$REPO_ROOT/.venv/bin/uvicorn" ] || die 1 "no virtualenv at $REPO_ROOT/.venv (drop --no-install to build one)"
+    if [ ! -x "$REPO_ROOT/.venv/bin/uvicorn" ]; then
+        # A dry run reports rather than refuses: it is a preview of what would
+        # happen, and it is the one mode that has to work on a machine where
+        # nothing has been set up yet — including a CI runner that installed the
+        # project into its own Python and never built a .venv here.
+        if [ "$DRY_RUN" = 1 ]; then
+            warn "no virtualenv at $REPO_ROOT/.venv; a real run would build one first"
+        else
+            die 1 "no virtualenv at $REPO_ROOT/.venv (drop --no-install to build one)"
+        fi
+    fi
 
     local py="$REPO_ROOT/.venv/bin/python"
     local db_path="${DATABASE_URL:-sqlite:///data/shelfos.db}"
