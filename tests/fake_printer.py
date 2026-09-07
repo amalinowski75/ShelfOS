@@ -19,6 +19,8 @@ Two things are easy to get wrong here and cost real time:
 from __future__ import annotations
 
 import os
+import select
+import socket
 import threading
 import time
 import tty
@@ -105,6 +107,92 @@ class FakePrinter:
         os.close(self._slave)
 
     def __enter__(self) -> FakePrinter:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+
+class PrinterBridge:
+    """A TCP listener that relays one connection to a :class:`FakePrinter`.
+
+    What ``socat TCP-LISTEN:9100 OPEN:/dev/shelfos-label`` does on the machine
+    holding the printer, in-process: the service opens ``tcp://127.0.0.1:<port>``
+    and the bytes arrive at the device as if it were local. Having the real
+    thing on the other side is the point — a stub that answered by itself would
+    prove the socket works and nothing about the status read-back, the tape
+    check or the per-label confirmation, which is what this transport exists to
+    keep.
+    """
+
+    def __init__(self, printer: FakePrinter) -> None:
+        self.printer = printer
+        self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._listener.bind(("127.0.0.1", 0))
+        self._listener.listen(1)
+        self.port = self._listener.getsockname()[1]
+        self.device = f"tcp://127.0.0.1:{self.port}"
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+
+    def _serve(self) -> None:
+        while not self._stop.is_set():
+            try:
+                connection, _ = self._listener.accept()
+            except OSError:
+                return
+            threading.Thread(
+                target=self._relay, args=(connection,), daemon=True
+            ).start()
+
+    def _relay(self, connection: socket.socket) -> None:
+        """Both directions at once, because the printer answers mid-job."""
+        device = os.open(self.printer.path, os.O_RDWR)
+        stop = threading.Event()
+
+        def to_device() -> None:
+            try:
+                while not stop.is_set():
+                    chunk = connection.recv(8192)
+                    if not chunk:
+                        break
+                    os.write(device, chunk)
+            except OSError:
+                pass
+            finally:
+                stop.set()
+
+        def to_socket() -> None:
+            try:
+                while not stop.is_set():
+                    if not select.select([device], [], [], 0.05)[0]:
+                        continue
+                    chunk = os.read(device, 4096)
+                    if not chunk:
+                        break
+                    connection.sendall(chunk)
+            except OSError:
+                pass
+            finally:
+                stop.set()
+
+        writer = threading.Thread(target=to_device, daemon=True)
+        reader = threading.Thread(target=to_socket, daemon=True)
+        writer.start()
+        reader.start()
+        writer.join()
+        stop.set()
+        reader.join(timeout=1)
+        os.close(device)
+        connection.close()
+
+    def close(self) -> None:
+        self._stop.set()
+        self._listener.close()
+
+    def __enter__(self) -> PrinterBridge:
         return self
 
     def __exit__(self, *_exc: object) -> None:

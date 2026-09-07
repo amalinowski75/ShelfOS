@@ -9,6 +9,26 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## The label printer can be somewhere other than the server
+
+ShelfOS writes raster bytes straight to a device, so the printer had to be on the
+machine running the service. That is the wrong shape for the ordinary case: the
+service is on a server and the printer is on the desk of the person printing.
+
+- `SHELFOS_LABEL_DEVICE` now takes `tcp://host:port` as well as a device path.
+  On the machine holding the printer, `socat` relays one connection to it and a
+  reverse SSH tunnel carries the port; both are user services, so they come up
+  on their own and nothing is exposed to the network. README has the two unit
+  files.
+- Nothing downstream changes. The transport was already a file descriptor, so
+  the tape is still read off the printer, a fault still stops the job before any
+  tape moves, and each label is still confirmed — tested end to end through a
+  real bridge in front of the existing fake printer, not against a stub that
+  would have proved only that a socket works.
+- The tunnel is what keeps the server's setting stable: it always talks to its
+  own `127.0.0.1`, so the printer's machine can move networks or sit behind NAT
+  with nothing on the server to change.
+
 ## Restoring a backup could leave a service that would not start
 
 An archive carries its own accounts. Restore one taken from a laptop onto a

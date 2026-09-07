@@ -228,6 +228,23 @@ def _check_label_settings() -> None:
         )
     if not config.label_printing_configured():
         return  # no printer is a normal setup, not a misconfiguration
+    if label_printer.is_network_device(config.LABEL_DEVICE):
+        # A printer reached over TCP: there is no path to stat, and whether the
+        # bridge is up is not a question with a lasting answer — a laptop that
+        # holds the printer comes and goes. Say only whether the address itself
+        # is usable, which is the part a restart cannot fix by itself.
+        try:
+            host, port = label_printer.split_network_device(config.LABEL_DEVICE)
+        except ValidationError as error:
+            _logger.warning("Label printing is misconfigured: %s", error)
+        else:
+            _logger.info(
+                "Label printing goes to %s:%d; printing fails while nothing is "
+                "listening there.",
+                host,
+                port,
+            )
+        return
     device = Path(config.LABEL_DEVICE)
     if not device.exists():
         _logger.warning(

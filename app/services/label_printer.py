@@ -23,6 +23,7 @@ import io
 import logging
 import os
 import select
+import socket
 import stat
 import threading
 import time
@@ -660,8 +661,74 @@ def _decode_status(frame: bytes) -> PrinterStatus | None:
     )
 
 
+# A printer reached over the network rather than plugged in here: the browser's
+# machine holds the QL and a bridge on it relays one TCP connection to the
+# device (see README). Everything past the open is the same — the transport is
+# a file descriptor either way, so the raster, the status read-back, the tape
+# check and the per-label confirmation all work unchanged.
+_TCP_SCHEME = "tcp://"
+
+
+def is_network_device(device: str) -> bool:
+    """Whether ``device`` names a printer reached over TCP rather than a path."""
+    return device.startswith(_TCP_SCHEME)
+
+
+def split_network_device(device: str) -> tuple[str, int]:
+    """The host and port from a ``tcp://host:port`` device, or raise.
+
+    Raises :class:`ValidationError` rather than PrinterError: a malformed
+    setting is a configuration mistake to be reported at startup, not a printer
+    that failed to answer.
+    """
+    remainder = device[len(_TCP_SCHEME) :]
+    host, separator, port_text = remainder.rpartition(":")
+    if not separator or not host or not port_text.isdigit():
+        raise ValidationError(
+            f"SHELFOS_LABEL_DEVICE={device!r} is not a tcp://host:port address"
+        )
+    port = int(port_text)
+    if not 1 <= port <= 65535:
+        raise ValidationError(
+            f"SHELFOS_LABEL_DEVICE={device!r} has a port outside 1-65535"
+        )
+    # A bracketed IPv6 literal keeps its brackets in the URL and loses them here.
+    return host.strip("[]"), port
+
+
+def _open_network_device(device: str) -> int:
+    """Connect to the bridge and hand back a raw descriptor.
+
+    ``detach`` so the socket object stops owning the descriptor: both callers
+    close it with ``os.close``, and leaving the object owning it too would make
+    the eventual garbage collection a second close of a number that may by then
+    belong to something else.
+    """
+    host, port = split_network_device(device)
+    try:
+        connection = socket.create_connection(
+            (host, port), timeout=config.LABEL_PRINT_TIMEOUT
+        )
+    except ConnectionRefusedError:
+        raise PrinterError(
+            f"nothing is listening on {host}:{port} — the bridge on the machine "
+            "holding the printer is not running (see the label printer section "
+            "of README.md)"
+        ) from None
+    except socket.gaierror:
+        raise PrinterError(f"could not resolve {host} for the label printer") from None
+    except OSError as error:
+        raise PrinterError(
+            f"could not reach the label printer at {host}:{port}: {error.strerror}"
+        ) from None
+    connection.setblocking(False)
+    return connection.detach()
+
+
 def _open_device(device: str) -> int:
     """Open the printer, translating errno into something actionable."""
+    if is_network_device(device):
+        return _open_network_device(device)
     try:
         return os.open(device, os.O_RDWR | os.O_NONBLOCK)
     except FileNotFoundError:
@@ -744,11 +811,17 @@ def _write_budget() -> float:
 def _answers_questions(fd: int) -> bool:
     """Whether this device can be asked anything.
 
-    Only a character device is a printer. A regular file — the tests' stand-in,
-    or a misconfigured path — reports itself readable and then returns nothing
+    A character device is a printer; so is a socket, which is a bridge with a
+    printer on the far end. What is excluded is a regular file — a misconfigured
+    path, or a stand-in — which reports itself readable and then returns nothing
     for ever, so asking it would burn the whole timeout on every print.
+
+    Getting this wrong is quiet rather than loud: a printer that "cannot be
+    asked" simply loses the tape check and the per-label confirmation, and
+    prints anyway.
     """
-    return stat.S_ISCHR(os.fstat(fd).st_mode)
+    mode = os.fstat(fd).st_mode
+    return stat.S_ISCHR(mode) or stat.S_ISSOCK(mode)
 
 
 def _read_status(fd: int, budget: float) -> PrinterStatus | None:

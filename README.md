@@ -373,6 +373,64 @@ sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=usbmisc
 export SHELFOS_LABEL_DEVICE="/dev/shelfos-label"   # stable across replugs
 ```
 
+**The printer can be somewhere else.** ShelfOS writes raster bytes straight to a
+device, so the printer has to be on the machine running the service — unless you
+point it at one over the network:
+
+```bash
+export SHELFOS_LABEL_DEVICE="tcp://127.0.0.1:9100"
+```
+
+Everything else is unchanged: the tape is still read off the printer, a fault
+still stops the job before any tape moves, and each label is still confirmed.
+Only the last hop is different.
+
+On the machine holding the printer, one bridge and one tunnel, both as user
+services so they come up on their own:
+
+```ini
+# ~/.config/systemd/user/shelfos-label.service
+[Unit]
+Description=Expose the label printer on 127.0.0.1:9100
+
+[Service]
+ExecStart=/usr/bin/socat TCP-LISTEN:9100,bind=127.0.0.1,reuseaddr,fork OPEN:/dev/shelfos-label,rdwr,nonblock
+Restart=always
+
+[Install]
+WantedBy=default.target
+```
+
+```ini
+# ~/.config/systemd/user/shelfos-label-tunnel.service
+[Unit]
+Description=Reverse tunnel for the label printer
+After=shelfos-label.service
+
+[Service]
+ExecStart=/usr/bin/ssh -N -T -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -R 9100:127.0.0.1:9100 USER@SERVER
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user enable --now shelfos-label shelfos-label-tunnel
+loginctl enable-linger "$USER"   # so it runs without a graphical session
+```
+
+The tunnel is what keeps the server's setting stable: it always talks to its own
+`127.0.0.1`, so the machine with the printer can change address, move networks or
+sit behind NAT without anything on the server changing — and no port is exposed.
+`ServerAliveInterval` and `Restart=always` matter more than they look: a laptop
+that sleeps otherwise leaves the server with a port that accepts connections and
+does nothing with them.
+
+CUPS still must not hold the same printer, exactly as when it is plugged in
+locally.
+
 Joining the `lp` group works too (`sudo usermod -aG lp $USER`), but needs a fresh
 login and leaves the unstable device number.
 

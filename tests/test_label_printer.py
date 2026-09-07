@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import os
+import socket
 import threading
 
 import pytest
@@ -21,7 +22,7 @@ from app.services.errors import PrinterError, ValidationError
 from app.services.label_service import LabelData, location_qr_payload
 from PIL import Image, ImageChops
 
-from tests.fake_printer import IDLE_FRAME, FakePrinter, frame
+from tests.fake_printer import IDLE_FRAME, FakePrinter, PrinterBridge, frame
 
 _DEJAVU = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
@@ -398,7 +399,8 @@ def test_an_unwritable_device_names_the_permission_fix(tmp_path) -> None:  # typ
 
 
 def test_a_busy_printer_is_reported_rather_than_waited_on(
-    tmp_path, monkeypatch  # type: ignore[no-untyped-def]
+    tmp_path,
+    monkeypatch,  # type: ignore[no-untyped-def]
 ) -> None:
     monkeypatch.setattr(config, "LABEL_PRINT_TIMEOUT", 0.05)
     (tmp_path / "lp0").touch()
@@ -861,3 +863,117 @@ def test_progress_is_readable_while_a_run_is_going_and_clear_after() -> None:
 
     assert any(p is not None for p in seen)  # something to show a watcher
     assert lp.job_progress() is None  # and nothing left behind afterwards
+
+
+# --- Reached over the network ------------------------------------------------
+#
+# The printer is on the machine in front of the person, and the service runs on
+# a server; a bridge there relays one TCP connection to the device. What matters
+# is that nothing downstream notices: the transport is a file descriptor either
+# way, so the tape check, the status read-back and the per-label confirmation
+# have to survive the change or the feature is only half of itself.
+
+
+def test_a_network_device_is_recognised() -> None:
+    assert lp.is_network_device("tcp://127.0.0.1:9100")
+    assert not lp.is_network_device("/dev/usb/lp0")
+    assert not lp.is_network_device("")
+
+
+@pytest.mark.parametrize(
+    ("device", "expected"),
+    [
+        ("tcp://127.0.0.1:9100", ("127.0.0.1", 9100)),
+        ("tcp://laptop.local:9100", ("laptop.local", 9100)),
+        (
+            "tcp://[::1]:9100",
+            ("::1", 9100),
+        ),  # the brackets are the URL's, not the host's
+    ],
+)
+def test_a_network_device_is_split_into_host_and_port(
+    device: str, expected: tuple[str, int]
+) -> None:
+    assert lp.split_network_device(device) == expected
+
+
+@pytest.mark.parametrize(
+    "device",
+    [
+        "tcp://",
+        "tcp://host",
+        "tcp://host:",
+        "tcp://host:abc",
+        "tcp://host:0",
+        "tcp://host:65536",
+        "tcp://:9100",
+    ],
+)
+def test_a_malformed_network_device_is_a_configuration_error(device: str) -> None:
+    """ValidationError, not PrinterError: startup can say so, and no amount of
+    plugging the printer in will help."""
+    with pytest.raises(ValidationError):
+        lp.split_network_device(device)
+
+
+def test_nothing_listening_says_the_bridge_is_not_running() -> None:
+    """The likeliest failure by far — a laptop that is asleep or has moved."""
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+    listener.close()  # a port nothing holds
+    with pytest.raises(PrinterError, match="bridge"):
+        lp.print_labels(_labels(1), device=f"tcp://127.0.0.1:{port}")
+
+
+def test_a_socket_can_be_asked_questions() -> None:
+    """A character device is a printer and so is a socket; a regular file is not.
+
+    Getting this wrong is quiet: the printer is simply never asked, so the tape
+    check and the confirmation disappear and it prints anyway.
+    """
+    a, b = socket.socketpair()
+    try:
+        assert lp._answers_questions(a.fileno())
+    finally:
+        a.close()
+        b.close()
+    with open(os.devnull) as handle:  # a character device
+        assert lp._answers_questions(handle.fileno())
+
+
+def test_a_print_over_tcp_is_asked_believed_and_confirmed() -> None:
+    """The local test's headline, through a bridge, asserting the same things."""
+    with (
+        FakePrinter([IDLE_FRAME, frame(b18=lp._STATUS_COMPLETED)]) as printer,
+        PrinterBridge(printer) as bridge,
+    ):
+        outcome = lp.print_labels(_labels(1), device=bridge.device)
+        printer.wait_for(b"\x1a")
+
+    assert outcome.confirmed  # the far-end printer was heard, over TCP
+    assert outcome.sent == 1
+    assert outcome.tape == "62"  # read off the wire, not taken from configuration
+    assert printer.received.startswith(lp._STATUS_REQUEST)
+    assert printer.received.endswith(b"\x1a")
+    assert len(printer.received) > 30_000
+
+
+def test_a_fault_over_tcp_still_stops_before_any_tape_moves() -> None:
+    """The refusal is the tape check, and it has to survive the transport."""
+    with (
+        FakePrinter([frame(b8=0x02)]) as printer,  # end of media
+        PrinterBridge(printer) as bridge,
+    ):
+        with pytest.raises(PrinterError):
+            lp.print_labels(_labels(1), device=bridge.device)
+        printer.wait_for(lp._STATUS_REQUEST)
+
+    assert len(printer.received) < 100  # the question, and nothing else
+
+
+def test_the_tape_is_read_over_tcp() -> None:
+    with FakePrinter([IDLE_FRAME]) as printer, PrinterBridge(printer) as bridge:
+        status = lp.read_printer_status(bridge.device)
+    assert status is not None
+    assert lp.detect_tape(status) == "62"
