@@ -350,3 +350,123 @@ def test_only_a_caddyfile_that_is_ours_alone_is_replaced(
         ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
     )
     assert result.stdout.strip() == ("replace" if replaceable else "separate")
+
+
+def test_backup_restore_never_steps_down_to_the_service_user(tmp_path: Path) -> None:
+    """Stepping down gives up root's right to traverse directories.
+
+    An archive normally sits in the operator's home, which is 0750 on Ubuntu, so
+    the service user cannot enter it whatever the archive's own mode is. That
+    surfaced as "Permission denied" on a plainly world-readable file, and no
+    amount of chmod on the file helped.
+    """
+    script = _SCRIPT.read_text()
+    body = script[script.index("cmd_backup() {") :]
+    body = body[: body.index("\n}\n") + 3]
+    assert "sudo -u" not in body, "backup steps down to the service user again"
+    # And it puts the ownership back afterwards (in give_data_back), or the
+    # service comes up unable to write the database it just restored.
+    assert "give_data_back" in body
+
+
+def _restore_resolver(tmp_path: Path) -> str:
+    """The archive-path branch of cmd_backup, on its own, callable from bash."""
+    script = _SCRIPT.read_text()
+    body = script[script.index("cmd_backup() {") :]
+    body = body[: body.index("\n}\n") + 3]
+    resolver = body[body.index('if [ "$action" = restore ]; then') :]
+    return resolver[: resolver.index("\n    fi\n") + 7]
+
+
+def _run_resolver(tmp_path: Path, cwd: Path, *args: str):  # type: ignore[no-untyped-def]
+    probe = tmp_path / "probe.sh"
+    probe.write_text(
+        "\n".join(
+            [
+                "set -euo pipefail",
+                'die() { printf "error: %s\\n" "$2" >&2; exit "$1"; }',
+                "resolve() {",
+                "    local action=restore",
+                _restore_resolver(tmp_path),
+                '    printf "%s\\n" "$@"',
+                "}",
+                f"cd {cwd}",
+                "resolve " + " ".join(args),
+                "",
+            ]
+        )
+    )
+    return subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+
+
+def test_backup_restore_makes_the_archive_path_absolute(tmp_path: Path) -> None:
+    """It is read by a process that need not share this working directory."""
+    archive = tmp_path / "sub" / "snap.tar.gz"
+    archive.parent.mkdir()
+    archive.touch()
+    result = _run_resolver(tmp_path, archive.parent, "../sub/snap.tar.gz")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(archive)
+
+
+def test_a_missing_directory_fails_instead_of_becoming_a_root_path(
+    tmp_path: Path,
+) -> None:
+    """`cd` failing used to leave the substitution empty, so a typo in the
+    directory became "/<basename>" — a path the operator never typed, at the
+    filesystem root, which might even exist."""
+    result = _run_resolver(tmp_path, tmp_path, "./bakups/snap.tar.gz")
+    assert result.returncode == 1
+    assert "no such directory" in result.stderr
+    assert "/snap.tar.gz" not in result.stdout
+
+
+def test_the_archive_is_found_after_a_leading_flag(tmp_path: Path) -> None:
+    """`restore --force snap.tar.gz` is a reasonable thing to type, and looking
+    only at $1 left the relative path to be read by a root process elsewhere —
+    with the service already stopped."""
+    archive = tmp_path / "sub" / "snap.tar.gz"
+    archive.parent.mkdir()
+    archive.touch()
+    result = _run_resolver(tmp_path, archive.parent, "--force", "snap.tar.gz")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == ["--force", str(archive)]
+
+
+def test_the_data_is_handed_back_even_when_a_restore_fails(tmp_path: Path) -> None:
+    """backup.py swaps the database before the attachments, so a part-way
+    failure is exactly when root-owned data is left behind — and the case where
+    nobody thinks to check ownership."""
+    script = _SCRIPT.read_text()
+    body = script[script.index("cmd_backup() {") :]
+    body = body[: body.index("\n}\n") + 3]
+    tail = body[
+        body.index(
+            'if [ "$action" = restore ] && is_deployed; then',
+            body.index("local status=0"),
+        ) :
+    ]
+    assert "give_data_back" in tail
+    assert 'if [ "$status" = 0 ]' not in tail, "the chown is gated on success again"
+
+
+def test_the_handback_resolves_symlinks(tmp_path: Path) -> None:
+    """backup.py supports an attachments directory that is a symlink to external
+    storage, and `chown -R` on a symlinked operand changes the link, not the
+    tree behind it."""
+    script = _SCRIPT.read_text()
+    body = script[script.index("give_data_back() {") :]
+    body = body[: body.index("\n}\n") + 3]
+    assert "readlink -f" in body
+
+
+def test_the_installed_code_is_not_owned_by_the_service_user() -> None:
+    """It is executed by root now (backup, password), and the unit's
+    ProtectSystem=strict already made ownership of it worth nothing to the
+    service — so a service account able to edit it would be a path from a
+    web-app bug to root on the operator's next sudo."""
+    script = _SCRIPT.read_text()
+    assert 'chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"' not in script
+    assert 'chown -R root:root "$INSTALL_DIR"' in script

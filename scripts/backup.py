@@ -35,6 +35,7 @@ Targets the same places as the app: ``DATABASE_URL`` (default
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import os
@@ -162,7 +163,18 @@ def create_backup(db_path: Path, attachments_dir: Path, output: Path) -> dict[st
             # looks like a backup.
             partial = output.with_name(output.name + ".part")
             try:
-                with tarfile.open(partial, "w:gz") as archive:
+                # The gzip header records an original filename, and building
+                # under "<name>.part" would put the temporary one in there for
+                # good — so `file` reports a finished backup as having been
+                # something.part, which reads like a truncated download. Name
+                # the stream after what the archive will be called.
+                with (
+                    partial.open("wb") as raw,
+                    gzip.GzipFile(
+                        filename=output.name, mode="wb", fileobj=raw
+                    ) as compressed,
+                    tarfile.open(fileobj=compressed, mode="w") as archive,
+                ):
                     archive.add(manifest_path, arcname=_MANIFEST_NAME)
                     archive.add(snapshot, arcname=_DATABASE_NAME)
                     for path in files:

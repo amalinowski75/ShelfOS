@@ -319,3 +319,29 @@ def test_restore_refuses_an_archive_larger_than_free_disk(
         backup.restore_backup(
             archive, source["root"] / "r" / "db", source["root"] / "r" / "att"
         )
+
+
+def test_the_archive_is_not_named_after_the_temporary_file(
+    source: dict[str, Path],
+) -> None:
+    """gzip records the uncompressed name in its header, and the archive is
+    built under "<name>.part" — so without care that temporary name is what
+    every tool reports for good, and a finished backup reads like a truncated
+    download.
+    """
+    import gzip as gzip_module
+
+    output = source["root"] / "shelfos-backup-20260907.tar.gz"
+    backup.create_backup(source["db"], source["attachments"], output)
+
+    with output.open("rb") as raw:
+        header = raw.read(10)
+        assert header[3] & 0x08, "no filename stored in the gzip header"
+        name = b""
+        while (byte := raw.read(1)) not in (b"\x00", b""):
+            name += byte
+    assert not name.endswith(b".part"), name
+    assert name == b"shelfos-backup-20260907.tar"
+    # And it is still a readable archive after all that.
+    with gzip_module.open(output) as stream:
+        assert stream.read(2)

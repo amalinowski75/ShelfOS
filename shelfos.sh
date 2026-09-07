@@ -926,7 +926,14 @@ deploy_step_venv() {
         sudo_run touch "$INSTALL_DIR/.venv/.shelfos-installed"
         step_ok
     fi
-    sudo_run chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR" "$DATA_DIR"
+    # The data is the service's; the code is not. ProtectSystem=strict already
+    # makes /opt/shelfos read-only to the unit, so handing it over bought
+    # nothing — and now that `backup` and `password` run root out of that tree,
+    # a service account able to edit it would be a way from a web-app bug to
+    # root on the operator's next sudo. Stated rather than left alone, so an
+    # install made by an earlier version is corrected on the next deploy.
+    sudo_run chown -R root:root "$INSTALL_DIR"
+    sudo_run chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR"
 }
 
 deploy_step_env() {
@@ -1223,7 +1230,8 @@ cmd_update() {
         sudo_run "$INSTALL_DIR/.venv/bin/pip" install --quiet --editable "$INSTALL_DIR"
         sudo_run touch "$INSTALL_DIR/.venv/.shelfos-installed"
     fi
-    sudo_run chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
+    # Root's, not the service's — see deploy_step_venv.
+    sudo_run chown -R root:root "$INSTALL_DIR"
 
     # The installed unit and Caddyfile carry this machine's port and domain, so
     # a new version of either cannot simply be copied over them.
@@ -1375,6 +1383,18 @@ signing secret and every session invalid — back that file up separately.
 EOF
 }
 
+# Hand the database and attachments back to the service after root has written
+# them. Paths are resolved first: backup.py deliberately supports an attachments
+# directory that is a symlink to external storage, and `chown -R` on a symlinked
+# operand changes the link rather than the tree behind it — so without this the
+# files stay root-owned and the service starts unable to write uploads.
+give_data_back() {
+    local db_path att_path
+    db_path=$(readlink -f "${DEPLOY_DB#sqlite:///}" 2>/dev/null || printf '%s' "${DEPLOY_DB#sqlite:///}")
+    att_path=$(readlink -f "$DEPLOY_ATT" 2>/dev/null || printf '%s' "$DEPLOY_ATT")
+    sudo_run chown -R "$SERVICE_USER:$SERVICE_USER" "$db_path" "$att_path"
+}
+
 cmd_backup() {
     local action="create"
     case ${1:-} in
@@ -1382,14 +1402,16 @@ cmd_backup() {
         -h|--help)      usage_backup; return 0 ;;
     esac
 
-    local py script env_args=""
+    local py script db att
+    local -a env_args=()
     if is_deployed; then
         py="$INSTALL_DIR/.venv/bin/python"
         script="$INSTALL_DIR/scripts/backup.py"
-        local db att
         db=$(env_file_value "$ENV_FILE_SYSTEM" DATABASE_URL)
         att=$(env_file_value "$ENV_FILE_SYSTEM" SHELFOS_ATTACHMENTS_DIR)
-        env_args="DATABASE_URL=${db:-sqlite:///$DATA_DIR/shelfos.db} SHELFOS_ATTACHMENTS_DIR=${att:-$DATA_DIR/attachments}"
+        db=${db:-sqlite:///$DATA_DIR/shelfos.db}
+        att=${att:-$DATA_DIR/attachments}
+        env_args=("DATABASE_URL=$db" "SHELFOS_ATTACHMENTS_DIR=$att")
         [ -x "$py" ] || die 1 "no virtualenv at $py"
     else
         py="$REPO_ROOT/.venv/bin/python"
@@ -1404,9 +1426,34 @@ cmd_backup() {
         set -- "$@" --yes
     fi
 
+    # An archive named relatively is about to be read by a process that may not
+    # share this working directory, and named in messages that outlive it. The
+    # archive is not always the first argument — `restore --force snap.tar.gz`
+    # is a reasonable thing to type — so find the first one that is not a flag.
+    if [ "$action" = restore ]; then
+        local -a resolved=()
+        local found=0 arg dir
+        for arg in "$@"; do
+            if [ "$found" = 0 ]; then
+                case $arg in
+                    -*) ;;
+                    *)
+                        dir=$(cd "$(dirname "$arg")" 2>/dev/null && pwd) \
+                            || die 1 "no such directory: $(dirname "$arg")"
+                        # Without the check above this silently becomes
+                        # "/<basename>": cd fails, the substitution is empty, and
+                        # a typo in the directory turns into a path at the root
+                        # that the operator never typed — and might even exist.
+                        arg="$dir/$(basename "$arg")"
+                        found=1 ;;
+                esac
+            fi
+            resolved+=("$arg")
+        done
+        set -- "${resolved[@]+"${resolved[@]}"}"
+    fi
+
     if [ "$action" = create ] && is_deployed; then
-        # Somewhere the service user can actually write, since /opt is read-only
-        # to it under the unit's sandbox and its home is /opt/shelfos.
         local has_output=0 arg
         for arg in "$@"; do
             # Every spelling argparse accepts, not only the spaced ones: with
@@ -1417,7 +1464,10 @@ cmd_backup() {
             esac
         done
         if [ "$has_output" = 0 ]; then
-            sudo_run install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 750 "$DATA_DIR/backups"
+            # root:root 0700. The archives are root's business, like
+            # /etc/shelfos/env: each one carries every password hash in the
+            # database, and the service itself has no reason to read them back.
+            sudo_run install -d -o root -g root -m 700 "$DATA_DIR/backups"
             set -- "$@" -o "$DATA_DIR/backups/shelfos-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
         fi
     fi
@@ -1429,24 +1479,32 @@ cmd_backup() {
 
     local status=0
     if is_deployed; then
-        # shellcheck disable=SC2086  # env_args is a deliberate list of assignments
-        if [ "$DRY_RUN" = 1 ]; then
-            printf '        %s+ sudo -u %s env %s %s %s %s %s%s\n' \
-                "$C_DIM" "$SERVICE_USER" "$env_args" "$py" "$script" "$action" "$*" "$C_OFF" >&2
-        else
-            sudo_run env $env_args sudo -u "$SERVICE_USER" \
-                env $env_args "$py" "$script" "$action" "$@" || status=$?
-        fi
+        # As root, not as the service user. Stepping down to it means giving up
+        # root's right to traverse directories, and an archive normally sits in
+        # the operator's home — 0750 on Ubuntu, so the service user cannot enter
+        # it whatever the archive's own mode is. That failure reads as
+        # "Permission denied" on a file that is plainly world-readable, and no
+        # amount of chmod on it helps.
+        sudo_run env "${env_args[@]}" "$py" "$script" "$action" "$@" || status=$?
     else
         run "$py" "$script" "$action" "$@" || status=$?
     fi
 
     if [ "$action" = restore ] && is_deployed; then
+        # Unconditionally, not only on success. A restore that fails part way
+        # has usually already replaced the database — backup.py swaps it before
+        # the attachments — so the failure path is exactly when root-owned data
+        # is left behind, and the one where nobody thinks to check ownership.
+        # It costs nothing when nothing changed.
+        give_data_back
         sudo_run systemctl start "$SERVICE_NAME"
     fi
 
     if [ "$action" = create ] && [ "$status" = 0 ]; then
         note "The archive does not contain $ENV_FILE_SYSTEM — back that up separately."
+        if is_deployed; then
+            note "It is owned by root and readable only with sudo; it holds every password hash."
+        fi
     fi
     return "$status"
 }
