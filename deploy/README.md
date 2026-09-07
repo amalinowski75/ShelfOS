@@ -170,12 +170,17 @@ source, creates a user and talks to systemd and to a certificate authority. On a
 throwaway Ubuntu 24.04 container or VM, in order:
 
 1. `sudo ./shelfos.sh deploy` from a fresh clone, answering the prompts.
-2. `sudo ./shelfos.sh deploy` again — every step must say `skipped`.
-3. `./shelfos.sh status` — service active, health answering, no `replace-me`.
-4. `./shelfos.sh backup create`, then `restore` of that archive.
-5. `sudo ./shelfos.sh update` with nothing new upstream — must say so and stop.
-6. Reboot; the service comes back on its own.
-7. With a Brother QL attached: `/dev/shelfos-label` exists and a test label prints.
+2. `sudo ./shelfos.sh deploy` again — it must recognise the install, say what it
+   found, and point at `update` and `--reinstall` rather than doing anything.
+3. `sudo ./shelfos.sh deploy --reinstall` — *this* is the run where every step
+   reports `skipped`, and where a half-finished install would be repaired.
+4. `./shelfos.sh status` — service active, health answering, no `replace-me`.
+5. `./shelfos.sh backup create`, then `restore` of that archive. A restore whose
+   archive carries an admin on the default password must say so and offer to fix
+   it **before** the service is started.
+6. `sudo ./shelfos.sh update` with nothing new upstream — must say so and stop.
+7. Reboot; the service comes back on its own.
+8. With a Brother QL attached: `/dev/shelfos-label` exists and a test label prints.
 
 ## Behind a different proxy
 
