@@ -153,14 +153,17 @@ def _check_seeded_admin_password(session: Session) -> None:
         raise RuntimeError(
             f"Refusing to start: admin account(s) {names} still have the default "
             "password, which is public. With the app stopped, run "
-            "`python scripts/set_password.py <username>`. Setting "
-            "SHELFOS_ADMIN_PASSWORD does not change an account that already exists."
+            "`sudo ./shelfos.sh password <username>` — or, running the script "
+            "directly, `python scripts/set_password.py <username>` with "
+            "DATABASE_URL set to this instance's database, which is what the "
+            "wrapper does for you. Setting SHELFOS_ADMIN_PASSWORD does not "
+            "change an account that already exists."
         )
     # Here the app does start, so the ordinary way round is the ordinary advice.
     _logger.warning(
         "Admin account(s) %s still have the default password. Sign in and use "
         "Change password, or stop the app and run "
-        "`python scripts/set_password.py <username>`.",
+        "`./shelfos.sh password <username>`.",
         names,
     )
 

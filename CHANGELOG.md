@@ -9,6 +9,33 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## Restoring a backup could leave a service that would not start
+
+An archive carries its own accounts. Restore one taken from a laptop onto a
+production install and it brings that laptop's admin — usually still on
+`admin`/`admin` — so the next start refuses, correctly, over a password nobody
+on that machine ever chose. The service was left down, three steps after the
+cause, and the way out did not work either: the refusal said to run
+`scripts/set_password.py`, which falls back to a database path relative to the
+working directory. On a server that is not where the database is, so anyone
+following the advice literally got "No database at /opt/shelfos/data/shelfos.db".
+
+- **`./shelfos.sh password [USERNAME]`** sets an account's password on whichever
+  install is here, with the database named and as the right user. It offers to
+  start the service afterwards, since the reason to be there is usually one that
+  will not start.
+- **`backup restore` checks before starting.** If the restored database has an
+  admin on the default password it says so while the service is still stopped —
+  the only moment the fix is one command away — and offers to set a new one there
+  and then.
+- The refusal message now names the wrapper first, and says that running the
+  script directly needs `DATABASE_URL`.
+- Fixes a crash shipped in the previous entry: the handback after a restore read
+  two variables nothing assigned, which under `set -u` ends the script — after
+  the database had been replaced and before the service was started. shellcheck
+  finds that only with `check-unassigned-uppercase`, which is off by default; CI
+  turns it on, and a test asserts every global the script reads is one it sets.
+
 ## A backup you could not restore
 
 `./shelfos.sh backup restore ~/snap.tar.gz` failed with `Permission denied` on an

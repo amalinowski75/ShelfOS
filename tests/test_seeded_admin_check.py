@@ -253,7 +253,11 @@ def test_the_production_message_leads_with_the_only_possible_remedy(
         app_main._check_seeded_admin_password(session)
     message = str(caught.value)
     assert "Sign in" not in message
-    assert message.index("set_password.py") < len(message)
+    # The wrapper first, because it is the one that works on a deployed install:
+    # set_password.py alone falls back to a database path relative to the working
+    # directory, which on a server is not where the database is.
+    assert message.index("shelfos.sh password") < message.index("set_password.py")
+    assert "DATABASE_URL" in message
 
 
 def test_the_development_message_offers_signing_in(
@@ -271,7 +275,7 @@ def test_the_development_message_offers_signing_in(
     message = next(
         r.getMessage() for r in caplog.records if "default password" in r.getMessage()
     )
-    assert message.index("Sign in") < message.index("set_password.py")
+    assert message.index("Sign in") < message.index("shelfos.sh password")
 
 
 # --- the account demo data is attributed to ----------------------------------
