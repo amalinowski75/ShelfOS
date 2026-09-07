@@ -27,21 +27,33 @@ Recent changes are in [CHANGELOG.md](CHANGELOG.md).
 ## Development
 
 ```bash
-./run.sh
+./shelfos.sh devel
 ```
 
-That is the whole setup: on a fresh clone it builds the virtualenv and installs the
-dependencies, then serves on <http://127.0.0.1:9000>. Later runs go straight to
-serving — except after a change to `pyproject.toml`, when it reinstalls first, so a
-pull that adds a dependency doesn't leave you with an app that crashes on import.
+A fresh clone builds the virtualenv and installs the dependencies first; later
+runs go straight to serving on `http://127.0.0.1:9000`, except after a change to
+`pyproject.toml`, when it reinstalls first. An empty database is offered demo
+data. The database stays in this clone at `data/shelfos.db` — run a second
+instance from a second clone, and give it `--port 9001`.
 
-It also loads `~/.ShelfOS/.env` if you keep one (shop API keys, printer, secret key
-— see below); without it the app runs on its development defaults. Settings can come
-from either side: `PORT=8080 ./run.sh` and a `PORT` line in that file both work, as
-do `PYTHON` (which interpreter builds the venv) and `SHELFOS_ENV_FILE` (which file
-to read).
+`shelfos.sh` is the one entry point:
 
-The equivalent by hand, if you would rather:
+| Command | What it does |
+| --- | --- |
+| `devel` | run a local instance from this clone, reloading on edits |
+| `deploy` | install as a system service with TLS (needs root) |
+| `update` | move an installed service forward, backing it up first |
+| `status` | what is installed, and whether it is healthy |
+| `backup` | create or restore a backup of whichever install is here |
+
+`--dry-run` works on any of them: it prints what would happen, changes nothing,
+and never calls `sudo`. `./shelfos.sh <command> --help` has the flags.
+
+Settings come from `~/.ShelfOS/.env` if it exists (`SHELFOS_ENV_FILE` names a
+different file). The file is parsed, not sourced, and fills in only what is not
+already set — so `PORT=8080 ./shelfos.sh devel` wins over a `PORT` line in it.
+
+The manual equivalent, if you would rather not use the script:
 
 ```bash
 python3 -m venv .venv
@@ -50,18 +62,14 @@ pip install -e ".[dev]"
 uvicorn app.main:app --reload --port 9000
 ```
 
-Run the quality gate (Definition of Done):
+Before opening a pull request (the Definition of Done):
 
 ```bash
-ruff check .
-black --check .
-mypy app
-pytest --cov
+ruff check . && black --check . && mypy app && pytest --cov
 ```
 
-The server-rendered web UI's browser scripts have their own test suite
-([Vitest](https://vitest.dev) + jsdom). It needs Node 18+; install once with
-`npm ci`, then:
+The web UI scripts have their own suite ([Vitest](https://vitest.dev) + jsdom).
+It needs Node 18+; install once with `npm ci`, then:
 
 ```bash
 npm test
@@ -73,10 +81,18 @@ shapes, which is as useful to someone probing the instance as to whoever runs it
 
 ### Running it on a server
 
-`./run.sh` is for a laptop. For a machine that stays up, `deploy/` has a systemd
-unit, an environment-file template, and a Caddyfile that terminates TLS and
-renews its own certificate — with `deploy/README.md` explaining the setup and the
-handful of things that catch people out.
+```bash
+sudo ./shelfos.sh deploy
+```
+
+It asks for a hostname and a first admin password, generates the signing secret
+itself, and then does the whole of `deploy/README.md`: a system user, the code in
+`/opt/shelfos`, data in `/var/lib/shelfos`, settings in `/etc/shelfos/env`, a
+systemd unit, and Caddy holding the certificate. Re-running is safe — every step
+says what it skipped. `--dry-run` shows the plan without touching anything.
+
+`deploy/README.md` has the layout it builds, the same steps written out for doing
+by hand, and the handful of things that catch people out.
 
 ### Authentication
 
