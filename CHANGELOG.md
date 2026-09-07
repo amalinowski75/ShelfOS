@@ -25,6 +25,12 @@ service is on a server and the printer is on the desk of the person printing.
   tape moves, and each label is still confirmed — tested end to end through a
   real bridge in front of the existing fake printer, not against a stub that
   would have proved only that a socket works.
+- The failure modes a network brings are answered rather than inherited: the
+  connect is bounded by the caller's own budget, so a sleeping machine cannot
+  stall every preview for the length of a print timeout while holding the print
+  lock; a timeout says what happened rather than "None"; and a peer that accepts
+  and never speaks ends the read instead of being taken for a quiet printer,
+  which would have burned the whole budget before the useful error.
 - The tunnel is what keeps the server's setting stable: it always talks to its
   own `127.0.0.1`, so the printer's machine can move networks or sit behind NAT
   with nothing on the server to change.

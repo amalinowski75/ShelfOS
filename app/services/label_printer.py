@@ -696,8 +696,15 @@ def split_network_device(device: str) -> tuple[str, int]:
     return host.strip("[]"), port
 
 
-def _open_network_device(device: str) -> int:
+def _open_network_device(device: str, budget: float) -> int:
     """Connect to the bridge and hand back a raw descriptor.
+
+    ``budget`` is the caller's own, not the print timeout: this is on the status
+    path too, where ``/labels/tapes`` and every preview render ask the printer
+    what it holds while holding the print lock. A machine that has gone to sleep
+    takes a connection nowhere, and spending the whole 30-second write budget on
+    that — per request, since only a successful answer is remembered — would
+    stall previews and make a print started meanwhile report the printer busy.
 
     ``detach`` so the socket object stops owning the descriptor: both callers
     close it with ``os.close``, and leaving the object owning it too would make
@@ -705,10 +712,17 @@ def _open_network_device(device: str) -> int:
     belong to something else.
     """
     host, port = split_network_device(device)
-    try:
-        connection = socket.create_connection(
-            (host, port), timeout=config.LABEL_PRINT_TIMEOUT
+    if budget <= 0:
+        # settimeout() rejects a non-positive value with ValueError, which is
+        # not an OSError and would escape every handler below — turning a
+        # misconfigured timeout into a 500 from the tape list rather than the
+        # "the printer is not saying what it holds" the device path gives.
+        raise ValidationError(
+            f"no time budget to reach the label printer at {host}:{port} "
+            f"({budget:g}s); check SHELFOS_LABEL_PRINT_TIMEOUT"
         )
+    try:
+        connection = socket.create_connection((host, port), timeout=budget)
     except ConnectionRefusedError:
         raise PrinterError(
             f"nothing is listening on {host}:{port} — the bridge on the machine "
@@ -718,17 +732,26 @@ def _open_network_device(device: str) -> int:
     except socket.gaierror:
         raise PrinterError(f"could not resolve {host} for the label printer") from None
     except OSError as error:
+        # `or error`: a connect timeout is a TimeoutError built from a plain
+        # string, so it carries no errno and strerror is None — and a timeout is
+        # the likeliest failure of all here, a sleeping machine black-holing the
+        # route. "…: None" would be the message most people ever see.
         raise PrinterError(
-            f"could not reach the label printer at {host}:{port}: {error.strerror}"
+            f"could not reach the label printer at {host}:{port}: "
+            f"{error.strerror or error}"
         ) from None
     connection.setblocking(False)
     return connection.detach()
 
 
-def _open_device(device: str) -> int:
-    """Open the printer, translating errno into something actionable."""
+def _open_device(device: str, budget: float) -> int:
+    """Open the printer, translating errno into something actionable.
+
+    ``budget`` bounds a network connection only; opening a device node is
+    immediate whether or not the printer is switched on.
+    """
     if is_network_device(device):
-        return _open_network_device(device)
+        return _open_network_device(device, budget)
     try:
         return os.open(device, os.O_RDWR | os.O_NONBLOCK)
     except FileNotFoundError:
@@ -767,6 +790,14 @@ def _write_all(fd: int, data: bytes, device: str, budget: float) -> None:
         except BlockingIOError:
             time.sleep(_POLL_SECONDS)
         except OSError as error:
+            if error.errno in (errno.EPIPE, errno.ECONNRESET) and is_network_device(
+                device
+            ):
+                raise PrinterError(
+                    "the connection to the label printer closed mid-job — the "
+                    "bridge on the machine holding it stopped, or the tunnel "
+                    "dropped (see the label printer section of README.md)"
+                ) from None
             if error.errno == errno.EBUSY:
                 raise PrinterError(
                     f"{device} is held by another program — CUPS usually is the "
@@ -825,8 +856,17 @@ def _answers_questions(fd: int) -> bool:
 
 
 def _read_status(fd: int, budget: float) -> PrinterStatus | None:
-    """Wait for one status frame, or ``None`` if the device stays quiet."""
+    """Wait for one status frame, or ``None`` if the device stays quiet.
+
+    A closed socket is not quiet: ``select`` reports it readable for ever and
+    every read returns nothing, so treating an empty read as "not yet" would
+    spin out the whole budget. That is the shape of the likeliest network
+    failure — the tunnel up but the bridge behind it down, so the connection is
+    accepted and then dropped — and burning the budget there delays the write's
+    own error, which is the one that says something useful.
+    """
     buffer = b""
+    ends_at_eof = stat.S_ISSOCK(os.fstat(fd).st_mode)
     deadline = time.monotonic() + budget
     while time.monotonic() < deadline:
         if not select.select([fd], [], [], _POLL_SECONDS)[0]:
@@ -836,6 +876,8 @@ def _read_status(fd: int, budget: float) -> PrinterStatus | None:
         except (BlockingIOError, OSError):
             return None
         if not chunk:
+            if ends_at_eof:
+                return None
             time.sleep(_POLL_SECONDS)
             continue
         buffer += chunk
@@ -881,12 +923,17 @@ def read_printer_status(device: str | None = None) -> PrinterStatus | None:
     device = config.LABEL_DEVICE if device is None else device
     if not device:
         raise ValidationError(_NOT_CONFIGURED)
-    fd = _open_device(device)
+    budget = _readback_budget()
+    if budget <= 0:
+        # Asked before opening anything: "do not bother asking" should not first
+        # spend a connection finding out.
+        return None
+    fd = _open_device(device, budget)
     try:
-        if _readback_budget() <= 0 or not _answers_questions(fd):
+        if not _answers_questions(fd):
             return None
-        _write_all(fd, _STATUS_REQUEST, device, budget=_readback_budget())
-        return _read_status(fd, budget=_readback_budget())
+        _write_all(fd, _STATUS_REQUEST, device, budget=budget)
+        return _read_status(fd, budget=budget)
     finally:
         os.close(fd)
 
@@ -1212,7 +1259,7 @@ def print_labels(
     _set_progress(0, total)
     printed = 0
     try:
-        fd = _open_device(device)
+        fd = _open_device(device, _write_budget())
         try:
             before = None
             if _readback_budget() > 0 and _answers_questions(fd):

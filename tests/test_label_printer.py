@@ -13,6 +13,7 @@ import io
 import os
 import socket
 import threading
+import time
 
 import pytest
 import segno
@@ -977,3 +978,114 @@ def test_the_tape_is_read_over_tcp() -> None:
         status = lp.read_printer_status(bridge.device)
     assert status is not None
     assert lp.detect_tape(status) == "62"
+
+
+def test_a_status_query_does_not_spend_the_print_budget_connecting(
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    """The status path holds the print lock, and every preview render uses it.
+
+    A machine that has gone to sleep takes a connection nowhere. Spending the
+    30-second write budget on that — per request, since only a successful answer
+    is remembered — stalls previews and makes a print started meanwhile report
+    the printer busy.
+    """
+    seen: list[float] = []
+
+    def spy(address: tuple[str, int], timeout: float | None = None):  # type: ignore[no-untyped-def]
+        seen.append(float(timeout or 0))
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(socket, "create_connection", spy)
+    monkeypatch.setattr(config, "LABEL_PRINT_TIMEOUT", 30.0)
+    monkeypatch.setattr(config, "LABEL_STATUS_TIMEOUT", 2.0)
+    assert lp.status_if_free("tcp://127.0.0.1:9100") is None
+    assert seen == [2.0]  # the readback budget, not the write budget
+
+
+def test_a_readback_of_zero_does_not_even_connect(
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    """ "Do not bother asking" should not first spend a connection finding out."""
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("connected anyway")
+
+    monkeypatch.setattr(socket, "create_connection", refuse)
+    monkeypatch.setattr(config, "LABEL_STATUS_TIMEOUT", 0.0)
+    assert lp.read_printer_status("tcp://127.0.0.1:9100") is None
+
+
+def test_a_negative_timeout_is_a_configuration_error_not_a_crash(
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    """settimeout() rejects it with ValueError, which is not an OSError — so it
+    escaped every handler and turned the tape list into a 500 rather than the
+    "not saying what it holds" the device path gives."""
+    monkeypatch.setattr(config, "LABEL_STATUS_TIMEOUT", -1.0)
+    monkeypatch.setattr(config, "LABEL_PRINT_TIMEOUT", -1.0)
+    # status_if_free swallows a ValidationError and reports nothing known.
+    assert lp.status_if_free("tcp://127.0.0.1:9100") is None
+    with pytest.raises(ValidationError):
+        lp.print_labels(_labels(1), device="tcp://127.0.0.1:9100")
+
+
+def test_a_connect_timeout_says_something(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """TimeoutError carries no errno, so strerror is None — and a timeout is the
+    likeliest failure of all: a sleeping machine black-holing the route."""
+
+    def time_out(*_args: object, **_kwargs: object) -> None:
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(socket, "create_connection", time_out)
+    with pytest.raises(PrinterError) as caught:
+        lp.print_labels(_labels(1), device="tcp://127.0.0.1:9100")
+    assert "None" not in str(caught.value)
+    assert "timed out" in str(caught.value)
+
+
+def test_a_bridge_that_will_never_answer_is_not_mistaken_for_a_quiet_printer(
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    """A socket that has seen EOF is readable for ever and reads empty.
+
+    Treating that as "quiet for now" — right for a character device — spins out
+    the whole readback budget. The shape in the field is a bridge that accepts
+    and then has nothing behind it: the tunnel is up, ``sshd`` accepts on the
+    server's loopback so there is no connection refused, and the far end never
+    speaks. The half-close here is that, reduced: writes keep succeeding, reads
+    return nothing, for ever.
+    """
+    # Generous, so that burning it is unmistakable in the timing below rather
+    # than lost in the noise of a default that is already short.
+    monkeypatch.setattr(config, "LABEL_STATUS_TIMEOUT", 5.0)
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    done = threading.Event()
+
+    def accept_and_never_answer() -> None:
+        connection, _ = listener.accept()
+        connection.shutdown(socket.SHUT_WR)  # our reads see EOF from now on
+        try:
+            while not done.is_set():  # keep draining, so writes still succeed
+                if not connection.recv(4096):
+                    break
+        except OSError:
+            pass
+        connection.close()
+
+    server = threading.Thread(target=accept_and_never_answer, daemon=True)
+    server.start()
+    started = time.monotonic()
+    try:
+        status = lp.read_printer_status(f"tcp://127.0.0.1:{port}")
+    finally:
+        done.set()
+        listener.close()
+        server.join(timeout=2)
+
+    assert status is None  # nothing was said, and that is the answer
+    # The point: it did not sit out the budget waiting for a corpse to speak.
+    assert time.monotonic() - started < 2.0
