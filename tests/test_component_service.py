@@ -785,10 +785,10 @@ def test_create_component_with_no_values(session: Session) -> None:
 
 
 def test_create_component_with_values_audits_initial_values(session: Session) -> None:
-    from app.seed import ensure_system_user
+    from app.seed import ensure_demo_user
     from app.services import audit_service as audit
 
-    user = ensure_system_user(session)
+    user = ensure_demo_user(session)
     ctype = cs.create_type(session, "resistor")
     definition = cs.add_parameter_definition(
         session, ctype.id, name="resistance", label="R",

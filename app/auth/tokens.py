@@ -40,7 +40,8 @@ def credential_fingerprint(user: User) -> str | None:
     is not ours to hand out. (This is the mechanism Django calls the session
     auth hash.)
 
-    ``None`` for an account with no password — the seeded system user — which
+    ``None`` for an account with no password — the one demo data is attributed
+    to is the only such account ShelfOS makes — which
     cannot sign in, and so must never satisfy this check either.
     """
     if user.password_hash is None:

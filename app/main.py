@@ -40,7 +40,6 @@ from app.api.routes import (
 from app.auth.deps import require_access, require_admin, require_csrf
 from app.auth.throttle import LoginThrottle
 from app.db import engine, init_db
-from app.seed import ensure_system_user
 from app.services import label_printer, match_rule_service
 from app.services import user_service as us
 from app.services.errors import ValidationError
@@ -69,13 +68,16 @@ _PROTECTED_ROUTERS = (
 
 
 def _bootstrap() -> None:
-    """Create the schema and seed the system user and bootstrap admin (D11)."""
+    """Create the schema and seed the bootstrap admin (D11).
+
+    Not the account demo data is attributed to: that belongs to the demo data
+    and is created with it (see :mod:`app.seed`).
+    """
     _check_insecure_defaults()
     _check_scan_separator()
     _check_label_settings()
     init_db()
     with Session(engine) as session:
-        ensure_system_user(session)
         _check_admin_password_source(session)
         us.ensure_admin(
             session,

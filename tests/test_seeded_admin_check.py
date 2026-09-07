@@ -174,9 +174,9 @@ def test_a_seeded_but_unusable_admin_does_not_count_as_one(
     session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The system user is an admin that cannot sign in, so a seed is still due."""
-    from app.seed import ensure_system_user
+    from app.seed import ensure_demo_user
 
-    ensure_system_user(session)
+    ensure_demo_user(session)
     assert not us.has_login_capable_admin(session)
     monkeypatch.setattr(config, "ENV", "production")
     monkeypatch.setattr(config, "ADMIN_PASSWORD", config.DEFAULT_ADMIN_PASSWORD)
@@ -272,3 +272,93 @@ def test_the_development_message_offers_signing_in(
         r.getMessage() for r in caplog.records if "default password" in r.getMessage()
     )
     assert message.index("Sign in") < message.index("set_password.py")
+
+
+# --- the account demo data is attributed to ----------------------------------
+
+
+def test_the_demo_account_is_created_with_the_demo_data(session: Session) -> None:
+    from app.seed import DEMO_USER_NAME, ensure_demo_user
+
+    user = ensure_demo_user(session)
+    assert user.name == DEMO_USER_NAME
+    assert user.password_hash is None  # so it cannot sign in
+    assert ensure_demo_user(session).id == user.id  # idempotent
+
+
+def test_an_older_databases_system_account_is_adopted_not_renamed(
+    session: Session,
+) -> None:
+    """Its name is what the audit log shows against everything it ever did.
+
+    "system did this" was true when it was written; renaming it now would make
+    old entries claim something that was never on screen. So the row is reused
+    as it stands, and only a new database gets the better name.
+    """
+    from app.models.enums import UserRole
+    from app.models.user import User
+    from app.seed import ensure_demo_user
+
+    legacy = User(name="system", role=UserRole.ADMIN)
+    session.add(legacy)
+    session.commit()
+    session.refresh(legacy)
+
+    adopted = ensure_demo_user(session)
+    assert adopted.id == legacy.id
+    assert adopted.name == "system"
+    assert len(us.list_users(session)) == 1
+
+
+def test_an_account_that_cannot_sign_in_cannot_be_given_a_password(
+    session: Session,
+) -> None:
+    """The command-line tool always refused this; the users page did not."""
+    from app.seed import ensure_demo_user
+    from app.services.errors import ValidationError
+
+    demo = ensure_demo_user(session)
+    admin = us.create_user(
+        session,
+        username="admin",
+        password="a-real-admin-password",
+        role=UserRole.ADMIN,
+    )
+    with pytest.raises(ValidationError, match="not a sign-in account"):
+        us.set_password(session, demo.id, "a-real-password", actor_id=admin.id)
+    assert us.get_by_username(session, "demo") is not None
+    assert us.get_by_username(session, "demo").password_hash is None
+
+
+def test_a_real_account_is_never_adopted_as_the_demo_actor(
+    session: Session,
+) -> None:
+    """Nothing reserves the name, so an admin can create a person called "demo".
+
+    Matching on the name alone would then record every demo stock movement and
+    audit entry against that person — §19 showing their name on hundreds of
+    actions they never took.
+    """
+    from app.seed import DEMO_USER_NAME, ensure_demo_user
+    from app.services.errors import ValidationError
+
+    human = us.create_user(session, username=DEMO_USER_NAME, password="a-real-password")
+    with pytest.raises(ValidationError, match="can sign in"):
+        ensure_demo_user(session)
+    # Untouched: still theirs, still able to sign in.
+    assert us.authenticate(session, DEMO_USER_NAME, "a-real-password") is not None
+    assert len(us.list_users(session)) == 1
+    assert human.password_hash is not None
+
+
+def test_a_legacy_system_account_with_a_password_is_not_adopted_either(
+    session: Session,
+) -> None:
+    """Such rows can exist: the users page could give it one until this branch."""
+    from app.seed import DEMO_USER_NAME, ensure_demo_user
+
+    us.create_user(session, username="system", password="a-real-password")
+    actor = ensure_demo_user(session)
+    assert actor.name == DEMO_USER_NAME
+    assert actor.password_hash is None
+    assert us.authenticate(session, "system", "a-real-password") is not None

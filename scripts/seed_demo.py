@@ -17,6 +17,7 @@ import argparse
 from app.db import engine, init_db
 from app.demo_data import populate_demo
 from app.models.component import Component
+from app.services.errors import ValidationError
 from sqlmodel import Session, select
 
 
@@ -38,7 +39,13 @@ def main() -> None:
                 "Re-run with --force to add demo data anyway."
             )
             return
-        counts = populate_demo(session)
+        try:
+            counts = populate_demo(session)
+        except ValidationError as error:
+            # The one refusal it can hit: the demo actor's name is held by an
+            # account somebody can sign in with, so attributing demo data would
+            # put a real person's name on it.
+            raise SystemExit(str(error)) from None
 
     print("Demo data inserted:")
     for name, count in counts.items():

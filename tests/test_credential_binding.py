@@ -61,9 +61,9 @@ def test_fingerprint_is_not_the_hash_itself(session: Session) -> None:
 
 def test_an_account_that_cannot_sign_in_has_no_fingerprint(session: Session) -> None:
     """The seeded system user has no password and must satisfy no check."""
-    from app.seed import ensure_system_user
+    from app.seed import ensure_demo_user
 
-    assert credential_fingerprint(ensure_system_user(session)) is None
+    assert credential_fingerprint(ensure_demo_user(session)) is None
 
 
 def test_token_carries_the_fingerprint(

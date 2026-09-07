@@ -9,6 +9,32 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## The "system" account belonged to the demo data all along
+
+A fresh install had two accounts in its users table: the admin somebody asked
+for, and a second admin-role row called `system` that nothing would ever use.
+It was a leftover of decision D2, when there was no authentication and one
+account owned every recorded action; D11 gave people real accounts and every
+action has been attributed to whoever took it ever since, but the seeding stayed
+in the startup path. It looked like an account someone had forgotten about,
+which is exactly what it was.
+
+- It is created by the demo data now, which is the only thing that needs it —
+  stock movements and audit entries take a `user_id` that is a foreign key, and
+  nobody is signed in while demo data is generated. A production install has one
+  account.
+- New databases call it **`demo`**. An older database's `system` row is adopted
+  as it stands rather than renamed: its name is what the audit log shows against
+  everything that account ever did, and renaming it now would make old entries
+  claim something that was never on screen. Adoption goes by the property, not
+  the name — only an account that cannot sign in is taken, so a person's account
+  that happens to be called `demo` never ends up with hundreds of demo actions
+  recorded against it.
+- Giving it a password is refused everywhere, not only by
+  `scripts/set_password.py`. The Password button on the users page could turn it
+  into an ordinary admin account, quietly, while the account was documented as
+  one that cannot sign in.
+
 ## httpx was a test dependency that the app imports to start
 
 `url_fetch` and all four shop providers import `httpx` at module scope, but it

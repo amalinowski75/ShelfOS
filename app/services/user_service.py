@@ -300,6 +300,15 @@ def set_password(
     """
     check_password_policy(password)
     user = require_entity(session, User, user_id, "user")
+    if user.password_hash is None:
+        # An account seeded without a password is one that cannot sign in — the
+        # actor demo data is attributed to. Giving it one turns it into an
+        # ordinary admin account named "demo", which is not something the
+        # Password button on the users page should be able to do quietly. The
+        # command-line tool has always refused this; now every path agrees.
+        raise ValidationError(
+            f"{user.name!r} is not a sign-in account and cannot be given a password"
+        )
     audit_service.record_change(
         session,
         entity_type=_AUDIT_ENTITY,

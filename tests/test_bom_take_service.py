@@ -12,7 +12,7 @@ from typing import cast
 import pytest
 from app.models.enums import LocationType, StockReason
 from app.models.stock import StockMovement
-from app.seed import ensure_system_user
+from app.seed import ensure_demo_user
 from app.services import bom_service as bs
 from app.services import bom_take_service as bts
 from app.services import component_service as cs
@@ -25,7 +25,7 @@ from sqlmodel import Session, col, select
 @pytest.fixture
 def shop(session: Session):  # type: ignore[no-untyped-def]
     """A gathering branch, two ordinary shelves, and factories for parts/BOMs."""
-    ensure_system_user(session)
+    ensure_demo_user(session)
     ctype = cs.create_type(session, "ic")
     gathering = ls.create_location(session, type=LocationType.BOX, name="Kontroler CNC")
     resistors = ls.create_location(
