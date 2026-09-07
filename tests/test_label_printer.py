@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import io
 import os
+import socket
 import threading
+import time
 
 import pytest
 import segno
@@ -21,7 +23,7 @@ from app.services.errors import PrinterError, ValidationError
 from app.services.label_service import LabelData, location_qr_payload
 from PIL import Image, ImageChops
 
-from tests.fake_printer import IDLE_FRAME, FakePrinter, frame
+from tests.fake_printer import IDLE_FRAME, FakePrinter, PrinterBridge, frame
 
 _DEJAVU = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
@@ -398,7 +400,8 @@ def test_an_unwritable_device_names_the_permission_fix(tmp_path) -> None:  # typ
 
 
 def test_a_busy_printer_is_reported_rather_than_waited_on(
-    tmp_path, monkeypatch  # type: ignore[no-untyped-def]
+    tmp_path,
+    monkeypatch,  # type: ignore[no-untyped-def]
 ) -> None:
     monkeypatch.setattr(config, "LABEL_PRINT_TIMEOUT", 0.05)
     (tmp_path / "lp0").touch()
@@ -861,3 +864,228 @@ def test_progress_is_readable_while_a_run_is_going_and_clear_after() -> None:
 
     assert any(p is not None for p in seen)  # something to show a watcher
     assert lp.job_progress() is None  # and nothing left behind afterwards
+
+
+# --- Reached over the network ------------------------------------------------
+#
+# The printer is on the machine in front of the person, and the service runs on
+# a server; a bridge there relays one TCP connection to the device. What matters
+# is that nothing downstream notices: the transport is a file descriptor either
+# way, so the tape check, the status read-back and the per-label confirmation
+# have to survive the change or the feature is only half of itself.
+
+
+def test_a_network_device_is_recognised() -> None:
+    assert lp.is_network_device("tcp://127.0.0.1:9100")
+    assert not lp.is_network_device("/dev/usb/lp0")
+    assert not lp.is_network_device("")
+
+
+@pytest.mark.parametrize(
+    ("device", "expected"),
+    [
+        ("tcp://127.0.0.1:9100", ("127.0.0.1", 9100)),
+        ("tcp://laptop.local:9100", ("laptop.local", 9100)),
+        (
+            "tcp://[::1]:9100",
+            ("::1", 9100),
+        ),  # the brackets are the URL's, not the host's
+    ],
+)
+def test_a_network_device_is_split_into_host_and_port(
+    device: str, expected: tuple[str, int]
+) -> None:
+    assert lp.split_network_device(device) == expected
+
+
+@pytest.mark.parametrize(
+    "device",
+    [
+        "tcp://",
+        "tcp://host",
+        "tcp://host:",
+        "tcp://host:abc",
+        "tcp://host:0",
+        "tcp://host:65536",
+        "tcp://:9100",
+    ],
+)
+def test_a_malformed_network_device_is_a_configuration_error(device: str) -> None:
+    """ValidationError, not PrinterError: startup can say so, and no amount of
+    plugging the printer in will help."""
+    with pytest.raises(ValidationError):
+        lp.split_network_device(device)
+
+
+def test_nothing_listening_says_the_bridge_is_not_running() -> None:
+    """The likeliest failure by far — a laptop that is asleep or has moved."""
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+    listener.close()  # a port nothing holds
+    with pytest.raises(PrinterError, match="bridge"):
+        lp.print_labels(_labels(1), device=f"tcp://127.0.0.1:{port}")
+
+
+def test_a_socket_can_be_asked_questions() -> None:
+    """A character device is a printer and so is a socket; a regular file is not.
+
+    Getting this wrong is quiet: the printer is simply never asked, so the tape
+    check and the confirmation disappear and it prints anyway.
+    """
+    a, b = socket.socketpair()
+    try:
+        assert lp._answers_questions(a.fileno())
+    finally:
+        a.close()
+        b.close()
+    with open(os.devnull) as handle:  # a character device
+        assert lp._answers_questions(handle.fileno())
+
+
+def test_a_print_over_tcp_is_asked_believed_and_confirmed() -> None:
+    """The local test's headline, through a bridge, asserting the same things."""
+    with (
+        FakePrinter([IDLE_FRAME, frame(b18=lp._STATUS_COMPLETED)]) as printer,
+        PrinterBridge(printer) as bridge,
+    ):
+        outcome = lp.print_labels(_labels(1), device=bridge.device)
+        printer.wait_for(b"\x1a")
+
+    assert outcome.confirmed  # the far-end printer was heard, over TCP
+    assert outcome.sent == 1
+    assert outcome.tape == "62"  # read off the wire, not taken from configuration
+    assert printer.received.startswith(lp._STATUS_REQUEST)
+    assert printer.received.endswith(b"\x1a")
+    assert len(printer.received) > 30_000
+
+
+def test_a_fault_over_tcp_still_stops_before_any_tape_moves() -> None:
+    """The refusal is the tape check, and it has to survive the transport."""
+    with (
+        FakePrinter([frame(b8=0x02)]) as printer,  # end of media
+        PrinterBridge(printer) as bridge,
+    ):
+        with pytest.raises(PrinterError):
+            lp.print_labels(_labels(1), device=bridge.device)
+        printer.wait_for(lp._STATUS_REQUEST)
+
+    assert len(printer.received) < 100  # the question, and nothing else
+
+
+def test_the_tape_is_read_over_tcp() -> None:
+    with FakePrinter([IDLE_FRAME]) as printer, PrinterBridge(printer) as bridge:
+        status = lp.read_printer_status(bridge.device)
+    assert status is not None
+    assert lp.detect_tape(status) == "62"
+
+
+def test_a_status_query_does_not_spend_the_print_budget_connecting(
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    """The status path holds the print lock, and every preview render uses it.
+
+    A machine that has gone to sleep takes a connection nowhere. Spending the
+    30-second write budget on that — per request, since only a successful answer
+    is remembered — stalls previews and makes a print started meanwhile report
+    the printer busy.
+    """
+    seen: list[float] = []
+
+    def spy(address: tuple[str, int], timeout: float | None = None):  # type: ignore[no-untyped-def]
+        seen.append(float(timeout or 0))
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(socket, "create_connection", spy)
+    monkeypatch.setattr(config, "LABEL_PRINT_TIMEOUT", 30.0)
+    monkeypatch.setattr(config, "LABEL_STATUS_TIMEOUT", 2.0)
+    assert lp.status_if_free("tcp://127.0.0.1:9100") is None
+    assert seen == [2.0]  # the readback budget, not the write budget
+
+
+def test_a_readback_of_zero_does_not_even_connect(
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    """ "Do not bother asking" should not first spend a connection finding out."""
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("connected anyway")
+
+    monkeypatch.setattr(socket, "create_connection", refuse)
+    monkeypatch.setattr(config, "LABEL_STATUS_TIMEOUT", 0.0)
+    assert lp.read_printer_status("tcp://127.0.0.1:9100") is None
+
+
+def test_a_negative_timeout_is_a_configuration_error_not_a_crash(
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    """settimeout() rejects it with ValueError, which is not an OSError — so it
+    escaped every handler and turned the tape list into a 500 rather than the
+    "not saying what it holds" the device path gives."""
+    monkeypatch.setattr(config, "LABEL_STATUS_TIMEOUT", -1.0)
+    monkeypatch.setattr(config, "LABEL_PRINT_TIMEOUT", -1.0)
+    # status_if_free swallows a ValidationError and reports nothing known.
+    assert lp.status_if_free("tcp://127.0.0.1:9100") is None
+    with pytest.raises(ValidationError):
+        lp.print_labels(_labels(1), device="tcp://127.0.0.1:9100")
+
+
+def test_a_connect_timeout_says_something(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """TimeoutError carries no errno, so strerror is None — and a timeout is the
+    likeliest failure of all: a sleeping machine black-holing the route."""
+
+    def time_out(*_args: object, **_kwargs: object) -> None:
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(socket, "create_connection", time_out)
+    with pytest.raises(PrinterError) as caught:
+        lp.print_labels(_labels(1), device="tcp://127.0.0.1:9100")
+    assert "None" not in str(caught.value)
+    assert "timed out" in str(caught.value)
+
+
+def test_a_bridge_that_will_never_answer_is_not_mistaken_for_a_quiet_printer(
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    """A socket that has seen EOF is readable for ever and reads empty.
+
+    Treating that as "quiet for now" — right for a character device — spins out
+    the whole readback budget. The shape in the field is a bridge that accepts
+    and then has nothing behind it: the tunnel is up, ``sshd`` accepts on the
+    server's loopback so there is no connection refused, and the far end never
+    speaks. The half-close here is that, reduced: writes keep succeeding, reads
+    return nothing, for ever.
+    """
+    # Generous, so that burning it is unmistakable in the timing below rather
+    # than lost in the noise of a default that is already short.
+    monkeypatch.setattr(config, "LABEL_STATUS_TIMEOUT", 5.0)
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    done = threading.Event()
+
+    def accept_and_never_answer() -> None:
+        connection, _ = listener.accept()
+        connection.shutdown(socket.SHUT_WR)  # our reads see EOF from now on
+        try:
+            while not done.is_set():  # keep draining, so writes still succeed
+                if not connection.recv(4096):
+                    break
+        except OSError:
+            pass
+        connection.close()
+
+    server = threading.Thread(target=accept_and_never_answer, daemon=True)
+    server.start()
+    started = time.monotonic()
+    try:
+        status = lp.read_printer_status(f"tcp://127.0.0.1:{port}")
+    finally:
+        done.set()
+        listener.close()
+        server.join(timeout=2)
+
+    assert status is None  # nothing was said, and that is the answer
+    # The point: it did not sit out the budget waiting for a corpse to speak.
+    assert time.monotonic() - started < 2.0

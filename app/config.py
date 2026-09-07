@@ -169,11 +169,14 @@ LABEL_MARGIN_MM = float(os.environ.get("SHELFOS_LABEL_MARGIN_MM", "2"))
 LABEL_FONT = os.environ.get("SHELFOS_LABEL_FONT", "").strip()
 LABEL_FONT_BOLD = os.environ.get("SHELFOS_LABEL_FONT_BOLD", "").strip()
 
-# Where the label printer is, as a device the host can write to — a Brother QL
-# on USB is /dev/usb/lp0. Empty (the default) means no printer: labels can still
-# be previewed and printed through the browser, and the print buttons stay
-# hidden. The raster bytes go to this path directly; ShelfOS does not go through
-# CUPS, and CUPS holding the same device will make writes fail.
+# Where the label printer is. Either a device this host can write to — a Brother
+# QL on USB is /dev/usb/lp0 — or "tcp://host:port" for one reached through a
+# bridge on the machine it is plugged into, which is how a server prints to a
+# printer sitting on somebody's desk (see README). Empty (the default) means no
+# printer: labels can still be previewed and printed through the browser, and
+# the print buttons stay hidden. The raster bytes go to this device directly;
+# ShelfOS does not go through CUPS, and CUPS holding the same printer will make
+# writes fail either way.
 LABEL_DEVICE = os.environ.get("SHELFOS_LABEL_DEVICE", "").strip()
 
 # Which Brother QL is on the other end. The 800 series has its own raster
