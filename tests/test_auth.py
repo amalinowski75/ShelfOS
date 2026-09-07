@@ -112,16 +112,15 @@ def test_production_refuses_default_secret(monkeypatch) -> None:
         _check_insecure_defaults()
 
 
-def test_production_refuses_default_admin_password(monkeypatch) -> None:
-    """A real secret but the default admin password is still fatal in prod."""
+def test_production_refuses_default_admin_password(session, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """On a database with no admin yet, the variable is about to be used."""
     from app import config
-    from app.main import _check_insecure_defaults
+    from app.main import _check_admin_password_source
 
     monkeypatch.setattr(config, "ENV", "production")
-    monkeypatch.setattr(config, "SECRET_KEY", "a-real-production-secret-value-32b")
     monkeypatch.setattr(config, "ADMIN_PASSWORD", "admin")
     with pytest.raises(RuntimeError, match="SHELFOS_ADMIN_PASSWORD"):
-        _check_insecure_defaults()
+        _check_admin_password_source(session)
 
 
 def test_development_tolerates_defaults(monkeypatch) -> None:
@@ -266,16 +265,15 @@ def test_disabled_user_cannot_log_in(
     assert resp.status_code == 401
 
 
-def test_production_refuses_short_admin_password(monkeypatch) -> None:
+def test_production_refuses_short_admin_password(session, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """The bootstrap admin skips the policy at seed time, so it is enforced here."""
     from app import config
-    from app.main import _check_insecure_defaults
+    from app.main import _check_admin_password_source
 
     monkeypatch.setattr(config, "ENV", "production")
-    monkeypatch.setattr(config, "SECRET_KEY", "a-real-production-secret-value-32b")
     monkeypatch.setattr(config, "ADMIN_PASSWORD", "short")
     with pytest.raises(RuntimeError, match="at least"):
-        _check_insecure_defaults()
+        _check_admin_password_source(session)
 
 
 def test_admin_user_endpoints_enforce_password_policy(client: TestClient) -> None:

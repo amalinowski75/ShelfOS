@@ -94,6 +94,21 @@ password asks for a new token.
 One consequence at upgrade time: sessions and tokens issued before this existed
 carry no fingerprint and are refused, so everyone signs in once more.
 
+The bootstrap admin is seeded **only when the database has no admin who can sign
+in** — so on any install past its first run, changing `SHELFOS_ADMIN_USERNAME` or
+`SHELFOS_ADMIN_PASSWORD` does nothing to the account that already exists. Change
+that account's password in the app (*Change password*, top bar), or with the app
+stopped:
+
+```bash
+python scripts/set_password.py admin        # prompts, without echoing
+python scripts/set_password.py --list       # which accounts exist
+```
+
+With `SHELFOS_ENV=production`, ShelfOS refuses to start while any admin still has
+the default password — checked against the account, not against the variable, so
+setting the variable is no way to satisfy it.
+
 Passwords set through ShelfOS — an admin creating or resetting an account, a user
 changing their own — must be at least 8 characters. The bootstrap admin's comes
 from the environment instead, so that rule is applied at startup: with
