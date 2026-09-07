@@ -71,6 +71,13 @@ Interactive API docs are at `/docs` (and `/redoc`) once it is running, signed in
 as an admin — they and the `/openapi.json` they read list every endpoint and its
 shapes, which is as useful to someone probing the instance as to whoever runs it.
 
+### Running it on a server
+
+`./run.sh` is for a laptop. For a machine that stays up, `deploy/` has a systemd
+unit, an environment-file template, and a Caddyfile that terminates TLS and
+renews its own certificate — with `deploy/README.md` explaining the setup and the
+handful of things that catch people out.
+
 ### Authentication
 
 The UI and API require login (decision D11). On first startup a bootstrap admin
