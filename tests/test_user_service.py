@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from app.models.enums import UserRole
-from app.seed import ensure_demo_user
+from app.seed import DEMO_USER_NAME, ensure_demo_user
 from app.services import user_service as us
 from app.services.errors import NotFoundError, ValidationError
 from sqlmodel import Session
@@ -39,10 +39,16 @@ def test_authenticate_rejects_inactive_user(session: Session) -> None:
     assert us.authenticate(session, "carol", "pw-password") is None
 
 
-def test_system_user_cannot_log_in(session: Session) -> None:
+def test_the_demo_actor_cannot_log_in(session: Session) -> None:
+    """By its name, not by a name that happens not to exist.
+
+    Authenticating a username no account has would pass whatever
+    ``ensure_demo_user`` did — including giving the account a password, which is
+    the one thing this is here to rule out.
+    """
     ensure_demo_user(session)
-    # No password set, so authentication must fail.
-    assert us.authenticate(session, "system", "") is None
+    assert us.authenticate(session, DEMO_USER_NAME, "") is None
+    assert us.get_by_username(session, DEMO_USER_NAME).password_hash is None
 
 
 def test_duplicate_username_rejected(session: Session) -> None:

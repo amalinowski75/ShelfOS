@@ -37,10 +37,11 @@ def test_bootstrap_creates_schema_and_seeds_accounts(monkeypatch) -> None:  # ty
     with Session(engine) as session:
         users = session.exec(select(User)).all()
     by_name = {u.name: u for u in users}
-    # The bootstrap admin, and nothing else. The account demo data is
-    # attributed to used to be seeded here too, so a fresh production install
-    # got a second admin-role row nothing would ever use; it belongs to the
-    # demo data and is created with it.
+    # The bootstrap admin, and nothing else. The account demo data is attributed
+    # to used to be seeded here too, so a fresh production install got a second
+    # admin-role row nothing would ever use; it belongs to the demo data now.
+    # Asserted through the real lifespan above, so putting the seeding back into
+    # _bootstrap fails here rather than passing a hand-copied imitation of it.
     assert by_name[config.ADMIN_USERNAME].password_hash is not None
     assert DEMO_USER_NAME not in by_name
     assert list(by_name) == [config.ADMIN_USERNAME]

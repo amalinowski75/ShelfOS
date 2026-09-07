@@ -1,7 +1,9 @@
 """User model (spec §18, decision D11).
 
-Humans authenticate with their own accounts; the seeded "system" user owns
-automated actions and cannot log in (no password hash).
+Humans authenticate with their own accounts, and every action is recorded
+against whoever took it. An account with no password hash cannot sign in at all;
+the one the demo data is attributed to is the only such account ShelfOS makes
+(see :mod:`app.seed`).
 """
 
 from __future__ import annotations
@@ -17,6 +19,8 @@ class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(unique=True, index=True)
     role: UserRole = Field(default=UserRole.USER, sa_column=enum_column(UserRole))
-    # None means the account cannot log in (e.g. the system user).
+    # None means the account cannot sign in at all, and cannot be given a
+    # password later either (see user_service.set_password). The demo data's
+    # actor is the only account ShelfOS creates this way.
     password_hash: str | None = Field(default=None)
     is_active: bool = Field(default=True)

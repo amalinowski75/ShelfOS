@@ -68,7 +68,11 @@ _PROTECTED_ROUTERS = (
 
 
 def _bootstrap() -> None:
-    """Create the schema and seed the system user and bootstrap admin (D11)."""
+    """Create the schema and seed the bootstrap admin (D11).
+
+    Not the account demo data is attributed to: that belongs to the demo data
+    and is created with it (see :mod:`app.seed`).
+    """
     _check_insecure_defaults()
     _check_scan_separator()
     _check_label_settings()

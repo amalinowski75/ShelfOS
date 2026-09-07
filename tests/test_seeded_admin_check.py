@@ -277,22 +277,6 @@ def test_the_development_message_offers_signing_in(
 # --- the account demo data is attributed to ----------------------------------
 
 
-def test_startup_creates_no_demo_account(session: Session) -> None:
-    """It is part of the demo data, not of every installation.
-
-    Seeding it at startup gave a fresh production install a second admin-role
-    row that nothing would ever use, sitting in the users table looking like an
-    account somebody had forgotten about.
-    """
-    from app.seed import DEMO_USER_NAME
-
-    app_main._check_admin_password_source(session)
-    us.ensure_admin(session, username="admin", password="a-real-admin-password")
-    app_main._check_seeded_admin_password(session)
-    assert [u.name for u in us.list_users(session)] == ["admin"]
-    assert us.get_by_username(session, DEMO_USER_NAME) is None
-
-
 def test_the_demo_account_is_created_with_the_demo_data(session: Session) -> None:
     from app.seed import DEMO_USER_NAME, ensure_demo_user
 
@@ -344,3 +328,37 @@ def test_an_account_that_cannot_sign_in_cannot_be_given_a_password(
         us.set_password(session, demo.id, "a-real-password", actor_id=admin.id)
     assert us.get_by_username(session, "demo") is not None
     assert us.get_by_username(session, "demo").password_hash is None
+
+
+def test_a_real_account_is_never_adopted_as_the_demo_actor(
+    session: Session,
+) -> None:
+    """Nothing reserves the name, so an admin can create a person called "demo".
+
+    Matching on the name alone would then record every demo stock movement and
+    audit entry against that person — §19 showing their name on hundreds of
+    actions they never took.
+    """
+    from app.seed import DEMO_USER_NAME, ensure_demo_user
+    from app.services.errors import ValidationError
+
+    human = us.create_user(session, username=DEMO_USER_NAME, password="a-real-password")
+    with pytest.raises(ValidationError, match="can sign in"):
+        ensure_demo_user(session)
+    # Untouched: still theirs, still able to sign in.
+    assert us.authenticate(session, DEMO_USER_NAME, "a-real-password") is not None
+    assert len(us.list_users(session)) == 1
+    assert human.password_hash is not None
+
+
+def test_a_legacy_system_account_with_a_password_is_not_adopted_either(
+    session: Session,
+) -> None:
+    """Such rows can exist: the users page could give it one until this branch."""
+    from app.seed import DEMO_USER_NAME, ensure_demo_user
+
+    us.create_user(session, username="system", password="a-real-password")
+    actor = ensure_demo_user(session)
+    assert actor.name == DEMO_USER_NAME
+    assert actor.password_hash is None
+    assert us.authenticate(session, "system", "a-real-password") is not None

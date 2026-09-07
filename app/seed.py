@@ -22,6 +22,7 @@ from sqlmodel import Session, select
 
 from app.models.enums import UserRole
 from app.models.user import User
+from app.services.errors import ValidationError
 
 DEMO_USER_NAME = "demo"
 
@@ -39,14 +40,25 @@ def ensure_demo_user(session: Session) -> User:
     written. Renaming it now would make years-old entries claim something that
     was never on screen. New databases get ``demo``, which is what it is.
 
-    It has no password hash, so it cannot sign in — see
-    :func:`app.services.user_service.authenticate`, and the refusal in
-    ``set_password`` that stops one being given to it.
+    Adoption goes by the property, not by the name: only an account that cannot
+    sign in is taken. Nothing reserves either name, so an admin can create a
+    person's account called ``demo`` through the users page — and matching on
+    the name alone would then attribute every demo stock movement and audit
+    entry to that person, putting their name in §19 against hundreds of actions
+    they never took. When the name is held by a real account and there is no
+    seeded actor to adopt, this refuses rather than guessing.
     """
     for name in (DEMO_USER_NAME, _LEGACY_NAME):
         user = session.exec(select(User).where(User.name == name)).first()
-        if user is not None:
+        if user is not None and user.password_hash is None:
             return user
+    holder = session.exec(select(User).where(User.name == DEMO_USER_NAME)).first()
+    if holder is not None:
+        raise ValidationError(
+            f"cannot attribute demo data: an account named {DEMO_USER_NAME!r} "
+            "already exists and can sign in. Rename it first, so the demo data "
+            "is not recorded against a real person."
+        )
     user = User(name=DEMO_USER_NAME, role=UserRole.ADMIN)
     session.add(user)
     session.commit()

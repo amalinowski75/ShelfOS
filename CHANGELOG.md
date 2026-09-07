@@ -26,7 +26,10 @@ which is exactly what it was.
 - New databases call it **`demo`**. An older database's `system` row is adopted
   as it stands rather than renamed: its name is what the audit log shows against
   everything that account ever did, and renaming it now would make old entries
-  claim something that was never on screen.
+  claim something that was never on screen. Adoption goes by the property, not
+  the name — only an account that cannot sign in is taken, so a person's account
+  that happens to be called `demo` never ends up with hundreds of demo actions
+  recorded against it.
 - Giving it a password is refused everywhere, not only by
   `scripts/set_password.py`. The Password button on the users page could turn it
   into an ordinary admin account, quietly, while the account was documented as

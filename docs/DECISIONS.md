@@ -45,10 +45,14 @@ Decided 2026-07-08 when implementing real auth (replaces the D2 stub).
 - **Accounts:** admin creates accounts; **no self-registration**. A first admin
   is seeded on startup from `ADMIN_USERNAME` / `ADMIN_PASSWORD` env (defaults
   `admin`/`admin`, with a warning) so there is a bootstrap account.
-- **System user:** the seeded "system" user is kept as the owner of automated
-  actions (seeding, imports) and **cannot log in** (no password); humans use
-  their own accounts, and stock/audit records are attributed to the logged-in
-  user.
+- **No system user:** every action is attributed to the account that took it,
+  imports included. The "system" user this decision originally kept as the owner
+  of automated actions was a holdover from D2, when there was no authentication;
+  it was seeded on every startup long after it had nothing left to own. The demo
+  data still needs an actor — stock and audit rows take a `user_id` and nobody
+  is signed in while they are generated — so it creates one of its own, named
+  `demo` and unable to sign in (`app/seed.py`). A production install has no such
+  account.
 
 ## D3. EAV parameters — inheritance  [CONFIRMED]
 
