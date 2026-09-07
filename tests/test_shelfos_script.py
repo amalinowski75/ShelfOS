@@ -350,3 +350,55 @@ def test_only_a_caddyfile_that_is_ours_alone_is_replaced(
         ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
     )
     assert result.stdout.strip() == ("replace" if replaceable else "separate")
+
+
+def test_backup_restore_never_steps_down_to_the_service_user(tmp_path: Path) -> None:
+    """Stepping down gives up root's right to traverse directories.
+
+    An archive normally sits in the operator's home, which is 0750 on Ubuntu, so
+    the service user cannot enter it whatever the archive's own mode is. That
+    surfaced as "Permission denied" on a plainly world-readable file, and no
+    amount of chmod on the file helped.
+    """
+    script = _SCRIPT.read_text()
+    body = script[script.index("cmd_backup() {") :]
+    body = body[: body.index("\n}\n") + 3]
+    assert "sudo -u" not in body, "backup steps down to the service user again"
+    # And it puts the ownership back afterwards, or the service comes up unable
+    # to write the database it just restored.
+    assert 'chown -R "$SERVICE_USER:$SERVICE_USER"' in body
+
+
+def test_backup_restore_makes_the_archive_path_absolute(tmp_path: Path) -> None:
+    """It is read by a process that need not share this working directory."""
+    script = _SCRIPT.read_text()
+    body = script[script.index("cmd_backup() {") :]
+    body = body[: body.index("\n}\n") + 3]
+    probe = tmp_path / "probe.sh"
+    archive = tmp_path / "sub" / "snap.tar.gz"
+    archive.parent.mkdir()
+    archive.write_bytes(b"not really an archive")
+    # Drive just the path-resolving branch, with the surrounding script stubbed.
+    resolver = body[body.index('if [ "$action" = restore ] && [ -n "${1:-}" ]; then') :]
+    resolver = resolver[: resolver.index("\n    fi\n") + 7]
+    # Inside a function, because the branch declares `local`.
+    probe.write_text(
+        "\n".join(
+            [
+                "resolve() {",
+                "    local action=restore",
+                resolver,
+                '    printf "%s" "$1"',
+                "}",
+                f"cd {archive.parent}",
+                "resolve ../sub/snap.tar.gz",
+                "",
+            ]
+        )
+    )
+    result = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("/"), result.stdout
+    assert result.stdout.endswith("/snap.tar.gz"), result.stdout

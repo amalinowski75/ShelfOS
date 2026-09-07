@@ -9,6 +9,28 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## A backup you could not restore
+
+`./shelfos.sh backup restore ~/snap.tar.gz` failed with `Permission denied` on an
+archive that was plainly world-readable, and no `chmod` on it helped — because
+the file was never the problem. The wrapper stepped down to the service user with
+`sudo -u shelfos`, giving up root's right to traverse directories, and a home
+directory on Ubuntu is `0750`. The service user could not enter it whatever the
+archive's own mode was.
+
+- `backup` runs as root on a deployed install now. Root can read an archive
+  wherever the operator left it, and the data is chowned back to the service user
+  after a restore — restoring as root would otherwise leave the service unable to
+  write the database it had just been given.
+- A relative archive path is made absolute before it is handed on, since it is
+  read by a process that need not share the working directory it was typed in.
+- Archives go to a `root`-owned `0700` directory: each one carries every password
+  hash in the database, and the service has no reason to read them back.
+- The gzip header no longer records the temporary name. The archive is built as
+  `<name>.part` and renamed, so `file` reported a finished backup as having been
+  `something.tar.gz.part` — which reads like a truncated download and is what
+  first made a perfectly good archive look broken.
+
 ## The "system" account belonged to the demo data all along
 
 A fresh install had two accounts in its users table: the admin somebody asked

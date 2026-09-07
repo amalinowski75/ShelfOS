@@ -1382,14 +1382,16 @@ cmd_backup() {
         -h|--help)      usage_backup; return 0 ;;
     esac
 
-    local py script env_args=""
+    local py script db att
+    local -a env_args=()
     if is_deployed; then
         py="$INSTALL_DIR/.venv/bin/python"
         script="$INSTALL_DIR/scripts/backup.py"
-        local db att
         db=$(env_file_value "$ENV_FILE_SYSTEM" DATABASE_URL)
         att=$(env_file_value "$ENV_FILE_SYSTEM" SHELFOS_ATTACHMENTS_DIR)
-        env_args="DATABASE_URL=${db:-sqlite:///$DATA_DIR/shelfos.db} SHELFOS_ATTACHMENTS_DIR=${att:-$DATA_DIR/attachments}"
+        db=${db:-sqlite:///$DATA_DIR/shelfos.db}
+        att=${att:-$DATA_DIR/attachments}
+        env_args=("DATABASE_URL=$db" "SHELFOS_ATTACHMENTS_DIR=$att")
         [ -x "$py" ] || die 1 "no virtualenv at $py"
     else
         py="$REPO_ROOT/.venv/bin/python"
@@ -1404,9 +1406,17 @@ cmd_backup() {
         set -- "$@" --yes
     fi
 
+    # An archive named relatively is about to be read by a process that may not
+    # share this working directory, and named in messages that outlive it.
+    if [ "$action" = restore ] && [ -n "${1:-}" ]; then
+        local archive=$1; shift
+        case $archive in
+            -*) set -- "$archive" "$@" ;;
+            *)  set -- "$(cd "$(dirname "$archive")" 2>/dev/null && pwd)/$(basename "$archive")" "$@" ;;
+        esac
+    fi
+
     if [ "$action" = create ] && is_deployed; then
-        # Somewhere the service user can actually write, since /opt is read-only
-        # to it under the unit's sandbox and its home is /opt/shelfos.
         local has_output=0 arg
         for arg in "$@"; do
             # Every spelling argparse accepts, not only the spaced ones: with
@@ -1417,7 +1427,10 @@ cmd_backup() {
             esac
         done
         if [ "$has_output" = 0 ]; then
-            sudo_run install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 750 "$DATA_DIR/backups"
+            # root:root 0700. The archives are root's business, like
+            # /etc/shelfos/env: each one carries every password hash in the
+            # database, and the service itself has no reason to read them back.
+            sudo_run install -d -o root -g root -m 700 "$DATA_DIR/backups"
             set -- "$@" -o "$DATA_DIR/backups/shelfos-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
         fi
     fi
@@ -1429,24 +1442,31 @@ cmd_backup() {
 
     local status=0
     if is_deployed; then
-        # shellcheck disable=SC2086  # env_args is a deliberate list of assignments
-        if [ "$DRY_RUN" = 1 ]; then
-            printf '        %s+ sudo -u %s env %s %s %s %s %s%s\n' \
-                "$C_DIM" "$SERVICE_USER" "$env_args" "$py" "$script" "$action" "$*" "$C_OFF" >&2
-        else
-            sudo_run env $env_args sudo -u "$SERVICE_USER" \
-                env $env_args "$py" "$script" "$action" "$@" || status=$?
-        fi
+        # As root, not as the service user. Stepping down to it means giving up
+        # root's right to traverse directories, and an archive normally sits in
+        # the operator's home — 0750 on Ubuntu, so the service user cannot enter
+        # it whatever the archive's own mode is. That failure reads as
+        # "Permission denied" on a file that is plainly world-readable, and no
+        # amount of chmod on it helps.
+        sudo_run env "${env_args[@]}" "$py" "$script" "$action" "$@" || status=$?
     else
         run "$py" "$script" "$action" "$@" || status=$?
     fi
 
     if [ "$action" = restore ] && is_deployed; then
+        if [ "$status" = 0 ]; then
+            # Restoring as root leaves root-owned files where the service writes.
+            # Without this it comes back up unable to touch its own database.
+            sudo_run chown -R "$SERVICE_USER:$SERVICE_USER" "${db#sqlite:///}" "$att"
+        fi
         sudo_run systemctl start "$SERVICE_NAME"
     fi
 
     if [ "$action" = create ] && [ "$status" = 0 ]; then
         note "The archive does not contain $ENV_FILE_SYSTEM — back that up separately."
+        if is_deployed; then
+            note "It is owned by root and readable only with sudo; it holds every password hash."
+        fi
     fi
     return "$status"
 }
