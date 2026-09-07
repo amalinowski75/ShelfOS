@@ -89,8 +89,10 @@ sudo ./shelfos.sh deploy
 It asks for a hostname and a first admin password, generates the signing secret
 itself, and then does the whole of `deploy/README.md`: a system user, the code in
 `/opt/shelfos`, data in `/var/lib/shelfos`, settings in `/etc/shelfos/env`, a
-systemd unit, and Caddy holding the certificate. Re-running is safe — every step
-says what it skipped. `--dry-run` shows the plan without touching anything.
+systemd unit, and Caddy holding the certificate. Run it again and it recognises
+the install and stops, pointing at `update`; `--reinstall` walks the steps once
+more, skipping what is already done, which is how a half-finished install is
+repaired. `--dry-run` shows the plan without touching anything.
 
 `deploy/README.md` has the layout it builds, the same steps written out for doing
 by hand, and the handful of things that catch people out.

@@ -566,7 +566,9 @@ settings in /etc/shelfos/env, a systemd unit, and Caddy holding the certificate.
   --dry-run              print what would happen; never calls sudo
   -y, --yes              accept the defaults and skip the confirmation
 
-Re-running is safe: every step reports what it skipped.
+Run it twice and it recognises the install and stops. --reinstall is the one
+that walks the steps again, skipping what is already done — which is how a
+half-finished install is repaired.
 EOF
 }
 
