@@ -100,6 +100,30 @@ names the account and the fix:
 sudo -u shelfos /opt/shelfos/.venv/bin/python /opt/shelfos/scripts/set_password.py admin
 ```
 
+**The label printer, if there is one.** The unit's printer block is written for
+the udev rule in the main README, which is not optional here: without it the
+device is `/dev/usb/lpN` with an N that changes on replug, owned `root:lp 0660`.
+Install it, then keep three things agreeing with each other — the rule's `GROUP`,
+the unit's `SupplementaryGroups`, and `SHELFOS_LABEL_DEVICE`:
+
+```
+# /etc/udev/rules.d/99-brother-ql.rules
+SUBSYSTEM=="usbmisc", ATTRS{idVendor}=="04f9", MODE="0660", GROUP="plugdev", SYMLINK+="shelfos-label"
+```
+
+```bash
+sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=usbmisc
+# then in /etc/shelfos/env:
+#   SHELFOS_LABEL_DEVICE=/dev/shelfos-label
+```
+
+The unit allows the device by class (`char-usb`, major 180) rather than by path,
+so a replug that renumbers the node changes nothing. A wrong group here fails
+with `EACCES`, which reads exactly like the printer being unplugged; the main
+README's printer section covers the rest, including that CUPS must not own the
+same printer and that a QL-800 out of the box is in Editor Lite mode and
+enumerates as a USB disk rather than a printer.
+
 **One worker.** The sign-in throttle counts failures in one process's memory and
 the label printer's job lock is per process, so a second worker doubles the
 allowance and lets two prints reach the printer at once. Both need shared state
