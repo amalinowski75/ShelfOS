@@ -146,6 +146,12 @@ before `--workers` is worth raising.
 **Everyone signs in again after an upgrade** that changes `SHELFOS_SECRET_KEY`,
 and once more after the release that tied sessions to the current password.
 
+**The Caddyfile.** `deploy` takes over `/etc/caddy/Caddyfile` only when it is
+absent, empty, or one it wrote itself and still the only site in it — it leaves a
+marker comment on the first line to know. Anything else gets
+`/etc/caddy/sites/shelfos.caddy` and a printed `import` line to add, because
+overwriting a file that serves somebody else's site takes that site off the air.
+
 **Backups.** `./shelfos.sh backup` wraps `scripts/backup.py` with the right paths
 and the right user; it takes the database and attachments together and verifies
 checksums on restore. Neither carries the environment file, which is where the

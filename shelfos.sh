@@ -16,7 +16,11 @@
 # hostile way to fail in a tool already asking for sudo. Every deployment target
 # is Debian or Ubuntu, where bash is a certainty.
 
-set -euo pipefail
+# -E (errtrace) is not decoration: without it an ERR trap set in a function is
+# not in effect inside the functions it calls, so deploy's failure handler —
+# the one that names the step and says nothing was rolled back — would never
+# run, and a failed apt-get would exit silently after a step heading.
+set -Eeuo pipefail
 
 readonly SHELFOS_VERSION="1.0.0"
 
@@ -242,9 +246,14 @@ load_env_file() {
         key=${line%%=*}
         value=${line#*=}
         key=${key%"${key##*[![:space:]]}"}         # trim trailing space
+        # The whole key, not just its first character: `${!key}` below is an
+        # indirect expansion, and bash makes an invalid name there a fatal
+        # error, which under `set -e` ends the script on somebody's typo with a
+        # message that names neither the file nor the line.
         case $key in
-            [A-Za-z_]*) ;;
-            *) warn "$file: ignoring '$key', which is not a variable name"; continue ;;
+            ''|[0-9]*|*[!A-Za-z0-9_]*)
+                warn "$file: ignoring '$key', which is not a variable name"
+                continue ;;
         esac
         # One layer of matching quotes, the way systemd strips them, so a file
         # written either way keeps working in both places.
@@ -348,6 +357,21 @@ port_is_free() {
 }
 
 is_deployed() { [ -e "$SERVICE_PATH" ] || [ -d "$INSTALL_DIR" ]; }
+
+# The port an install actually listens on, read back from the unit that defines
+# it. Deploy templates --port into ExecStart, so the unit is the one place that
+# knows; assuming the default here made `status` report a healthy install as
+# unreachable, and made `update` tell the operator to roll back a good update.
+installed_port() {
+    local port=""
+    if [ -r "$SERVICE_PATH" ]; then
+        port=$(sed -n 's/^[[:space:]]*--port[[:space:]]\{1,\}\([0-9]\{1,\}\).*/\1/p' "$SERVICE_PATH" | head -1)
+    fi
+    if [ -z "$port" ]; then
+        port=$(env_file_value "$ENV_FILE_SYSTEM" PORT)
+    fi
+    printf '%s' "${port:-$DEFAULT_PORT}"
+}
 
 gen_secret() {
     "${PYTHON:-python3}" -c 'import secrets; print(secrets.token_urlsafe(48))'
@@ -648,12 +672,20 @@ deploy_gather() {
     fi
 
     if [ -z "$DEPLOY_ADMIN_PASSWORD" ]; then
-        if [ "$DRY_RUN" = 1 ] || ! have_tty; then
-            DEPLOY_ADMIN_PASSWORD="(prompted for)"
-        elif [ -f "$ENV_FILE_SYSTEM" ]; then
+        if [ -f "$ENV_FILE_SYSTEM" ]; then
+            # The existing file is kept whatever happens, so there is no
+            # password to ask for.
             DEPLOY_ADMIN_PASSWORD="(keeping the existing settings file)"
-        else
+        elif [ "$DRY_RUN" = 1 ]; then
+            DEPLOY_ADMIN_PASSWORD="(would be asked for)"
+        elif have_tty; then
             ask_secret DEPLOY_ADMIN_PASSWORD "Password for the first admin ($DEPLOY_ADMIN_USER)"
+        else
+            # Never invent one. A placeholder here would be written into
+            # /etc/shelfos/env verbatim and would be long enough to clear the
+            # app's own floor, so the install would come up healthy with the
+            # first admin on a password that is printed in this file.
+            die 1 "no terminal to ask for the first admin's password. Pass it with --admin-password-stdin, as in: printf '%s' \"\$PASSWORD\" | sudo ./shelfos.sh deploy --admin-password-stdin …"
         fi
     fi
 
@@ -909,23 +941,37 @@ deploy_step_env() {
         fi
         return 0
     fi
-    local secret device_line
+    local secret
     secret=$(gen_secret)
-    if [ "$DEPLOY_WANT_PRINTER" = 1 ]; then
-        device_line="SHELFOS_LABEL_DEVICE=/dev/shelfos-label"
-    else
-        device_line="#SHELFOS_LABEL_DEVICE=/dev/shelfos-label"
-    fi
-    # Rewrite the example's own lines rather than appending, so the file keeps
-    # its comments — they are the documentation for every setting in it.
-    sed \
-        -e "s|^SHELFOS_SECRET_KEY=.*|SHELFOS_SECRET_KEY=$secret|" \
-        -e "s|^SHELFOS_ADMIN_USERNAME=.*|SHELFOS_ADMIN_USERNAME=$DEPLOY_ADMIN_USER|" \
-        -e "s|^SHELFOS_ADMIN_PASSWORD=.*|SHELFOS_ADMIN_PASSWORD=$DEPLOY_ADMIN_PASSWORD|" \
-        -e "s|^#SHELFOS_LABEL_DEVICE=.*|$device_line|" \
-        "$REPO_ROOT/deploy/shelfos.env.example" \
-        | write_file "$ENV_FILE_SYSTEM" 640 "root:$SERVICE_USER"
+    render_env_file "$secret" | write_file "$ENV_FILE_SYSTEM" 640 "root:$SERVICE_USER"
     step_ok
+}
+
+# The example file with four of its values replaced, its comments intact —
+# they are the documentation for every setting in it.
+#
+# Done with shell string handling rather than sed. A password is arbitrary text
+# and sed's replacement side is not: `&` there expands to the whole matched
+# line, so `p&ss` would be stored as a mangled string the user could never sign
+# in with, and `|` would close the s/// command and fail the step outright.
+# Neither is a thing anyone would connect to the password they had just typed.
+render_env_file() {
+    local secret=$1 line key
+    while IFS= read -r line || [ -n "$line" ]; do
+        key=${line%%=*}
+        case $key in
+            SHELFOS_SECRET_KEY)    printf 'SHELFOS_SECRET_KEY=%s\n' "$secret" ;;
+            SHELFOS_ADMIN_USERNAME) printf 'SHELFOS_ADMIN_USERNAME=%s\n' "$DEPLOY_ADMIN_USER" ;;
+            SHELFOS_ADMIN_PASSWORD) printf 'SHELFOS_ADMIN_PASSWORD=%s\n' "$DEPLOY_ADMIN_PASSWORD" ;;
+            \#SHELFOS_LABEL_DEVICE|SHELFOS_LABEL_DEVICE)
+                if [ "$DEPLOY_WANT_PRINTER" = 1 ]; then
+                    printf 'SHELFOS_LABEL_DEVICE=/dev/shelfos-label\n'
+                else
+                    printf '#SHELFOS_LABEL_DEVICE=/dev/shelfos-label\n'
+                fi ;;
+            *) printf '%s\n' "$line" ;;
+        esac
+    done < "$REPO_ROOT/deploy/shelfos.env.example"
 }
 
 deploy_step_import() {
@@ -1014,6 +1060,24 @@ deploy_step_printer() {
     fi
 }
 
+readonly CADDY_MARKER="# Written by shelfos.sh. Add a second site and this file stops being replaced."
+
+# Whether /etc/caddy/Caddyfile is ours to replace wholesale.
+#
+# Only when it is absent, or has nothing in it but comments, or carries our
+# marker AND still declares exactly one site. Anything else gets a file of its
+# own under sites/ — overwriting a Caddyfile that serves somebody else's site
+# takes that site off the air, which is not a thing to do while installing
+# something unrelated. "It mentions shelfos" is not enough: a file with three
+# sites, one of them this one, mentions it too.
+caddyfile_is_ours_alone() {
+    [ -f "$CADDYFILE" ] || return 0
+    grep -qv '^[[:space:]]*\(#.*\)\?$' "$CADDYFILE" 2>/dev/null || return 0
+    head -1 "$CADDYFILE" 2>/dev/null | grep -qF "$CADDY_MARKER" || return 1
+    # One top-level `… {` line is one site block.
+    [ "$(grep -c '^[^[:space:]#].*{[[:space:]]*$' "$CADDYFILE" 2>/dev/null)" = 1 ]
+}
+
 deploy_step_caddy_config() {
     step "Caddy site"
     if [ "$DEPLOY_WANT_CADDY" = 0 ]; then
@@ -1026,9 +1090,8 @@ deploy_step_caddy_config() {
         -e "s|reverse_proxy 127\.0\.0\.1:[0-9]*|reverse_proxy 127.0.0.1:$DEPLOY_PORT|" \
         "$REPO_ROOT/deploy/Caddyfile")
 
-    if [ ! -f "$CADDYFILE" ] || ! grep -qv '^[[:space:]]*\(#.*\)\?$' "$CADDYFILE" 2>/dev/null \
-        || grep -q 'shelfos' "$CADDYFILE" 2>/dev/null; then
-        printf '%s\n' "$rendered" | write_file "$CADDYFILE" 644 "root:root"
+    if caddyfile_is_ours_alone; then
+        printf '%s\n%s\n' "$CADDY_MARKER" "$rendered" | write_file "$CADDYFILE" 644 "root:root"
         step_ok
     else
         # Someone else's sites are in there. Overwriting would take them down,
@@ -1123,8 +1186,7 @@ cmd_update() {
     is_deployed || die 3 "ShelfOS is not installed here; use './shelfos.sh deploy' first"
     [ -d "$INSTALL_DIR/.git" ] || die 1 "$INSTALL_DIR has no git history (it was copied, not cloned), so there is nothing to pull; re-deploy from a clone"
 
-    local port; port=$(env_file_value "$ENV_FILE_SYSTEM" PORT)
-    port=${port:-$DEFAULT_PORT}
+    local port; port=$(installed_port)
 
     if [ "$want_backup" = 1 ]; then
         info "Taking a backup first — it is the only way back from a bad update."
@@ -1222,7 +1284,7 @@ cmd_status() {
         status_line "service" "${active:-unknown} (${enabled:-unknown} at boot)"
         [ "$active" = active ] || healthy=1
 
-        local port; port=$(env_file_value "$ENV_FILE_SYSTEM" PORT); port=${port:-$DEFAULT_PORT}
+        local port; port=$(installed_port)
         if health_probe "$port" 1; then
             status_line "health" "answering on 127.0.0.1:$port"
         else
@@ -1335,14 +1397,29 @@ cmd_backup() {
         [ -x "$py" ] || die 1 "no virtualenv here; run './shelfos.sh devel' once to build it"
     fi
 
+    # -y is eaten by the global flag parser, so a documented
+    # `backup restore snap.tar.gz --yes` would otherwise reach backup.py without
+    # it and sit on an input() prompt — with the service already stopped.
+    if [ "$ASSUME_YES" = 1 ] && [ "$action" = restore ]; then
+        set -- "$@" --yes
+    fi
+
     if [ "$action" = create ] && is_deployed; then
         # Somewhere the service user can actually write, since /opt is read-only
         # to it under the unit's sandbox and its home is /opt/shelfos.
-        case " $* " in
-            *" -o "*|*" --output "*) ;;
-            *) sudo_run install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 750 "$DATA_DIR/backups"
-               set -- "$@" -o "$DATA_DIR/backups/shelfos-backup-$(date +%Y%m%d-%H%M%S).tar.gz" ;;
-        esac
+        local has_output=0 arg
+        for arg in "$@"; do
+            # Every spelling argparse accepts, not only the spaced ones: with
+            # --output=PATH missed, an appended -o would win (argparse takes the
+            # last) and the archive would quietly land somewhere else.
+            case $arg in
+                -o|--output|--output=*|-o=*) has_output=1 ;;
+            esac
+        done
+        if [ "$has_output" = 0 ]; then
+            sudo_run install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 750 "$DATA_DIR/backups"
+            set -- "$@" -o "$DATA_DIR/backups/shelfos-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
+        fi
     fi
 
     if [ "$action" = restore ] && is_deployed; then

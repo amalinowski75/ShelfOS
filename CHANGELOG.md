@@ -29,9 +29,11 @@ point.
   Caddy and its certificate. It asks everything up front, then works, and every
   step says `ok` or `skipped` — so re-running it is how a half-finished install
   is repaired rather than something to be careful of. It refuses to overwrite
-  `/etc/shelfos/env` or a `Caddyfile` that already serves other sites, and it
-  does not roll back on failure, because removing a half-made user or a
-  directory that may hold data is the more dangerous thing to do.
+  `/etc/shelfos/env`, refuses to overwrite a `Caddyfile` that serves anything
+  besides the site it wrote there itself, refuses to invent a first admin
+  password when there is no terminal to ask at, and does not roll back on
+  failure, because removing a half-made user or a directory that may hold data
+  is the more dangerous thing to do.
 - **`update`** takes a backup first, refuses to pull over hand-edited files, and
   restarts only after it has checked the app answers. **`status`** says what is
   installed and whether it is healthy without ever printing a setting's value.
