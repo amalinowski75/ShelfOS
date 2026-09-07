@@ -1,0 +1,101 @@
+# ShelfOS under systemd, served to a reverse proxy on the same host.
+#
+#   sudo cp deploy/shelfos.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now shelfos
+#
+# Read deploy/README.md first. This assumes the layout it sets up: the code at
+# /opt/shelfos owned by a "shelfos" system user, the data at /var/lib/shelfos,
+# and settings in /etc/shelfos/env.
+
+[Unit]
+Description=ShelfOS inventory
+Documentation=https://github.com/amalinowski75/ShelfOS
+After=network-online.target
+Wants=network-online.target
+
+# Restart, but give up rather than loop. ShelfOS refuses to start on some
+# misconfigurations by design — a default admin password, a missing secret — and
+# those do not improve on the next attempt; a restart loop only buries the one
+# log line that says what is wrong. These two live in [Unit], not [Service]:
+# systemd ignores them here with a warning nobody reads.
+StartLimitIntervalSec=120
+StartLimitBurst=4
+
+[Service]
+Type=exec
+User=shelfos
+Group=shelfos
+WorkingDirectory=/opt/shelfos
+
+# Settings and secrets. systemd does NOT parse a leading "export", so the file
+# must be plain KEY=value lines — see deploy/shelfos.env.example. The leading `-`
+# means a missing file is not itself an error: ShelfOS then fails on its own
+# checks and says which setting is wrong, which is the more useful message.
+EnvironmentFile=-/etc/shelfos/env
+
+# --host 127.0.0.1: the proxy is the only thing that should reach this. Binding
+# 0.0.0.0 publishes the app on the port directly, in plain HTTP, past every
+# certificate and header the proxy adds.
+#
+# No --reload: it watches the source tree and restarts on writes, which a server
+# has no use for.
+#
+# One worker, deliberately. The sign-in throttle counts failures in one process's
+# memory, so a second worker would silently double the allowance, and the label
+# printer's job lock is per process too. Put both in shared state before scaling
+# this number.
+#
+# --forwarded-allow-ips: uvicorn believes X-Forwarded-For only from an address it
+# trusts. Without it every visitor arrives as the proxy and they all share one
+# sign-in allowance. Change it if the proxy runs on another host.
+ExecStart=/opt/shelfos/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 \
+    --port 9000 \
+    --workers 1 \
+    --proxy-headers \
+    --forwarded-allow-ips 127.0.0.1
+
+# Paired with StartLimit* in [Unit] above.
+Restart=on-failure
+RestartSec=5
+
+# --- Sandboxing -------------------------------------------------------------
+# ProtectSystem=strict makes the whole filesystem read-only, /opt/shelfos
+# included, so ShelfOS must be pointed at /var/lib/shelfos for both the things it
+# writes. DATABASE_URL and SHELFOS_ATTACHMENTS_DIR default to paths *relative to
+# the working directory*, which would land in the read-only checkout: set both to
+# absolute paths in the environment file, as the example does.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+ReadWritePaths=/var/lib/shelfos
+
+# --- Label printer ----------------------------------------------------------
+# Delete this whole block when no Brother QL is attached; PrivateDevices=yes
+# above then stands and /dev/usb stays hidden. With a printer, that hiding is
+# exactly what has to be undone, and the device let back in by name — use the
+# path SHELFOS_LABEL_DEVICE names, which is /dev/shelfos-label if you installed
+# the udev rule from the README.
+PrivateDevices=no
+DeviceAllow=/dev/usb/lp0 rw
+SupplementaryGroups=lp
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,47 @@
+# ShelfOS behind Caddy, which gets and renews the certificate by itself.
+#
+#   sudo cp deploy/Caddyfile /etc/caddy/Caddyfile     # edit the hostname first
+#   sudo systemctl reload caddy
+#
+# Caddy needs the hostname to resolve to this machine and ports 80 and 443 open;
+# port 80 is how the certificate is issued and renewed, so it cannot be closed
+# even though everything is redirected off it.
+
+shelfos.example.com {
+	# Uvicorn listens on the loopback only, so this is the only way in.
+	reverse_proxy 127.0.0.1:9000
+
+	# Attachments are capped at 25 MB by the app (SHELFOS_MAX_ATTACHMENT_MB), so
+	# refuse a larger body here rather than carrying it across the loopback to be
+	# rejected. Keep this above the app's limit, or uploads the app would accept
+	# fail with a proxy error that says nothing about attachments.
+	request_body {
+		max_size 30MB
+	}
+
+	# The app sets these itself on every response it produces. It cannot set them
+	# on a 500 from an unhandled exception, because Starlette's error middleware
+	# wraps its own (app/main.py says so), and that one response goes out bare.
+	# Filling them in here closes that gap.
+	#
+	# `defer` runs this after the response comes back, so there is something to
+	# look at; `?` sets each header only when it is absent, which leaves the app's
+	# own value alone where it set one. Without the `?` these would overwrite,
+	# and a route that deliberately sends its own (the attachment download sends
+	# nosniff) would be silently overruled from out here.
+	header {
+		defer
+		?X-Frame-Options DENY
+		?Content-Security-Policy "frame-ancestors 'none'"
+		?X-Content-Type-Options nosniff
+		?Referrer-Policy strict-origin-when-cross-origin
+		?Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		-Server
+	}
+
+	# Off by default. Turn it on to feed fail2ban the sign-in failures ShelfOS
+	# logs, or to see what is being probed.
+	# log {
+	#	output file /var/log/caddy/shelfos.log
+	# }
+}
