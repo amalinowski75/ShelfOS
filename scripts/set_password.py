@@ -41,7 +41,6 @@ from pathlib import Path
 import app.models  # noqa: F401  (registers every table on SQLModel.metadata)
 from app.db import engine
 from app.models.user import User
-from app.seed import SYSTEM_USER_NAME
 from app.services import user_service as us
 from app.services.errors import ValidationError
 from sqlmodel import Session, col, select
@@ -113,7 +112,11 @@ def main() -> None:
         user = us.get_by_username(session, args.username)
         if user is None:
             raise SystemExit(f"No account named {args.username!r}.")
-        if user.name == SYSTEM_USER_NAME or user.password_hash is None:
+        if user.password_hash is None:
+            # Checked by the property, not by a name: the account demo data is
+            # attributed to is called "demo" in a new database and "system" in
+            # an older one, and having no hash is what actually makes an
+            # account unable to sign in.
             raise SystemExit(
                 f"{user.name!r} cannot sign in and has no password to set."
             )

@@ -18,7 +18,7 @@ from app.models.enums import (
     ParameterDataType,
     UserRole,
 )
-from app.seed import SYSTEM_USER_NAME, ensure_system_user
+from app.seed import DEMO_USER_NAME, ensure_demo_user
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
@@ -123,9 +123,9 @@ def test_invoice_decimal_precision(session: Session) -> None:
     assert loaded.total_net == Decimal("12.345678")
 
 
-def test_ensure_system_user_is_idempotent(session: Session) -> None:
-    first = ensure_system_user(session)
-    second = ensure_system_user(session)
+def test_ensure_demo_user_is_idempotent(session: Session) -> None:
+    first = ensure_demo_user(session)
+    second = ensure_demo_user(session)
     assert first.id == second.id
-    assert first.name == SYSTEM_USER_NAME
+    assert first.name == DEMO_USER_NAME
     assert first.role is UserRole.ADMIN

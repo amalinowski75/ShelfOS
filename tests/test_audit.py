@@ -10,7 +10,7 @@ import pytest
 from app.models.bom import Bom
 from app.models.enums import LocationType, ParameterDataType
 from app.models.invoice import InvoiceImportLine
-from app.seed import ensure_system_user
+from app.seed import ensure_demo_user
 from app.services import audit_service as audit
 from app.services import component_service as cs
 from app.services import invoice_import_service as imp
@@ -26,7 +26,7 @@ from sqlmodel import Session, select
 @pytest.fixture
 def ctx(session: Session) -> dict[str, int]:
     """A user, component, location and a table parameter for audit tests."""
-    user = ensure_system_user(session)
+    user = ensure_demo_user(session)
     ctype = cs.create_type(session, "resistor")
     definition = cs.add_parameter_definition(
         session,

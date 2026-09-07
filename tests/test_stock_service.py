@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from app.models.enums import ContainerType, LocationType, StockReason
 from app.models.location import ComponentLocation
-from app.seed import ensure_system_user
+from app.seed import ensure_demo_user
 from app.services import component_service as cs
 from app.services import location_service as ls
 from app.services import stock_service as ss
@@ -16,7 +16,7 @@ from sqlmodel import Session, select
 @pytest.fixture
 def fixture_ids(session: Session) -> tuple[int, int, int]:
     """Return (component_id, location_id, user_id) for stock tests."""
-    user = ensure_system_user(session)
+    user = ensure_demo_user(session)
     ctype = cs.create_type(session, "resistor")
     component = cs.create_component(session, ctype.id)
     location = ls.create_location(session, type=LocationType.DRAWER, name="D1")
@@ -284,7 +284,7 @@ def test_total_quantity_across_locations(fixture_ids, session: Session) -> None:
 
 
 def test_unknown_component_raises(session: Session) -> None:
-    user = ensure_system_user(session)
+    user = ensure_demo_user(session)
     location = ls.create_location(session, type=LocationType.DRAWER, name="D1")
     with pytest.raises(NotFoundError):
         ss.add_stock(

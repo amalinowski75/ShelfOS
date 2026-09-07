@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from app import config
 from app.models.user import User
-from app.seed import SYSTEM_USER_NAME
+from app.seed import DEMO_USER_NAME
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, create_engine, select
@@ -37,6 +37,10 @@ def test_bootstrap_creates_schema_and_seeds_accounts(monkeypatch) -> None:  # ty
     with Session(engine) as session:
         users = session.exec(select(User)).all()
     by_name = {u.name: u for u in users}
-    # The system user cannot log in (no hash); the bootstrap admin can.
-    assert by_name[SYSTEM_USER_NAME].password_hash is None
+    # The bootstrap admin, and nothing else. The account demo data is
+    # attributed to used to be seeded here too, so a fresh production install
+    # got a second admin-role row nothing would ever use; it belongs to the
+    # demo data and is created with it.
     assert by_name[config.ADMIN_USERNAME].password_hash is not None
+    assert DEMO_USER_NAME not in by_name
+    assert list(by_name) == [config.ADMIN_USERNAME]

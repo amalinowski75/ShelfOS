@@ -25,7 +25,7 @@ from app.models.enums import (
     ParameterDataType,
     StockReason,
 )
-from app.seed import ensure_system_user
+from app.seed import ensure_demo_user
 from app.services import bom_service as bs
 from app.services import component_service as cs
 from app.services import invoice_service as inv
@@ -41,7 +41,7 @@ _QUANTITIES = [5, 10, 25, 50, 100, 250, 500, 1000]
 def populate_demo(session: Session, *, seed: int = 1) -> dict[str, int]:
     """Insert demo data and return a summary of how much was created."""
     rng = random.Random(seed)
-    user = ensure_system_user(session)
+    user = ensure_demo_user(session)
     assert user.id is not None
 
     drawers = _build_locations(session)

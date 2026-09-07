@@ -6,7 +6,7 @@ from datetime import date
 from decimal import Decimal
 
 from app.models.enums import LocationType
-from app.seed import ensure_system_user
+from app.seed import ensure_demo_user
 from app.services import component_service as cs
 from app.services import invoice_service as inv
 from app.services import location_service as ls
@@ -28,7 +28,7 @@ def test_list_components_filters_by_type(session: Session) -> None:
 
 
 def test_total_quantities_by_component(session: Session) -> None:
-    user = ensure_system_user(session)
+    user = ensure_demo_user(session)
     ctype = cs.create_type(session, "resistor")
     c1 = cs.create_component(session, ctype.id)
     c2 = cs.create_component(session, ctype.id)
@@ -50,7 +50,7 @@ def test_total_quantities_by_component(session: Session) -> None:
 
 
 def test_list_component_locations_only_positive(session: Session) -> None:
-    user = ensure_system_user(session)
+    user = ensure_demo_user(session)
     ctype = cs.create_type(session, "resistor")
     component = cs.create_component(session, ctype.id)
     loc = ls.create_location(session, type=LocationType.DRAWER, name="A")
@@ -74,7 +74,7 @@ def test_list_component_locations_only_positive(session: Session) -> None:
 
 
 def test_list_movements_most_recent_first(session: Session) -> None:
-    user = ensure_system_user(session)
+    user = ensure_demo_user(session)
     ctype = cs.create_type(session, "resistor")
     component = cs.create_component(session, ctype.id)
     loc = ls.create_location(session, type=LocationType.DRAWER, name="A")
@@ -98,7 +98,7 @@ def test_list_movements_most_recent_first(session: Session) -> None:
 
 
 def test_list_purchase_history(session: Session) -> None:
-    user = ensure_system_user(session)
+    user = ensure_demo_user(session)
     ctype = cs.create_type(session, "resistor")
     component = cs.create_component(session, ctype.id)
     loc = ls.create_location(session, type=LocationType.DRAWER, name="A")
@@ -137,7 +137,7 @@ def test_build_location_stock_groups_sorts_and_drops_depleted(
     """What the locations page renders inside each location."""
     from app.web.presenter import build_location_stock
 
-    user = ensure_system_user(session)
+    user = ensure_demo_user(session)
     ctype = cs.create_type(session, "resistor")
     zed = cs.create_component(session, ctype.id, mpn="ZZ-1", manufacturer="Yageo")
     alpha = cs.create_component(session, ctype.id, mpn="AA-1")
@@ -182,7 +182,7 @@ def test_build_location_stock_labels_a_component_with_no_mpn(
     """The label is a link's text, so it can never be blank."""
     from app.web.presenter import build_location_stock
 
-    user = ensure_system_user(session)
+    user = ensure_demo_user(session)
     ctype = cs.create_type(session, "resistor")
     component = cs.create_component(session, ctype.id)
     drawer = ls.create_location(session, type=LocationType.DRAWER, name="D5")

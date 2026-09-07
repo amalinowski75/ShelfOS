@@ -7,7 +7,7 @@ from decimal import Decimal
 
 import pytest
 from app.models.enums import LocationType
-from app.seed import ensure_system_user
+from app.seed import ensure_demo_user
 from app.services import component_service as cs
 from app.services import invoice_service as inv
 from app.services import location_service as ls
@@ -23,7 +23,7 @@ from sqlmodel import Session
 @pytest.fixture
 def setup(session: Session) -> dict[str, int]:
     """Create a user, component and location for invoice tests."""
-    user = ensure_system_user(session)
+    user = ensure_demo_user(session)
     ctype = cs.create_type(session, "resistor")
     component = cs.create_component(session, ctype.id)
     location = ls.create_location(session, type=LocationType.DRAWER, name="D1")

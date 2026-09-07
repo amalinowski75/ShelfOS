@@ -83,14 +83,14 @@ def test_it_refuses_an_unknown_account(file_db: tuple[str, Engine]) -> None:
     assert "No account named" in result.stdout + result.stderr
 
 
-def test_it_refuses_the_system_user(file_db: tuple[str, Engine]) -> None:
-    """It cannot sign in, so giving it a password would only create a way in."""
+def test_it_refuses_an_account_that_cannot_sign_in(file_db: tuple[str, Engine]) -> None:
+    """Giving the demo-data actor a password would only create a way in."""
     url, engine = file_db
-    from app.seed import ensure_system_user
+    from app.seed import DEMO_USER_NAME, ensure_demo_user
 
     with Session(engine) as session:
-        ensure_system_user(session)
-    result = _run(url, "system", new_password="a-real-admin-password")
+        ensure_demo_user(session)
+    result = _run(url, DEMO_USER_NAME, new_password="a-real-admin-password")
     assert result.returncode != 0
     assert "cannot sign in" in result.stdout + result.stderr
 

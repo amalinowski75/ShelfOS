@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from app.models.enums import UserRole
-from app.seed import ensure_system_user
+from app.seed import ensure_demo_user
 from app.services import user_service as us
 from app.services.errors import NotFoundError, ValidationError
 from sqlmodel import Session
@@ -40,7 +40,7 @@ def test_authenticate_rejects_inactive_user(session: Session) -> None:
 
 
 def test_system_user_cannot_log_in(session: Session) -> None:
-    ensure_system_user(session)
+    ensure_demo_user(session)
     # No password set, so authentication must fail.
     assert us.authenticate(session, "system", "") is None
 
@@ -91,7 +91,7 @@ def test_cannot_lock_out_last_admin(session: Session) -> None:
         session, username="admin", password="pw-password", role=UserRole.ADMIN
     )
     # A passwordless system admin does not count as login-capable.
-    ensure_system_user(session)
+    ensure_demo_user(session)
 
     with pytest.raises(ValidationError):
         us.set_role(session, admin.id, UserRole.USER, actor_id=1)
@@ -123,7 +123,7 @@ def test_ensure_admin_is_idempotent(session: Session) -> None:
 def test_ensure_admin_ignores_non_login_system_user(session: Session) -> None:
     # The system user is an admin but cannot log in; a real admin must still be
     # seeded so someone can actually authenticate.
-    system = ensure_system_user(session)
+    system = ensure_demo_user(session)
     admin = us.ensure_admin(session, username="admin", password="admin-password")
     assert admin.id != system.id
     assert admin.password_hash is not None
