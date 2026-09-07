@@ -926,7 +926,14 @@ deploy_step_venv() {
         sudo_run touch "$INSTALL_DIR/.venv/.shelfos-installed"
         step_ok
     fi
-    sudo_run chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR" "$DATA_DIR"
+    # The data is the service's; the code is not. ProtectSystem=strict already
+    # makes /opt/shelfos read-only to the unit, so handing it over bought
+    # nothing — and now that `backup` and `password` run root out of that tree,
+    # a service account able to edit it would be a way from a web-app bug to
+    # root on the operator's next sudo. Stated rather than left alone, so an
+    # install made by an earlier version is corrected on the next deploy.
+    sudo_run chown -R root:root "$INSTALL_DIR"
+    sudo_run chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR"
 }
 
 deploy_step_env() {
@@ -1223,7 +1230,8 @@ cmd_update() {
         sudo_run "$INSTALL_DIR/.venv/bin/pip" install --quiet --editable "$INSTALL_DIR"
         sudo_run touch "$INSTALL_DIR/.venv/.shelfos-installed"
     fi
-    sudo_run chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
+    # Root's, not the service's — see deploy_step_venv.
+    sudo_run chown -R root:root "$INSTALL_DIR"
 
     # The installed unit and Caddyfile carry this machine's port and domain, so
     # a new version of either cannot simply be copied over them.
@@ -1375,6 +1383,18 @@ signing secret and every session invalid — back that file up separately.
 EOF
 }
 
+# Hand the database and attachments back to the service after root has written
+# them. Paths are resolved first: backup.py deliberately supports an attachments
+# directory that is a symlink to external storage, and `chown -R` on a symlinked
+# operand changes the link rather than the tree behind it — so without this the
+# files stay root-owned and the service starts unable to write uploads.
+give_data_back() {
+    local db_path att_path
+    db_path=$(readlink -f "${DEPLOY_DB#sqlite:///}" 2>/dev/null || printf '%s' "${DEPLOY_DB#sqlite:///}")
+    att_path=$(readlink -f "$DEPLOY_ATT" 2>/dev/null || printf '%s' "$DEPLOY_ATT")
+    sudo_run chown -R "$SERVICE_USER:$SERVICE_USER" "$db_path" "$att_path"
+}
+
 cmd_backup() {
     local action="create"
     case ${1:-} in
@@ -1407,13 +1427,30 @@ cmd_backup() {
     fi
 
     # An archive named relatively is about to be read by a process that may not
-    # share this working directory, and named in messages that outlive it.
-    if [ "$action" = restore ] && [ -n "${1:-}" ]; then
-        local archive=$1; shift
-        case $archive in
-            -*) set -- "$archive" "$@" ;;
-            *)  set -- "$(cd "$(dirname "$archive")" 2>/dev/null && pwd)/$(basename "$archive")" "$@" ;;
-        esac
+    # share this working directory, and named in messages that outlive it. The
+    # archive is not always the first argument — `restore --force snap.tar.gz`
+    # is a reasonable thing to type — so find the first one that is not a flag.
+    if [ "$action" = restore ]; then
+        local -a resolved=()
+        local found=0 arg dir
+        for arg in "$@"; do
+            if [ "$found" = 0 ]; then
+                case $arg in
+                    -*) ;;
+                    *)
+                        dir=$(cd "$(dirname "$arg")" 2>/dev/null && pwd) \
+                            || die 1 "no such directory: $(dirname "$arg")"
+                        # Without the check above this silently becomes
+                        # "/<basename>": cd fails, the substitution is empty, and
+                        # a typo in the directory turns into a path at the root
+                        # that the operator never typed — and might even exist.
+                        arg="$dir/$(basename "$arg")"
+                        found=1 ;;
+                esac
+            fi
+            resolved+=("$arg")
+        done
+        set -- "${resolved[@]+"${resolved[@]}"}"
     fi
 
     if [ "$action" = create ] && is_deployed; then
@@ -1454,11 +1491,12 @@ cmd_backup() {
     fi
 
     if [ "$action" = restore ] && is_deployed; then
-        if [ "$status" = 0 ]; then
-            # Restoring as root leaves root-owned files where the service writes.
-            # Without this it comes back up unable to touch its own database.
-            sudo_run chown -R "$SERVICE_USER:$SERVICE_USER" "${db#sqlite:///}" "$att"
-        fi
+        # Unconditionally, not only on success. A restore that fails part way
+        # has usually already replaced the database — backup.py swaps it before
+        # the attachments — so the failure path is exactly when root-owned data
+        # is left behind, and the one where nobody thinks to check ownership.
+        # It costs nothing when nothing changed.
+        give_data_back
         sudo_run systemctl start "$SERVICE_NAME"
     fi
 

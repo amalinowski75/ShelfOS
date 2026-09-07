@@ -20,8 +20,16 @@ archive's own mode was.
 
 - `backup` runs as root on a deployed install now. Root can read an archive
   wherever the operator left it, and the data is chowned back to the service user
-  after a restore — restoring as root would otherwise leave the service unable to
-  write the database it had just been given.
+  after a restore — always, not only on success, since a restore that fails part
+  way is exactly when root-owned data is left behind. Symlinks are resolved
+  first, because `chown -R` on a symlinked operand changes the link rather than
+  the tree behind it, and an attachments directory pointing at external storage
+  is something backup.py deliberately supports.
+- **`/opt/shelfos` stays root-owned.** It was chowned to the service user, which
+  bought nothing — `ProtectSystem=strict` already makes it read-only to the
+  unit — and became a real hazard the moment root started running code out of
+  it: a bug in the web app would have been a path to root on the operator's next
+  `sudo ./shelfos.sh backup`.
 - A relative archive path is made absolute before it is handed on, since it is
   read by a process that need not share the working directory it was typed in.
 - Archives go to a `root`-owned `0700` directory: each one carries every password
