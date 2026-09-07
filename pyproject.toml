@@ -14,6 +14,12 @@ dependencies = [
     "bcrypt>=4.2",
     "pyjwt>=2.9",
     "itsdangerous>=2.2",
+    # A runtime dependency, not a testing one: url_fetch and every shop
+    # provider import it at module scope, so the app does not start without it.
+    # It lived in the dev extra for most of this project's life and nobody
+    # noticed, because every way of running ShelfOS installed that extra —
+    # until deploy, which correctly installs the runtime set alone.
+    "httpx>=0.28",
     "pdfplumber>=0.11",
     "segno>=1.6",
     # Brother QL raster protocol, for printing location labels on a label
@@ -33,7 +39,6 @@ dev = [
     "mypy>=1.13",
     "ruff>=0.8",
     "black>=24.10",
-    "httpx>=0.28",
 ]
 
 [build-system]
