@@ -67,6 +67,15 @@ class FakePrinter:
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
 
+    def stop_draining(self) -> None:
+        """Stop reading the job, as a QL does when an error is raised mid-raster.
+
+        The pty's buffer then fills and every further write returns EAGAIN for
+        ever — the shape that hung the app on its first evening with real
+        hardware, and the one a bridge with no write deadline inherits.
+        """
+        self._stop.set()
+
     def _serve(self) -> None:
         while not self._stop.is_set():
             try:
@@ -124,10 +133,33 @@ class PrinterBridge:
     the thing we actually ship drifted away from it.
     """
 
-    def __init__(self, printer: FakePrinter) -> None:
+    #: Tries before giving up on finding a port nobody else takes first.
+    ATTEMPTS = 3
+
+    def __init__(self, printer: FakePrinter, *args: str) -> None:
         self.printer = printer
-        # Pick the port here so the test knows it; the bridge serves one caller
-        # at a time and does not announce a port it was not given.
+        self.log: list[str] = []
+        self._extra = list(args)
+        for attempt in range(self.ATTEMPTS):
+            self._start()
+            if self._wait_until_listening():
+                return
+            # The port was taken between the probe closing and the child binding
+            # it — by another bridge in a parallel test, or by anything wanting
+            # an ephemeral port. The child says so and exits at once, so this is
+            # milliseconds rather than a timeout; try another number.
+            failure = "\n".join(self.log)
+            self.close()
+            if attempt == self.ATTEMPTS - 1 or "cannot listen" not in failure:
+                raise AssertionError(
+                    f"the bridge did not listen on {self.port}: {failure or '(silent)'}"
+                )
+
+    def _start(self) -> None:
+        # The port is picked here because the bridge refuses `--port 0`: a
+        # service whose callers must know its number has no use for "any free
+        # one". That leaves a window before the child binds it, which is what
+        # ATTEMPTS is for.
         probe = socket.socket()
         probe.bind(("127.0.0.1", 0))
         self.port = probe.getsockname()[1]
@@ -139,26 +171,62 @@ class PrinterBridge:
                 sys.executable,
                 str(script),
                 "--device",
-                printer.path,
+                self.printer.path,
                 "--port",
                 str(self.port),
+                *self._extra,
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
             text=True,
         )
-        self._wait_until_listening()
+        # Drained on a thread, not left in the pipe: the bridge logs a line per
+        # connection, and a test driving enough of them would fill the 64 KiB
+        # buffer and block the bridge inside print() — a hang with no
+        # explanation. Keeping the lines also makes them assertable.
+        self.log = []
+        self._reader = threading.Thread(target=self._drain, daemon=True)
+        self._reader.start()
 
-    def _wait_until_listening(self, timeout: float = 5.0) -> None:
+    def _drain(self) -> None:
+        assert self._process.stdout is not None
+        for line in self._process.stdout:
+            self.log.append(line.rstrip("\n"))
+
+    @property
+    def is_running(self) -> bool:
+        """Whether the bridge is still serving — the property most of these
+        tests are really about, since one wedged connection used to end it."""
+        return self._process.poll() is None
+
+    def wait_for_log(self, fragment: str, timeout: float = 5.0) -> str:
+        """Block until the bridge has said something containing ``fragment``."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
+            for line in list(self.log):
+                if fragment in line:
+                    return line
+            time.sleep(0.02)
+        raise AssertionError(
+            f"the bridge never said {fragment!r}; it said: {self.log}"
+        )
+
+    def _wait_until_listening(self, timeout: float = 5.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            # Checked every round: a child that died at startup (the port was
+            # taken) should fail in milliseconds with its own words, rather than
+            # after the full timeout with "the bridge did not listen", which
+            # points at the bridge instead of at the collision.
+            if self._process.poll() is not None:
+                return False
             try:
                 socket.create_connection(("127.0.0.1", self.port), timeout=0.2).close()
-                return
+                return True
             except OSError:
                 time.sleep(0.02)
-        raise AssertionError(f"the bridge did not listen on {self.port} in {timeout}s")
+        return False
 
     def close(self) -> None:
         self._process.terminate()
@@ -167,6 +235,10 @@ class PrinterBridge:
         except subprocess.TimeoutExpired:  # pragma: no cover - a wedged bridge
             self._process.kill()
             self._process.wait(timeout=5)
+        finally:
+            self._reader.join(timeout=5)
+            if self._process.stdout is not None:
+                self._process.stdout.close()
 
     def __enter__(self) -> PrinterBridge:
         return self

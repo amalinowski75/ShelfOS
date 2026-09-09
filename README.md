@@ -410,6 +410,13 @@ of 10, `socat` 2 times in 8 (7 in 8 with `ignoreeof`), and this bridge 20 out of
 20. That is the difference between "the printer is not saying what it holds"
 appearing at random and not at all.
 
+One connection is served at a time, which is what `usblp` allows anyway — so the
+bridge never lets a single connection become permanent. A printer that stops
+accepting bytes (a QL waiting for its cover to be closed) gives up after 30
+seconds, and a caller that goes silent for two minutes is disconnected; both are
+logged, and the next caller is served. `--write-timeout` and `--idle-timeout`
+change those, and `--idle-timeout 0` turns the second one off.
+
 ```ini
 # ~/.config/systemd/user/shelfos-label-tunnel.service
 [Unit]
@@ -464,7 +471,7 @@ does nothing with them.
 **9100 is a convention, not a requirement.** It is the port HP JetDirect used for
 raw printing, so anyone who has set up a network printer recognises what this is —
 but nothing in ShelfOS knows the number. It appears in three places, and any free
-port works as long as all three agree: the `socat` unit, the `-R` argument in the
+port works as long as all three agree: the bridge unit, the `-R` argument in the
 tunnel unit, and `SHELFOS_LABEL_DEVICE` on the server. Change it if something on
 either machine already listens there; `ExitOnForwardFailure=yes` in the tunnel unit
 means a port already taken on the server fails loudly rather than leaving you
