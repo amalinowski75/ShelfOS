@@ -783,7 +783,14 @@ deploy_summary() {
         info "  settings        $ENV_FILE_SYSTEM  (new, with a generated secret key)"
     fi
     info "  service         $SERVICE_NAME  port $DEPLOY_PORT, user $SERVICE_USER"
-    if [ "$DEPLOY_WANT_CADDY" = 1 ]; then
+    if [ "$DEPLOY_WANT_CADDY" = 1 ] && ! is_loopback_address "$DEPLOY_LISTEN"; then
+        # Both at once is almost certainly not what somebody meant: the app is
+        # then reachable past the proxy, so the certificate, the security
+        # headers Caddy adds and the trusted-proxy setting all apply to one way
+        # in and not to the other.
+        info "  proxy           Caddy on $DEPLOY_DOMAIN"
+        info "  ${C_YELLOW}                and $DEPLOY_LISTEN:$DEPLOY_PORT directly, in plain HTTP, past it${C_OFF}"
+    elif [ "$DEPLOY_WANT_CADDY" = 1 ]; then
         info "  proxy           Caddy on $DEPLOY_DOMAIN"
     elif is_loopback_address "$DEPLOY_LISTEN"; then
         info "  proxy           none — reachable at $DEPLOY_LISTEN:$DEPLOY_PORT, from this machine only"
@@ -1418,6 +1425,11 @@ deploy_step_verify() {
     fi
     info ""
     info "${C_GREEN}ShelfOS is running.${C_OFF}"
+    if [ "$DEPLOY_WANT_CADDY" = 1 ] && ! is_loopback_address "$DEPLOY_LISTEN"; then
+        warn "The service also answers directly on $DEPLOY_LISTEN:$DEPLOY_PORT, in plain HTTP,"
+        warn "which is a way in that skips Caddy's certificate and its headers. Deploy"
+        warn "without --listen if that was not deliberate."
+    fi
     if [ "$DEPLOY_WANT_CADDY" = 1 ]; then
         info "  https://$DEPLOY_DOMAIN  (Caddy will get the certificate on the first request;"
         info "  the name has to resolve here and ports 80 and 443 have to be open — 80 too,"

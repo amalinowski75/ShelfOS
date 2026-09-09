@@ -1314,3 +1314,26 @@ def test_the_installed_address_is_read_back_from_the_unit(tmp_path: Path) -> Non
         ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
     )
     assert fallback.stdout.strip() == "127.0.0.1"
+
+
+def test_a_proxy_and_a_direct_port_at_once_is_pointed_out(tmp_path: Path) -> None:
+    """Both at once is almost certainly not what anybody meant.
+
+    The app is then reachable past Caddy, so the certificate, the headers it
+    adds and the trusted-proxy setting apply to one way in and not to the other
+    — and nothing on screen would have said so.
+    """
+    output = _rendered_unit(tmp_path, "--domain", "example.test", "--listen", "0.0.0.0")
+    assert "past it" in output
+
+
+def test_the_ordinary_deploy_is_unchanged(tmp_path: Path) -> None:
+    """Nothing above may alter the path almost everyone takes: Caddy in front,
+    the service on loopback behind it."""
+    output = _rendered_unit(tmp_path, "--domain", "example.test")
+    assert "--host 127.0.0.1" in output
+    assert "Caddy on example.test" in output
+    assert "past it" not in output
+    # The unit's own comments explain what binding 0.0.0.0 would mean, so match
+    # the summary's wording rather than the two words it shares with them.
+    assert "in plain HTTP, to anything" not in output
