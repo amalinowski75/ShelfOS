@@ -408,7 +408,7 @@ Description=Reverse tunnel for the label printer
 After=shelfos-label.service
 
 [Service]
-ExecStart=/usr/bin/ssh -N -T -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -R 9100:127.0.0.1:9100 USER@SERVER
+ExecStart=/usr/bin/ssh -N -T -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -R 9100:127.0.0.1:9100 CHANGE-ME-user@server
 Restart=always
 RestartSec=5
 
@@ -416,10 +416,34 @@ RestartSec=5
 WantedBy=default.target
 ```
 
+**Before enabling the tunnel, ssh into the server by hand once.** A systemd
+service cannot answer either of the two questions ssh asks on a first
+connection, and both failures look the same from the outside — a unit stuck in
+`activating`, restarting every five seconds for ever, saying nothing:
+
+```bash
+ssh-copy-id user@server     # your key in the server's authorized_keys
+ssh user@server             # accept the host key, and check it lets you in
+```
+
+Then enable both, and look at what happened — `Restart=always` means a wrong
+address or an unaccepted host key retries silently rather than stopping:
+
 ```bash
 systemctl --user enable --now shelfos-label shelfos-label-tunnel
-loginctl enable-linger "$USER"   # so it runs without a graphical session
+loginctl enable-linger "$USER"       # so it runs without a graphical session
+systemctl --user status shelfos-label shelfos-label-tunnel
 ```
+
+Both must say `active (running)`. `activating (auto-restart)` means the tunnel is
+failing; `journalctl --user -u shelfos-label-tunnel` says why, and the usual
+answers are the `CHANGE-ME` above still being there, a host key never accepted,
+or a key the server does not know. Note `--user` throughout: these are user
+units, and `sudo systemctl status` looks in the system manager and reports that
+they do not exist.
+
+Recreating the machine at the far end invalidates both halves at once — its host
+key changes and its `authorized_keys` goes with it.
 
 The tunnel is what keeps the server's setting stable: it always talks to its own
 `127.0.0.1`, so the machine with the printer can change address, move networks or
