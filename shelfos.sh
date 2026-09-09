@@ -1149,8 +1149,43 @@ deploy_tunnel_sshd() {
         else
             warn "sshd would not reload; the configuration is in place and valid, and applies the next time it starts"
         fi
+        deploy_tunnel_sshd_check
     fi
     step_ok "sshd will take registered printers"
+}
+
+# Ask sshd what it will actually do for this account, rather than trusting that
+# a file we wrote is a file that applies.
+#
+# On a server somebody else set up, two things can quietly undo all of it, and
+# both look identical from the machine with the printer -- "Permission denied",
+# which the installer would report as a key nobody has authorised:
+#
+#   * AllowUsers/AllowGroups naming the humans who may log in. It cannot go in a
+#     Match block, so nothing in our file can add this account to it;
+#   * a Match block of theirs later in the configuration, which for a connection
+#     matching both would win on the settings it repeats.
+deploy_tunnel_sshd_check() {
+    local effective
+    effective=$(sudo_run "$SSHD_BIN" -T \
+        -C "user=$TUNNEL_USER,host=localhost,addr=127.0.0.1" 2> /dev/null || true)
+    [ -n "$effective" ] || return 0
+
+    case $effective in
+        *"allowusers "*|*"allowgroups "*)
+            if ! printf '%s\n' "$effective" \
+                | grep -Eq "^allow(users|groups) (.* )?$TUNNEL_USER( |\$)"; then
+                warn "this sshd only admits named accounts, and $TUNNEL_USER is not among them:"
+                printf '%s\n' "$effective" | grep -E '^allow(users|groups) ' >&2
+                warn "add it there, or no printer will be able to connect however its key is authorised"
+            fi ;;
+    esac
+
+    if ! printf '%s\n' "$effective" | grep -qi "^permitlisten .*:$(tunnel_port)"; then
+        warn "sshd does not apply this configuration to $TUNNEL_USER — something later in
+    /etc/ssh/sshd_config overrides it. Check with:
+        sudo sshd -T -C user=$TUNNEL_USER,host=localhost,addr=127.0.0.1 | grep -i permitlisten"
+    fi
 }
 
 deploy_step_dirs() {

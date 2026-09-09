@@ -430,6 +430,14 @@ Match User shelfos-tunnel
 Match all
 ```
 
+On a server somebody else set up, two things can quietly undo all of this, and
+the deploy checks for both by asking sshd what it will actually do
+(`sshd -T -C user=shelfos-tunnel,…`) rather than trusting that a file it wrote
+is a file that applies: an `AllowUsers`/`AllowGroups` list, which cannot go in a
+`Match` block and so cannot be extended from ours, and a `Match` block of theirs
+further down that wins on whatever it repeats. Either one refuses the tunnel in
+exactly the words an unauthorised key produces.
+
 `Match all` closes the block: drop-ins are included at the *top* of `sshd_config`,
 and a Match left open would swallow every global setting after it. The deploy
 validates with `sshd -t` before reloading and withdraws the file if it does not

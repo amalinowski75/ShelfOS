@@ -44,6 +44,12 @@ the deployment is a server and a browser.
   else, and the page fills its name in. Not the service account: that one has no
   shell and a root-owned home, so sshd would refuse it, and giving it those would
   turn a confined service account into a login account.
+- The deploy asks sshd what it will **actually do** for the tunnel account
+  (`sshd -T -C user=…`), rather than trusting that a file it wrote is a file that
+  applies. An `AllowUsers` list it cannot extend, or somebody's own `Match` block
+  further down, would otherwise refuse every printer in exactly the words an
+  unauthorised key produces — and the installer's message now names that
+  possibility too.
 - A deploy installs **fonts-dejavu-core**. A label is a bitmap and drawing text
   into one needs a TTF on the host, which a server has no desktop to have brought
   — so every preview and every print failed with "no label font found" until

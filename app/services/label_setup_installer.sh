@@ -329,9 +329,15 @@ else
         ssh -p $SSH_PORT $SSH_USER@$SSH_HOST
     then run this script again." ;;
             *"Permission denied"*|*"Too many authentication failures"*)
-                die "$SSH_HOST has not authorized this machine's key yet.
+                die "$SSH_HOST would not let $SSH_USER in with this machine's key.
 
-    $(authorize_hint)" ;;
+    Usually that means the key is not authorized there yet:
+
+    $(authorize_hint)
+
+    If ShelfOS said it accepted the key, then that server admits only named
+    accounts (AllowUsers/AllowGroups in its sshd configuration) and $SSH_USER is
+    not one of them — which is for whoever runs it to change." ;;
             *"remote port forwarding failed"*)
                 # ssh says the same sentence for a port in use and a port its
                 # configuration will not hand over, so name both rather than

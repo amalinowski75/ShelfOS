@@ -1147,6 +1147,27 @@ def _sshd_probe(tmp_path: Path, mode: str) -> tuple[str, Path]:
     ]
     dropin = tmp_path / "60-shelfos-tunnel.conf"
     run_dir = tmp_path / "run-sshd"
+    # `sshd -T` answers with the effective configuration for the connection it is
+    # asked about; the step reads that to find out whether its own file applies.
+    effective = {
+        "no-allow-list": "permitlisten 127.0.0.1:9100 localhost:9100\n",
+        "allow-list-without-us": (
+            "allowusers adam maria\npermitlisten 127.0.0.1:9100 localhost:9100\n"
+        ),
+        "allow-list-with-us": (
+            "allowusers adam shelfos-tunnel\npermitlisten 127.0.0.1:9100\n"
+        ),
+        # The same, with the account named FIRST: a pattern that expects a space
+        # in front of it misses this one and warns about a server that is
+        # already set up correctly.
+        "allow-list-with-us-first": (
+            "allowusers shelfos-tunnel adam\npermitlisten 127.0.0.1:9100\n"
+        ),
+        "overridden": "allowusers adam shelfos-tunnel\npermitlisten 127.0.0.1:2222\n",
+    }.get(mode, "permitlisten 127.0.0.1:9100 localhost:9100\n")
+    answer_t = (
+        'if [ "$1" = "-T" ]; then\n' f"  printf '%s' '{effective}'\n" "  exit 0\nfi\n"
+    )
     behaviour = {
         "needs-run-dir": (
             f'if [ ! -d "{run_dir}" ]; then\n'
@@ -1159,9 +1180,9 @@ def _sshd_probe(tmp_path: Path, mode: str) -> tuple[str, Path]:
             "  exit 1\nfi\nexit 0\n"
         ),
         "broken-anyway": 'echo "/etc/ssh/sshd_config: line 12: bad" >&2\nexit 1\n',
-    }[mode]
+    }.get(mode, "exit 0\n")
     fake = tmp_path / "sshd"
-    fake.write_text("#!/bin/sh\n" + behaviour)
+    fake.write_text("#!/bin/sh\n" + answer_t + behaviour)
     fake.chmod(0o755)
     probe = tmp_path / "sshd-probe.sh"
     probe.write_text(
@@ -1360,3 +1381,35 @@ def test_the_deploy_installs_the_font_the_renderer_looks_for_first() -> None:
         if line.strip().startswith("for pkg in ")
     )
     assert family in packages, f"{first} is tried first, but {packages.strip()}"
+
+
+def test_a_server_that_admits_only_named_accounts_is_pointed_out(
+    tmp_path: Path,
+) -> None:
+    """AllowUsers cannot go in a Match block, so nothing this deploy writes can
+    add the tunnel account to it — and from the machine with the printer the
+    refusal looks exactly like a key nobody authorised."""
+    output, _ = _sshd_probe(tmp_path, "allow-list-without-us")
+    assert "only admits named accounts" in output
+    assert "adam maria" in output
+
+
+@pytest.mark.parametrize(
+    "mode", ["allow-list-with-us", "allow-list-with-us-first", "no-allow-list"]
+)
+def test_a_server_that_already_admits_it_says_nothing(
+    tmp_path: Path, mode: str
+) -> None:
+    output, _ = _sshd_probe(tmp_path, mode)
+    assert "only admits named accounts" not in output
+    assert "OK: sshd will take registered printers" in output
+
+
+def test_a_configuration_that_does_not_apply_to_us_is_pointed_out(
+    tmp_path: Path,
+) -> None:
+    """Asking sshd what it will DO, rather than trusting that a file we wrote is
+    a file that applies: a Match block of theirs further down wins on whatever
+    it repeats."""
+    output, _ = _sshd_probe(tmp_path, "overridden")
+    assert "does not apply this configuration" in output
