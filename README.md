@@ -394,12 +394,28 @@ services so they come up on their own:
 Description=Expose the label printer on 127.0.0.1:9100
 
 [Service]
-ExecStart=/usr/bin/socat TCP-LISTEN:9100,bind=127.0.0.1,reuseaddr,fork OPEN:/dev/shelfos-label,rdwr,nonblock
+ExecStart=/usr/bin/python3 /path/to/ShelfOS/scripts/label_bridge.py --device /dev/shelfos-label --port 9100
 Restart=always
 
 [Install]
 WantedBy=default.target
 ```
+
+`scripts/label_bridge.py` rather than a line of `socat`, and the reason is worth
+knowing if you are tempted to substitute one. A QL answers a question when it is
+ready, and a read taken before then returns **zero bytes** — which `socat` takes
+for the end of the conversation and hangs up on, usually before the answer
+arrives. Measured on a QL-800: reading the device directly answered 10 times out
+of 10, `socat` 2 times in 8 (7 in 8 with `ignoreeof`), and this bridge 20 out of
+20. That is the difference between "the printer is not saying what it holds"
+appearing at random and not at all.
+
+One connection is served at a time, which is what `usblp` allows anyway — so the
+bridge never lets a single connection become permanent. A printer that stops
+accepting bytes (a QL waiting for its cover to be closed) gives up after 30
+seconds, and a caller that goes silent for two minutes is disconnected; both are
+logged, and the next caller is served. `--write-timeout` and `--idle-timeout`
+change those, and `--idle-timeout 0` turns the second one off.
 
 ```ini
 # ~/.config/systemd/user/shelfos-label-tunnel.service
@@ -455,7 +471,7 @@ does nothing with them.
 **9100 is a convention, not a requirement.** It is the port HP JetDirect used for
 raw printing, so anyone who has set up a network printer recognises what this is —
 but nothing in ShelfOS knows the number. It appears in three places, and any free
-port works as long as all three agree: the `socat` unit, the `-R` argument in the
+port works as long as all three agree: the bridge unit, the `-R` argument in the
 tunnel unit, and `SHELFOS_LABEL_DEVICE` on the server. Change it if something on
 either machine already listens there; `ExitOnForwardFailure=yes` in the tunnel unit
 means a port already taken on the server fails loudly rather than leaving you
