@@ -44,6 +44,11 @@ the deployment is a server and a browser.
   else, and the page fills its name in. Not the service account: that one has no
   shell and a root-owned home, so sshd would refuse it, and giving it those would
   turn a confined service account into a login account.
+- The ssh target offered is no longer whatever the browser's address bar says.
+  A loopback address there means a proxy or a tunnel in between — a container's
+  proxy device, a published port, an `ssh -L` — and ssh from the machine with
+  the printer would come back to that machine. The page offers the address the
+  server sees itself at instead, and says why.
 - **Nothing to do on the server.** The script registers its own public key with
   ShelfOS over the session the person is already signed in with — no account
   here, no ssh, nothing typed. sshd reads that account's keys from a command

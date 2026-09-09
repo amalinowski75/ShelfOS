@@ -391,6 +391,14 @@ checking its work, and for the reasons behind each step, which are the part a
 script cannot carry. The one thing it deliberately does not do is touch the
 server: the setting above is the administrator's to make.
 
+The page proposes the ssh target from the address you are reading it at, with
+one exception that matters in a container: when that address is loopback, the
+browser has come through a proxy or a forwarded port, and ssh from the machine
+with the printer cannot follow it back — so what is offered instead is the
+address this server sees itself at. Both are proposals in a field you can
+change, and the port beside it is there for the same reason (an `lxc proxy`
+device in front of ssh, say).
+
 **The key stays on the machine with the printer, and registers itself.** The
 script makes its own ssh key there and hands the *public* half to ShelfOS over
 the session the person is already signed in with — so setting up a printer needs

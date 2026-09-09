@@ -12,6 +12,7 @@ part worth pinning down.
 from __future__ import annotations
 
 import base64
+import ipaddress
 import re
 import shutil
 import subprocess
@@ -684,3 +685,56 @@ def test_the_address_and_the_token_are_checked_before_they_are_written() -> None
     for token in ("not a token", "a.b", "a.b.c.d", "a b.c.d"):
         with pytest.raises(ValidationError):
             _render(shelfos_url="https://host", enroll_token=token)
+
+
+# ------------------------------------------------- which address to propose
+
+
+@pytest.mark.parametrize(
+    "browser_host", ["127.0.0.1", "localhost", "::1", "LOCALHOST", ""]
+)
+def test_a_loopback_browser_address_is_replaced_by_our_own(
+    monkeypatch: pytest.MonkeyPatch, browser_host: str
+) -> None:
+    """The address in the browser's bar says how the BROWSER got here.
+
+    Through a container's proxy device, a published port or an `ssh -L`, that is
+    loopback — and ssh from the machine with the printer, on the far side of it,
+    would come back to that machine. This is the case a test container walks
+    into, and the answer is the address the server sees itself at.
+    """
+    monkeypatch.setattr(setup, "own_address", lambda: "10.0.3.42")
+    assert setup.propose_ssh_host(browser_host) == "10.0.3.42"
+
+
+@pytest.mark.parametrize(
+    "browser_host", ["shelf.example", "192.168.1.5", "shelf.example.com"]
+)
+def test_a_real_address_is_never_second_guessed(
+    monkeypatch: pytest.MonkeyPatch, browser_host: str
+) -> None:
+    """A name somebody chose is the best answer available: it resolves the same
+    way from the machine with the printer, which an interface address may not."""
+    monkeypatch.setattr(setup, "own_address", lambda: "10.0.3.42")
+    assert setup.propose_ssh_host(browser_host) == browser_host
+
+
+def test_with_no_address_of_its_own_it_offers_what_the_browser_used(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(setup, "own_address", lambda: "")
+    assert setup.propose_ssh_host("127.0.0.1") == "127.0.0.1"
+    assert setup.propose_ssh_host("") == ""
+
+
+def test_the_address_it_finds_is_one_it_could_be_reached_at() -> None:
+    """Whatever this machine answers, it must be usable in the field it fills.
+
+    A route lookup can hand back loopback (no route at all) or a link-local
+    address (no DHCP), and neither is somewhere ssh can be pointed.
+    """
+    address = setup.own_address()
+    if address:
+        assert setup._valid_host(address)
+        parsed = ipaddress.ip_address(address)
+        assert not parsed.is_loopback and not parsed.is_link_local

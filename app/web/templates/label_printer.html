@@ -27,6 +27,15 @@
         <input class="control control-narrow" id="ssh_port" name="ssh_port"
                type="number" min="1" max="65535" value="{{ default_ssh_port }}" />
       </div>
+      {% if ssh_host_is_ours %}
+      <p class="muted">
+        You are reading this at a loopback address, so you have reached ShelfOS
+        through a tunnel or a forwarded port — and ssh from the machine with the
+        printer cannot follow that back. The address above is the one this server
+        sees itself at; change it if the printer's machine reaches it by another
+        name, and set the port if ssh is forwarded too.
+      </p>
+      {% endif %}
       <p class="muted">
         An account on the server machine, reached over ssh — not your ShelfOS
         login. The install created <code>shelfos-tunnel</code> for exactly this,

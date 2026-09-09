@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 from app import config
+from app.services import label_setup
 from app.services import label_setup as setup
 from fastapi.testclient import TestClient
 
@@ -73,6 +74,33 @@ def test_the_ssh_target_is_proposed_from_the_host_header(client: TestClient) -> 
     html = client.get("/label-printer", headers={"Host": "shelf.example:8080"}).text
     assert 'value="shelf.example"' in html
     assert "shelf.example:8080" not in html
+    # A name somebody chose is the best answer there is; nothing overrides it.
+    assert "You are reading this at a loopback address" not in html
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1:9200", "localhost:9000", "[::1]:9000"])
+def test_a_loopback_browser_address_is_not_offered_as_an_ssh_target(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, host: str
+) -> None:
+    """Reaching this page at loopback means a proxy or a tunnel in between — an
+    lxc proxy device, a published container port, an `ssh -L`. ssh from the
+    machine with the printer, on the far side of that, would come back to
+    itself; the address this server sees itself at is the useful proposal.
+    """
+    monkeypatch.setattr(label_setup, "own_address", lambda: "10.0.3.42")
+    html = client.get("/label-printer", headers={"Host": host}).text
+    assert 'value="10.0.3.42"' in html
+    assert "You are reading this at a loopback address" in html
+
+
+def test_a_server_that_cannot_name_itself_offers_what_the_browser_used(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No routable address of its own — offer what there is rather than an empty
+    field with no clue in it."""
+    monkeypatch.setattr(label_setup, "own_address", lambda: "")
+    html = client.get("/label-printer", headers={"Host": "127.0.0.1:9200"}).text
+    assert 'value="127.0.0.1"' in html
 
 
 def test_the_account_the_deploy_made_is_filled_in(

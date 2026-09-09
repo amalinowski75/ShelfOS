@@ -747,9 +747,11 @@ def label_printer_page(
     on someone's desk and the machine it is plugged into, not about what they may
     change in ShelfOS, and the page itself changes nothing here.
 
-    The ssh target is proposed from the Host header, which the client controls —
-    fine, because it is a suggestion in an editable field and every value is
-    validated again when the installer is rendered.
+    The ssh target is proposed from the Host header — which the client controls,
+    and which is fine, because it is a suggestion in an editable field and every
+    value is validated again when the installer is rendered — except when that
+    header is loopback, which says the browser came through a proxy or a tunnel
+    that ssh cannot follow. See :func:`label_setup.propose_ssh_host`.
     """
     return templates.TemplateResponse(
         request,
@@ -765,7 +767,11 @@ def label_printer_page(
             # machine: that changes what the server accepts.
             "can_register": tunnel_keys.configured()
             and user.role is not UserRole.READ_ONLY,
-            "ssh_host": request.url.hostname or "",
+            "ssh_host": label_setup.propose_ssh_host(request.url.hostname or ""),
+            # Whether that proposal came from somewhere other than the address
+            # in the browser's bar, which is worth a sentence when it happens.
+            "ssh_host_is_ours": (request.url.hostname or "").lower()
+            in label_setup.LOOPBACK_HOSTS,
             "default_device": label_setup.DEFAULT_DEVICE,
             "default_ssh_port": label_setup.DEFAULT_SSH_PORT,
             # The port the server is already listening for, so the form comes

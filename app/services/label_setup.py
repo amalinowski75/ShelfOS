@@ -29,6 +29,7 @@ import hashlib
 import ipaddress
 import re
 import shlex
+import socket
 import textwrap
 from functools import lru_cache
 from pathlib import Path
@@ -101,6 +102,62 @@ def default_bridge_port() -> int:
         except ValidationError:
             return DEFAULT_BRIDGE_PORT
     return DEFAULT_BRIDGE_PORT
+
+
+# Reaching ShelfOS through one of these means the browser is coming down a
+# tunnel or a proxy — an lxc proxy device, an ssh -L, a port published from a
+# container — and ssh from the machine with the printer cannot follow it.
+LOOPBACK_HOSTS: Final = ("127.0.0.1", "::1", "localhost")
+
+# Where a route lookup is aimed to find out which address this machine would
+# answer on. TEST-NET-1 (RFC 5737), documentation-only and never routed: a UDP
+# `connect` sends nothing, it only asks the kernel which source address it would
+# use — so nothing leaves this machine and nothing has to be reachable.
+_ROUTE_PROBE: Final = ("192.0.2.1", 9)
+
+
+def own_address() -> str:
+    """The address this machine would be reached at, or ``""``.
+
+    Deliberately IPv4 only. A v6-only host is rare enough here that proposing an
+    address whose spelling in an ssh command line is its own small argument
+    (brackets or no brackets, scope or no scope) is worse than leaving the field
+    to be typed.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(_ROUTE_PROBE)
+        address = str(probe.getsockname()[0])
+    except OSError:
+        return ""
+    finally:
+        probe.close()
+    try:
+        parsed = ipaddress.ip_address(address)
+    except ValueError:  # pragma: no cover - the kernel gave us a literal
+        return ""
+    if parsed.is_loopback or parsed.is_unspecified or parsed.is_link_local:
+        return ""
+    return address
+
+
+def propose_ssh_host(browser_host: str) -> str:
+    """Which address to offer for ssh, given how the browser got here.
+
+    The host the browser used is normally the right answer and the best one — a
+    name somebody chose, that resolves the same way from anywhere. But when it is
+    loopback, it is an artefact of how this page was reached: a proxy device in
+    front of a container, a forwarded port, an ssh tunnel. ssh from the machine
+    with the printer, on the other side of that, would come back to itself. The
+    address this machine sees itself at is the useful proposal there.
+
+    Either way it is a proposal in a field somebody can change, and it is
+    validated again when the installer is rendered.
+    """
+    host = (browser_host or "").strip()
+    if host and host.lower() not in LOOPBACK_HOSTS:
+        return host
+    return own_address() or host
 
 
 def _valid_host(host: str) -> bool:
