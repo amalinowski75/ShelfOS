@@ -1413,3 +1413,73 @@ def test_a_configuration_that_does_not_apply_to_us_is_pointed_out(
     it repeats."""
     output, _ = _sshd_probe(tmp_path, "overridden")
     assert "does not apply this configuration" in output
+
+
+# --- deploying a second time over a working install ---------------------------
+
+
+def _installed_domain(tmp_path: Path, caddyfile: str | None, site: str | None) -> str:
+    """Run installed_domain against a Caddy config of our own."""
+    script = _SCRIPT.read_text()
+    body = script[
+        script.index("installed_domain() {") : script.index("installed_listen() {")
+    ]
+    main = tmp_path / "Caddyfile"
+    if caddyfile is not None:
+        main.write_text(caddyfile)
+    sites = tmp_path / "shelfos.caddy"
+    if site is not None:
+        sites.write_text(site)
+    probe = tmp_path / "domain.sh"
+    marker = script.split('readonly CADDY_MARKER="', 1)[1].split('"', 1)[0]
+    probe.write_text(
+        f"CADDYFILE={main}\nCADDY_MARKER='{marker}'\n"
+        # The second location the real one looks in, pointed at our tmp copy.
+        f"{body.replace('/etc/caddy/sites/shelfos.caddy', str(sites))}\n"
+        "installed_domain\n"
+    )
+    result = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+def test_a_second_deploy_keeps_the_domain_the_first_one_was_given(
+    tmp_path: Path,
+) -> None:
+    """Asked again without --domain, a deploy used to fall back to "no TLS" — on
+    a working HTTPS server that drops the proxy and loosens the session cookie,
+    which is a re-run quietly undoing the thing it is re-running."""
+    marker = _SCRIPT.read_text().split('readonly CADDY_MARKER="', 1)[1].split('"', 1)[0]
+    domain = _installed_domain(
+        tmp_path,
+        f"{marker}\nshelf.example.com {{\n  reverse_proxy 127.0.0.1:9000\n}}\n",
+        None,
+    )
+    assert domain == "shelf.example.com"
+
+
+def test_it_reads_our_own_site_file_and_not_somebody_elses(tmp_path: Path) -> None:
+    """Where our site lands when the Caddyfile already served somebody else.
+
+    And the trap in the same case: that Caddyfile names THEIR domain, so a
+    helper reading it first would point ShelfOS at a name that is not its.
+    """
+    domain = _installed_domain(
+        tmp_path,
+        "other.example {\n  respond 200\n}\n",
+        "shelf.example.com {\n  a\n}\n",
+    )
+    assert domain == "shelf.example.com"
+
+
+def test_somebody_elses_caddyfile_is_not_a_domain_to_keep(tmp_path: Path) -> None:
+    """No marker, no site file of ours: nothing here belongs to this install."""
+    assert (
+        _installed_domain(tmp_path, "other.example {\n  respond 200\n}\n", None) == ""
+    )
+
+
+def test_no_caddy_config_means_nothing_to_keep(tmp_path: Path) -> None:
+    assert _installed_domain(tmp_path, None, None) == ""

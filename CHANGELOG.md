@@ -44,6 +44,12 @@ the deployment is a server and a browser.
   else, and the page fills its name in. Not the service account: that one has no
   shell and a root-owned home, so sshd would refuse it, and giving it those would
   turn a confined service account into a login account.
+- A second `deploy --reinstall` **keeps the domain the first one was given**,
+  read back from the Caddy config it wrote. Asked again without `--domain` it
+  used to fall back to no TLS, which on a working HTTPS server drops the proxy
+  from the plan and loosens the session cookie — a re-run quietly undoing the
+  thing it is re-running. Only our own site counts: a Caddyfile serving somebody
+  else's site names their domain, not ours.
 - The deploy asks sshd what it will **actually do** for the tunnel account
   (`sshd -T -C user=…`), rather than trusting that a file it wrote is a file that
   applies. An `AllowUsers` list it cannot extend, or somebody's own `Match` block

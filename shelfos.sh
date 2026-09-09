@@ -401,6 +401,28 @@ is_deployed() { [ -e "$SERVICE_PATH" ] || [ -d "$INSTALL_DIR" ]; }
 # Which address the installed unit binds, read from the unit itself for the same
 # reason the port is: it is where the answer actually lives, and asking anywhere
 # else makes `status` report on a service nobody is running.
+# The domain an install already serves, out of the Caddy config it was given.
+#
+# A second deploy should not have to be told what the first one was told: asked
+# again without --domain, this install used to fall back to "no TLS", which on a
+# working HTTPS server means dropping the proxy from the summary and loosening
+# the session cookie — a re-run that quietly undoes the thing it is re-running.
+installed_domain() {
+    local domain="" file
+    # Our own site file first, and the shared Caddyfile only when it carries our
+    # marker: a Caddyfile serving somebody else's site names somebody else's
+    # domain, and inheriting that would point ShelfOS at a name that is not its.
+    for file in /etc/caddy/sites/shelfos.caddy "$CADDYFILE"; do
+        [ -r "$file" ] || continue
+        case $file in
+            "$CADDYFILE") grep -qF "$CADDY_MARKER" "$file" 2>/dev/null || continue ;;
+        esac
+        domain=$(sed -n 's/^\([A-Za-z0-9][A-Za-z0-9.-]*\)[[:space:]]*{[[:space:]]*$/\1/p' "$file" | head -1)
+        [ -n "$domain" ] && break
+    done
+    printf '%s' "$domain"
+}
+
 installed_listen() {
     local host=""
     if [ -r "$SERVICE_PATH" ]; then
@@ -723,6 +745,13 @@ deploy_gather() {
     valid_port "$DEPLOY_PORT" || die 2 "port must be a number between 1 and 65535, not '$DEPLOY_PORT'"
     valid_bind_address "$DEPLOY_LISTEN" \
         || die 2 "--listen takes an IP address, not '$DEPLOY_LISTEN' (0.0.0.0 for every interface)"
+
+    # What this machine already serves, when nobody said otherwise. Only ever a
+    # starting point: --domain overrides it, --no-tls turns the whole thing off.
+    if [ "$DEPLOY_WANT_CADDY" = 1 ] && [ -z "$DEPLOY_DOMAIN" ]; then
+        DEPLOY_DOMAIN=$(installed_domain)
+        [ -z "$DEPLOY_DOMAIN" ] || note "        keeping the domain this install serves: $DEPLOY_DOMAIN"
+    fi
 
     if [ "$DEPLOY_WANT_CADDY" = 1 ] && [ -z "$DEPLOY_DOMAIN" ]; then
         if [ "$DRY_RUN" = 1 ] || ! have_tty; then

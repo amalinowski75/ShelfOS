@@ -44,6 +44,20 @@ an unhandled exception becomes a 500 from Starlette's error middleware, which
 wraps the app's own header middleware, so that one response goes out without the
 security headers. Caddy adds them to everything.
 
+### Deploying again over a working install
+
+`deploy` recognises an install and stops; `--reinstall` walks the steps again,
+skipping what is already done. It keeps the domain it finds in the Caddy config
+it wrote, so `sudo ./shelfos.sh deploy --reinstall` on an HTTPS server stays an
+HTTPS server; `--domain` overrides it and `--no-tls` turns it off. The
+certificate lives in Caddy's own storage, not in the config, so rewriting the
+config does not reissue anything.
+
+Where the unit differs from the one in this checkout — a new version usually
+changes it — the diff is shown and installing it is a question, because that
+file carries this machine's port and address. Answering no leaves the unit
+alone and stops.
+
 ### Reaching it without a proxy
 
 The service binds 127.0.0.1, because with Caddy in front that is the only thing
