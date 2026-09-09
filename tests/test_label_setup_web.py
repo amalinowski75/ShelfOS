@@ -98,6 +98,57 @@ def test_an_install_that_predates_the_account_leaves_the_field_blank(
     assert 'id="ssh_user" name="ssh_user" required\n               value=""' in html
 
 
+def test_the_page_promises_a_trip_to_the_server_only_when_there_is_one(
+    client: TestClient,
+    anon_client: TestClient,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # type: ignore[no-untyped-def]
+    """The page describes what will actually happen, which depends on the server.
+
+    With the key store set up, the script registers itself and the page says
+    there is nothing to do. Without it — or for a read-only account, which may
+    not change what this server accepts — it says the one line to run, rather
+    than promising something that will not happen.
+    """
+    monkeypatch.setattr(config, "TUNNEL_KEYS_FILE", str(tmp_path / "keys"))
+    ready = client.get("/label-printer").text
+    assert "Nothing to do on the server" in ready
+    assert "tunnel-key add" not in ready
+
+    viewer = anon_client.get(
+        "/label-printer", headers=_headers(client, "read-only", "viewer-reg")
+    ).text
+    assert "needs a hand on the server" in viewer
+    assert "tunnel-key add" in viewer
+
+    monkeypatch.setattr(config, "TUNNEL_KEYS_FILE", "")
+    unset = client.get("/label-printer").text
+    assert "needs a hand on the server" in unset
+
+
+def test_the_download_carries_a_token_only_when_it_can_be_used(
+    client: TestClient,
+    anon_client: TestClient,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # type: ignore[no-untyped-def]
+    """A token in a script that may not register anything would be a credential
+    handed out for nothing."""
+    empty_token = "ENROLL_TOKEN=" + "''"
+    monkeypatch.setattr(config, "TUNNEL_KEYS_FILE", str(tmp_path / "keys"))
+    ready = _download(client).text
+    assert empty_token not in ready
+    assert "/api/labels/setup/enroll" in ready
+
+    viewer = _download(anon_client, _headers(client, "read-only", "viewer-token")).text
+    assert empty_token in viewer
+    assert "SHELFOS_URL=" + "''" in viewer
+
+    monkeypatch.setattr(config, "TUNNEL_KEYS_FILE", "")
+    assert empty_token in _download(client).text
+
+
 def test_the_page_says_nothing_about_the_server(client: TestClient) -> None:
     """A negative assertion because it is a requirement, not an accident.
 

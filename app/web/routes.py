@@ -44,7 +44,7 @@ from app.models.enums import (
 from app.models.invoice import InvoiceImportLine
 from app.models.user import User
 from app.services import attachment_service as ats
-from app.services import audit_service, label_setup, shops
+from app.services import audit_service, label_setup, shops, tunnel_keys
 from app.services import bom_service as boms_svc
 from app.services import bom_take_service as bts
 from app.services import component_service as cs
@@ -759,6 +759,12 @@ def label_printer_page(
             # Filled in by the deploy that created the account; blank on an
             # install that predates it, and typed by hand there.
             "ssh_user": config.TUNNEL_USER,
+            # Whether the downloaded script can hand its own key back, which
+            # decides whether this page describes a trip to the server or not.
+            # A read-only account may read all of this and still not register a
+            # machine: that changes what the server accepts.
+            "can_register": tunnel_keys.configured()
+            and user.role is not UserRole.READ_ONLY,
             "ssh_host": request.url.hostname or "",
             "default_device": label_setup.DEFAULT_DEVICE,
             "default_ssh_port": label_setup.DEFAULT_SSH_PORT,

@@ -665,14 +665,15 @@ def _tunnel_probe(tmp_path: Path, body: str) -> subprocess.CompletedProcess:  # 
     # tunnel_port lives up with the deploy steps, and the permitted port comes
     # from it — so take the real one rather than stub the answer being asserted.
     port_fn = script[
-        script.index("tunnel_port() {") : script.index("deploy_step_tunnel_user() {")
+        script.index("tunnel_port() {") : script.index("sshd_dropin_body() {")
     ]
     home = tmp_path / "tunnel-home"
-    (home / ".ssh").mkdir(parents=True)
+    home.mkdir()
     probe = tmp_path / "probe.sh"
     probe.write_text(
         "set -uo pipefail\n"
-        f"TUNNEL_USER=$(id -un)\nTUNNEL_HOME={home}\nDRY_RUN=0\n"
+        f"TUNNEL_USER=$(id -un)\nSERVICE_USER=$(id -un)\n"
+        f"TUNNEL_HOME={home}\nTUNNEL_KEYS={home}/tunnel-keys\nDRY_RUN=0\n"
         'info() { printf "%s\\n" "$*"; }\n'
         'note() { printf "%s\\n" "$*"; }\n'
         'die() { printf "%s\\n" "$2" >&2; exit "$1"; }\n'
@@ -766,7 +767,7 @@ def test_an_authorized_key_may_only_bind_the_one_port(
     """
     result = _tunnel_probe(tmp_path, f"tunnel_key_add {shlex.quote(good_key)}")
     assert result.returncode == 0, result.stderr
-    line = (tmp_path / "tunnel-home" / ".ssh" / "authorized_keys").read_text().strip()
+    line = (tmp_path / "tunnel-home" / "tunnel-keys").read_text().strip()
     assert line.startswith("restrict,port-forwarding,")
     assert 'permitlisten="127.0.0.1:9100"' in line
     assert 'permitopen="127.0.0.1:1"' in line
@@ -785,7 +786,7 @@ def test_the_same_machine_coming_back_replaces_its_entry(
         "tunnel_key_list",
     )
     assert result.returncode == 0, result.stderr
-    keys = (tmp_path / "tunnel-home" / ".ssh" / "authorized_keys").read_text()
+    keys = (tmp_path / "tunnel-home" / "tunnel-keys").read_text()
     assert keys.count("ssh-ed25519") == 1, keys
     assert result.stdout.count("shelfos-label@goofy") == 1, result.stdout
 
@@ -802,7 +803,7 @@ def test_a_key_can_be_withdrawn_by_the_name_it_was_added_under(
         "tunnel_key_list",
     )
     assert result.returncode == 0, result.stderr
-    keys = (tmp_path / "tunnel-home" / ".ssh" / "authorized_keys").read_text()
+    keys = (tmp_path / "tunnel-home" / "tunnel-keys").read_text()
     assert "dopey" in keys and "goofy" not in keys
     assert "shelfos-label@dopey" in result.stdout
 
@@ -826,7 +827,7 @@ def test_the_permitted_port_follows_the_installed_setting(tmp_path: Path) -> Non
     env.write_text("SHELFOS_LABEL_DEVICE=tcp://127.0.0.1:9241\n")
     script = _SCRIPT.read_text()
     body = script[
-        script.index("tunnel_port() {") : script.index("deploy_step_tunnel_user() {")
+        script.index("tunnel_port() {") : script.index("sshd_dropin_body() {")
     ]
     rule = "# " + "-" * 75
     helpers = script[
@@ -859,3 +860,107 @@ def test_tunnel_key_refuses_a_key_carrying_its_own_options(
     result = _run("tunnel-key", "add", 'command="/bin/sh" ' + good_key)
     assert result.returncode == 2
     assert "not a plain public key" in result.stderr
+
+
+# --- the sshd block, which is the ceiling on every registered key -------------
+
+
+def _dropin(tmp_path: Path, env: str = "") -> str:
+    """Render the sshd drop-in the deploy installs."""
+    script = _SCRIPT.read_text()
+    rule = "# " + "-" * 75
+    body = script[
+        script.index("tunnel_port() {") : script.index("deploy_step_tunnel() {")
+    ]
+    helpers = script[
+        script.index("env_file_value() {") : script.index(f"{rule}\n# Shared helpers")
+    ]
+    env_file = tmp_path / "env"
+    env_file.write_text(env)
+    probe = tmp_path / "dropin.sh"
+    probe.write_text(
+        f"ENV_FILE_SYSTEM={env_file}\n"
+        "TUNNEL_USER=shelfos-tunnel\n"
+        "TUNNEL_KEYS_COMMAND=/usr/local/lib/shelfos/tunnel-keys\n"
+        'valid_port() { [ "$1" -ge 1 ] 2>/dev/null && [ "$1" -le 65535 ]; }\n'
+        f"{helpers}\n{body}\nsshd_dropin_body\n"
+    )
+    result = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+def test_the_sshd_block_closes_itself(tmp_path: Path) -> None:
+    """`Match all` at the end, and it is not a nicety.
+
+    Drop-ins are included at the TOP of sshd_config, so a Match block left open
+    would swallow every global setting after it — the whole server's ssh
+    configuration would silently apply to one account and nothing else.
+    """
+    lines = [line for line in _dropin(tmp_path).splitlines() if line.strip()]
+    matches = [line for line in lines if line.startswith("Match ")]
+    assert matches == ["Match User shelfos-tunnel", "Match all"]
+    assert lines[-1] == "Match all"
+
+
+def test_a_registered_key_may_only_carry_the_printer(tmp_path: Path) -> None:
+    """The ceiling lives here rather than in the key's own options, so it holds
+    however the key got into the file — including if ShelfOS itself were made to
+    write one."""
+    block = _dropin(tmp_path)
+    assert "Match User shelfos-tunnel" in block
+    assert "AllowTcpForwarding remote" in block  # -R only; no outbound tunnels
+    assert "PermitOpen none" in block
+    assert "PermitListen 127.0.0.1:9100" in block
+    assert "PermitTTY no" in block
+    assert "ForceCommand /usr/sbin/nologin" in block
+    assert "AuthorizedKeysCommandUser root" in block
+
+
+def test_the_permitted_port_follows_the_setting(tmp_path: Path) -> None:
+    """A key allowed to bind 9100 while the service listens for 9241 is a tunnel
+    that comes up and carries nothing."""
+    block = _dropin(tmp_path, env="SHELFOS_LABEL_DEVICE=tcp://127.0.0.1:9241\n")
+    assert "PermitListen 127.0.0.1:9241" in block
+
+
+def test_the_keys_command_answers_for_one_account_only(tmp_path: Path) -> None:
+    """sshd runs it as root, so it does one thing: print one file for one name."""
+    command = (_SCRIPT.parent / "deploy" / "tunnel-keys.sh").read_text()
+    rendered = command.replace("@TUNNEL_USER@", "shelfos-tunnel").replace(
+        "@TUNNEL_KEYS@", str(tmp_path / "keys")
+    )
+    path = tmp_path / "tunnel-keys.sh"
+    path.write_text(rendered)
+    (tmp_path / "keys").write_text("ssh-ed25519 AAAA test@machine\n")
+
+    asked_for_ours = subprocess.run(
+        ["sh", str(path), "shelfos-tunnel"], capture_output=True, text=True
+    )
+    assert asked_for_ours.stdout.strip() == "ssh-ed25519 AAAA test@machine"
+
+    for other in ("root", "shelfos", ""):
+        answer = subprocess.run(
+            ["sh", str(path), other], capture_output=True, text=True
+        )
+        assert answer.stdout == "", other
+        assert answer.returncode == 0
+
+
+def test_a_missing_key_file_is_not_an_error(tmp_path: Path) -> None:
+    """No printer has registered yet. sshd reads empty output as "no keys"; an
+    error would be logged as a broken server instead."""
+    command = (_SCRIPT.parent / "deploy" / "tunnel-keys.sh").read_text()
+    path = tmp_path / "tunnel-keys.sh"
+    path.write_text(
+        command.replace("@TUNNEL_USER@", "shelfos-tunnel").replace(
+            "@TUNNEL_KEYS@", str(tmp_path / "nothing-here")
+        )
+    )
+    answer = subprocess.run(
+        ["sh", str(path), "shelfos-tunnel"], capture_output=True, text=True
+    )
+    assert answer.returncode == 0
+    assert answer.stdout == ""

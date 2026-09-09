@@ -44,6 +44,16 @@ readonly SERVICE_USER="shelfos"
 # 127.0.0.1 without caring whose session is holding the other end.
 readonly TUNNEL_USER="shelfos-tunnel"
 readonly TUNNEL_HOME="/var/lib/shelfos-tunnel"
+# The keys that account may be reached with. NOT ~/.ssh/authorized_keys: sshd
+# refuses a key file owned by a third account, and ShelfOS — which is a third
+# account here — has to be able to write it, so that a machine with a printer can
+# register itself from the browser instead of somebody logging in to this server.
+# So sshd is pointed at a command that prints this file, and the file is the
+# service's own data. What a key in it may DO is capped by the Match block below,
+# not by trusting whatever wrote the file.
+readonly TUNNEL_KEYS="$DATA_DIR/tunnel-keys"
+readonly TUNNEL_KEYS_COMMAND="/usr/local/lib/shelfos/tunnel-keys"
+readonly SSHD_DROPIN="/etc/ssh/sshd_config.d/60-shelfos-tunnel.conf"
 readonly CADDYFILE="/etc/caddy/Caddyfile"
 readonly UDEV_RULE="/etc/udev/rules.d/99-brother-ql.rules"
 readonly DEFAULT_PORT=9000
@@ -797,7 +807,7 @@ cmd_deploy() {
     deploy_step_packages
     deploy_step_caddy_package
     deploy_step_user
-    deploy_step_tunnel_user
+    deploy_step_tunnel
     deploy_step_dirs
     deploy_step_code
     deploy_step_venv
@@ -898,10 +908,40 @@ tunnel_port() {
     printf '9100'
 }
 
-deploy_step_tunnel_user() {
+# The Match block. Everything a registered key may do is here rather than in the
+# key's own options, so it holds however the key got there: remote forwarding of
+# one loopback port, no session, no other port, nothing outbound. `Match all` at
+# the end is load-bearing — drop-ins are included at the TOP of sshd_config, and
+# a Match block left open would swallow the whole global configuration after it.
+sshd_dropin_body() {
+    printf '%s\n' \
+        "# Written by shelfos.sh. Lets a machine with a label printer reach this" \
+        "# host over ssh, and nothing else. Remove this file and the printer" \
+        "# tunnel stops working; nothing else changes." \
+        "Match User $TUNNEL_USER" \
+        "    AuthorizedKeysCommand $TUNNEL_KEYS_COMMAND %u" \
+        "    AuthorizedKeysCommandUser root" \
+        "    AllowTcpForwarding remote" \
+        "    PermitListen 127.0.0.1:$(tunnel_port)" \
+        "    PermitOpen none" \
+        "    PermitTTY no" \
+        "    AllowAgentForwarding no" \
+        "    X11Forwarding no" \
+        "    PermitTunnel no" \
+        "    ForceCommand /usr/sbin/nologin" \
+        "Match all"
+}
+
+deploy_step_tunnel() {
     step "tunnel account"
+    deploy_tunnel_account
+    deploy_tunnel_keys_file
+    deploy_tunnel_sshd
+}
+
+deploy_tunnel_account() {
     if getent passwd "$TUNNEL_USER" > /dev/null 2>&1; then
-        step_skipped "exists"
+        step_skipped "account exists"
         return 0
     fi
     # Inert until a key is authorised: no password, no shell, and an empty
@@ -913,6 +953,51 @@ deploy_step_tunnel_user() {
         --shell /usr/sbin/nologin --comment "ShelfOS label-printer tunnel" "$TUNNEL_USER"
     sudo_run chmod 0700 "$TUNNEL_HOME"
     step_ok "$TUNNEL_USER"
+}
+
+deploy_tunnel_keys_file() {
+    # Owned by the service, so it can register a machine on its own; world
+    # readable, because the command sshd runs reads it, and a public key is
+    # public. Never truncated here — an existing one holds machines that work.
+    if [ -e "$TUNNEL_KEYS" ]; then
+        step_skipped "keeping the registered machines"
+    else
+        sudo_run install -m 0644 -o "$SERVICE_USER" -g "$SERVICE_USER" \
+            /dev/null "$TUNNEL_KEYS"
+    fi
+}
+
+deploy_tunnel_sshd() {
+    # No sshd, nothing to configure: a server nobody can ssh into cannot carry a
+    # tunnel either, and installing an ssh server unasked is not this script's
+    # business.
+    if [ ! -d /etc/ssh/sshd_config.d ]; then
+        warn "no /etc/ssh/sshd_config.d here, so a printer cannot register itself; install openssh-server and run this again"
+        return 0
+    fi
+    sudo_run install -d -m 0755 -o root -g root "$(dirname "$TUNNEL_KEYS_COMMAND")"
+    sed -e "s|@TUNNEL_USER@|$TUNNEL_USER|g" -e "s|@TUNNEL_KEYS@|$TUNNEL_KEYS|g" \
+        "$REPO_ROOT/deploy/tunnel-keys.sh" | write_file "$TUNNEL_KEYS_COMMAND" 755 "root:root"
+
+    if [ "$DRY_RUN" = 0 ] && [ -f "$SSHD_DROPIN" ] \
+        && [ "$(sudo cat "$SSHD_DROPIN" 2>/dev/null || true)" = "$(sshd_dropin_body)" ]; then
+        step_skipped "sshd already configured"
+        return 0
+    fi
+    sshd_dropin_body | write_file "$SSHD_DROPIN" 644 "root:root"
+
+    # Validated before anything is reloaded, and withdrawn if it does not pass:
+    # a bad sshd config that gets reloaded is how somebody loses the only way
+    # into their own server. `reload` rather than `restart` for the same reason
+    # — open sessions, including the one running this, survive it.
+    if [ "$DRY_RUN" = 0 ]; then
+        if ! sudo_run /usr/sbin/sshd -t; then
+            sudo_run rm -f "$SSHD_DROPIN"
+            die 1 "sshd rejected the configuration this would have added, so it was removed and nothing was reloaded"
+        fi
+        sudo_run systemctl reload ssh 2> /dev/null || sudo_run systemctl reload sshd
+    fi
+    step_ok "sshd will take registered printers"
 }
 
 deploy_step_dirs() {
@@ -1016,6 +1101,7 @@ render_env_file() {
             SHELFOS_ADMIN_USERNAME) printf 'SHELFOS_ADMIN_USERNAME=%s\n' "$DEPLOY_ADMIN_USER" ;;
             SHELFOS_ADMIN_PASSWORD) printf 'SHELFOS_ADMIN_PASSWORD=%s\n' "$DEPLOY_ADMIN_PASSWORD" ;;
             SHELFOS_TUNNEL_USER)   printf 'SHELFOS_TUNNEL_USER=%s\n' "$TUNNEL_USER" ;;
+            SHELFOS_TUNNEL_KEYS)   printf 'SHELFOS_TUNNEL_KEYS=%s\n' "$TUNNEL_KEYS" ;;
             \#SHELFOS_LABEL_DEVICE|SHELFOS_LABEL_DEVICE)
                 if [ "$DEPLOY_WANT_PRINTER" = 1 ]; then
                     printf 'SHELFOS_LABEL_DEVICE=/dev/shelfos-label\n'
@@ -1793,10 +1879,15 @@ ensure_tunnel_user() {
         sudo_run chmod 0700 "$TUNNEL_HOME"
         info "created the $TUNNEL_USER account"
     fi
-    sudo_run install -d -m 0700 -o "$TUNNEL_USER" -g "$TUNNEL_USER" "$TUNNEL_HOME/.ssh"
 }
 
-tunnel_keys_path() { printf '%s/.ssh/authorized_keys' "$TUNNEL_HOME"; }
+# Where the keys live now. Read from the installed settings, so a server told to
+# keep them somewhere else is still managed by this command.
+tunnel_keys_path() {
+    local configured
+    configured=$(env_file_value "$ENV_FILE_SYSTEM" SHELFOS_TUNNEL_KEYS)
+    printf '%s' "${configured:-$TUNNEL_KEYS}"
+}
 
 # The comment a person named the machine with, out of a line that also carries
 # the options this script put in front of it. Field four onwards: options, type,
@@ -1808,14 +1899,15 @@ tunnel_key_comment() {
     }'
 }
 
-# What is authorised now, or nothing. sshd's own file, so reading it needs root.
+# What is authorised now, or nothing. Public keys in a world-readable file, so
+# reading needs nothing — which also keeps `list` honest in a dry run.
 tunnel_keys_read() {
-    sudo_run cat "$(tunnel_keys_path)" 2>/dev/null || true
+    cat "$(tunnel_keys_path)" 2>/dev/null || true
 }
 
 tunnel_keys_write() {
     ensure_tunnel_user
-    write_file "$(tunnel_keys_path)" 600 "$TUNNEL_USER:$TUNNEL_USER"
+    write_file "$(tunnel_keys_path)" 644 "$SERVICE_USER:$SERVICE_USER"
 }
 
 usage_tunnel_key() {

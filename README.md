@@ -391,25 +391,50 @@ checking its work, and for the reasons behind each step, which are the part a
 script cannot carry. The one thing it deliberately does not do is touch the
 server: the setting above is the administrator's to make.
 
-**The key stays on the machine with the printer.** The script makes its own ssh
-key there — ShelfOS hands out a script, never a credential, so opening that page
-can never be a way to obtain ssh access to this server. Nothing can use the key
-until the server is told about it, so the first run stops and prints one line to
-run where ShelfOS is installed:
+**The key stays on the machine with the printer, and registers itself.** The
+script makes its own ssh key there and hands the *public* half to ShelfOS over
+the session the person is already signed in with — so setting up a printer needs
+no account on this server, no ssh, and nothing typed here. ShelfOS never hands
+out a credential: what comes down is a script, and what goes up is a public key.
 
-```bash
-./shelfos.sh tunnel-key add "ssh-ed25519 AAAA... shelfos-label@goofy"
-./shelfos.sh tunnel-key list          # what is authorised
-./shelfos.sh tunnel-key remove goofy  # withdraw a machine
+That works because sshd does not read the tunnel account's keys from its home. A
+deploy points `AuthorizedKeysCommand` at a small root-owned script that prints a
+file ShelfOS owns (`SHELFOS_TUNNEL_KEYS`), so the service writes ordinary data
+and needs no privileges of its own. What a key in that file may then do is capped
+by the server, not by trusting whatever wrote it:
+
+```
+Match User shelfos-tunnel
+    AuthorizedKeysCommand /usr/local/lib/shelfos/tunnel-keys %u
+    AuthorizedKeysCommandUser root
+    AllowTcpForwarding remote        # -R only: no outbound connections
+    PermitListen 127.0.0.1:9100      # and only this port
+    PermitTTY no
+    ForceCommand /usr/sbin/nologin
+Match all
 ```
 
-That authorises the key for `shelfos-tunnel`, an account a deploy creates for
-this and nothing else: system account, `nologin`, no privileges. The
-`authorized_keys` entry is `restrict,port-forwarding,permitopen="127.0.0.1:1",
-permitlisten="127.0.0.1:<port>"`, so the key may bind that one port here and do
-nothing else — no shell, no other port, and no connections out. (`permitopen` is
-not decoration: `port-forwarding` re-enables forwarding both ways, and without it
-the same key could reach anything this server can, from here.)
+`Match all` closes the block: drop-ins are included at the *top* of `sshd_config`,
+and a Match left open would swallow every global setting after it. The deploy
+validates with `sshd -t` before reloading and withdraws the file if it does not
+pass, and reloads rather than restarts, so the session running it survives.
+
+The upshot is that the worst a registered key can do — even one written by a
+ShelfOS that had been compromised — is bind that one loopback port, which is to
+say pretend to be a label printer. There is no shell, no other port, and nothing
+outbound.
+
+Registrations are visible and revocable on the server:
+
+```bash
+./shelfos.sh tunnel-key list              # which machines may connect
+./shelfos.sh tunnel-key remove goofy      # withdraw one
+./shelfos.sh tunnel-key add "ssh-..."     # authorise one by hand
+```
+
+`add` is for the cases the browser cannot cover: a server without the sshd block,
+or a read-only account, which may read the page but not change what this server
+accepts. The page says which of the two it is and prints the line to run.
 
 The service account is deliberately not usable for this: it has no shell and a
 root-owned home, so sshd would refuse it, and giving it those would turn a

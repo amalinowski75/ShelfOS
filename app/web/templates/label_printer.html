@@ -65,21 +65,41 @@
       </p>
     </div>
 
+    {% if can_register %}
     <div class="notice">
-      <strong>It takes two runs, and one line on the server.</strong>
+      <strong>Nothing to do on the server.</strong>
+      <p>
+        The script makes its own ssh key on this computer and registers the public
+        half with ShelfOS, over the session you are signed in with now. The private
+        half never travels — this page hands out a script, never a credential — and
+        the key it registers may do exactly one thing here: carry this printer.
+        You need no account on the server and nothing to type there.
+      </p>
+      <p class="muted">
+        The script can register itself for a week after you download it; after that
+        download it again. An admin can see the machines that have registered, and
+        withdraw one, with <code>./shelfos.sh tunnel-key list</code> and
+        <code>remove</code>.
+      </p>
+    </div>
+    {% else %}
+    <div class="notice">
+      <strong>This one needs a hand on the server.</strong>
       <p>
         The script makes its own ssh key on this computer — the private half never
-        travels, which is why this page hands out a script and never a credential.
-        Nothing can use that key until the server is told about it, so the first
-        run stops and prints one line to paste on the server:
+        travels — but this ShelfOS cannot register it for you, either because the
+        server was not set up for that or because a read-only account may not change
+        what the server accepts. The first run stops and prints one line to run
+        where ShelfOS is installed:
       </p>
       <pre><code>./shelfos.sh tunnel-key add "ssh-ed25519 AAAA... shelfos-label@your-machine"</code></pre>
       <p class="muted">
-        Run that where ShelfOS is installed (it needs sudo there), then run the
-        script here again and it carries on. <code>./shelfos.sh tunnel-key list</code>
-        shows what is authorised, and <code>remove</code> withdraws a machine.
+        Then run the script here again and it carries on.
+        <code>./shelfos.sh tunnel-key list</code> shows what is authorised, and
+        <code>remove</code> withdraws a machine.
       </p>
     </div>
+    {% endif %}
 
     <div class="notice">
       <strong>The script asks for sudo. Read it first.</strong>

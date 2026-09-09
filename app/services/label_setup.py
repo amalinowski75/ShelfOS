@@ -70,6 +70,11 @@ _DEVICE = re.compile(r"^/dev/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$")
 # the build rather than reach somebody's bash.
 _LEFTOVER_TOKEN = re.compile(r"@[A-Z0-9_]+@")
 _BASE64_ONLY = re.compile(r"^[A-Za-z0-9+/=\n]+$")
+# An ordinary absolute http(s) URL, with nothing after the authority: this is
+# where the script posts its key, not a path to anything.
+_HTTP_URL = re.compile(r"^https?://[A-Za-z0-9.:_\[\]-]{1,255}$")
+# Three base64url segments. A JWT and nothing else.
+_JWT = re.compile(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$")
 
 # Only a loopback literal, and literally: the tunnel by design ends on the
 # server's own loopback, so there is no reason for this endpoint to open a
@@ -148,6 +153,8 @@ def render_installer(
     device: str = DEFAULT_DEVICE,
     bridge_port: str | int = DEFAULT_BRIDGE_PORT,
     group: str = ALLOWED_GROUPS[0],
+    shelfos_url: str = "",
+    enroll_token: str = "",
 ) -> str:
     """Validate the answers and return the installer as text.
 
@@ -175,6 +182,14 @@ def render_installer(
         )
     if group not in ALLOWED_GROUPS:
         raise ValidationError("the group must be one of: " + ", ".join(ALLOWED_GROUPS))
+    # Where the script sends its own public key, and what lets it. Both are put
+    # there by ShelfOS rather than typed by anyone, and both are checked anyway:
+    # they end up in a shell script, and "we wrote it ourselves" is exactly the
+    # assumption that stops being true the first time somebody adds a caller.
+    if shelfos_url and not _HTTP_URL.match(shelfos_url):
+        raise ValidationError("the ShelfOS address must be an http or https URL")
+    if enroll_token and not _JWT.match(enroll_token):
+        raise ValidationError("the registration token is malformed")
 
     return _render(
         {
@@ -185,6 +200,8 @@ def render_installer(
             "BRIDGE_PORT": str(bridge_port_number),
             "GROUP": group,
             "BRIDGE_SHA256": bridge_sha256(),
+            "SHELFOS_URL": shelfos_url,
+            "ENROLL_TOKEN": enroll_token,
         }
     )
 

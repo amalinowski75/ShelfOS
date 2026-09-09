@@ -28,6 +28,7 @@ from app.api.routes import (
     boms,
     components,
     invoices,
+    label_enroll,
     labels,
     links,
     locations,
@@ -278,6 +279,7 @@ def _check_insecure_defaults() -> None:
             "Using the default SECRET_KEY; set SHELFOS_SECRET_KEY in production."
         )
 
+
 def create_app(*, create_tables: bool = True) -> FastAPI:
     """Build and configure the ShelfOS FastAPI application.
 
@@ -372,6 +374,11 @@ def create_app(*, create_tables: bool = True) -> FastAPI:
     app.include_router(
         admin.router, dependencies=[Depends(require_admin), Depends(require_csrf)]
     )
+
+    # The setup script registering its own key: not a person, not a browser, and
+    # not a sign-in — it carries a token scoped to this one action, which the
+    # route checks itself. See app/api/routes/label_enroll.py.
+    app.include_router(label_enroll.router)
 
     app.include_router(web_routes.router)
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")

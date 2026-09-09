@@ -71,6 +71,7 @@ def is_using_default_admin_password() -> bool:
     """True when the default admin password is in effect."""
     return ADMIN_PASSWORD == DEFAULT_ADMIN_PASSWORD
 
+
 # Server-side fetch of an attachment from a URL (spec §10): connect+read timeout
 # (seconds) and the maximum number of redirects followed (each re-validated).
 ATTACHMENT_URL_TIMEOUT = float(os.environ.get("SHELFOS_ATTACHMENT_URL_TIMEOUT", "10"))
@@ -185,6 +186,21 @@ LABEL_DEVICE = os.environ.get("SHELFOS_LABEL_DEVICE", "").strip()
 # Empty (the default, and what a deploy that predates the account leaves) means
 # the field starts blank and is typed by hand.
 TUNNEL_USER = os.environ.get("SHELFOS_TUNNEL_USER", "").strip()
+
+# The file sshd is told to read the tunnel account's keys out of (through the
+# AuthorizedKeysCommand a deploy installs). ShelfOS owns it, which is what lets
+# a printer register itself without anybody logging in to this machine: the
+# service writes an ordinary file, and no part of ShelfOS needs privileges.
+# Empty (the default) means this server was not set up for it, and the page then
+# says how to authorise a key by hand instead of offering a button that cannot
+# work.
+TUNNEL_KEYS_FILE = os.environ.get("SHELFOS_TUNNEL_KEYS", "").strip()
+
+# How long the registration token inside a downloaded setup script is good for.
+# Long enough to download it today and run it at the weekend; short enough that
+# a forgotten copy in Downloads stops being a way in. It authorises one thing —
+# adding a key that may bind one loopback port — and never a sign-in.
+TUNNEL_ENROLL_HOURS = int(os.environ.get("SHELFOS_TUNNEL_ENROLL_HOURS", "168"))
 
 # Which Brother QL is on the other end. The 800 series has its own raster
 # header, so a wrong model here produces a printer that takes the job and does

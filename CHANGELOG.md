@@ -44,13 +44,26 @@ the deployment is a server and a browser.
   else, and the page fills its name in. Not the service account: that one has no
   shell and a root-owned home, so sshd would refuse it, and giving it those would
   turn a confined service account into a login account.
+- **Nothing to do on the server.** The script registers its own public key with
+  ShelfOS over the session the person is already signed in with — no account
+  here, no ssh, nothing typed. sshd reads that account's keys from a command
+  (`AuthorizedKeysCommand`) printing a file ShelfOS owns, so the service needs no
+  privileges to authorise a machine, and a `Match User` block caps what any key
+  in it may do: one remote forward of one loopback port, no shell, nothing
+  outbound. The deploy validates the block with `sshd -t` before reloading, and
+  withdraws it if it does not pass — a bad sshd config that gets reloaded is how
+  people lose the only way into their own server.
+- The registration token lives in the downloaded script, is good for a week, and
+  is **not a sign-in**: tokens carrying a scope are refused everywhere else in
+  the app, so a shell script in somebody's Downloads can never be presented as
+  the account that downloaded it.
 - **The key is made on the machine with the printer and stays there.** ShelfOS
   hands out a script, never a credential — a page that handed out a private key
   would make "can open this page" mean "has ssh access to the server", and a key
-  fetched by ten people is nobody's. The first run prints one line for the
-  server: `./shelfos.sh tunnel-key add "<public key>"`, with `list` and `remove`
-  beside it. It authorises `restrict,port-forwarding,permitopen="127.0.0.1:1",
-  permitlisten="127.0.0.1:<port>"` — bind that one port here, and nothing else.
+  fetched by ten people is nobody's. `./shelfos.sh tunnel-key add "<public key>"`
+  remains for what the browser cannot cover — a server without the sshd block, or
+  a read-only account, which may read the page but not change what this server
+  accepts — with `list` and `remove` beside it.
 - The ssh check is now the connection the unit actually makes, held open for a
   moment. `ssh host true` tested a session, which a forwarding-only key refuses
   on purpose: the check would have failed on a setup that works. The new one

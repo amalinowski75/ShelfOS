@@ -29,6 +29,12 @@ DEVICE="@DEVICE@"
 BRIDGE_PORT="@BRIDGE_PORT@"
 GROUP="@GROUP@"
 BRIDGE_SHA256="@BRIDGE_SHA256@"
+# Where this machine registers its own key, and the token that lets it. Both are
+# put here by ShelfOS when the script is downloaded. Empty when this server was
+# not set up for it, or when the account that downloaded it may not register a
+# machine — the script then prints what to run on the server instead.
+SHELFOS_URL="@SHELFOS_URL@"
+ENROLL_TOKEN="@ENROLL_TOKEN@"
 
 BRIDGE_PATH="$HOME/.local/lib/shelfos/label_bridge.py"
 # This machine's own key for the tunnel, made here and kept here. The private
@@ -190,8 +196,9 @@ fi
 PUBLIC_KEY=""
 [ -f "$KEY_PATH.pub" ] && PUBLIC_KEY="$(cat "$KEY_PATH.pub")"
 
-# What the server must be told, printed wherever it is needed. One line, ready
-# to paste; the account it authorises can do nothing but bind the one port.
+# What the server must be told, for the times this script cannot tell it itself.
+# One line, ready to paste; the account it authorises can do nothing but bind
+# the one port.
 authorize_hint() {
     printf '%s\n' "On the server, in the ShelfOS checkout, run:
 
@@ -199,6 +206,72 @@ authorize_hint() {
 
     then run this script again."
 }
+
+# Hand the public half to ShelfOS, which is where the person running this is
+# already signed in. That is the whole point of the exercise: no account on the
+# server, no logging in to it, nothing to do there at all.
+#
+# Only the PUBLIC half ever moves. The token came with this download, may do
+# this one thing, and expires.
+register_with_shelfos() {
+    [ -n "$SHELFOS_URL" ] && [ -n "$ENROLL_TOKEN" ] || return 2
+    "$PYTHON" - "$SHELFOS_URL" "$ENROLL_TOKEN" "$PUBLIC_KEY" <<'SHELFOS_ENROLL_EOF'
+import json
+import sys
+import urllib.error
+import urllib.request
+
+url, token, public_key = sys.argv[1], sys.argv[2], sys.argv[3]
+request = urllib.request.Request(
+    url.rstrip("/") + "/api/labels/setup/enroll",
+    data=json.dumps({"public_key": public_key}).encode(),
+    headers={
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + token,
+    },
+    method="POST",
+)
+try:
+    with urllib.request.urlopen(request, timeout=20) as response:
+        answer = json.load(response)
+    print(f"registered as {answer['comment']} ({answer['fingerprint']})")
+except urllib.error.HTTPError as error:
+    try:
+        detail = json.load(error).get("detail", "")
+    except Exception:
+        detail = error.reason
+    print(f"{error.code} {detail}", file=sys.stderr)
+    sys.exit(1)
+except OSError as error:
+    print(f"cannot reach {url}: {error}", file=sys.stderr)
+    sys.exit(1)
+SHELFOS_ENROLL_EOF
+}
+
+step "Registering this machine with ShelfOS"
+if [ "$DRY_RUN" = 1 ]; then
+    printf '    would send this machine\047s public key to %s\n' "${SHELFOS_URL:-(not offered)}"
+else
+    enroll_status=0
+    register_with_shelfos || enroll_status=$?
+    if [ "$enroll_status" = 0 ]; then
+        step_ok "ShelfOS accepted the key — nothing to do on the server"
+    elif [ "$enroll_status" = 2 ]; then
+        # No token came with the download: either this server was not set up to
+        # register printers, or the account that downloaded the script may not
+        # (a read-only account may read the page, but not change what the server
+        # accepts). The key still has to be authorised, so say how.
+        warn "this copy of the script cannot register itself, so the key has to be
+    authorised on the server once.
+
+    $(authorize_hint)"
+    else
+        warn "ShelfOS did not accept the key; the message above says why. If the
+    registration token has expired, download the script again. Otherwise:
+
+    $(authorize_hint)"
+    fi
+fi
 
 if [ "$SKIP_SSH_CHECK" = 1 ]; then
     warn "skipping the ssh check: if the key is not authorized or the port is taken,

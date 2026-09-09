@@ -39,6 +39,68 @@ def _render(**overrides: object) -> str:
     return setup.render_installer(**{**ANSWERS, **overrides})  # type: ignore[arg-type]
 
 
+class _Enrolment:
+    """A stand-in for ShelfOS, listening, so the script can register for real.
+
+    The interesting half of this feature is a POST made by a shell script on
+    somebody's laptop; asserting on the text of that script would be asserting
+    on the wrong thing. This is small enough to be worth having the script talk
+    to something that answers.
+    """
+
+    def __init__(self, status: int = 200, detail: str = "") -> None:
+        import http.server
+        import json
+        import threading
+
+        received: list[dict[str, str]] = []
+        self.received = received
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802 - http.server's spelling
+                length = int(self.headers.get("Content-Length", "0"))
+                body = json.loads(self.rfile.read(length) or b"{}")
+                received.append(
+                    {
+                        "path": self.path,
+                        "authorization": self.headers.get("Authorization", ""),
+                        "public_key": body.get("public_key", ""),
+                    }
+                )
+                answer = (
+                    {
+                        "comment": "shelfos-label@test",
+                        "fingerprint": "SHA256:x",
+                        "port": 9100,
+                        "registered": 1,
+                    }
+                    if status == 200
+                    else {"detail": detail}
+                )
+                payload = json.dumps(answer).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *_args: object) -> None:
+                pass
+
+        self._server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self._server.server_address[1]}"
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+
+    def __enter__(self) -> _Enrolment:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+        self._thread.join(timeout=5)
+
+
 def _parses(script: str, tmp_path: Path) -> None:
     path = tmp_path / "installer.sh"
     path.write_text(script)
@@ -149,6 +211,8 @@ def test_the_second_wall_holds_on_its_own(tmp_path: Path) -> None:
             "BRIDGE_PORT": "9100",
             "GROUP": "lp",
             "BRIDGE_SHA256": setup.bridge_sha256(),
+            "SHELFOS_URL": "https://shelf.example",
+            "ENROLL_TOKEN": "a.b.c",
         }
     )
     _parses(script, tmp_path)
@@ -166,6 +230,8 @@ def test_an_unfilled_token_is_a_failure_not_a_download() -> None:
                 "DEVICE": "/dev/x",
                 "BRIDGE_PORT": "9100",
                 "GROUP": "lp",
+                "SHELFOS_URL": "",
+                "ENROLL_TOKEN": "",
                 # BRIDGE_SHA256 deliberately absent.
             }
         )
@@ -527,3 +593,94 @@ def test_python_is_what_runs_the_bridge_in_the_unit() -> None:
 def test_it_uses_this_interpreter_family(tmp_path: Path) -> None:
     """Guards the assumption behind the whole thing: python3 is on the machine."""
     assert sys.version_info >= (3, 10)
+
+
+# ------------------------------------------------- registering with ShelfOS
+
+
+TOKEN = "aaaa.bbbb.cccc"
+
+
+def test_the_script_registers_its_own_key(tmp_path: Path) -> None:
+    """The whole point: nobody signs in to the server, and nothing is typed there.
+
+    Only the public half moves, and it moves to ShelfOS — where the person
+    running this is already signed in — rather than to an account on the server
+    that most people would not have.
+    """
+    with _Enrolment() as shelfos:
+        script = tmp_path / "installer.sh"
+        script.write_text(_render(shelfos_url=shelfos.url, enroll_token=TOKEN))
+        stubs = _stub_path(tmp_path)
+        result = subprocess.run(
+            ["bash", str(script)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env={
+                "PATH": f"{stubs}:/usr/bin:/bin",
+                "HOME": str(_prepare_home(tmp_path)),
+                "USER": "tester",
+                "XDG_RUNTIME_DIR": str(tmp_path / "run"),
+            },
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert len(shelfos.received) == 1, shelfos.received
+        call = shelfos.received[0]
+
+    assert call["path"] == "/api/labels/setup/enroll"
+    assert call["authorization"] == f"Bearer {TOKEN}"
+    public = (tmp_path / "home" / ".ssh" / "shelfos-label.pub").read_text().strip()
+    assert call["public_key"] == public
+    # The private half stays where it was made. This is the assertion that says
+    # a page handing out a script is not a page handing out a credential.
+    assert "PRIVATE KEY" not in str(shelfos.received)
+    assert "nothing to do on the server" in result.stdout
+
+
+def test_a_refused_registration_falls_back_to_the_line_to_paste(
+    tmp_path: Path,
+) -> None:
+    """An expired token must not be a dead end: the manual way still exists,
+    and the script prints it with the key already in it."""
+    with _Enrolment(status=401, detail="token has expired") as shelfos:
+        script = tmp_path / "installer.sh"
+        script.write_text(_render(shelfos_url=shelfos.url, enroll_token=TOKEN))
+        stubs = _stub_path(tmp_path)
+        result = subprocess.run(
+            ["bash", str(script)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env={
+                "PATH": f"{stubs}:/usr/bin:/bin",
+                "HOME": str(_prepare_home(tmp_path)),
+                "USER": "tester",
+                "XDG_RUNTIME_DIR": str(tmp_path / "run"),
+            },
+        )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "token has expired" in result.stderr
+    assert "tunnel-key add" in result.stderr
+
+
+def test_a_download_that_cannot_register_says_so_once(tmp_path: Path) -> None:
+    """No token in the script — a read-only account, or a server not set up for
+    it — and the script says what to do instead of failing at a POST it was
+    never going to be allowed to make."""
+    result, _ = _run_installer(tmp_path)  # rendered without url or token
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "cannot register itself" in result.stderr
+    assert "tunnel-key add" in result.stderr
+
+
+def test_the_address_and_the_token_are_checked_before_they_are_written() -> None:
+    """Both are put there by ShelfOS, and both are validated anyway: they end up
+    in a shell script, and "we wrote it ourselves" stops being true the first
+    time somebody adds a caller."""
+    for url in ("javascript:alert(1)", "https://host/path", "https://host;id"):
+        with pytest.raises(ValidationError):
+            _render(shelfos_url=url, enroll_token=TOKEN)
+    for token in ("not a token", "a.b", "a.b.c.d", "a b.c.d"):
+        with pytest.raises(ValidationError):
+            _render(shelfos_url="https://host", enroll_token=token)

@@ -72,10 +72,23 @@ sudo useradd --system --create-home --home-dir /var/lib/shelfos-tunnel \
 sudo chmod 0700 /var/lib/shelfos-tunnel
 ```
 
-It can do nothing until a key is authorised, which is `./shelfos.sh tunnel-key add`
-(it writes `~shelfos-tunnel/.ssh/authorized_keys` with `restrict` plus a single
-`permitlisten`). Put the name in `/etc/shelfos/env` as `SHELFOS_TUNNEL_USER` and the
-setup page fills it into its form.
+It can do nothing until a key is authorised. Keys are not kept in its home: sshd
+refuses a key file owned by a third account, and ShelfOS has to write it so that a
+machine with a printer can register itself from the browser. So sshd is pointed at
+a command instead:
+
+```bash
+sudo install -D -m 0644 -o shelfos -g shelfos /dev/null /var/lib/shelfos/tunnel-keys
+sudo install -D -m 0755 -o root -g root /opt/shelfos/deploy/tunnel-keys.sh \
+     /usr/local/lib/shelfos/tunnel-keys     # replace @TUNNEL_USER@ / @TUNNEL_KEYS@
+sudoedit /etc/ssh/sshd_config.d/60-shelfos-tunnel.conf   # the Match block, see README.md
+sudo sshd -t && sudo systemctl reload ssh                # never reload an untested config
+```
+
+Put both names in `/etc/shelfos/env` (`SHELFOS_TUNNEL_USER`, `SHELFOS_TUNNEL_KEYS`)
+and the setup page fills the form in and registers keys by itself. Without them
+everything still works, with a key authorised by hand
+(`./shelfos.sh tunnel-key add`).
 
 Settings, readable by the service and nobody else — it holds the signing secret
 and every shop key:
