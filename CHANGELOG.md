@@ -64,6 +64,10 @@ the deployment is a server and a browser.
   remains for what the browser cannot cover — a server without the sshd block, or
   a read-only account, which may read the page but not change what this server
   accepts — with `list` and `remove` beside it.
+- An install made before any of this **learns the two new settings** even though
+  its `/etc/shelfos/env` is never replaced (it holds the signing secret and the
+  shop keys). Only what is missing or empty is filled in; an answer already
+  there is somebody's decision.
 - **A deploy no longer dies because udev would not re-apply a rule.** In a
   container `/sys` is not writable even for root, so `udevadm trigger` reports
   "Permission denied" for every device and exits non-zero — which ended the

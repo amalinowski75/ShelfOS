@@ -807,8 +807,11 @@ cmd_deploy() {
     deploy_step_packages
     deploy_step_caddy_package
     deploy_step_user
-    deploy_step_tunnel
     deploy_step_dirs
+    # After the directories: the key store lives in the data directory, and this
+    # step writes it. Before the unit and the service: nothing here needs the
+    # service, and a printer registering itself needs sshd told about it first.
+    deploy_step_tunnel
     deploy_step_code
     deploy_step_venv
     deploy_step_env
@@ -937,6 +940,51 @@ deploy_step_tunnel() {
     deploy_tunnel_account
     deploy_tunnel_keys_file
     deploy_tunnel_sshd
+    # An install made before this existed keeps its own settings file — it holds
+    # the signing secret and the shop keys, so it is never replaced — and would
+    # otherwise never learn these two. Without them the page cannot fill the
+    # account in and cannot register a printer, on a server that is set up for
+    # both. Only ever fills in what is missing or empty; an answer already there
+    # is somebody's decision.
+    set_env_setting SHELFOS_TUNNEL_USER "$TUNNEL_USER"
+    set_env_setting SHELFOS_TUNNEL_KEYS "$TUNNEL_KEYS"
+}
+
+# set_env_setting KEY VALUE — give a setting a value in the installed env file,
+# if it has none. Reads and rewrites the whole file rather than appending: a key
+# that is present but empty (as the template ships it) has to be filled in, not
+# repeated further down where the second line would win and the first would
+# confuse whoever read the file next.
+set_env_setting() {
+    local key=$1 value=$2 line current="" output="" seen=0 changed=0
+    [ -f "$ENV_FILE_SYSTEM" ] || return 0
+    current=$(sudo_run cat "$ENV_FILE_SYSTEM") || return 0
+    [ -n "$current" ] || return 0
+    local existing
+    while IFS= read -r line || [ -n "$line" ]; do
+        case $line in
+            "$key="*)
+                seen=1
+                existing=${line#"$key="}
+                if [ -n "$existing" ]; then
+                    # Already answered. Even an answer that disagrees with what
+                    # this deploy would have written is somebody's, and a deploy
+                    # is not the place to overrule it.
+                    output="$output$line"$'\n'
+                else
+                    output="$output$key=$value"$'\n'
+                    changed=1
+                fi ;;
+            *) output="$output$line"$'\n' ;;
+        esac
+    done <<< "$current"
+    if [ "$seen" = 0 ]; then
+        output="$output$key=$value"$'\n'
+        changed=1
+    fi
+    [ "$changed" = 1 ] || return 0
+    printf '%s' "$output" | write_file "$ENV_FILE_SYSTEM" 640 "root:$SERVICE_USER"
+    info "set $key in $ENV_FILE_SYSTEM"
 }
 
 deploy_tunnel_account() {

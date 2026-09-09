@@ -1020,3 +1020,108 @@ def test_udev_refusing_to_reapply_the_rule_does_not_fail_the_deploy(
     assert result.returncode == 0, result.stderr
     assert "WARNED" in result.stderr
     assert "replug" in result.stderr
+
+
+def test_every_step_runs_after_the_step_that_makes_what_it_writes_to(
+    tmp_path: Path,
+) -> None:
+    """Ordering, asserted rather than remembered.
+
+    The tunnel step went in before the one that creates /var/lib/shelfos and
+    died on a real deploy with "cannot create regular file ... No such file or
+    directory" — at step 4 of 13, having made an account and nothing else. The
+    dependency is invisible when reading either function on its own, so it is
+    written down here.
+    """
+    script = _SCRIPT.read_text()
+    order = [
+        line.strip()
+        for line in script[
+            script.index("    deploy_step_packages") : script.index("    trap - ERR")
+        ].splitlines()
+        if line.strip().startswith("deploy_step_")
+    ]
+    assert order.index("deploy_step_dirs") < order.index("deploy_step_tunnel")
+    assert order.index("deploy_step_user") < order.index("deploy_step_tunnel")
+    # And the settings the app reads are written before it is imported or run.
+    assert order.index("deploy_step_env") < order.index("deploy_step_import")
+    assert order.index("deploy_step_unit") < order.index("deploy_step_verify")
+
+
+def test_the_key_store_is_written_under_the_data_directory(tmp_path: Path) -> None:
+    """The two paths that have to agree: what the deploy creates, and what the
+    app is told to write. A mismatch is only visible when a printer registers."""
+    script = _SCRIPT.read_text()
+    assert 'readonly TUNNEL_KEYS="$DATA_DIR/tunnel-keys"' in script
+    made = script[
+        script.index("deploy_step_dirs() {") : script.index("deploy_step_code() {")
+    ]
+    assert '"$DATA_DIR"' in made
+
+
+def _env_probe(tmp_path: Path, content: str, calls: str) -> tuple[str, str]:
+    """Run set_env_setting against a settings file of our own."""
+    script = _SCRIPT.read_text()
+    body = script[
+        script.index("set_env_setting() {") : script.index("deploy_tunnel_account() {")
+    ]
+    env_file = tmp_path / "env"
+    env_file.write_text(content)
+    probe = tmp_path / "env-probe.sh"
+    probe.write_text(
+        "set -Eeuo pipefail\n"
+        f"ENV_FILE_SYSTEM={env_file}\nSERVICE_USER=$(id -un)\nDRY_RUN=0\n"
+        'info() { printf "INFO: %s\\n" "$*" >&2; }\n'
+        'sudo_run() { "$@"; }\n'
+        'write_file() { cat > "$1"; }\n'
+        f"{body}\n{calls}\n"
+    )
+    result = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    assert result.returncode == 0, result.stderr
+    return env_file.read_text(), result.stderr
+
+
+def test_a_settings_file_from_before_learns_the_new_settings(tmp_path: Path) -> None:
+    """The upgrade case, and the one a real deploy walked into.
+
+    An existing /etc/shelfos/env is never replaced — it holds the signing secret
+    and the shop keys — so a server set up for registering printers would have
+    gone on saying it was not.
+    """
+    text, log = _env_probe(
+        tmp_path,
+        "SHELFOS_SECRET_KEY=abc\nSHELFOS_LABEL_DEVICE=tcp://127.0.0.1:9100\n",
+        "set_env_setting SHELFOS_TUNNEL_USER shelfos-tunnel\n"
+        "set_env_setting SHELFOS_TUNNEL_KEYS /var/lib/shelfos/tunnel-keys\n",
+    )
+    assert "SHELFOS_TUNNEL_USER=shelfos-tunnel" in text
+    assert "SHELFOS_TUNNEL_KEYS=/var/lib/shelfos/tunnel-keys" in text
+    # Everything that was there is still there, once.
+    assert text.count("SHELFOS_SECRET_KEY=abc") == 1
+    assert "INFO" in log
+
+
+def test_an_empty_setting_is_filled_in_where_it_stands(tmp_path: Path) -> None:
+    """In place, not appended: a second line for the same key would win, and the
+    first would mislead whoever read the file next."""
+    text, _ = _env_probe(
+        tmp_path,
+        "SHELFOS_TUNNEL_USER=\nSHELFOS_SECRET_KEY=abc\n",
+        "set_env_setting SHELFOS_TUNNEL_USER shelfos-tunnel\n",
+    )
+    assert text.splitlines()[0] == "SHELFOS_TUNNEL_USER=shelfos-tunnel"
+    assert text.count("SHELFOS_TUNNEL_USER") == 1
+
+
+def test_an_answer_already_there_is_left_alone(tmp_path: Path) -> None:
+    """Including one that disagrees with this deploy: it is somebody's choice,
+    and a deploy is not the place to overrule it."""
+    text, log = _env_probe(
+        tmp_path,
+        "SHELFOS_TUNNEL_KEYS=/srv/keys\n",
+        "set_env_setting SHELFOS_TUNNEL_KEYS /var/lib/shelfos/tunnel-keys\n",
+    )
+    assert text == "SHELFOS_TUNNEL_KEYS=/srv/keys\n"
+    assert "INFO" not in log
