@@ -1047,8 +1047,15 @@ deploy_tunnel_sshd() {
         # sshd may simply not be running here yet, and it reads this file when it
         # starts. Ending the deploy at this point would leave the service
         # installed and stopped over something that fixes itself.
-        if ! sudo_run systemctl reload ssh 2> /dev/null \
-            && ! sudo_run systemctl reload sshd 2> /dev/null; then
+        if sudo_run systemctl reload ssh 2> /dev/null \
+            || sudo_run systemctl reload sshd 2> /dev/null; then
+            :
+        elif systemctl is-active --quiet ssh.socket 2> /dev/null; then
+            # Socket activation (Ubuntu 22.10 and later): there is no long-lived
+            # sshd to reload, because one is started per connection and reads
+            # this file as it starts. Nothing to do, and nothing to report.
+            :
+        else
             warn "sshd would not reload; the configuration is in place and valid, and applies the next time it starts"
         fi
     fi
