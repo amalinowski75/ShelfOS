@@ -971,8 +971,8 @@ deploy_tunnel_sshd() {
     # No sshd, nothing to configure: a server nobody can ssh into cannot carry a
     # tunnel either, and installing an ssh server unasked is not this script's
     # business.
-    if [ ! -d /etc/ssh/sshd_config.d ]; then
-        warn "no /etc/ssh/sshd_config.d here, so a printer cannot register itself; install openssh-server and run this again"
+    if [ ! -d /etc/ssh/sshd_config.d ] || [ ! -x /usr/sbin/sshd ]; then
+        warn "no ssh server here, so a printer cannot register itself; install openssh-server and run this again"
         return 0
     fi
     sudo_run install -d -m 0755 -o root -g root "$(dirname "$TUNNEL_KEYS_COMMAND")"
@@ -995,7 +995,14 @@ deploy_tunnel_sshd() {
             sudo_run rm -f "$SSHD_DROPIN"
             die 1 "sshd rejected the configuration this would have added, so it was removed and nothing was reloaded"
         fi
-        sudo_run systemctl reload ssh 2> /dev/null || sudo_run systemctl reload sshd
+        # A validated config that could not be reloaded is not a failed install:
+        # sshd may simply not be running here yet, and it reads this file when it
+        # starts. Ending the deploy at this point would leave the service
+        # installed and stopped over something that fixes itself.
+        if ! sudo_run systemctl reload ssh 2> /dev/null \
+            && ! sudo_run systemctl reload sshd 2> /dev/null; then
+            warn "sshd would not reload; the configuration is in place and valid, and applies the next time it starts"
+        fi
     fi
     step_ok "sshd will take registered printers"
 }
@@ -1188,8 +1195,16 @@ deploy_step_printer() {
     else
         printf '# Installed by shelfos.sh — a stable name and a group the service is in.\n%s\n' "$rule" \
             | write_file "$UDEV_RULE" 644 "root:root"
-        sudo_run udevadm control --reload
-        sudo_run udevadm trigger --subsystem-match=usbmisc
+        # Applying the rule may not be possible, and that is not a failed
+        # install. In a container /sys is not writable even for root, so
+        # `udevadm trigger` reports "Permission denied" for every device it can
+        # see and exits non-zero — which used to end the deploy at this step,
+        # having installed everything and started nothing. The rule is written
+        # either way, and takes effect when the printer is next plugged in.
+        if ! sudo_run udevadm control --reload \
+            || ! sudo_run udevadm trigger --subsystem-match=usbmisc; then
+            warn "udev would not re-apply the rule to what is already plugged in (normal in a container, where /sys is read-only). The rule is installed; replug the printer, or reboot, for it to take effect."
+        fi
         step_ok "group $DEPLOY_PRINTER_GROUP"
     fi
     # Say now whether the rule matched. A missing symlink here is far easier to

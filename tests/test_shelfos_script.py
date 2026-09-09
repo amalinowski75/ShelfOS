@@ -964,3 +964,59 @@ def test_a_missing_key_file_is_not_an_error(tmp_path: Path) -> None:
     )
     assert answer.returncode == 0
     assert answer.stdout == ""
+
+
+# --- steps that must not fail the whole deploy --------------------------------
+
+
+def _step_probe(tmp_path: Path, setup: str, call: str) -> subprocess.CompletedProcess:  # type: ignore[no-untyped-def]
+    """Run one deploy step with everything privileged replaced.
+
+    `deploy` traps ERR and stops on the first failing command, which is right
+    for a step that has actually failed and wrong for one that merely could not
+    finish a cosmetic part of its job. That distinction is only visible with the
+    trap in place, so the probe installs it too.
+    """
+    script = _SCRIPT.read_text()
+    body = script[
+        script.index("deploy_step_printer() {") : script.index(
+            'readonly CADDY_MARKER="'
+        )
+    ]
+    probe = tmp_path / "step.sh"
+    probe.write_text(
+        "set -Eeuo pipefail\n"
+        "trap 'echo TRAP-FIRED >&2; exit 9' ERR\n"
+        "step() { :; }\nstep_ok() { :; }\nstep_skipped() { :; }\n"
+        'warn() { printf "WARNED: %s\\n" "$*" >&2; }\n'
+        "write_file() { cat > /dev/null; }\n"
+        "DRY_RUN=0\nDEPLOY_WANT_PRINTER=1\nDEPLOY_PRINTER_GROUP=plugdev\n"
+        "BROTHER_VENDOR=04f9\n"
+        f"UDEV_RULE={tmp_path}/rules\n"
+        f"{setup}\n{body}\n{call}\n"
+    )
+    return subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+
+
+def test_udev_refusing_to_reapply_the_rule_does_not_fail_the_deploy(
+    tmp_path: Path,
+) -> None:
+    """What killed a real deploy at step 10 of 12, with everything installed and
+    nothing started.
+
+    In a container /sys is not writable even for root, so `udevadm trigger`
+    prints "Permission denied" for every device and exits non-zero. The rule is
+    written either way and takes effect at the next replug; ending the deploy
+    there is much worse than saying so.
+    """
+    result = _step_probe(
+        tmp_path,
+        setup='sudo_run() { [ "$1" = udevadm ] && return 1; return 0; }',
+        call="deploy_step_printer",
+    )
+    assert "TRAP-FIRED" not in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "WARNED" in result.stderr
+    assert "replug" in result.stderr

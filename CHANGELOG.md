@@ -64,6 +64,13 @@ the deployment is a server and a browser.
   remains for what the browser cannot cover — a server without the sshd block, or
   a read-only account, which may read the page but not change what this server
   accepts — with `list` and `remove` beside it.
+- **A deploy no longer dies because udev would not re-apply a rule.** In a
+  container `/sys` is not writable even for root, so `udevadm trigger` reports
+  "Permission denied" for every device and exits non-zero — which ended the
+  deploy at step 10 of 12, with everything installed and nothing started. The
+  rule is written either way and takes effect at the next replug, so this is now
+  a warning that says so. The same for reloading sshd, which may not be running
+  yet on a machine being set up.
 - The ssh check is now the connection the unit actually makes, held open for a
   moment. `ssh host true` tested a session, which a forwarding-only key refuses
   on purpose: the check would have failed on a setup that works. The new one
