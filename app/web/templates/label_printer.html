@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Label printer — ShelfOS{% endblock %}
+
+{% block content %}
+<div class="head">
+  <div>
+    <h1>Label printer setup</h1>
+    <p>
+      For a Brother QL sitting on <em>your</em> desk, not on the server. Answer the
+      three questions below, download the script, read it, run it. It sets up two
+      small services on your computer that carry the printer to ShelfOS.
+    </p>
+  </div>
+</div>
+
+<div class="card card-pad setup-card">
+  <form method="get" action="/api/labels/setup/installer.sh" id="setup-form">
+    <div class="field">
+      <label for="ssh_user">Your ssh account on the server</label>
+      <div class="row-fields">
+        <input class="control" id="ssh_user" name="ssh_user" required
+               placeholder="your-login" autocomplete="off" />
+        <span class="at">@</span>
+        <input class="control" id="ssh_host" name="ssh_host" required
+               value="{{ ssh_host }}" autocomplete="off" />
+        <span class="at">port</span>
+        <input class="control control-narrow" id="ssh_port" name="ssh_port"
+               type="number" min="1" max="65535" value="{{ default_ssh_port }}" />
+      </div>
+      <p class="muted">
+        This is a shell account on the server machine, reached over ssh — not your
+        ShelfOS login. You must already be able to run
+        <code>ssh you@server</code> from this computer; the script checks that
+        before it changes anything, and stops with what to do if you cannot.
+      </p>
+    </div>
+
+    <div class="field">
+      <label for="device">The printer's device on your computer</label>
+      <input class="control" id="device" name="device" value="{{ default_device }}" />
+      <p class="muted">
+        Leave this as it is unless you know otherwise. The script creates that
+        name, so the printer keeps it across replugs instead of moving between
+        <code>/dev/usb/lp0</code> and <code>lp4</code>.
+      </p>
+    </div>
+
+    <div class="field">
+      <label for="bridge_port">Port on your computer</label>
+      <div class="row-fields">
+        <input class="control control-narrow" id="bridge_port" name="bridge_port"
+               type="number" min="1" max="65535" value="{{ default_bridge_port }}" />
+        <label class="inline-label" for="group">Group</label>
+        <select class="control control-narrow" id="group" name="group">
+          {% for name in groups %}<option value="{{ name }}">{{ name }}</option>{% endfor %}
+        </select>
+      </div>
+      <p class="muted">
+        The port is already the one ShelfOS expects; change it only if something
+        on your computer uses it. The group is what lets you open the printer
+        without root — <code>plugdev</code> on most desktops, <code>lp</code> on
+        systems that keep printers there.
+      </p>
+    </div>
+
+    <div class="notice">
+      <strong>The script asks for sudo. Read it first.</strong>
+      <p>
+        With root it does exactly three things: writes a udev rule so the printer
+        keeps one name, adds you to the group above, and enables lingering so the
+        services run when you are not logged in. Everything else lands in your home
+        directory. Undo it later with <code>--uninstall</code>, which leaves the
+        group and the lingering alone because they may be older than this.
+      </p>
+      <pre><code>less ~/Downloads/shelfos-label-setup.sh
+bash ~/Downloads/shelfos-label-setup.sh --dry-run
+bash ~/Downloads/shelfos-label-setup.sh</code></pre>
+      <p class="muted">
+        <code>--dry-run</code> prints what it would do and never calls sudo.
+        <code>--show-bridge</code> prints the printer bridge it carries, so you can
+        read that too. The file names your server and your login, so delete it when
+        you are done.
+      </p>
+    </div>
+
+    <footer class="setup-actions">
+      <button type="submit" class="btn btn-primary">Download the script</button>
+    </footer>
+  </form>
+</div>
+
+<div class="card card-pad setup-card">
+  <h2>Is it working?</h2>
+  <p class="muted">
+    Once both services are running, this asks the printer what tape it is holding —
+    the same question printing asks, over the same path.
+  </p>
+  <div class="row-fields">
+    <input class="control" id="probe-device" value="tcp://127.0.0.1:{{ default_bridge_port }}" readonly />
+    <button type="button" class="btn btn-secondary" id="probe-btn">Test connection</button>
+  </div>
+  <p id="probe-result" class="probe-result" hidden></p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/label_printer.js?v={{ static_version() }}"></script>
+{% endblock %}

@@ -1175,6 +1175,31 @@ html.bom-pick-open, html.bom-pick-open body { overflow: hidden; }
 .hint { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
 .row-actions-inline { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 
+/* --- Label-printer setup (§7) ---------------------------------------------- */
+/* A form of few fields with a lot of explanation around it, so the prose is
+   given room rather than squeezed beside the controls. */
+.setup-card { max-width: 760px; margin-bottom: 18px; }
+.setup-card .field { margin-bottom: 20px; }
+.setup-card .muted { margin: 6px 0 0; font-size: 13px; line-height: 1.5; }
+/* Fields that read as one sentence — user @ host port — stay on one line. */
+.row-fields { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.row-fields .control { flex: 1 1 12ch; min-width: 0; }
+.control-narrow { flex: 0 0 11ch !important; }
+.row-fields .at, .inline-label { color: var(--muted); font-size: 13px; }
+/* The sudo warning: heading, prose and commands stacked, unlike the app's other
+   notices, which are a line of text with a button beside it. */
+.setup-card .notice { display: block; margin: 22px 0; }
+.setup-card .notice pre {
+  margin: 10px 0 0; padding: 10px 12px; overflow-x: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  font-size: 12.5px; line-height: 1.6;
+}
+.setup-actions { display: flex; justify-content: flex-end; }
+.probe-result { margin: 12px 0 0; font-size: 13.5px; }
+.probe-result[data-state="good"] { color: var(--ok); }
+.probe-result[data-state="bad"] { color: var(--danger); }
+.probe-result[data-state="waiting"] { color: var(--muted); }
+
 /* ---------- `hidden` means hidden ---------- */
 /* Last in the file AND !important, and it needs both.
 

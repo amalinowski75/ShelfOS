@@ -9,6 +9,38 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## Setting up the label printer from the browser
+
+Printing to a printer on someone else's desk worked, and standing it up meant
+reading the README, cloning this repository onto a laptop for one file, and
+writing two systemd units and a udev rule without a typo. Nobody has a clone:
+the deployment is a server and a browser.
+
+- **`/label-printer`**, open to anyone signed in — read-only accounts included,
+  because it concerns the machine in front of the person rather than what they
+  may change in ShelfOS. Answer three questions, download one script with the
+  answers already in it, read it, run it.
+- The script carries the bridge inside it as base64 and checks its sha256 after
+  decoding, so what lands on the laptop is this repository's file byte for byte
+  and a truncated download says so instead of half-installing. `--show-bridge`
+  prints it, `--dry-run` prints what it would do and never calls sudo.
+- It checks ssh **before** it changes anything, and separates the two failures
+  that look identical from the outside: an unaccepted host key and a key the
+  server does not know both leave the tunnel restarting for ever, saying
+  nothing. Each gets the command that fixes it.
+- It refuses to run as root. Under sudo it would set up root's user services and
+  root's linger — two services nobody would think to look for, while the user's
+  never start.
+- **Test connection** asks the printer what tape it holds, over the same path
+  printing uses, and names the failure rather than shrugging. The one worth
+  having is "the connection was accepted and then went quiet": the bridge is up
+  and the printer behind it is not — unplugged, in Editor Lite mode, or held by
+  CUPS. Everywhere else that collapses into "the printer is not saying what it
+  holds", which sends people to the wrong machine.
+- The page says nothing whatever about the server. What ShelfOS itself needs is
+  the administrator's, set elsewhere; the person with the printer has no way to
+  act on it and no reason to see it.
+
 ## A bridge of our own for the network printer
 
 The `socat` line the last entry recommended turns out to be the wrong tool, and

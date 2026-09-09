@@ -914,6 +914,87 @@ def status_if_free(device: str | None = None) -> PrinterStatus | None:
         _PRINT_LOCK.release()
 
 
+@dataclass(frozen=True)
+class ProbeResult:
+    """What one look at a printer came to, in terms a person can act on.
+
+    ``status_if_free`` answers the only question printing needs — can this be
+    asked anything right now — and collapses every failure into ``None``. A
+    setup page is asking a different question: *why* is it not working. So this
+    keeps the outcomes apart, and the one that matters most is the one nothing
+    else distinguishes — a connection accepted and then silent, which means the
+    tunnel and the bridge are both up and the printer is the missing piece.
+    """
+
+    answered: bool
+    busy: bool
+    detail: str
+    tape: str | None = None
+    width_mm: int | None = None
+    errors: tuple[str, ...] = ()
+
+
+def probe_device(device: str) -> ProbeResult:
+    """Ask a printer how it is, and say what came of asking.
+
+    Takes the print lock like :func:`status_if_free`, for the same reason: three
+    status bytes sent during a job are spliced into the raster, and nothing
+    downstream can tell them from the label. The lock is why this lives here
+    rather than in the web layer, which has no business holding it.
+    """
+    if not _PRINT_LOCK.acquire(timeout=_STATUS_LOCK_SECONDS):
+        return ProbeResult(
+            answered=False,
+            busy=True,
+            detail="a print is running just now — ask again in a moment",
+        )
+    try:
+        status = read_printer_status(device)
+    except PrinterError as error:
+        return ProbeResult(answered=False, busy=False, detail=str(error))
+    except ValidationError as error:
+        return ProbeResult(answered=False, busy=False, detail=str(error))
+    finally:
+        _PRINT_LOCK.release()
+
+    if status is None:
+        # Reached, and then nothing. Over a bridge that means the far end is
+        # listening but the printer behind it is not talking — which is a
+        # different problem from "the bridge is not running", and the one people
+        # otherwise spend an afternoon on.
+        return ProbeResult(
+            answered=False,
+            busy=False,
+            detail=(
+                "the connection was accepted and then went quiet: the far end is "
+                "there, but the printer is not answering. It is usually unplugged, "
+                "still in Editor Lite mode, or held by CUPS."
+            ),
+        )
+    if status.errors:
+        return ProbeResult(
+            answered=True,
+            busy=False,
+            detail="the printer reports: " + ", ".join(status.errors),
+            tape=detect_tape(status),
+            width_mm=status.media_width_mm,
+            errors=status.errors,
+        )
+    tape = detect_tape(status)
+    return ProbeResult(
+        answered=True,
+        busy=False,
+        detail=(
+            f"the printer answered: it is holding {tape} tape"
+            if tape
+            else f"the printer answered, holding {status.media_width_mm} mm tape "
+            "this build does not recognise"
+        ),
+        tape=tape,
+        width_mm=status.media_width_mm,
+    )
+
+
 def read_printer_status(device: str | None = None) -> PrinterStatus | None:
     """Ask the printer how it is, or ``None`` if it does not answer.
 

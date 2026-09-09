@@ -11,11 +11,13 @@ from app.api.schemas import (
     LabelJobRead,
     LabelPrintRequest,
     LabelPrintResult,
+    PrinterProbeRead,
     TapeRead,
     TapesRead,
 )
 from app.services import label_printer as lp
 from app.services import label_service as lbl
+from app.services import label_setup as setup
 
 router = APIRouter(prefix="/api/labels", tags=["labels"])
 
@@ -128,4 +130,67 @@ def running_job() -> LabelJobRead:
         printing=progress is not None,
         done=progress[0] if progress else 0,
         total=progress[1] if progress else 0,
+    )
+
+
+@router.get("/setup/installer.sh")
+def download_installer(
+    ssh_user: str,
+    ssh_host: str,
+    ssh_port: int = setup.DEFAULT_SSH_PORT,
+    device: str = setup.DEFAULT_DEVICE,
+    bridge_port: int = setup.DEFAULT_BRIDGE_PORT,
+    group: str = setup.ALLOWED_GROUPS[0],
+) -> Response:
+    """The setup script for the machine holding the printer, filled in (§7).
+
+    A GET taking the answers in the query string, because the form that sends
+    it is a plain ``<form method="get">``: a download built in JavaScript would
+    be the only Blob in the whole interface, and this needs no session state.
+    Every value is validated in the service, and a bad one comes back as a 422
+    rather than being escaped into the script.
+    """
+    script = setup.render_installer(
+        ssh_user=ssh_user,
+        ssh_host=ssh_host,
+        ssh_port=ssh_port,
+        device=device,
+        bridge_port=bridge_port,
+        group=group,
+    )
+    return Response(
+        content=script,
+        media_type="text/x-shellscript",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{setup.INSTALLER_FILENAME}"'
+            ),
+            # It names a server and an account. Not a secret, but there is no
+            # reason for a proxy or the browser to keep a copy.
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.get("/setup/probe", response_model=PrinterProbeRead)
+def probe_printer(device: str | None = None) -> PrinterProbeRead:
+    """Ask the printer how it is, and say what came of asking (§7).
+
+    200 in every reachable case, including "it did not answer". That is the
+    answer the button asked for, not a failure of the request — unlike the
+    print path, where a 503 is right because silence defeats what the caller
+    wanted. A GET, like ``/tapes``, which has always asked the printer this way;
+    that also keeps the button working for a read-only account, which is the
+    point, since it is about the machine in front of the person rather than
+    their permissions in ShelfOS.
+    """
+    target = setup.probe_target(device or config.LABEL_DEVICE)
+    result = lp.probe_device(target)
+    return PrinterProbeRead(
+        answered=result.answered,
+        busy=result.busy,
+        detail=result.detail,
+        tape=result.tape,
+        width_mm=result.width_mm,
+        errors=list(result.errors),
     )

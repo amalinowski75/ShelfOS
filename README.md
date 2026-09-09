@@ -381,6 +381,16 @@ point it at one over the network:
 export SHELFOS_LABEL_DEVICE="tcp://127.0.0.1:9100"
 ```
 
+**The quick way is `/label-printer`**, a page open to anyone signed in: answer
+three questions, download a script with your answers already in it, read it and
+run it on the machine holding the printer. It carries the bridge below, sets up
+both services, and checks the ssh connection before it changes anything — then
+the page's Test connection button asks the printer what tape it holds. The rest
+of this section is what that script does, for setting it up by hand, for
+checking its work, and for the reasons behind each step, which are the part a
+script cannot carry. The one thing it deliberately does not do is touch the
+server: the setting above is the administrator's to make.
+
 Everything else is unchanged: the tape is still read off the printer, a fault
 still stops the job before any tape moves, and each label is still confirmed.
 Only the last hop is different.

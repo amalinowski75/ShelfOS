@@ -44,7 +44,7 @@ from app.models.enums import (
 from app.models.invoice import InvoiceImportLine
 from app.models.user import User
 from app.services import attachment_service as ats
-from app.services import audit_service, shops
+from app.services import audit_service, label_setup, shops
 from app.services import bom_service as boms_svc
 from app.services import bom_take_service as bts
 from app.services import component_service as cs
@@ -732,6 +732,37 @@ def types_page(
             # For the inline "Create matcher" dialog on a parameter (admin page).
             "mounting_types": [mt.value for mt in MountingType],
             "domains": [d.value for d in MatchDomain],
+        },
+    )
+
+
+@router.get("/label-printer", response_class=HTMLResponse)
+def label_printer_page(
+    request: Request,
+    user: User = Depends(require_web_user),
+) -> HTMLResponse:
+    """Set up a label printer attached to the machine you are sitting at (§7).
+
+    Open to every signed-in account, read-only included: it is about the printer
+    on someone's desk and the machine it is plugged into, not about what they may
+    change in ShelfOS, and the page itself changes nothing here.
+
+    The ssh target is proposed from the Host header, which the client controls —
+    fine, because it is a suggestion in an editable field and every value is
+    validated again when the installer is rendered.
+    """
+    return templates.TemplateResponse(
+        request,
+        "label_printer.html",
+        {
+            "current_user": user,
+            "ssh_host": request.url.hostname or "",
+            "default_device": label_setup.DEFAULT_DEVICE,
+            "default_ssh_port": label_setup.DEFAULT_SSH_PORT,
+            # The port the server is already listening for, so the form comes
+            # out consistent without saying a word about the server's settings.
+            "default_bridge_port": label_setup.default_bridge_port(),
+            "groups": label_setup.ALLOWED_GROUPS,
         },
     )
 

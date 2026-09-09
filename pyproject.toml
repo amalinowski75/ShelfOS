@@ -48,6 +48,12 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["app*"]
 
+# The installer template is a shell script that lives beside the code rendering
+# it, so it can be parsed and shellchecked in CI like any other script. Without
+# this it would be left out of a built wheel and the download would 503.
+[tool.setuptools.package-data]
+"app.services" = ["*.sh"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra -q --strict-markers"

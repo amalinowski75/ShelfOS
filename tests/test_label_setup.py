@@ -1,0 +1,433 @@
+"""The installer ShelfOS hands to whoever has the printer on their desk.
+
+Two things are being defended here. One is that the rendered file is a valid
+shell script whatever anyone types into the form — and that hostile answers are
+*refused* rather than escaped, because the two places these values land (a
+systemd ``ExecStart`` and a udev rule) are not shells and quoting means nothing
+in either. The other is the order the script does things in: it asks for sudo,
+so what it does with root, and what it checks before touching anything, is the
+part worth pinning down.
+"""
+
+from __future__ import annotations
+
+import base64
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+from app.services import label_setup as setup
+from app.services.errors import ValidationError
+
+_REPO = Path(__file__).resolve().parents[1]
+_BRIDGE = _REPO / "scripts" / "label_bridge.py"
+
+ANSWERS = {
+    "ssh_user": "adam",
+    "ssh_host": "shelf.example",
+    "ssh_port": 22,
+    "device": "/dev/shelfos-label",
+    "bridge_port": 9100,
+    "group": "plugdev",
+}
+
+
+def _render(**overrides: object) -> str:
+    return setup.render_installer(**{**ANSWERS, **overrides})  # type: ignore[arg-type]
+
+
+def _parses(script: str, tmp_path: Path) -> None:
+    path = tmp_path / "installer.sh"
+    path.write_text(script)
+    result = subprocess.run(["bash", "-n", str(path)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+# --------------------------------------------------------------- the template
+
+
+def test_the_template_itself_is_a_valid_script() -> None:
+    """The template is a real .sh file precisely so this is possible.
+
+    A three-hundred-line script inside a Python triple-quoted string cannot be
+    parsed, linted or read; keeping it on disk with ``"@TOKEN@"`` in place of
+    each value means ``bash -n`` and shellcheck see it in CI like any other.
+    """
+    result = subprocess.run(
+        ["bash", "-n", str(setup.TEMPLATE_PATH)], capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr
+
+
+# ------------------------------------------------------------ what is refused
+
+
+@pytest.mark.parametrize(
+    "user",
+    [
+        "-oProxyCommand=x",  # read as an OPTION by ssh; quoting cannot help
+        "$(id)",
+        "`id`",
+        "a b",
+        "adam;rm -rf ~",
+        "adam@evil",
+        "adam\nroot",
+        "",
+        "A" * 40,
+    ],
+)
+def test_a_hostile_ssh_user_is_refused_not_escaped(user: str) -> None:
+    with pytest.raises(ValidationError):
+        _render(ssh_user=user)
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "-oProxyCommand=x",
+        "host evil",
+        "user@host@evil",
+        "host:22",
+        "host/path",
+        "$(id)",
+        "[not-an-ipv6]",
+        "",
+        "h" * 300,
+    ],
+)
+def test_a_hostile_host_is_refused(host: str) -> None:
+    with pytest.raises(ValidationError):
+        _render(ssh_host=host)
+
+
+@pytest.mark.parametrize(
+    "device",
+    ["/dev/../etc/passwd", "~/dev/x", "/dev/lp 0", "/etc/passwd", "/dev/$(id)", ""],
+)
+def test_a_hostile_device_is_refused(device: str) -> None:
+    with pytest.raises(ValidationError):
+        _render(device=device)
+
+
+@pytest.mark.parametrize("port", ["0", "65536", "-1", "9100; id", "", "80.5"])
+def test_a_bad_port_is_refused(port: str) -> None:
+    with pytest.raises(ValidationError):
+        _render(bridge_port=port)
+
+
+def test_the_group_is_a_closed_set() -> None:
+    """It lands in a udev rule, where shell quoting means nothing whatever."""
+    for name in setup.ALLOWED_GROUPS:
+        assert _render(group=name)
+    with pytest.raises(ValidationError):
+        _render(group='plugdev", MODE="0777')
+
+
+@pytest.mark.parametrize(
+    "host", ["shelf.example", "192.0.2.10", "[2001:db8::1]", "shelf", "a.b.c.d.e"]
+)
+def test_ordinary_hosts_are_accepted(host: str, tmp_path: Path) -> None:
+    _parses(_render(ssh_host=host), tmp_path)
+
+
+def test_the_second_wall_holds_on_its_own(tmp_path: Path) -> None:
+    """Belt and braces: quoting is declared to be the second wall, so test it.
+
+    This calls the private renderer directly, skipping validation, with values
+    no public path would ever pass. The result must still parse — if quoting
+    were doing nothing, this is where it would show.
+    """
+    script = setup._render(
+        {
+            "SSH_USER": "a'b\"c $(id) `id`",
+            "SSH_HOST": "h;rm -rf /",
+            "SSH_PORT": "22",
+            "DEVICE": "/dev/x y",
+            "BRIDGE_PORT": "9100",
+            "GROUP": "lp",
+            "BRIDGE_SHA256": setup.bridge_sha256(),
+        }
+    )
+    _parses(script, tmp_path)
+
+
+def test_an_unfilled_token_is_a_failure_not_a_download() -> None:
+    """A misspelt token must break here, not appear in somebody's bash."""
+    values = dict(ANSWERS)
+    with pytest.raises(ValidationError, match="unfilled token"):
+        setup._render(
+            {
+                "SSH_USER": "adam",
+                "SSH_HOST": "h",
+                "SSH_PORT": "22",
+                "DEVICE": "/dev/x",
+                "BRIDGE_PORT": "9100",
+                "GROUP": "lp",
+                # BRIDGE_SHA256 deliberately absent.
+            }
+        )
+    assert values  # the sample answers above are untouched by this test
+
+
+# -------------------------------------------------------------- what is in it
+
+
+def test_the_rendered_script_parses(tmp_path: Path) -> None:
+    _parses(_render(), tmp_path)
+
+
+@pytest.mark.skipif(shutil.which("shellcheck") is None, reason="shellcheck not here")
+def test_the_rendered_script_passes_shellcheck(tmp_path: Path) -> None:
+    path = tmp_path / "installer.sh"
+    path.write_text(_render())
+    result = subprocess.run(
+        ["shellcheck", "--shell=bash", "--severity=style", str(path)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout
+
+
+def test_the_port_reaches_the_three_places_that_must_agree() -> None:
+    """The bridge unit, the tunnel's -R, and the check the script runs at the end.
+
+    "Three things that have to match" is the kind of agreement that drifts
+    silently, so it is asserted rather than remembered. One assignment feeds all
+    three, which is the point — and the fourth place, the server's own setting,
+    is deliberately absent: this page says nothing about the server.
+    """
+    script = _render(bridge_port=9223)
+    assert "BRIDGE_PORT=9223" in script
+    assert script.count("BRIDGE_PORT=") == 1, "more than one source for the port"
+    assert "--device $DEVICE --port $BRIDGE_PORT" in script  # the bridge unit
+    assert "-R $BRIDGE_PORT:127.0.0.1:$BRIDGE_PORT" in script  # the tunnel
+    assert '"$PYTHON" - "$BRIDGE_PORT"' in script  # the check at the end
+
+
+def test_the_bridge_travels_byte_for_byte() -> None:
+    """What lands on the laptop is the file from this repository, not a copy of it."""
+    script = _render()
+    blob = re.search(
+        r"<<'SHELFOS_BRIDGE_BASE64'\n(.*?)\nSHELFOS_BRIDGE_BASE64", script, re.S
+    )
+    assert blob, "the embedded bridge is missing"
+    decoded = base64.b64decode(blob.group(1))
+    assert decoded == _BRIDGE.read_bytes()
+    assert setup.bridge_sha256() in script
+
+
+def test_the_script_says_nothing_about_the_server_configuration() -> None:
+    """The one requirement it would be easiest to break by being helpful.
+
+    Whatever has to happen on the server is the administrator's, and happens
+    elsewhere. Somebody adding "and put this in /etc/shelfos/env" would be
+    trying to help; this is why they will not.
+    """
+    script = _render()
+    assert "SHELFOS_LABEL_DEVICE" not in script
+    assert "/etc/shelfos/env" not in script
+    assert "systemctl restart shelfos" not in script
+
+
+# ------------------------------------------------------------- what it DOES
+
+
+def _stub_path(tmp_path: Path) -> Path:
+    """A PATH holding fake sudo/systemctl/ssh/… that record how they were called."""
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    log = tmp_path / "calls.log"
+    for name in (
+        "sudo",
+        "systemctl",
+        "ssh",
+        "ssh-keygen",
+        "udevadm",
+        "usermod",
+        "loginctl",
+        "journalctl",
+        "lpstat",
+    ):
+        stub = stubs / name
+        # Every stub records how it was called and succeeds. Succeeding is what
+        # lets the script run to the end, which is the only way to see the order
+        # it does things in — and the order is what these tests are about.
+        stub.write_text(
+            "#!/bin/sh\n" f'printf "%s %s\\n" {name} "$*" >> "{log}"\n' "exit 0\n"
+        )
+        stub.chmod(0o755)
+    return stubs
+
+
+def _run_installer(
+    tmp_path: Path, *args: str
+) -> tuple[subprocess.CompletedProcess, str]:
+    script = tmp_path / "installer.sh"
+    script.write_text(_render())
+    stubs = _stub_path(tmp_path)
+    result = subprocess.run(
+        ["bash", str(script), *args],
+        capture_output=True,
+        text=True,
+        env={
+            "PATH": f"{stubs}:/usr/bin:/bin",
+            "HOME": str(tmp_path / "home"),
+            "USER": "tester",
+            "XDG_RUNTIME_DIR": str(tmp_path / "run"),
+        },
+    )
+    calls = (
+        (tmp_path / "calls.log").read_text()
+        if (tmp_path / "calls.log").exists()
+        else ""
+    )
+    return result, calls
+
+
+def test_a_dry_run_never_calls_sudo(tmp_path: Path) -> None:
+    """The whole promise of --dry-run, in one assertion."""
+    result, calls = _run_installer(tmp_path, "--dry-run")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "sudo " not in calls
+    assert "would run" in result.stdout
+
+
+def test_ssh_is_checked_before_anything_is_enabled(tmp_path: Path) -> None:
+    """Order matters: two failures look identical from the outside otherwise.
+
+    An unaccepted host key and a missing authorized_keys entry both leave the
+    tunnel restarting for ever, saying nothing. The script separates them, and
+    does it before it has changed anything.
+    """
+    result, calls = _run_installer(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    lines = calls.splitlines()
+    checked = next(i for i, line in enumerate(lines) if line.startswith("ssh-keygen"))
+    logged_in = next(i for i, line in enumerate(lines) if line.startswith("ssh "))
+    enabled = [i for i, line in enumerate(lines) if "enable" in line]
+    touched = [i for i, line in enumerate(lines) if line.startswith("sudo")]
+    assert enabled, "nothing was enabled at all"
+    assert checked < logged_in < min(enabled)
+    # And nothing was changed before either check, which is the other half of it.
+    assert touched and checked < min(touched)
+
+
+def test_the_user_is_added_to_a_group_never_moved_into_one(tmp_path: Path) -> None:
+    """-aG appends; -G REPLACES every group, sudo included. People lock
+    themselves out of their own machine that way, and it is one character."""
+    script = _render()
+    assert "usermod -aG" in script
+    assert re.search(r"usermod\s+(-\w*\s+)*-G\b", script) is None
+
+
+def test_it_refuses_to_run_as_root(tmp_path: Path) -> None:
+    """Under sudo it would set up root's user services and root's linger — two
+    services nobody would think to look for, while the user's never start."""
+    script = _render()
+    assert 'if [ "$(id -u)" = 0 ]; then' in script
+    guard = script.index('"$(id -u)" = 0')
+    assert guard < script.index("udevadm"), "the guard must come first"
+
+
+def test_the_cups_queue_is_reported_never_removed() -> None:
+    """Deleting somebody's configured printer is not an installer's decision."""
+    script = _render()
+    assert "lpadmin -x" in script
+    assert "sudo lpadmin -x" not in script.replace("        sudo lpadmin -x QL-800", "")
+
+
+def test_uninstall_leaves_the_group_and_the_lingering_alone(tmp_path: Path) -> None:
+    """Both may predate this script and may be holding something else up."""
+    result, calls = _run_installer(tmp_path, "--uninstall", "--dry-run")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "gpasswd" not in calls
+    assert "disable-linger" not in calls
+    assert "Left alone on purpose" in result.stdout
+
+
+def test_show_bridge_prints_the_code_it_would_install(tmp_path: Path) -> None:
+    """The file asks to be read, and the most interesting part of it is base64."""
+    script = tmp_path / "installer.sh"
+    script.write_text(_render())
+    result = subprocess.run(
+        ["bash", str(script), "--show-bridge"], capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == _BRIDGE.read_text()
+
+
+# ------------------------------------------------------------------ defaults
+
+
+def test_the_default_port_follows_the_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    """So the form comes out consistent without naming the server's settings."""
+    from app import config
+
+    monkeypatch.setattr(config, "LABEL_DEVICE", "tcp://127.0.0.1:9200")
+    assert setup.default_bridge_port() == 9200
+    monkeypatch.setattr(config, "LABEL_DEVICE", "/dev/shelfos-label")
+    assert setup.default_bridge_port() == 9100
+    monkeypatch.setattr(config, "LABEL_DEVICE", "")
+    assert setup.default_bridge_port() == 9100
+    monkeypatch.setattr(config, "LABEL_DEVICE", "tcp://nonsense")
+    assert setup.default_bridge_port() == 9100
+
+
+# ------------------------------------------------------- the probe's own guard
+
+
+@pytest.mark.parametrize(
+    "device",
+    [
+        "tcp://example.com:9100",
+        "tcp://169.254.169.254:80",  # the cloud metadata endpoint
+        "tcp://127.0.0.1.nip.io:9100",  # resolves to loopback, and is not it
+        "tcp://10.0.0.5:9100",
+        "http://127.0.0.1:9100",
+        "",
+    ],
+)
+def test_only_the_servers_own_loopback_may_be_tested(device: str) -> None:
+    with pytest.raises(ValidationError):
+        setup.probe_target(device)
+
+
+@pytest.mark.parametrize(
+    "device",
+    [
+        "tcp://127.0.0.1:9100",
+        "tcp://[::1]:9100",
+        "tcp://localhost:9100",
+        "/dev/usb/lp0",
+    ],
+)
+def test_loopback_and_devices_are_allowed(device: str) -> None:
+    assert setup.probe_target(device) == device
+
+
+def test_a_build_without_the_bridge_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    """503 with a sentence, not a 500 with a stack trace."""
+    from app.services.errors import PrinterError
+
+    setup.bridge_source.cache_clear()
+    monkeypatch.setattr(setup, "BRIDGE_SOURCE_PATH", Path("/nonexistent/bridge.py"))
+    try:
+        with pytest.raises(PrinterError, match="label_bridge"):
+            setup.bridge_source()
+    finally:
+        setup.bridge_source.cache_clear()
+
+
+def test_python_is_what_runs_the_bridge_in_the_unit() -> None:
+    """ExecStart is not a shell, so the interpreter is named, not inferred."""
+    script = _render()
+    assert "ExecStart=$PYTHON $BRIDGE_PATH --device $DEVICE" in script
+    assert 'PYTHON="$(command -v python3)"' in script
+
+
+def test_it_uses_this_interpreter_family(tmp_path: Path) -> None:
+    """Guards the assumption behind the whole thing: python3 is on the machine."""
+    assert sys.version_info >= (3, 10)

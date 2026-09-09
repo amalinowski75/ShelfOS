@@ -85,6 +85,16 @@
   <div>
     <h1>Locations</h1>
     <p>Storage hierarchy for stock (spec §7).</p>
+    {# Where the absence of Print is noticed is where the way to fix it belongs.
+       "Labels" still works without a printer — it is a page to print from the
+       browser — so this says what is missing rather than that nothing works. #}
+    {% if not label_printing %}
+    <p class="muted">
+      No label printer is set up, so these can be printed from the browser but not
+      onto tape. <a href="/label-printer">Set up a label printer</a> attached to
+      your own computer.
+    </p>
+    {% endif %}
   </div>
   <div class="head-actions">
     {# Both ticked shows everything; neither shows nothing. A location counts as
