@@ -428,6 +428,15 @@ sit behind NAT without anything on the server changing — and no port is expose
 that sleeps otherwise leaves the server with a port that accepts connections and
 does nothing with them.
 
+**9100 is a convention, not a requirement.** It is the port HP JetDirect used for
+raw printing, so anyone who has set up a network printer recognises what this is —
+but nothing in ShelfOS knows the number. It appears in three places, and any free
+port works as long as all three agree: the `socat` unit, the `-R` argument in the
+tunnel unit, and `SHELFOS_LABEL_DEVICE` on the server. Change it if something on
+either machine already listens there; `ExitOnForwardFailure=yes` in the tunnel unit
+means a port already taken on the server fails loudly rather than leaving you
+printing into nothing.
+
 CUPS still must not hold the same printer, exactly as when it is plugged in
 locally.
 
