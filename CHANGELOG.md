@@ -44,6 +44,12 @@ the deployment is a server and a browser.
   else, and the page fills its name in. Not the service account: that one has no
   shell and a root-owned home, so sshd would refuse it, and giving it those would
   turn a confined service account into a login account.
+- The tunnel asks for `127.0.0.1:<port>` by name rather than for a bare port,
+  and the server permits both spellings. sshd matches `PermitListen` against what
+  the client *asked* for, and a bare port carries no address at all — so a rule
+  naming only the address it would resolve to could refuse the exact forward it
+  was written to allow, with the client reporting it in the same words it uses
+  for a port that is genuinely in use. The message now names both possibilities.
 - **Signing in works on a deployment served without TLS.** The session cookie is
   marked `Secure` in production, and no browser sends one of those back over
   plain HTTP — so the session was dropped, the sign-in form's token had nothing

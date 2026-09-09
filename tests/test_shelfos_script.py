@@ -913,7 +913,11 @@ def test_a_registered_key_may_only_carry_the_printer(tmp_path: Path) -> None:
     assert "Match User shelfos-tunnel" in block
     assert "AllowTcpForwarding remote" in block  # -R only; no outbound tunnels
     assert "PermitOpen none" in block
-    assert "PermitListen 127.0.0.1:9100" in block
+    # Both spellings of the one binding: sshd matches PermitListen against what
+    # the client ASKED for, and a request for a bare port carries no address —
+    # so an entry naming only the address it resolves to can refuse exactly the
+    # forward it was written to allow. Neither reaches past loopback.
+    assert "PermitListen 127.0.0.1:9100 localhost:9100" in block
     assert "PermitTTY no" in block
     assert "ForceCommand /usr/sbin/nologin" in block
     assert "AuthorizedKeysCommandUser root" in block
@@ -923,7 +927,7 @@ def test_the_permitted_port_follows_the_setting(tmp_path: Path) -> None:
     """A key allowed to bind 9100 while the service listens for 9241 is a tunnel
     that comes up and carries nothing."""
     block = _dropin(tmp_path, env="SHELFOS_LABEL_DEVICE=tcp://127.0.0.1:9241\n")
-    assert "PermitListen 127.0.0.1:9241" in block
+    assert "PermitListen 127.0.0.1:9241 localhost:9241" in block
 
 
 def test_the_keys_command_answers_for_one_account_only(tmp_path: Path) -> None:

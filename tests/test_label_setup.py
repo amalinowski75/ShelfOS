@@ -270,7 +270,7 @@ def test_the_port_reaches_the_three_places_that_must_agree() -> None:
     assert "BRIDGE_PORT=9223" in script
     assert script.count("BRIDGE_PORT=") == 1, "more than one source for the port"
     assert "--device $DEVICE --port $BRIDGE_PORT" in script  # the bridge unit
-    assert "-R $BRIDGE_PORT:127.0.0.1:$BRIDGE_PORT" in script  # the tunnel
+    assert "-R 127.0.0.1:$BRIDGE_PORT:127.0.0.1:$BRIDGE_PORT" in script  # the tunnel
     assert '"$PYTHON" - "$BRIDGE_PORT"' in script  # the check at the end
 
 
@@ -415,7 +415,10 @@ def test_the_connection_it_tests_is_the_one_the_unit_makes(tmp_path: Path) -> No
     works. This one asks for the forward itself."""
     _, calls = _run_installer(tmp_path)
     attempt = next(line for line in calls.splitlines() if line.startswith("ssh "))
-    assert "-R 9100:127.0.0.1:9100" in attempt
+    # The bind address is spelled out rather than left to the server's default:
+    # sshd matches PermitListen against what was ASKED for, and a bare port asks
+    # for no address at all.
+    assert "-R 127.0.0.1:9100:127.0.0.1:9100" in attempt
     assert "ExitOnForwardFailure=yes" in attempt
     assert "shelfos-label" in attempt  # its own key, not whatever the agent has
     assert " true" not in attempt
@@ -449,10 +452,16 @@ def test_a_key_the_server_does_not_know_gets_the_line_that_fixes_it(
     assert "sudo" not in calls
 
 
-def test_a_taken_port_is_named_as_a_taken_port(tmp_path: Path) -> None:
+def test_a_port_the_server_will_not_hand_over_names_both_reasons(
+    tmp_path: Path,
+) -> None:
+    """ssh says one sentence for two different problems — a port in use, and a
+    port the server's configuration will not permit — so the message names both
+    rather than sending somebody hunting for a process that is not there."""
     result, _ = _run_installer(tmp_path, ssh_mode="port-busy")
     assert result.returncode != 0
-    assert "already listening" in result.stderr
+    assert "already using it" in result.stderr
+    assert "does not allow this port" in result.stderr
     assert "9100" in result.stderr
 
 

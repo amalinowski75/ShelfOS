@@ -981,7 +981,11 @@ sshd_dropin_body() {
         "    AuthorizedKeysCommand $TUNNEL_KEYS_COMMAND %u" \
         "    AuthorizedKeysCommandUser root" \
         "    AllowTcpForwarding remote" \
-        "    PermitListen 127.0.0.1:$(tunnel_port)" \
+        "# Both spellings of one binding: a client that asks for a bare port sends" \
+        "# no address at all, and sshd matches what was ASKED against this list —" \
+        "# so an entry that only names the address it would resolve to can refuse" \
+        "# a request for exactly that. Neither reaches beyond loopback." \
+        "    PermitListen 127.0.0.1:$(tunnel_port) localhost:$(tunnel_port)" \
         "    PermitOpen none" \
         "    PermitTTY no" \
         "    AllowAgentForwarding no" \

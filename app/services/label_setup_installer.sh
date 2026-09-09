@@ -304,7 +304,7 @@ else
     if timeout 8 ssh -N -T \
         -o BatchMode=yes -o NumberOfPasswordPrompts=0 -o ConnectTimeout=10 \
         -o ExitOnForwardFailure=yes -o IdentitiesOnly=yes -i "$KEY_PATH" \
-        -p "$SSH_PORT" -R "$BRIDGE_PORT:127.0.0.1:$BRIDGE_PORT" \
+        -p "$SSH_PORT" -R "127.0.0.1:$BRIDGE_PORT:127.0.0.1:$BRIDGE_PORT" \
         "$SSH_USER@$SSH_HOST" 2>"$ssh_error"
     then
         ssh_status=0
@@ -333,9 +333,14 @@ else
 
     $(authorize_hint)" ;;
             *"remote port forwarding failed"*)
-                die "$SSH_HOST refused to hand over port $BRIDGE_PORT — something there is
-    already listening on it. Pick another port on the ShelfOS page (it must match
-    what the server expects) and download the script again." ;;
+                # ssh says the same sentence for a port in use and a port its
+                # configuration will not hand over, so name both rather than
+                # send someone looking for a process that is not there.
+                die "$SSH_HOST would not let this bind port $BRIDGE_PORT. Either something
+    there is already using it, or that server does not allow this port. If you
+    changed the port on the ShelfOS page, download the script again so that all
+    three ends agree; otherwise ask whoever runs the server to look at
+    'journalctl -u ssh' there, which says which of the two it is." ;;
             *)
                 die "ssh to $SSH_USER@$SSH_HOST did not work:
 
@@ -453,7 +458,7 @@ tunnel_unit="$(printf '%s\n' \
     "After=shelfos-label.service" \
     "" \
     "[Service]" \
-    "ExecStart=$SSH_BIN -N -T -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o IdentitiesOnly=yes -o BatchMode=yes -i $KEY_PATH -p $SSH_PORT -R $BRIDGE_PORT:127.0.0.1:$BRIDGE_PORT $SSH_USER@$SSH_HOST" \
+    "ExecStart=$SSH_BIN -N -T -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o IdentitiesOnly=yes -o BatchMode=yes -i $KEY_PATH -p $SSH_PORT -R 127.0.0.1:$BRIDGE_PORT:127.0.0.1:$BRIDGE_PORT $SSH_USER@$SSH_HOST" \
     "Restart=always" \
     "RestartSec=5" \
     "" \

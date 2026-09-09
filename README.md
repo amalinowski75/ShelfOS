@@ -424,7 +424,7 @@ Match User shelfos-tunnel
     AuthorizedKeysCommand /usr/local/lib/shelfos/tunnel-keys %u
     AuthorizedKeysCommandUser root
     AllowTcpForwarding remote        # -R only: no outbound connections
-    PermitListen 127.0.0.1:9100      # and only this port
+    PermitListen 127.0.0.1:9100 localhost:9100   # and only this port
     PermitTTY no
     ForceCommand /usr/sbin/nologin
 Match all
