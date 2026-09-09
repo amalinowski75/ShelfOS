@@ -19,12 +19,14 @@ Two things are easy to get wrong here and cost real time:
 from __future__ import annotations
 
 import os
-import select
 import socket
+import subprocess
+import sys
 import threading
 import time
 import tty
 from collections.abc import Callable
+from pathlib import Path
 
 # What a QL sends back, as captured from a real QL-800 on the bench: 62 mm
 # continuous tape, no errors, answering a status request.
@@ -114,83 +116,57 @@ class FakePrinter:
 
 
 class PrinterBridge:
-    """A TCP listener that relays one connection to a :class:`FakePrinter`.
+    """The shipped bridge, run for real in front of a :class:`FakePrinter`.
 
-    What ``socat TCP-LISTEN:9100 OPEN:/dev/shelfos-label`` does on the machine
-    holding the printer, in-process: the service opens ``tcp://127.0.0.1:<port>``
-    and the bytes arrive at the device as if it were local. Having the real
-    thing on the other side is the point — a stub that answered by itself would
-    prove the socket works and nothing about the status read-back, the tape
-    check or the per-label confirmation, which is what this transport exists to
-    keep.
+    ``scripts/label_bridge.py`` is what a person puts on the machine their
+    printer is plugged into, so the transport tests drive that rather than an
+    imitation of it — an in-process stand-in would have gone on passing while
+    the thing we actually ship drifted away from it.
     """
 
     def __init__(self, printer: FakePrinter) -> None:
         self.printer = printer
-        self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._listener.bind(("127.0.0.1", 0))
-        self._listener.listen(1)
-        self.port = self._listener.getsockname()[1]
+        # Pick the port here so the test knows it; the bridge serves one caller
+        # at a time and does not announce a port it was not given.
+        probe = socket.socket()
+        probe.bind(("127.0.0.1", 0))
+        self.port = probe.getsockname()[1]
+        probe.close()
         self.device = f"tcp://127.0.0.1:{self.port}"
-        self._stop = threading.Event()
-        self._thread = threading.Thread(target=self._serve, daemon=True)
-        self._thread.start()
+        script = Path(__file__).resolve().parents[1] / "scripts" / "label_bridge.py"
+        self._process = subprocess.Popen(
+            [
+                sys.executable,
+                str(script),
+                "--device",
+                printer.path,
+                "--port",
+                str(self.port),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            text=True,
+        )
+        self._wait_until_listening()
 
-    def _serve(self) -> None:
-        while not self._stop.is_set():
+    def _wait_until_listening(self, timeout: float = 5.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
             try:
-                connection, _ = self._listener.accept()
-            except OSError:
+                socket.create_connection(("127.0.0.1", self.port), timeout=0.2).close()
                 return
-            threading.Thread(
-                target=self._relay, args=(connection,), daemon=True
-            ).start()
-
-    def _relay(self, connection: socket.socket) -> None:
-        """Both directions at once, because the printer answers mid-job."""
-        device = os.open(self.printer.path, os.O_RDWR)
-        stop = threading.Event()
-
-        def to_device() -> None:
-            try:
-                while not stop.is_set():
-                    chunk = connection.recv(8192)
-                    if not chunk:
-                        break
-                    os.write(device, chunk)
             except OSError:
-                pass
-            finally:
-                stop.set()
-
-        def to_socket() -> None:
-            try:
-                while not stop.is_set():
-                    if not select.select([device], [], [], 0.05)[0]:
-                        continue
-                    chunk = os.read(device, 4096)
-                    if not chunk:
-                        break
-                    connection.sendall(chunk)
-            except OSError:
-                pass
-            finally:
-                stop.set()
-
-        writer = threading.Thread(target=to_device, daemon=True)
-        reader = threading.Thread(target=to_socket, daemon=True)
-        writer.start()
-        reader.start()
-        writer.join()
-        stop.set()
-        reader.join(timeout=1)
-        os.close(device)
-        connection.close()
+                time.sleep(0.02)
+        raise AssertionError(f"the bridge did not listen on {self.port} in {timeout}s")
 
     def close(self) -> None:
-        self._stop.set()
-        self._listener.close()
+        self._process.terminate()
+        try:
+            self._process.wait(timeout=5)
+        except subprocess.TimeoutExpired:  # pragma: no cover - a wedged bridge
+            self._process.kill()
+            self._process.wait(timeout=5)
 
     def __enter__(self) -> PrinterBridge:
         return self

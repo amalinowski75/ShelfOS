@@ -9,6 +9,28 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## A bridge of our own for the network printer
+
+The `socat` line the last entry recommended turns out to be the wrong tool, and
+it fails in the way that wastes the most time: intermittently. A Brother QL
+answers a question when it is ready, and a read taken before then returns zero
+bytes — which `socat` reads as end of stream and hangs up on. So the tape was
+read "sometimes", which looks like a flaky printer or a flaky network and is
+neither.
+
+- **`scripts/label_bridge.py`** replaces it: the same polling loop the app's own
+  reader has always used, so a printer at the far end behaves exactly like a
+  local one rather than nearly. Measured on a QL-800: the device directly
+  answered 10 out of 10, `socat` 2 in 8 (7 in 8 with `ignoreeof`), this bridge
+  20 out of 20.
+- It also writes in a loop, which `socat` did for us and a first draft of this
+  did not: `os.write` may accept less than it is given, and on a printer behind
+  a small kernel buffer it routinely does — losing the tail of every label while
+  a three-byte status request still worked perfectly.
+- The transport tests now drive the shipped script instead of an in-process
+  imitation of it, so they cannot go on passing while the thing people actually
+  run drifts away from them.
+
 ## The label printer can be somewhere other than the server
 
 ShelfOS writes raster bytes straight to a device, so the printer had to be on the

@@ -394,12 +394,21 @@ services so they come up on their own:
 Description=Expose the label printer on 127.0.0.1:9100
 
 [Service]
-ExecStart=/usr/bin/socat TCP-LISTEN:9100,bind=127.0.0.1,reuseaddr,fork OPEN:/dev/shelfos-label,rdwr,nonblock
+ExecStart=/usr/bin/python3 /path/to/ShelfOS/scripts/label_bridge.py --device /dev/shelfos-label --port 9100
 Restart=always
 
 [Install]
 WantedBy=default.target
 ```
+
+`scripts/label_bridge.py` rather than a line of `socat`, and the reason is worth
+knowing if you are tempted to substitute one. A QL answers a question when it is
+ready, and a read taken before then returns **zero bytes** — which `socat` takes
+for the end of the conversation and hangs up on, usually before the answer
+arrives. Measured on a QL-800: reading the device directly answered 10 times out
+of 10, `socat` 2 times in 8 (7 in 8 with `ignoreeof`), and this bridge 20 out of
+20. That is the difference between "the printer is not saying what it holds"
+appearing at random and not at all.
 
 ```ini
 # ~/.config/systemd/user/shelfos-label-tunnel.service
