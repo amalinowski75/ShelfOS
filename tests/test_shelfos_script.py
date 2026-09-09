@@ -1125,3 +1125,110 @@ def test_an_answer_already_there_is_left_alone(tmp_path: Path) -> None:
     )
     assert text == "SHELFOS_TUNNEL_KEYS=/srv/keys\n"
     assert "INFO" not in log
+
+
+def _sshd_probe(tmp_path: Path, mode: str) -> tuple[str, Path]:
+    """Run the sshd half of the tunnel step against a stand-in for sshd.
+
+    ``mode`` is how that stand-in behaves, and the three are the three ways this
+    can go: it will not test anything until its run directory exists; it rejects
+    what this step wrote; or it rejects the machine's own configuration, ours or
+    no ours.
+    """
+    script = _SCRIPT.read_text()
+    # From tunnel_port on: the drop-in's body is built from it, and the step
+    # writes what that produces.
+    body = script[
+        script.index("tunnel_port() {") : script.index("deploy_step_dirs() {")
+    ]
+    dropin = tmp_path / "60-shelfos-tunnel.conf"
+    run_dir = tmp_path / "run-sshd"
+    behaviour = {
+        "needs-run-dir": (
+            f'if [ ! -d "{run_dir}" ]; then\n'
+            '  echo "Missing privilege separation directory: /run/sshd" >&2\n'
+            "  exit 1\nfi\nexit 0\n"
+        ),
+        "rejects-ours": (
+            f'if [ -f "{dropin}" ]; then\n'
+            f'  echo "{dropin}: line 4: Bad configuration option" >&2\n'
+            "  exit 1\nfi\nexit 0\n"
+        ),
+        "broken-anyway": 'echo "/etc/ssh/sshd_config: line 12: bad" >&2\nexit 1\n',
+    }[mode]
+    fake = tmp_path / "sshd"
+    fake.write_text("#!/bin/sh\n" + behaviour)
+    fake.chmod(0o755)
+    probe = tmp_path / "sshd-probe.sh"
+    probe.write_text(
+        "set -Eeuo pipefail\n"
+        "trap 'echo TRAP-FIRED >&2; exit 9' ERR\n"
+        "step_ok() { printf 'OK: %s\\n' \"$*\"; }\n"
+        "step_skipped() { printf 'SKIPPED: %s\\n' \"$*\"; }\n"
+        'warn() { printf "WARNED: %s\\n" "$*" >&2; }\n'
+        'die() { printf "DIED: %s\\n" "$2" >&2; exit 1; }\n'
+        'write_file() { cat > "$1"; }\n'
+        # Ownership is not what these tests are about, and a test cannot have
+        # root; everything else runs for real, including the stand-in sshd.
+        "sudo_run() {\n"
+        '  case "$1" in\n'
+        f'    {fake}) shift; "{fake}" "$@" ;;\n'
+        '    install) mkdir -p "${@: -1}" ;;\n'
+        "    systemctl) return 1 ;;\n"
+        '    *) "$@" ;;\n'
+        "  esac\n"
+        "}\n"
+        "systemctl() { return 1; }\n"
+        "DRY_RUN=0\nTUNNEL_USER=shelfos-tunnel\n"
+        f"TUNNEL_KEYS={tmp_path}/keys\n"
+        f"TUNNEL_KEYS_COMMAND={tmp_path}/bin/tunnel-keys\n"
+        f"SSHD_DROPIN={dropin}\nSSHD_BIN={fake}\n"
+        f"SSHD_DROPIN_DIR={tmp_path}\nSSHD_RUN_DIR={run_dir}\n"
+        f"REPO_ROOT={_SCRIPT.parent}\n"
+        "ENV_FILE_SYSTEM=/nonexistent\n"
+        'valid_port() { [ "$1" -ge 1 ] 2>/dev/null && [ "$1" -le 65535 ]; }\n'
+        "env_file_value() { :; }\n"
+        f"{body}\ndeploy_tunnel_sshd\n"
+    )
+    result = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    return result.stdout + result.stderr, dropin
+
+
+def test_sshd_refusing_to_test_anything_is_not_our_configuration(
+    tmp_path: Path,
+) -> None:
+    """What a fresh container does, and what killed a deploy at step 5 of 13.
+
+    `sshd -t` will not test a configuration at all while /run/sshd is missing,
+    and on a machine where ssh has never started it is missing — systemd makes
+    it when the service comes up. The check was therefore failing over something
+    it had written nothing about, and withdrawing a perfectly good file.
+    """
+    output, dropin = _sshd_probe(tmp_path, "needs-run-dir")
+    assert "DIED" not in output, output
+    assert "TRAP-FIRED" not in output
+    assert "OK: sshd will take registered printers" in output
+    assert "Match User shelfos-tunnel" in dropin.read_text()
+
+
+def test_a_configuration_sshd_really_rejects_is_withdrawn(tmp_path: Path) -> None:
+    """The case the check exists for: our file is the problem, so it goes, and
+    nothing is reloaded."""
+    output, dropin = _sshd_probe(tmp_path, "rejects-ours")
+    assert "DIED" in output
+    assert not dropin.exists()
+
+
+def test_an_already_broken_sshd_config_is_not_blamed_on_this_deploy(
+    tmp_path: Path,
+) -> None:
+    """It fails without our file too, so withdrawing ours fixes nothing. Put it
+    back, say the configuration could not be checked, and carry on rather than
+    ending a deploy over something that was already there."""
+    output, dropin = _sshd_probe(tmp_path, "broken-anyway")
+    assert "DIED" not in output
+    assert "WARNED" in output
+    assert "not verified" in output
+    assert "Match User shelfos-tunnel" in dropin.read_text()

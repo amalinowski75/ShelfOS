@@ -53,7 +53,12 @@ readonly TUNNEL_HOME="/var/lib/shelfos-tunnel"
 # not by trusting whatever wrote the file.
 readonly TUNNEL_KEYS="$DATA_DIR/tunnel-keys"
 readonly TUNNEL_KEYS_COMMAND="/usr/local/lib/shelfos/tunnel-keys"
-readonly SSHD_DROPIN="/etc/ssh/sshd_config.d/60-shelfos-tunnel.conf"
+readonly SSHD_BIN="/usr/sbin/sshd"
+# sshd's privilege-separation directory. systemd makes it when ssh starts
+# (RuntimeDirectory=sshd); `sshd -t` refuses to test anything without it.
+readonly SSHD_RUN_DIR="/run/sshd"
+readonly SSHD_DROPIN_DIR="/etc/ssh/sshd_config.d"
+readonly SSHD_DROPIN="$SSHD_DROPIN_DIR/60-shelfos-tunnel.conf"
 readonly CADDYFILE="/etc/caddy/Caddyfile"
 readonly UDEV_RULE="/etc/udev/rules.d/99-brother-ql.rules"
 readonly DEFAULT_PORT=9000
@@ -1015,11 +1020,25 @@ deploy_tunnel_keys_file() {
     fi
 }
 
+# Whether sshd accepts the configuration as it now stands.
+#
+# `sshd -t` refuses to test anything at all when its run directory is missing —
+# "Missing privilege separation directory" — and on a machine where ssh has
+# never started, it IS missing: systemd makes it (RuntimeDirectory=sshd) when
+# the service comes up. A deploy on a fresh container therefore fails its own
+# check for a reason that has nothing to do with what it wrote. Making the
+# directory is exactly what ssh.service does, costs nothing, and does not
+# survive a reboot.
+sshd_config_is_good() {
+    [ -d "$SSHD_RUN_DIR" ] || sudo_run install -d -m 0755 -o root -g root "$SSHD_RUN_DIR"
+    sudo_run "$SSHD_BIN" -t
+}
+
 deploy_tunnel_sshd() {
     # No sshd, nothing to configure: a server nobody can ssh into cannot carry a
     # tunnel either, and installing an ssh server unasked is not this script's
     # business.
-    if [ ! -d /etc/ssh/sshd_config.d ] || [ ! -x /usr/sbin/sshd ]; then
+    if [ ! -d "$SSHD_DROPIN_DIR" ] || [ ! -x "$SSHD_BIN" ]; then
         warn "no ssh server here, so a printer cannot register itself; install openssh-server and run this again"
         return 0
     fi
@@ -1034,14 +1053,23 @@ deploy_tunnel_sshd() {
     fi
     sshd_dropin_body | write_file "$SSHD_DROPIN" 644 "root:root"
 
-    # Validated before anything is reloaded, and withdrawn if it does not pass:
-    # a bad sshd config that gets reloaded is how somebody loses the only way
-    # into their own server. `reload` rather than `restart` for the same reason
-    # — open sessions, including the one running this, survive it.
+    # Validated before anything is reloaded, and withdrawn if WE are what it
+    # rejects: a bad sshd config that gets reloaded is how somebody loses the
+    # only way into their own server. `reload` rather than `restart` for the same
+    # reason — open sessions, including the one running this, survive it.
     if [ "$DRY_RUN" = 0 ]; then
-        if ! sudo_run /usr/sbin/sshd -t; then
+        if ! sshd_config_is_good; then
             sudo_run rm -f "$SSHD_DROPIN"
-            die 1 "sshd rejected the configuration this would have added, so it was removed and nothing was reloaded"
+            if sshd_config_is_good; then
+                die 1 "sshd rejected the configuration this would have added, so it was removed and nothing was reloaded"
+            fi
+            # It rejects the configuration WITHOUT ours as well, so ours is not
+            # what is wrong and withdrawing it fixes nothing. Put it back, and
+            # say so rather than blaming this deploy for what was already there.
+            sshd_dropin_body | write_file "$SSHD_DROPIN" 644 "root:root"
+            warn "sshd will not validate its own existing configuration, so this one could not be checked; run 'sudo sshd -t' and fix what it reports"
+            step_ok "sshd configuration written but not verified"
+            return 0
         fi
         # A validated config that could not be reloaded is not a failed install:
         # sshd may simply not be running here yet, and it reads this file when it

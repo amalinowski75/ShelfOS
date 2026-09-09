@@ -64,6 +64,12 @@ the deployment is a server and a browser.
   remains for what the browser cannot cover — a server without the sshd block, or
   a read-only account, which may read the page but not change what this server
   accepts — with `list` and `remove` beside it.
+- `sshd -t` will not test a configuration at all while its run directory is
+  missing, and on a machine where ssh has never started it is — systemd makes it
+  when the service comes up. The check now makes it first, and when sshd still
+  refuses, asks again **without** the new file: only a rejection that goes away
+  with the file removed is the file's fault. A configuration that was already
+  broken is reported rather than blamed on the deploy.
 - An install made before any of this **learns the two new settings** even though
   its `/etc/shelfos/env` is never replaced (it holds the signing secret and the
   shop keys). Only what is missing or empty is filled in; an answer already
