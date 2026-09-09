@@ -664,6 +664,12 @@ DEPLOY_WANT_TLS=1
 # that is the only thing that should reach it, and a plain-HTTP port on a network
 # interface carries sign-ins in the clear. Anything else is asked for explicitly.
 DEPLOY_LISTEN="127.0.0.1"
+# Set by any step that changes what a running service is executing. `enable
+# --now` starts a stopped service and does nothing to a running one, so without
+# this a re-deploy would leave the old process serving the old code — with the
+# new templates on disk, which is a service that half-changed: a new link in the
+# navigation, and a 404 behind it, because routes are registered at import.
+DEPLOY_RESTART=0
 DEPLOY_WANT_PRINTER=""
 DEPLOY_PRINTER_GROUP="plugdev"
 DEPLOY_IMPORT_DB=""
@@ -1271,6 +1277,7 @@ deploy_reinstall_code() {
     else
         sudo_run git -C "$INSTALL_DIR" checkout --quiet -B "$branch" FETCH_HEAD
     fi
+    DEPLOY_RESTART=1
     step_ok "$installed → $DEPLOY_SOURCE_SHA ($branch)"
 }
 
@@ -1316,6 +1323,7 @@ deploy_step_venv() {
         sudo_run "$INSTALL_DIR/.venv/bin/pip" install --quiet --upgrade pip
         sudo_run "$INSTALL_DIR/.venv/bin/pip" install --quiet --editable "$INSTALL_DIR"
         sudo_run touch "$INSTALL_DIR/.venv/.shelfos-installed"
+        DEPLOY_RESTART=1
         step_ok
     fi
     # The data is the service's; the code is not. ProtectSystem=strict already
@@ -1438,10 +1446,17 @@ deploy_step_unit() {
             sudo_run cp "$SERVICE_PATH" "$SERVICE_PATH.bak-$(date +%Y%m%d%H%M%S)"
         fi
         printf '%s\n' "$rendered" | write_file "$SERVICE_PATH" 644 "root:root"
+        DEPLOY_RESTART=1
         step_ok
     fi
     sudo_run systemctl daemon-reload
     sudo_run systemctl enable --now "$SERVICE_NAME"
+    if [ "$DEPLOY_RESTART" = 1 ]; then
+        # `enable --now` does nothing to a service that is already running, and
+        # what changed above is exactly what a running one has already loaded.
+        note "        restarting: what it is running changed"
+        sudo_run systemctl restart "$SERVICE_NAME"
+    fi
 }
 
 deploy_step_printer() {

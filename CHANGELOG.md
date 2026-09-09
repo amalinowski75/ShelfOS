@@ -44,6 +44,13 @@ the deployment is a server and a browser.
   else, and the page fills its name in. Not the service account: that one has no
   shell and a root-owned home, so sshd would refuse it, and giving it those would
   turn a confined service account into a login account.
+- **A deploy that changed the code restarts the service.** `enable --now` starts
+  a stopped service and does nothing to a running one, so a re-deploy left the
+  old process serving the old code while the new templates sat on disk — which is
+  a service half-changed: a new link in the navigation, and a 404 behind it,
+  because routes are registered at import and templates are read per request. Now
+  anything that changes what a running service executes — the code, the
+  virtualenv, the unit — restarts it, and nothing else does.
 - **`deploy --reinstall` moves the installed code.** It used to skip that step
   outright as "already a checkout", so an install cloned from `main` stayed on
   `main` through an update and a re-deploy — every step reporting success, with

@@ -1594,3 +1594,57 @@ def test_hand_edited_files_stop_it(tmp_path: Path) -> None:
     output = _run_probe(probe)
     assert "DIED" in output
     assert (install / "app.txt").read_text() == "edited on the server\n"
+
+
+def _unit_probe(tmp_path: Path, restart: str, seed: bool = True) -> str:
+    """Run the unit step with systemd replaced, and see what it was told."""
+    script = _SCRIPT.read_text()
+    body = script[
+        script.index("deploy_step_unit() {") : script.index("deploy_step_printer() {")
+    ]
+    log = tmp_path / "systemctl.log"
+    log.unlink(missing_ok=True)
+    unit = tmp_path / "shelfos.service"
+    if seed:
+        # An installed unit that differs from the rendered one, which is what a
+        # deploy carrying a new version of it finds.
+        unit.write_text("[Service]\nExecStart=/bin/true\n")
+    probe = tmp_path / "unit.sh"
+    probe.write_text(
+        "set -Eeuo pipefail\n"
+        "trap 'echo TRAP-FIRED >&2; exit 9' ERR\n"
+        "step() { :; }\nstep_ok() { :; }\nstep_skipped() { :; }\nnote() { :; }\n"
+        'write_file() { cat > "$1"; }\n'
+        f'sudo_run() {{ if [ "$1" = systemctl ]; then printf "%s\\n" "$*" >> {log};'
+        ' else "$@"; fi; }\n'
+        f"SERVICE_PATH={unit}\nSERVICE_NAME=shelfos.service\n"
+        f"REPO_ROOT={_SCRIPT.parent}\nDEPLOY_PORT=9000\nDEPLOY_LISTEN=127.0.0.1\n"
+        f"DEPLOY_PRINTER_GROUP=plugdev\nDEPLOY_WANT_PRINTER=1\nDEPLOY_RESTART={restart}\n"
+        "ask_yes_no() { return 0; }\n"
+        f"{body}\ndeploy_step_unit\n"
+    )
+    subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    return log.read_text() if log.exists() else ""
+
+
+def test_a_deploy_that_changed_the_code_restarts_the_service(tmp_path: Path) -> None:
+    """`enable --now` starts a stopped service and does nothing to a running
+    one — so a re-deploy left the old process serving the old code, with the new
+    templates on disk: a new link in the navigation and a 404 behind it, because
+    routes are registered at import and templates are read per request."""
+    assert "restart shelfos.service" in _unit_probe(tmp_path, restart="1")
+
+
+def test_a_deploy_that_changed_nothing_leaves_it_running(tmp_path: Path) -> None:
+    """Restarting for nothing drops every connection in flight."""
+    _unit_probe(tmp_path, restart="1")  # installs the unit this deploy renders
+    calls = _unit_probe(tmp_path, restart="0", seed=False)  # and again, unchanged
+    assert "restart shelfos.service" not in calls
+    assert "enable --now shelfos.service" in calls
+
+
+def test_a_new_version_of_the_unit_restarts_it_by_itself(tmp_path: Path) -> None:
+    """Writing a unit and not restarting leaves the old command line running."""
+    assert "restart shelfos.service" in _unit_probe(tmp_path, restart="0")
