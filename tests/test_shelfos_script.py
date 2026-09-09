@@ -1232,3 +1232,85 @@ def test_an_already_broken_sshd_config_is_not_blamed_on_this_deploy(
     assert "WARNED" in output
     assert "not verified" in output
     assert "Match User shelfos-tunnel" in dropin.read_text()
+
+
+# --- which address the service binds ------------------------------------------
+
+
+def _rendered_unit(tmp_path: Path, *args: str) -> str:
+    """The unit a dry-run deploy would install, as it prints it."""
+    env, _ = _sudo_trap(tmp_path)
+    result = _run("deploy", "--dry-run", "-y", *args, env_extra=env)
+    assert result.returncode == 0, result.stderr
+    return result.stderr
+
+
+def test_the_service_binds_loopback_unless_it_is_told_otherwise(
+    tmp_path: Path,
+) -> None:
+    """The default is the safe one: a plain-HTTP port on a network interface
+    carries sign-ins in the clear, so it is asked for, never assumed."""
+    unit = _rendered_unit(tmp_path, "--no-tls")
+    assert "--host 127.0.0.1" in unit
+    assert "--host 0.0.0.0" not in unit
+
+
+def test_listen_puts_the_address_in_the_unit(tmp_path: Path) -> None:
+    """Reaching the service at the machine's own address, with no proxy device
+    or port forward in between — which is the point of the option."""
+    unit = _rendered_unit(tmp_path, "--no-tls", "--listen", "0.0.0.0")
+    assert "--host 0.0.0.0 \\" in unit
+    # The line keeps its continuation, or the unit stops parsing there and
+    # every argument after it is silently lost.
+    assert "--port 9000" in unit
+
+
+def test_a_non_loopback_bind_says_what_it_costs(tmp_path: Path) -> None:
+    """It is a reasonable thing to want and an unreasonable thing to do by
+    accident, so the summary says plainly what is being published."""
+    output = _rendered_unit(tmp_path, "--no-tls", "--listen", "0.0.0.0")
+    assert "plain HTTP" in output
+
+
+@pytest.mark.parametrize(
+    "address", ["localhost", "0.0.0.0.0", "shelf.example", "", "1.2.3.4:9000"]
+)
+def test_a_bind_address_that_is_not_an_address_is_refused(
+    tmp_path: Path, address: str
+) -> None:
+    """A name would be resolved by uvicorn at start-up, so a typo becomes a
+    service that will not start, for a reason two layers down in the journal."""
+    env, _ = _sudo_trap(tmp_path)
+    result = _run(
+        "deploy", "--dry-run", "-y", "--no-tls", "--listen", address, env_extra=env
+    )
+    assert result.returncode != 0
+    assert "--listen" in result.stderr
+
+
+def test_the_installed_address_is_read_back_from_the_unit(tmp_path: Path) -> None:
+    """`status` asks the service where it actually is: a health check aimed at
+    127.0.0.1 reports "no answer" for a perfectly healthy service bound
+    somewhere else."""
+    script = _SCRIPT.read_text()
+    body = script[
+        script.index("installed_listen() {") : script.index("installed_port() {")
+    ]
+    unit = tmp_path / "shelfos.service"
+    unit.write_text(
+        (_SCRIPT.parent / "deploy" / "shelfos.service")
+        .read_text()
+        .replace("--host 127.0.0.1", "--host 10.0.3.42")
+    )
+    probe = tmp_path / "listen.sh"
+    probe.write_text(f"SERVICE_PATH={unit}\n{body}\ninstalled_listen\n")
+    result = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    assert result.stdout.strip() == "10.0.3.42", result.stderr
+
+    probe.write_text(f"SERVICE_PATH=/nonexistent\n{body}\ninstalled_listen\n")
+    fallback = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    assert fallback.stdout.strip() == "127.0.0.1"

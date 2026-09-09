@@ -391,6 +391,11 @@ checking its work, and for the reasons behind each step, which are the part a
 script cannot carry. The one thing it deliberately does not do is touch the
 server: the setting above is the administrator's to make.
 
+If the server has no proxy in front of it — a test container, say — deploy it
+with `--listen 0.0.0.0` and reach it at its own address; the service otherwise
+binds loopback and needs a forwarded port to be reachable at all, which is what
+makes the address in the browser useless as an ssh target.
+
 The page proposes the ssh target from the address you are reading it at, with
 one exception that matters in a container: when that address is loopback, the
 browser has come through a proxy or a forwarded port, and ssh from the machine

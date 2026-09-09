@@ -346,6 +346,17 @@ require_checkout() {
     [ -z "$missing" ] || die 1 "this does not look like a ShelfOS checkout; missing:$missing"
 }
 
+# An address the service can bind: an IP literal, and nothing else. A name would
+# be resolved by uvicorn at start-up, which turns a typo or a DNS wobble into a
+# service that will not start, for a reason two layers down in the journal.
+valid_bind_address() {
+    python3 -c 'import ipaddress,sys; ipaddress.ip_address(sys.argv[1])' "$1" 2> /dev/null
+}
+
+is_loopback_address() {
+    python3 -c 'import ipaddress,sys; sys.exit(0 if ipaddress.ip_address(sys.argv[1]).is_loopback else 1)' "$1" 2> /dev/null
+}
+
 valid_port() {
     case $1 in
         ''|*[!0-9]*) return 1 ;;
@@ -387,6 +398,17 @@ is_deployed() { [ -e "$SERVICE_PATH" ] || [ -d "$INSTALL_DIR" ]; }
 # it. Deploy templates --port into ExecStart, so the unit is the one place that
 # knows; assuming the default here made `status` report a healthy install as
 # unreachable, and made `update` tell the operator to roll back a good update.
+# Which address the installed unit binds, read from the unit itself for the same
+# reason the port is: it is where the answer actually lives, and asking anywhere
+# else makes `status` report on a service nobody is running.
+installed_listen() {
+    local host=""
+    if [ -r "$SERVICE_PATH" ]; then
+        host=$(sed -n 's/^[[:space:]]*--host[[:space:]]\{1,\}\([^[:space:]\\]\{1,\}\).*/\1/p' "$SERVICE_PATH" | head -1)
+    fi
+    printf '%s' "${host:-127.0.0.1}"
+}
+
 installed_port() {
     local port=""
     if [ -r "$SERVICE_PATH" ]; then
@@ -403,10 +425,16 @@ gen_secret() {
 }
 
 # health_probe PORT SECONDS — poll /health until it answers or time runs out.
+# health_probe PORT SECONDS [HOST] — wait for /health to answer.
+#
+# HOST because a service that binds one address does not answer on another, and
+# asking the wrong one reads as "it never started". A wildcard bind is asked at
+# loopback, which it answers and which needs no route.
 health_probe() {
-    local port=$1 seconds=$2 waited=0
+    local port=$1 seconds=$2 host=${3:-127.0.0.1} waited=0
+    case $host in 0.0.0.0|::|"") host=127.0.0.1 ;; esac
     while [ "$waited" -lt "$seconds" ]; do
-        if curl -fsS --max-time 2 "http://127.0.0.1:$port/health" > /dev/null 2>&1; then
+        if curl -fsS --max-time 2 "http://$host:$port/health" > /dev/null 2>&1; then
             return 0
         fi
         sleep 1
@@ -582,6 +610,8 @@ settings in /etc/shelfos/env, a systemd unit, and Caddy holding the certificate.
   --port N               port the service listens on (default 9000)
   --admin-user NAME      first admin's username (default admin)
   --admin-password-stdin read the first admin's password from stdin
+  --listen ADDRESS       address the service binds (default 127.0.0.1; 0.0.0.0
+                         to reach it from another machine, in plain HTTP)
   --no-caddy             install the service only; arrange TLS yourself
   --no-tls               no domain, no Caddy (implies --no-caddy)
   --printer/--no-printer keep or strip the label-printer support
@@ -603,6 +633,10 @@ DEPLOY_PORT=""
 DEPLOY_ADMIN_USER="admin"
 DEPLOY_ADMIN_PASSWORD=""
 DEPLOY_WANT_CADDY=1
+# Which address the service binds. Loopback by default: with a proxy in front
+# that is the only thing that should reach it, and a plain-HTTP port on a network
+# interface carries sign-ins in the clear. Anything else is asked for explicitly.
+DEPLOY_LISTEN="127.0.0.1"
 DEPLOY_WANT_PRINTER=""
 DEPLOY_PRINTER_GROUP="plugdev"
 DEPLOY_IMPORT_DB=""
@@ -682,6 +716,8 @@ deploy_gather() {
         DEPLOY_PORT=$DEFAULT_PORT
     fi
     valid_port "$DEPLOY_PORT" || die 2 "port must be a number between 1 and 65535, not '$DEPLOY_PORT'"
+    valid_bind_address "$DEPLOY_LISTEN" \
+        || die 2 "--listen takes an IP address, not '$DEPLOY_LISTEN' (0.0.0.0 for every interface)"
 
     if [ "$DEPLOY_WANT_CADDY" = 1 ] && [ -z "$DEPLOY_DOMAIN" ]; then
         if [ "$DRY_RUN" = 1 ] || ! have_tty; then
@@ -749,8 +785,10 @@ deploy_summary() {
     info "  service         $SERVICE_NAME  port $DEPLOY_PORT, user $SERVICE_USER"
     if [ "$DEPLOY_WANT_CADDY" = 1 ]; then
         info "  proxy           Caddy on $DEPLOY_DOMAIN"
+    elif is_loopback_address "$DEPLOY_LISTEN"; then
+        info "  proxy           none — reachable at $DEPLOY_LISTEN:$DEPLOY_PORT, from this machine only"
     else
-        info "  proxy           none — the service listens on 127.0.0.1:$DEPLOY_PORT only"
+        info "  proxy           ${C_YELLOW}none — $DEPLOY_LISTEN:$DEPLOY_PORT, in plain HTTP, to anything that can reach it${C_OFF}"
     fi
     if [ "$DEPLOY_WANT_PRINTER" = 1 ]; then
         info "  label printer   kept, group $DEPLOY_PRINTER_GROUP, udev rule installed"
@@ -781,6 +819,7 @@ cmd_deploy() {
             --port)                 DEPLOY_PORT=${2:-}; shift 2 ;;
             --admin-user)           DEPLOY_ADMIN_USER=${2:-}; shift 2 ;;
             --admin-password-stdin) IFS= read -r DEPLOY_ADMIN_PASSWORD || true; shift ;;
+            --listen)               DEPLOY_LISTEN=${2:-}; shift 2 ;;
             --no-caddy)             DEPLOY_WANT_CADDY=0; shift ;;
             --no-tls)               DEPLOY_WANT_CADDY=0; DEPLOY_DOMAIN=""; shift ;;
             --printer)              DEPLOY_WANT_PRINTER=1; shift ;;
@@ -1231,9 +1270,10 @@ deploy_step_unit() {
     step "systemd unit"
     local rendered tmp
     tmp=$(mktemp "${TMPDIR:-/tmp}/shelfos-unit.XXXXXX")
-    # The unit in deploy/ is the source of truth; only the port and the printer
-    # block are decided here.
-    sed -e "s|^    --port [0-9]*|    --port $DEPLOY_PORT|" \
+    # The unit in deploy/ is the source of truth; only the address, the port and
+    # the printer block are decided here.
+    sed -e "s|^    --host .*|    --host $DEPLOY_LISTEN \\\\|" \
+        -e "s|^    --port [0-9]*|    --port $DEPLOY_PORT|" \
         -e "s|^SupplementaryGroups=.*|SupplementaryGroups=$DEPLOY_PRINTER_GROUP|" \
         "$REPO_ROOT/deploy/shelfos.service" > "$tmp"
     if [ "$DEPLOY_WANT_PRINTER" = 0 ]; then
@@ -1360,12 +1400,12 @@ deploy_step_verify() {
         step_skipped "dry run"
         return 0
     fi
-    if health_probe "$DEPLOY_PORT" 30; then
+    if health_probe "$DEPLOY_PORT" 30 "$DEPLOY_LISTEN"; then
         step_ok
     else
         step_ok "no answer within 30 seconds"
         info ""
-        warn "ShelfOS did not answer on 127.0.0.1:$DEPLOY_PORT within 30 seconds."
+        warn "ShelfOS did not answer on $DEPLOY_LISTEN:$DEPLOY_PORT within 30 seconds."
         info ""
         systemctl status "$SERVICE_NAME" --no-pager -l 2>&1 | head -20 >&2 || true
         info ""
@@ -1382,8 +1422,17 @@ deploy_step_verify() {
         info "  https://$DEPLOY_DOMAIN  (Caddy will get the certificate on the first request;"
         info "  the name has to resolve here and ports 80 and 443 have to be open — 80 too,"
         info "  because that is how the certificate is issued and renewed)"
+    elif is_loopback_address "$DEPLOY_LISTEN"; then
+        info "  http://$DEPLOY_LISTEN:$DEPLOY_PORT  — put your own TLS in front of it"
+        info ""
+        info "  Nothing outside this machine can reach that. To open it up, either put a"
+        info "  proxy in front of it, or re-run with --listen 0.0.0.0, which serves it"
+        info "  directly in plain HTTP — sign-ins and all — to whatever can route here."
     else
-        info "  http://127.0.0.1:$DEPLOY_PORT  — put your own TLS in front of it"
+        info "  http://$DEPLOY_LISTEN:$DEPLOY_PORT  — plain HTTP, on every network that can reach it"
+        info ""
+        warn "This carries sign-ins in the clear. Fine on a private bridge or a test box;"
+        warn "put TLS in front of it before anybody types a real password into it."
     fi
     info "  ./shelfos.sh status     what state it is in"
     info "  ./shelfos.sh backup     take one now; nothing else does it for you"
@@ -1475,7 +1524,7 @@ cmd_update() {
 
     if [ "$want_restart" = 1 ]; then
         sudo_run systemctl restart "$SERVICE_NAME"
-        if health_probe "$port" 30; then
+        if health_probe "$port" 30 "$(installed_listen)"; then
             info "${C_GREEN}Updated and answering.${C_OFF}"
         else
             warn "ShelfOS did not come back on port $port."
@@ -1522,11 +1571,11 @@ cmd_status() {
         status_line "service" "${active:-unknown} (${enabled:-unknown} at boot)"
         [ "$active" = active ] || healthy=1
 
-        local port; port=$(installed_port)
-        if health_probe "$port" 1; then
-            status_line "health" "answering on 127.0.0.1:$port"
+        local port listen; port=$(installed_port); listen=$(installed_listen)
+        if health_probe "$port" 1 "$listen"; then
+            status_line "health" "answering on $listen:$port"
         else
-            status_line "health" "no answer on 127.0.0.1:$port"
+            status_line "health" "no answer on $listen:$port"
             healthy=1
         fi
 
@@ -1735,7 +1784,7 @@ cmd_password() {
         if [ "$(systemctl is-active "$SERVICE_NAME" 2>/dev/null)" != active ]; then
             if ask_yes_no "The service is not running. Start it now?" y; then
                 sudo_run systemctl start "$SERVICE_NAME"
-                if health_probe "$(installed_port)" 30; then
+                if health_probe "$(installed_port)" 30 "$(installed_listen)"; then
                     info "${C_GREEN}Running.${C_OFF}"
                 else
                     warn "still not answering; ./shelfos.sh status has the log"

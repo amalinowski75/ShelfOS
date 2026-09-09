@@ -44,6 +44,12 @@ the deployment is a server and a browser.
   else, and the page fills its name in. Not the service account: that one has no
   shell and a root-owned home, so sshd would refuse it, and giving it those would
   turn a confined service account into a login account.
+- **`deploy --listen ADDRESS`**, so a server without a proxy can be reached at
+  its own address instead of through a forwarded port. Still 127.0.0.1 by
+  default — a plain-HTTP port on a network interface carries sign-ins in the
+  clear, and the summary says so when one is asked for. `status` and `update`
+  read the address back out of the unit, so they stop reporting "no answer" for
+  a healthy service that simply is not on loopback.
 - The ssh target offered is no longer whatever the browser's address bar says.
   A loopback address there means a proxy or a tunnel in between — a container's
   proxy device, a published port, an `ssh -L` — and ssh from the machine with

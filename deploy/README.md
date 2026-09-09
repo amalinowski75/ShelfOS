@@ -44,6 +44,23 @@ an unhandled exception becomes a 500 from Starlette's error middleware, which
 wraps the app's own header middleware, so that one response goes out without the
 security headers. Caddy adds them to everything.
 
+### Reaching it without a proxy
+
+The service binds 127.0.0.1, because with Caddy in front that is the only thing
+that should reach it. Without a proxy — a test container, a private bridge —
+that leaves it reachable from nowhere but the machine itself, and a forwarded
+port is a workaround for a decision rather than the decision:
+
+```bash
+sudo ./shelfos.sh deploy --no-tls --listen 0.0.0.0
+```
+
+Then it answers at the machine's own address, which is also the address the
+label-printer page will offer for ssh. It is plain HTTP: fine on a bridge only
+you can reach, not fine anywhere a password matters. `./shelfos.sh status` reads
+the address back out of the unit, so it reports on the service that is actually
+running rather than on loopback.
+
 ## Doing it by hand
 
 The script does exactly this, and this is the only path on a host it refuses —
