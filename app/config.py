@@ -179,6 +179,13 @@ LABEL_FONT_BOLD = os.environ.get("SHELFOS_LABEL_FONT_BOLD", "").strip()
 # writes fail either way.
 LABEL_DEVICE = os.environ.get("SHELFOS_LABEL_DEVICE", "").strip()
 
+# The account on THIS machine that a computer with a label printer logs in as to
+# carry it here over ssh (see "./shelfos.sh tunnel-key"). Read for one purpose:
+# filling it into the form on /label-printer, so nobody has to be told the name.
+# Empty (the default, and what a deploy that predates the account leaves) means
+# the field starts blank and is typed by hand.
+TUNNEL_USER = os.environ.get("SHELFOS_TUNNEL_USER", "").strip()
+
 # Which Brother QL is on the other end. The 800 series has its own raster
 # header, so a wrong model here produces a printer that takes the job and does
 # nothing with it.

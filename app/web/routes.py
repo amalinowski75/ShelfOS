@@ -756,6 +756,9 @@ def label_printer_page(
         "label_printer.html",
         {
             "current_user": user,
+            # Filled in by the deploy that created the account; blank on an
+            # install that predates it, and typed by hand there.
+            "ssh_user": config.TUNNEL_USER,
             "ssh_host": request.url.hostname or "",
             "default_device": label_setup.DEFAULT_DEVICE,
             "default_ssh_port": label_setup.DEFAULT_SSH_PORT,

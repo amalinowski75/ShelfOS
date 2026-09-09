@@ -75,6 +75,29 @@ def test_the_ssh_target_is_proposed_from_the_host_header(client: TestClient) -> 
     assert "shelf.example:8080" not in html
 
 
+def test_the_account_the_deploy_made_is_filled_in(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nobody should have to be told the name of an account they did not create."""
+    monkeypatch.setattr(config, "TUNNEL_USER", "shelfos-tunnel")
+    html = client.get("/label-printer").text
+    assert (
+        'id="ssh_user" name="ssh_user" required\n               value="shelfos-tunnel"'
+        in html
+    )
+
+
+def test_an_install_that_predates_the_account_leaves_the_field_blank(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Filling in a name that is not there would send people to an account that
+    does not exist, which fails as "Permission denied" — the same words as a key
+    nobody authorised."""
+    monkeypatch.setattr(config, "TUNNEL_USER", "")
+    html = client.get("/label-printer").text
+    assert 'id="ssh_user" name="ssh_user" required\n               value=""' in html
+
+
 def test_the_page_says_nothing_about_the_server(client: TestClient) -> None:
     """A negative assertion because it is a requirement, not an accident.
 

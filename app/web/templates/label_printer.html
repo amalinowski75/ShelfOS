@@ -19,7 +19,7 @@
       <label for="ssh_user">Your ssh account on the server</label>
       <div class="row-fields">
         <input class="control" id="ssh_user" name="ssh_user" required
-               placeholder="your-login" autocomplete="off" />
+               value="{{ ssh_user }}" placeholder="shelfos-tunnel" autocomplete="off" />
         <span class="at">@</span>
         <input class="control" id="ssh_host" name="ssh_host" required
                value="{{ ssh_host }}" autocomplete="off" />
@@ -28,10 +28,12 @@
                type="number" min="1" max="65535" value="{{ default_ssh_port }}" />
       </div>
       <p class="muted">
-        This is a shell account on the server machine, reached over ssh — not your
-        ShelfOS login. You must already be able to run
-        <code>ssh you@server</code> from this computer; the script checks that
-        before it changes anything, and stops with what to do if you cannot.
+        An account on the server machine, reached over ssh — not your ShelfOS
+        login. The install created <code>shelfos-tunnel</code> for exactly this,
+        and it is filled in above when the server knows its name. That account
+        has no privileges and no shell: an authorised key may bind one port on
+        the server and do nothing else — no commands, no other ports, no
+        connections out.
       </p>
     </div>
 
@@ -60,6 +62,22 @@
         on your computer uses it. The group is what lets you open the printer
         without root — <code>plugdev</code> on most desktops, <code>lp</code> on
         systems that keep printers there.
+      </p>
+    </div>
+
+    <div class="notice">
+      <strong>It takes two runs, and one line on the server.</strong>
+      <p>
+        The script makes its own ssh key on this computer — the private half never
+        travels, which is why this page hands out a script and never a credential.
+        Nothing can use that key until the server is told about it, so the first
+        run stops and prints one line to paste on the server:
+      </p>
+      <pre><code>./shelfos.sh tunnel-key add "ssh-ed25519 AAAA... shelfos-label@your-machine"</code></pre>
+      <p class="muted">
+        Run that where ShelfOS is installed (it needs sudo there), then run the
+        script here again and it carries on. <code>./shelfos.sh tunnel-key list</code>
+        shows what is authorised, and <code>remove</code> withdraws a machine.
       </p>
     </div>
 

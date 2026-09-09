@@ -147,7 +147,7 @@ def test_a_dry_run_deploy_walks_the_steps_in_order(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     seen = [line for line in result.stderr.splitlines() if line.strip().startswith("[")]
     numbers = [line.split("/")[0].split("[")[-1].strip() for line in seen]
-    assert numbers == [str(n) for n in range(1, 13)], seen
+    assert numbers == [str(n) for n in range(1, 14)], seen
 
 
 def test_a_dry_run_deploy_never_prints_the_password(tmp_path: Path) -> None:
@@ -644,3 +644,218 @@ def test_a_clone_names_its_database_absolutely() -> None:
     body = body[: body.index("\n}\n") + 3]
     assert 'DEPLOY_DB="sqlite:///$REPO_ROOT/data/shelfos.db"' in body
     assert "${DATABASE_URL:-$DEPLOY_DB}" in body  # a caller's value still wins
+
+
+# --- tunnel-key: who may bring a label printer here ---------------------------
+
+
+def _tunnel_probe(tmp_path: Path, body: str) -> subprocess.CompletedProcess:  # type: ignore[no-untyped-def]
+    """Run the tunnel-key functions against a home of our own.
+
+    The real ones write to /var/lib/shelfos-tunnel through sudo, which a test
+    cannot have; everything else about them — validation, the options line, the
+    add/list/remove bookkeeping — is exactly what wants testing, so the file
+    operations are pointed at tmp_path and sudo is replaced by running the
+    command directly.
+    """
+    script = _SCRIPT.read_text()
+    rule = "# " + "-" * 75
+    start = script.index("tunnel_key_options() {")
+    end = script.index(f"{rule}\n# main")
+    # tunnel_port lives up with the deploy steps, and the permitted port comes
+    # from it — so take the real one rather than stub the answer being asserted.
+    port_fn = script[
+        script.index("tunnel_port() {") : script.index("deploy_step_tunnel_user() {")
+    ]
+    home = tmp_path / "tunnel-home"
+    (home / ".ssh").mkdir(parents=True)
+    probe = tmp_path / "probe.sh"
+    probe.write_text(
+        "set -uo pipefail\n"
+        f"TUNNEL_USER=$(id -un)\nTUNNEL_HOME={home}\nDRY_RUN=0\n"
+        'info() { printf "%s\\n" "$*"; }\n'
+        'note() { printf "%s\\n" "$*"; }\n'
+        'die() { printf "%s\\n" "$2" >&2; exit "$1"; }\n'
+        'valid_port() { [ "$1" -ge 1 ] 2>/dev/null && [ "$1" -le 65535 ]; }\n'
+        "env_file_value() { :; }\n"
+        "ENV_FILE_SYSTEM=/nonexistent\n"
+        # Writes land here directly: the point of the test is what gets written.
+        'sudo_run() { "$@"; }\n'
+        'write_file() { cat > "$1"; }\n'
+        "ensure_tunnel_user() { :; }\n"
+        # Anything this probe forgot to bring along must fail the test rather
+        # than quietly expand to nothing — which is how an empty port reached an
+        # authorized_keys line here once.
+        'command_not_found_handle() { printf "MISSING: %s\\n" "$1" >&2; exit 127; }\n'
+        f"{port_fn}\n{script[start:end]}\n{body}\n"
+    )
+    return subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+
+
+def _make_key(directory: Path, comment: str) -> str:
+    """A real ed25519 public key, made the way the installer makes one.
+
+    Not a hand-written string that looks like one: `tunnel-key add` asks
+    ssh-keygen for a second opinion, and a fake would be refused there for a
+    reason that has nothing to do with what each test is about.
+    """
+    path = directory / comment.replace("@", "-")
+    subprocess.run(
+        ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", comment, "-f", str(path)],
+        check=True,
+        stdin=subprocess.DEVNULL,
+    )
+    return path.with_suffix(".pub").read_text().strip()
+
+
+@pytest.fixture(scope="module")
+def good_key(tmp_path_factory: pytest.TempPathFactory) -> str:
+    return _make_key(tmp_path_factory.mktemp("keys"), "shelfos-label@goofy")
+
+
+@pytest.mark.parametrize(
+    "mangle",
+    [
+        # Options of its own: this line is appended to a file sshd reads as
+        # configuration, so a key that brings its own permissions is the whole
+        # attack. Refused, never escaped.
+        lambda key: 'command="/bin/sh" ' + key,
+        lambda key: "no-pty," + key,
+        # A second key smuggled in on a second line, authorised unseen.
+        lambda key: key + "\nssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB7iVYt x",
+        lambda key: key + "\r\nssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC7iVYt y",
+        lambda key: key.replace("ssh-ed25519", "ssh-dss"),
+        lambda key: key.split(" ", 1)[1],  # the type stripped off
+        lambda key: key.replace("AAAA", "not-base64!!", 1),
+        lambda key: key + " $(id)",
+        lambda _key: "",
+    ],
+)
+def test_a_key_that_is_more_than_a_key_is_refused(
+    tmp_path: Path, good_key: str, mangle
+) -> None:  # type: ignore[no-untyped-def]
+    key = mangle(good_key)
+    result = _tunnel_probe(
+        tmp_path,
+        f"if valid_public_key {shlex.quote(key)};"
+        " then echo accepted; else echo refused; fi",
+    )
+    assert result.stdout.strip() == "refused", result.stdout
+
+
+def test_an_ordinary_public_key_is_accepted(tmp_path: Path, good_key: str) -> None:
+    result = _tunnel_probe(
+        tmp_path,
+        f"if valid_public_key {shlex.quote(good_key)};"
+        " then echo accepted; else echo refused; fi",
+    )
+    assert result.stdout.strip() == "accepted", result.stdout + result.stderr
+
+
+def test_an_authorized_key_may_only_bind_the_one_port(
+    tmp_path: Path, good_key: str
+) -> None:
+    """The options are the whole security story of this feature.
+
+    `restrict` turns everything off; `port-forwarding` puts back forwarding in
+    BOTH directions, which is why permitopen has to close the outgoing half —
+    without it the same key would turn the server into a proxy into whatever
+    network it sits on.
+    """
+    result = _tunnel_probe(tmp_path, f"tunnel_key_add {shlex.quote(good_key)}")
+    assert result.returncode == 0, result.stderr
+    line = (tmp_path / "tunnel-home" / ".ssh" / "authorized_keys").read_text().strip()
+    assert line.startswith("restrict,port-forwarding,")
+    assert 'permitlisten="127.0.0.1:9100"' in line
+    assert 'permitopen="127.0.0.1:1"' in line
+    assert line.endswith(good_key)
+
+
+def test_the_same_machine_coming_back_replaces_its_entry(
+    tmp_path: Path, good_key: str
+) -> None:
+    """Never two lines for one key: the older one would keep permitting an
+    older port for ever, and nothing would ever say so."""
+    result = _tunnel_probe(
+        tmp_path,
+        f"tunnel_key_add {shlex.quote(good_key)}\n"
+        f"tunnel_key_add {shlex.quote(good_key)}\n"
+        "tunnel_key_list",
+    )
+    assert result.returncode == 0, result.stderr
+    keys = (tmp_path / "tunnel-home" / ".ssh" / "authorized_keys").read_text()
+    assert keys.count("ssh-ed25519") == 1, keys
+    assert result.stdout.count("shelfos-label@goofy") == 1, result.stdout
+
+
+def test_a_key_can_be_withdrawn_by_the_name_it_was_added_under(
+    tmp_path: Path, good_key: str
+) -> None:
+    other = _make_key(tmp_path, "shelfos-label@dopey")
+    result = _tunnel_probe(
+        tmp_path,
+        f"tunnel_key_add {shlex.quote(good_key)}\n"
+        f"tunnel_key_add {shlex.quote(other)}\n"
+        "tunnel_key_remove shelfos-label@goofy\n"
+        "tunnel_key_list",
+    )
+    assert result.returncode == 0, result.stderr
+    keys = (tmp_path / "tunnel-home" / ".ssh" / "authorized_keys").read_text()
+    assert "dopey" in keys and "goofy" not in keys
+    assert "shelfos-label@dopey" in result.stdout
+
+
+def test_removing_something_that_is_not_there_fails_loudly(
+    tmp_path: Path, good_key: str
+) -> None:
+    """Silence here would read as "withdrawn" for a key that still works."""
+    result = _tunnel_probe(
+        tmp_path,
+        f"tunnel_key_add {shlex.quote(good_key)}\ntunnel_key_remove nobody@nowhere",
+    )
+    assert result.returncode != 0
+    assert "nobody@nowhere" in result.stderr
+
+
+def test_the_permitted_port_follows_the_installed_setting(tmp_path: Path) -> None:
+    """One source for the port: a key permitted to bind 9100 while the service
+    listens for 9241 is a tunnel that comes up and carries nothing."""
+    env = tmp_path / "env"
+    env.write_text("SHELFOS_LABEL_DEVICE=tcp://127.0.0.1:9241\n")
+    script = _SCRIPT.read_text()
+    body = script[
+        script.index("tunnel_port() {") : script.index("deploy_step_tunnel_user() {")
+    ]
+    rule = "# " + "-" * 75
+    helpers = script[
+        script.index("env_file_value() {") : script.index(f"{rule}\n# Shared helpers")
+    ]
+    probe = tmp_path / "port.sh"
+    probe.write_text(
+        f"ENV_FILE_SYSTEM={env}\n"
+        'valid_port() { [ "$1" -ge 1 ] 2>/dev/null && [ "$1" -le 65535 ]; }\n'
+        f"{helpers}\n{body}\ntunnel_port\n"
+    )
+    result = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    assert result.stdout.strip() == "9241", result.stderr
+
+
+def test_a_dry_run_tunnel_key_never_reaches_sudo(tmp_path: Path, good_key: str) -> None:
+    env, log = _sudo_trap(tmp_path)
+    result = _run("tunnel-key", "--dry-run", "add", good_key, env_extra=env)
+    assert result.returncode == 0, result.stderr
+    assert not log.exists(), log.read_text()
+    assert "would authorize" in result.stderr
+
+
+def test_tunnel_key_refuses_a_key_carrying_its_own_options(
+    tmp_path: Path, good_key: str
+) -> None:
+    """End to end through the real command, not only the helper."""
+    result = _run("tunnel-key", "add", 'command="/bin/sh" ' + good_key)
+    assert result.returncode == 2
+    assert "not a plain public key" in result.stderr

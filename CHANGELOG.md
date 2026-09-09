@@ -40,6 +40,22 @@ the deployment is a server and a browser.
 - The page says nothing whatever about the server. What ShelfOS itself needs is
   the administrator's, set elsewhere; the person with the printer has no way to
   act on it and no reason to see it.
+- A deploy now creates **`shelfos-tunnel`**, an account for this and nothing
+  else, and the page fills its name in. Not the service account: that one has no
+  shell and a root-owned home, so sshd would refuse it, and giving it those would
+  turn a confined service account into a login account.
+- **The key is made on the machine with the printer and stays there.** ShelfOS
+  hands out a script, never a credential — a page that handed out a private key
+  would make "can open this page" mean "has ssh access to the server", and a key
+  fetched by ten people is nobody's. The first run prints one line for the
+  server: `./shelfos.sh tunnel-key add "<public key>"`, with `list` and `remove`
+  beside it. It authorises `restrict,port-forwarding,permitopen="127.0.0.1:1",
+  permitlisten="127.0.0.1:<port>"` — bind that one port here, and nothing else.
+- The ssh check is now the connection the unit actually makes, held open for a
+  moment. `ssh host true` tested a session, which a forwarding-only key refuses
+  on purpose: the check would have failed on a setup that works. The new one
+  tells apart an unaccepted host key, a key nobody has authorised, and a port
+  already taken on the server — and each gets the command that fixes it.
 
 ## A bridge of our own for the network printer
 

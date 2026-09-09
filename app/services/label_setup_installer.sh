@@ -31,6 +31,10 @@ GROUP="@GROUP@"
 BRIDGE_SHA256="@BRIDGE_SHA256@"
 
 BRIDGE_PATH="$HOME/.local/lib/shelfos/label_bridge.py"
+# This machine's own key for the tunnel, made here and kept here. The private
+# half never travels: ShelfOS hands out this script, not a credential, so
+# opening the page can never be a way to obtain ssh access to the server.
+KEY_PATH="$HOME/.ssh/shelfos-label"
 UNIT_DIR="$HOME/.config/systemd/user"
 BRIDGE_UNIT="$UNIT_DIR/shelfos-label.service"
 TUNNEL_UNIT="$UNIT_DIR/shelfos-label-tunnel.service"
@@ -133,6 +137,8 @@ need python3 ""
 need ssh " (install openssh-client)"
 need base64 ""
 need systemctl " — this script sets up systemd user services"
+need ssh-keygen " (install openssh-client)"
+need timeout " (it is in coreutils)"
 PYTHON="$(command -v python3)"
 SSH_BIN="$(command -v ssh)"
 
@@ -157,38 +163,112 @@ if [ "$UNINSTALL" = 1 ]; then
     run sudo rm -f "$UDEV_RULE"
     run sudo udevadm control --reload
     step_ok "removed"
-    printf '\n%s\n' "Left alone on purpose: your membership of the '$GROUP' group and linger for $USER.
-Both may be older than this script and may be holding up something else. To undo
-them yourself: sudo gpasswd -d $USER $GROUP, and loginctl disable-linger $USER."
+    printf '\n%s\n' "Left alone on purpose: $KEY_PATH, your membership of the '$GROUP'
+group, and linger for $USER. The last two may be older than this script and may be
+holding up something else; the key is yours and removing it here would not
+withdraw anything anyway. To undo them yourself:
+    on the server:  ./shelfos.sh tunnel-key remove $(hostname -s 2>/dev/null || printf '<this machine>')
+    here:           rm -f $KEY_PATH $KEY_PATH.pub
+                    sudo gpasswd -d $USER $GROUP
+                    loginctl disable-linger $USER"
     exit 0
 fi
 
 # ------------------------------------------------------------------- ssh
 
+step "The key this machine logs in with"
+if [ -f "$KEY_PATH" ]; then
+    step_ok "$KEY_PATH is already here"
+elif [ "$DRY_RUN" = 1 ]; then
+    printf '    would run: ssh-keygen -t ed25519 -f %s\n' "$KEY_PATH"
+else
+    mkdir -p "$HOME/.ssh"
+    chmod 0700 "$HOME/.ssh"
+    ssh-keygen -q -t ed25519 -N "" -C "shelfos-label@$(hostname -s)" -f "$KEY_PATH"
+    step_ok "made $KEY_PATH — its private half stays on this machine"
+fi
+PUBLIC_KEY=""
+[ -f "$KEY_PATH.pub" ] && PUBLIC_KEY="$(cat "$KEY_PATH.pub")"
+
+# What the server must be told, printed wherever it is needed. One line, ready
+# to paste; the account it authorises can do nothing but bind the one port.
+authorize_hint() {
+    printf '%s\n' "On the server, in the ShelfOS checkout, run:
+
+        ./shelfos.sh tunnel-key add \"$PUBLIC_KEY\"
+
+    then run this script again."
+}
+
 if [ "$SKIP_SSH_CHECK" = 1 ]; then
-    warn "skipping the ssh check: if either half is missing, the tunnel will sit in
-    'activating' and retry for ever, saying nothing useful."
+    warn "skipping the ssh check: if the key is not authorized or the port is taken,
+    the tunnel will sit in 'activating' and retry for ever, saying nothing useful."
+elif [ "$DRY_RUN" = 1 ]; then
+    printf '    would check: the host key, then the reverse forward to %s\n' "$SSH_HOST"
 else
     step "Checking ssh to $SSH_USER@$SSH_HOST"
-    # Two separate failures that look identical from the outside — a unit stuck
-    # activating — and telling them apart here is most of the value of this
-    # script. The host key is never accepted automatically: doing that for you
-    # would throw away the one check that makes the connection mean anything.
-    known_host="$SSH_HOST"
-    [ "$SSH_PORT" = 22 ] || known_host="[$SSH_HOST]:$SSH_PORT"
-    if ! ssh-keygen -F "$known_host" >/dev/null 2>&1; then
-        die "the host key of $SSH_HOST is not known here yet.
+    # A tunnel already running would hold the very port this is about to ask
+    # for, and the test would report the trouble it is itself causing.
+    if systemctl --user is-active --quiet shelfos-label-tunnel.service 2>/dev/null; then
+        systemctl --user stop shelfos-label-tunnel.service
+    fi
+
+    # The real thing, not a proxy for it: exactly the connection the unit makes.
+    #
+    # `true` over ssh would have tested a session, which an authorized_keys entry
+    # restricted to forwarding refuses on purpose — the check would have failed
+    # on a setup that works perfectly. Asking ssh-keygen whether the host key is
+    # known would have been guesswork too: ssh finds ~ through the password file,
+    # not $HOME, so the file it reads is not always the file that would be
+    # searched. So there is one attempt, and what it says is what is reported.
+    # It succeeds only when the host key is known, the key is authorized AND the
+    # port is free on the server — between them every way the tunnel fails.
+    ssh_error="$(mktemp "${TMPDIR:-/tmp}/shelfos-ssh.XXXXXX")"
+    # Inside `if`, not after `set +e`: an ERR trap fires on a failing command
+    # whether errexit is on or not, so the failure this test EXPECTS would be
+    # reported as "failed at line …" before anything could read it. A condition
+    # is the one place bash agrees not to.
+    if timeout 8 ssh -N -T \
+        -o BatchMode=yes -o NumberOfPasswordPrompts=0 -o ConnectTimeout=10 \
+        -o ExitOnForwardFailure=yes -o IdentitiesOnly=yes -i "$KEY_PATH" \
+        -p "$SSH_PORT" -R "$BRIDGE_PORT:127.0.0.1:$BRIDGE_PORT" \
+        "$SSH_USER@$SSH_HOST" 2>"$ssh_error"
+    then
+        ssh_status=0
+    else
+        ssh_status=$?
+    fi
+    # 124 is `timeout` ending a connection that was still up — which is success:
+    # the forward was granted and held. Anything else is ssh giving up.
+    if [ "$ssh_status" = 124 ]; then
+        step_ok "the tunnel comes up, and $SSH_HOST let it bind $BRIDGE_PORT"
+        rm -f "$ssh_error"
+    else
+        ssh_says="$(cat "$ssh_error")"
+        rm -f "$ssh_error"
+        case $ssh_says in
+            *"Host key verification failed"*|*"Host key for"*"changed"*)
+                # Never accepted for anyone: that check is the only thing making
+                # the connection mean anything, and a script cannot look at a
+                # fingerprint and recognise it.
+                die "the host key of $SSH_HOST has not been accepted on this machine.
     Connect once by hand, look at the fingerprint, and accept it:
-        ssh -p $SSH_PORT $SSH_USER@$SSH_HOST"
+        ssh -p $SSH_PORT $SSH_USER@$SSH_HOST
+    then run this script again." ;;
+            *"Permission denied"*|*"Too many authentication failures"*)
+                die "$SSH_HOST has not authorized this machine's key yet.
+
+    $(authorize_hint)" ;;
+            *"remote port forwarding failed"*)
+                die "$SSH_HOST refused to hand over port $BRIDGE_PORT — something there is
+    already listening on it. Pick another port on the ShelfOS page (it must match
+    what the server expects) and download the script again." ;;
+            *)
+                die "ssh to $SSH_USER@$SSH_HOST did not work:
+
+    ${ssh_says:-(it said nothing at all)}" ;;
+        esac
     fi
-    step_ok "the host key is known"
-    if ! ssh -p "$SSH_PORT" -o BatchMode=yes -o NumberOfPasswordPrompts=0 \
-            -o ConnectTimeout=10 -- "$SSH_USER@$SSH_HOST" true >/dev/null 2>&1; then
-        die "$SSH_USER@$SSH_HOST does not let this machine in without a password.
-    A service cannot type one, so install your key first:
-        ssh-copy-id -p $SSH_PORT $SSH_USER@$SSH_HOST"
-    fi
-    step_ok "logs in with a key, no password"
 fi
 
 # ------------------------------------------------------------------ udev
@@ -300,7 +380,7 @@ tunnel_unit="$(printf '%s\n' \
     "After=shelfos-label.service" \
     "" \
     "[Service]" \
-    "ExecStart=$SSH_BIN -N -T -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -p $SSH_PORT -R $BRIDGE_PORT:127.0.0.1:$BRIDGE_PORT $SSH_USER@$SSH_HOST" \
+    "ExecStart=$SSH_BIN -N -T -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o IdentitiesOnly=yes -o BatchMode=yes -i $KEY_PATH -p $SSH_PORT -R $BRIDGE_PORT:127.0.0.1:$BRIDGE_PORT $SSH_USER@$SSH_HOST" \
     "Restart=always" \
     "RestartSec=5" \
     "" \
@@ -382,6 +462,7 @@ else
 fi
 
 printf '\n%s\n' "Done. On this machine there are now:
+    $KEY_PATH
     $BRIDGE_PATH
     $BRIDGE_UNIT
     $TUNNEL_UNIT

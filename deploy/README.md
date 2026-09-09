@@ -60,6 +60,23 @@ sudo /opt/shelfos/.venv/bin/pip install --editable /opt/shelfos
 sudo chown -R shelfos:shelfos /opt/shelfos /var/lib/shelfos
 ```
 
+A second account, for a label printer plugged into somebody else's machine (see
+`README.md`). It logs in over ssh and does one thing: bind the printer's port on
+this host. Not the service user — that one has no shell and a root-owned home, so
+sshd would refuse it, and giving it those would turn a confined service account
+into a login account:
+
+```bash
+sudo useradd --system --create-home --home-dir /var/lib/shelfos-tunnel \
+     --shell /usr/sbin/nologin --comment "ShelfOS label-printer tunnel" shelfos-tunnel
+sudo chmod 0700 /var/lib/shelfos-tunnel
+```
+
+It can do nothing until a key is authorised, which is `./shelfos.sh tunnel-key add`
+(it writes `~shelfos-tunnel/.ssh/authorized_keys` with `restrict` plus a single
+`permitlisten`). Put the name in `/etc/shelfos/env` as `SHELFOS_TUNNEL_USER` and the
+setup page fills it into its form.
+
 Settings, readable by the service and nobody else — it holds the signing secret
 and every shop key:
 

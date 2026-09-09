@@ -391,6 +391,32 @@ checking its work, and for the reasons behind each step, which are the part a
 script cannot carry. The one thing it deliberately does not do is touch the
 server: the setting above is the administrator's to make.
 
+**The key stays on the machine with the printer.** The script makes its own ssh
+key there — ShelfOS hands out a script, never a credential, so opening that page
+can never be a way to obtain ssh access to this server. Nothing can use the key
+until the server is told about it, so the first run stops and prints one line to
+run where ShelfOS is installed:
+
+```bash
+./shelfos.sh tunnel-key add "ssh-ed25519 AAAA... shelfos-label@goofy"
+./shelfos.sh tunnel-key list          # what is authorised
+./shelfos.sh tunnel-key remove goofy  # withdraw a machine
+```
+
+That authorises the key for `shelfos-tunnel`, an account a deploy creates for
+this and nothing else: system account, `nologin`, no privileges. The
+`authorized_keys` entry is `restrict,port-forwarding,permitopen="127.0.0.1:1",
+permitlisten="127.0.0.1:<port>"`, so the key may bind that one port here and do
+nothing else — no shell, no other port, and no connections out. (`permitopen` is
+not decoration: `port-forwarding` re-enables forwarding both ways, and without it
+the same key could reach anything this server can, from here.)
+
+The service account is deliberately not usable for this: it has no shell and a
+root-owned home, so sshd would refuse it, and giving it those would turn a
+confined service account into a login one. Whoever holds the tunnel makes no
+difference to ShelfOS — a reverse forward binds this machine's loopback whoever
+opened it, and the service just connects to `127.0.0.1`.
+
 Everything else is unchanged: the tape is still read off the printer, a fault
 still stops the job before any tape moves, and each label is still confirmed.
 Only the last hop is different.

@@ -34,6 +34,16 @@ readonly ENV_FILE_SYSTEM="$ETC_DIR/env"
 readonly SERVICE_NAME="shelfos.service"
 readonly SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME"
 readonly SERVICE_USER="shelfos"
+# The account a machine with a label printer logs in as to carry it here. Its
+# own, and not the service user: that one is `--system --shell nologin` with a
+# root-owned home under ProtectHome=yes, so it has nowhere to keep an
+# authorized_keys and sshd would refuse it — and giving it those would turn a
+# deliberately confined service account into a login account, which is the
+# opposite of why it is confined. It also buys nothing: a reverse forward binds
+# the server's loopback whoever made it, and the service just connects to
+# 127.0.0.1 without caring whose session is holding the other end.
+readonly TUNNEL_USER="shelfos-tunnel"
+readonly TUNNEL_HOME="/var/lib/shelfos-tunnel"
 readonly CADDYFILE="/etc/caddy/Caddyfile"
 readonly UDEV_RULE="/etc/udev/rules.d/99-brother-ql.rules"
 readonly DEFAULT_PORT=9000
@@ -781,12 +791,13 @@ cmd_deploy() {
     fi
 
     trap 'deploy_failed' ERR
-    STEP_TOTAL=12
+    STEP_TOTAL=13
     STEP_INDEX=0
 
     deploy_step_packages
     deploy_step_caddy_package
     deploy_step_user
+    deploy_step_tunnel_user
     deploy_step_dirs
     deploy_step_code
     deploy_step_venv
@@ -870,6 +881,38 @@ deploy_step_user() {
     fi
     sudo_run useradd --system --home-dir "$INSTALL_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
     step_ok
+}
+
+# The port the tunnel is allowed to bind, and the only one. Taken from the
+# installed setting so the key's permission and the service's expectation cannot
+# drift apart; 9100 when there is nothing to read, which is the same default the
+# setup page offers.
+tunnel_port() {
+    local device port
+    device=$(env_file_value "$ENV_FILE_SYSTEM" SHELFOS_LABEL_DEVICE)
+    case $device in
+        tcp://*)
+            port=${device##*:}
+            if valid_port "$port"; then printf '%s' "$port"; return 0; fi ;;
+    esac
+    printf '9100'
+}
+
+deploy_step_tunnel_user() {
+    step "tunnel account"
+    if getent passwd "$TUNNEL_USER" > /dev/null 2>&1; then
+        step_skipped "exists"
+        return 0
+    fi
+    # Inert until a key is authorised: no password, no shell, and an empty
+    # authorized_keys. `nologin` is not a problem for what it is for — a reverse
+    # forward opens no session, so the shell is never run — and it means the
+    # account cannot be used for anything else even if a key's restrictions were
+    # ever loosened.
+    sudo_run useradd --system --create-home --home-dir "$TUNNEL_HOME" \
+        --shell /usr/sbin/nologin --comment "ShelfOS label-printer tunnel" "$TUNNEL_USER"
+    sudo_run chmod 0700 "$TUNNEL_HOME"
+    step_ok "$TUNNEL_USER"
 }
 
 deploy_step_dirs() {
@@ -972,6 +1015,7 @@ render_env_file() {
             SHELFOS_SECRET_KEY)    printf 'SHELFOS_SECRET_KEY=%s\n' "$secret" ;;
             SHELFOS_ADMIN_USERNAME) printf 'SHELFOS_ADMIN_USERNAME=%s\n' "$DEPLOY_ADMIN_USER" ;;
             SHELFOS_ADMIN_PASSWORD) printf 'SHELFOS_ADMIN_PASSWORD=%s\n' "$DEPLOY_ADMIN_PASSWORD" ;;
+            SHELFOS_TUNNEL_USER)   printf 'SHELFOS_TUNNEL_USER=%s\n' "$TUNNEL_USER" ;;
             \#SHELFOS_LABEL_DEVICE|SHELFOS_LABEL_DEVICE)
                 if [ "$DEPLOY_WANT_PRINTER" = 1 ]; then
                     printf 'SHELFOS_LABEL_DEVICE=/dev/shelfos-label\n'
@@ -1684,6 +1728,227 @@ cmd_backup() {
     return "$status"
 }
 
+
+# ---------------------------------------------------------------------------
+# tunnel-key: let a machine with a label printer carry it here
+# ---------------------------------------------------------------------------
+
+# The options every authorised key carries. `restrict` turns everything off —
+# shell, pty, agent and X11 forwarding, user rc — and the two that follow put
+# back exactly one capability: binding ONE loopback port on this machine.
+#
+# `permitopen` is not redundant. `port-forwarding` re-enables forwarding in both
+# directions, and without a permitopen the same key could open connections FROM
+# this server to anywhere it can reach — a private account turned into a proxy
+# into the network behind it. There is no "remote only" keyword, so the outgoing
+# side is narrowed to a port nothing listens on rather than left open.
+#
+# An sshd older than 7.8 does not know `restrict` and refuses the key outright.
+# That is the right way round: a key that cannot be read is a key that grants
+# nothing.
+tunnel_key_options() {
+    printf 'restrict,port-forwarding,permitopen="127.0.0.1:1",permitlisten="127.0.0.1:%s"' "$1"
+}
+
+# Whether a line is a plain public key and nothing else.
+#
+# Rejected rather than escaped, because this line is appended to a file sshd
+# reads as configuration: a value carrying its own options, a second key on a
+# second line, or a comment with a newline in it would be authorising something
+# nobody looked at. The shape is `type base64 [comment]`, and each of the three
+# is checked.
+valid_public_key() {
+    local line=$1 type rest body comment
+    # Printable characters only, which is what rules out the shape that matters
+    # most: a second key on a second line, authorised without anyone seeing it.
+    # A pattern rather than a `case` over escapes, because a bracket expression
+    # holding $'\n' silently matches nothing and the check would pass everything.
+    [[ $line =~ ^[[:print:]]+$ ]] || return 1
+    [ ${#line} -le 4096 ] || return 1
+    line=${line#"${line%%[![:space:]]*}"}
+    line=${line%"${line##*[![:space:]]}"}
+    type=${line%% *}
+    rest=${line#* }
+    body=${rest%% *}
+    comment=""
+    [ "$rest" = "$body" ] || comment=${rest#* }
+    case $type in
+        ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521) ;;
+        sk-ssh-ed25519@openssh.com|sk-ecdsa-sha2-nistp256@openssh.com) ;;
+        *) return 1 ;;
+    esac
+    [[ $body =~ ^[A-Za-z0-9+/]{32,}={0,3}$ ]] || return 1
+    [ ${#comment} -le 128 ] || return 1
+    [ -z "$comment" ] || [[ $comment =~ ^[A-Za-z0-9._@:+-]+([[:space:]][A-Za-z0-9._@:+-]+)*$ ]] || return 1
+    return 0
+}
+
+# The account, made on demand. `deploy` creates it, but an install that predates
+# this command has not got one, and authorising a key is exactly the moment to
+# notice.
+ensure_tunnel_user() {
+    if ! getent passwd "$TUNNEL_USER" > /dev/null 2>&1; then
+        sudo_run useradd --system --create-home --home-dir "$TUNNEL_HOME" \
+            --shell /usr/sbin/nologin --comment "ShelfOS label-printer tunnel" "$TUNNEL_USER"
+        sudo_run chmod 0700 "$TUNNEL_HOME"
+        info "created the $TUNNEL_USER account"
+    fi
+    sudo_run install -d -m 0700 -o "$TUNNEL_USER" -g "$TUNNEL_USER" "$TUNNEL_HOME/.ssh"
+}
+
+tunnel_keys_path() { printf '%s/.ssh/authorized_keys' "$TUNNEL_HOME"; }
+
+# The comment a person named the machine with, out of a line that also carries
+# the options this script put in front of it. Field four onwards: options, type,
+# key, then whatever the laptop called itself — which may have spaces in it.
+tunnel_key_comment() {
+    printf '%s' "$1" | awk '{
+        if (NF < 4) { print "(no comment)"; next }
+        out = $4; for (i = 5; i <= NF; i++) out = out " " $i; print out
+    }'
+}
+
+# What is authorised now, or nothing. sshd's own file, so reading it needs root.
+tunnel_keys_read() {
+    sudo_run cat "$(tunnel_keys_path)" 2>/dev/null || true
+}
+
+tunnel_keys_write() {
+    ensure_tunnel_user
+    write_file "$(tunnel_keys_path)" 600 "$TUNNEL_USER:$TUNNEL_USER"
+}
+
+usage_tunnel_key() {
+    cat <<EOF
+Usage: ./shelfos.sh tunnel-key <add|list|remove> [argument]
+
+Authorise a machine with a label printer to bring it here over ssh. The key is
+made on THAT machine by the setup script from /label-printer, which prints the
+line to paste after 'add'. The private half never leaves it.
+
+  add "<public key>"   authorise one key, forwarding only, one port only
+  list                 what is authorised now
+  remove <comment>     withdraw a key, by its comment or its number in 'list'
+
+An authorised key can do exactly one thing: bind 127.0.0.1:$(tunnel_port) on this
+machine. No shell, no other port, no connections out.
+
+  ./shelfos.sh tunnel-key add "ssh-ed25519 AAAAC3Nza... shelfos-label@goofy"
+  ./shelfos.sh tunnel-key list
+  ./shelfos.sh tunnel-key remove shelfos-label@goofy
+EOF
+}
+
+cmd_tunnel_key() {
+    local action="" argument=""
+    while [ $# -gt 0 ]; do
+        case $1 in
+            -h|--help) usage_tunnel_key; return 0 ;;
+            -*)        usage_tunnel_key >&2; die 2 "unknown option: $1" ;;
+            *)         if [ -z "$action" ]; then action=$1; elif [ -z "$argument" ]; then argument=$1;
+                       else usage_tunnel_key >&2; die 2 "too many arguments"; fi ;;
+        esac
+        shift
+    done
+
+    case $action in
+        add)    tunnel_key_add "$argument" ;;
+        list)   tunnel_key_list ;;
+        remove) tunnel_key_remove "$argument" ;;
+        "")     usage_tunnel_key; return 0 ;;
+        *)      usage_tunnel_key >&2; die 2 "unknown action: $action" ;;
+    esac
+}
+
+tunnel_key_add() {
+    local key=$1 port line existing
+    [ -n "$key" ] || { usage_tunnel_key >&2; die 2 "give the public key to authorise, in quotes"; }
+    if ! valid_public_key "$key"; then
+        die 2 "that is not a plain public key.
+  Expected one line of 'type base64 comment', as printed by the setup script or
+  by 'cat ~/.ssh/shelfos-label.pub' on the machine with the printer. A line
+  carrying its own options is refused: what this authorises is decided here."
+    fi
+    # A second opinion from ssh itself where it is available: the checks above
+    # are about the shape of the line, this one is about the key being a key.
+    if command -v ssh-keygen > /dev/null 2>&1; then
+        local probe
+        probe=$(mktemp "${TMPDIR:-/tmp}/shelfos-key.XXXXXX")
+        printf '%s\n' "$key" > "$probe"
+        if ! ssh-keygen -l -f "$probe" > /dev/null 2>&1; then
+            rm -f "$probe"
+            die 2 "ssh-keygen does not recognise that as a public key"
+        fi
+        rm -f "$probe"
+    fi
+
+    port=$(tunnel_port)
+    line="$(tunnel_key_options "$port") $key"
+
+    if [ "$DRY_RUN" = 1 ]; then
+        info "would authorize for $TUNNEL_USER:"
+        note "  $line"
+        return 0
+    fi
+
+    existing=$(tunnel_keys_read)
+    # Compared on the key itself, not the whole line: the same laptop coming
+    # back after the port changed must replace its entry rather than gain a
+    # second one that permits the old port for ever.
+    if printf '%s\n' "$existing" | grep -qF -- "$key"; then
+        existing=$(printf '%s\n' "$existing" | grep -vF -- "$key" || true)
+        info "replacing the entry this key already had"
+    fi
+    { [ -z "$existing" ] || printf '%s\n' "$existing"; printf '%s\n' "$line"; } \
+        | grep -v '^$' | tunnel_keys_write
+    info "authorized for $TUNNEL_USER: may bind 127.0.0.1:$port here, and nothing else"
+}
+
+tunnel_key_list() {
+    if [ "$DRY_RUN" = 1 ]; then
+        info "would read $(tunnel_keys_path)"
+        return 0
+    fi
+    local keys index=0 line comment
+    keys=$(tunnel_keys_read)
+    if [ -z "$keys" ]; then
+        info "no keys are authorized for $TUNNEL_USER"
+        return 0
+    fi
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        index=$((index + 1))
+        # The comment is the only part a person can recognise a machine by.
+        comment=$(tunnel_key_comment "$line")
+        printf '  %d  %s\n' "$index" "$comment"
+    done <<< "$keys"
+}
+
+tunnel_key_remove() {
+    local want=$1 keys kept index=0 line comment removed=0
+    [ -n "$want" ] || { usage_tunnel_key >&2; die 2 "say which key to remove (a comment, or a number from 'list')"; }
+    if [ "$DRY_RUN" = 1 ]; then
+        info "would remove '$want' from $(tunnel_keys_path)"
+        return 0
+    fi
+    keys=$(tunnel_keys_read)
+    [ -n "$keys" ] || die 1 "no keys are authorized for $TUNNEL_USER"
+    kept=""
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        index=$((index + 1))
+        comment=$(tunnel_key_comment "$line")
+        if [ "$want" = "$index" ] || [ "$want" = "$comment" ]; then
+            removed=$((removed + 1))
+            continue
+        fi
+        kept="${kept}${line}"$'\n'
+    done <<< "$keys"
+    [ "$removed" -gt 0 ] || die 1 "nothing matched '$want' — './shelfos.sh tunnel-key list' shows what is there"
+    printf '%s' "$kept" | tunnel_keys_write
+    info "removed $removed key(s); the machine it belonged to can no longer connect"
+}
+
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
@@ -1700,6 +1965,7 @@ Usage: ./shelfos.sh <command> [options]
   status    what is installed, and whether it is healthy
   backup    create or restore a backup of whichever install is here
   password  set an account's password, with the app stopped
+  tunnel-key  authorise a machine to carry its label printer here over ssh
 
 Options that work anywhere:
   --dry-run   print what would happen and change nothing (never calls sudo)
@@ -1741,6 +2007,7 @@ main() {
         status)   cmd_status "${rest[@]+"${rest[@]}"}" ;;
         backup)   cmd_backup "${rest[@]+"${rest[@]}"}" ;;
         password) cmd_password "${rest[@]+"${rest[@]}"}" ;;
+        tunnel-key) cmd_tunnel_key "${rest[@]+"${rest[@]}"}" ;;
         *)        usage >&2; die 2 "unknown command: $command" ;;
     esac
 }

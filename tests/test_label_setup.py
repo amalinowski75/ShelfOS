@@ -235,16 +235,20 @@ def test_the_script_says_nothing_about_the_server_configuration() -> None:
 # ------------------------------------------------------------- what it DOES
 
 
-def _stub_path(tmp_path: Path) -> Path:
-    """A PATH holding fake sudo/systemctl/ssh/… that record how they were called."""
+def _stub_path(tmp_path: Path, ssh_mode: str = "ok") -> Path:
+    """A PATH holding fakes for everything privileged, recording every call.
+
+    ``ssh-keygen`` is deliberately NOT stubbed: the script now makes the key
+    itself, and a test that faked that away would be testing a flow nobody runs.
+    ``ssh`` is, and its behaviour is the interesting variable — the three ways
+    the tunnel can answer are the three ways this script has to explain.
+    """
     stubs = tmp_path / "bin"
     stubs.mkdir()
     log = tmp_path / "calls.log"
     for name in (
         "sudo",
         "systemctl",
-        "ssh",
-        "ssh-keygen",
         "udevadm",
         "usermod",
         "loginctl",
@@ -259,22 +263,47 @@ def _stub_path(tmp_path: Path) -> Path:
             "#!/bin/sh\n" f'printf "%s %s\\n" {name} "$*" >> "{log}"\n' "exit 0\n"
         )
         stub.chmod(0o755)
+
+    # The forward test succeeds by NOT returning: `timeout` ends a connection
+    # that held, and that is what a working tunnel looks like. The other two
+    # modes are the exact words OpenSSH uses, because the script reads them.
+    behaviour = {
+        "ok": "sleep 30\n",
+        "denied": 'echo "Permission denied (publickey)." >&2\nexit 255\n',
+        "port-busy": (
+            'echo "Warning: remote port forwarding failed for listen port 9100" >&2\n'
+            "exit 255\n"
+        ),
+        "host-key": 'echo "Host key verification failed." >&2\nexit 255\n',
+    }[ssh_mode]
+    ssh = stubs / "ssh"
+    ssh.write_text(f'#!/bin/sh\nprintf "ssh %s\\n" "$*" >> "{log}"\n{behaviour}')
+    ssh.chmod(0o755)
     return stubs
 
 
+def _prepare_home(tmp_path: Path) -> Path:
+    """An empty home for the run. The script makes its own key inside it."""
+    home = tmp_path / "home"
+    home.mkdir()
+    return home
+
+
 def _run_installer(
-    tmp_path: Path, *args: str
+    tmp_path: Path, *args: str, ssh_mode: str = "ok"
 ) -> tuple[subprocess.CompletedProcess, str]:
     script = tmp_path / "installer.sh"
     script.write_text(_render())
-    stubs = _stub_path(tmp_path)
+    stubs = _stub_path(tmp_path, ssh_mode)
+    home = _prepare_home(tmp_path)
     result = subprocess.run(
         ["bash", str(script), *args],
         capture_output=True,
         text=True,
+        timeout=120,
         env={
             "PATH": f"{stubs}:/usr/bin:/bin",
-            "HOME": str(tmp_path / "home"),
+            "HOME": str(home),
             "USER": "tester",
             "XDG_RUNTIME_DIR": str(tmp_path / "run"),
         },
@@ -296,23 +325,90 @@ def test_a_dry_run_never_calls_sudo(tmp_path: Path) -> None:
 
 
 def test_ssh_is_checked_before_anything_is_enabled(tmp_path: Path) -> None:
-    """Order matters: two failures look identical from the outside otherwise.
+    """Order matters, because a tunnel that cannot come up says nothing at all.
 
-    An unaccepted host key and a missing authorized_keys entry both leave the
-    tunnel restarting for ever, saying nothing. The script separates them, and
-    does it before it has changed anything.
+    The check is the real connection the unit will make, and it happens before
+    the first privileged thing this script does — so a machine that is not
+    allowed in yet is told so while nothing has been changed.
     """
     result, calls = _run_installer(tmp_path)
     assert result.returncode == 0, result.stdout + result.stderr
     lines = calls.splitlines()
-    checked = next(i for i, line in enumerate(lines) if line.startswith("ssh-keygen"))
-    logged_in = next(i for i, line in enumerate(lines) if line.startswith("ssh "))
+    tried = next(i for i, line in enumerate(lines) if line.startswith("ssh "))
     enabled = [i for i, line in enumerate(lines) if "enable" in line]
     touched = [i for i, line in enumerate(lines) if line.startswith("sudo")]
     assert enabled, "nothing was enabled at all"
-    assert checked < logged_in < min(enabled)
-    # And nothing was changed before either check, which is the other half of it.
-    assert touched and checked < min(touched)
+    assert tried < min(enabled)
+    assert touched and tried < min(touched)
+
+
+def test_the_connection_it_tests_is_the_one_the_unit_makes(tmp_path: Path) -> None:
+    """Not `ssh host true`: an authorized_keys entry restricted to forwarding
+    refuses a session on purpose, so that check would fail on a setup that
+    works. This one asks for the forward itself."""
+    _, calls = _run_installer(tmp_path)
+    attempt = next(line for line in calls.splitlines() if line.startswith("ssh "))
+    assert "-R 9100:127.0.0.1:9100" in attempt
+    assert "ExitOnForwardFailure=yes" in attempt
+    assert "shelfos-label" in attempt  # its own key, not whatever the agent has
+    assert " true" not in attempt
+
+
+def test_the_key_is_made_here_and_stays_here(tmp_path: Path) -> None:
+    """The whole reason this page hands out a script and not a credential."""
+    result, _ = _run_installer(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    private = tmp_path / "home" / ".ssh" / "shelfos-label"
+    assert private.is_file()
+    assert "PRIVATE KEY" in private.read_text()
+    assert private.stat().st_mode & 0o077 == 0
+    # Nothing secret is in what came from the server, and nothing secret is
+    # printed either — the public half is, and that is the half meant to travel.
+    assert "PRIVATE KEY" not in _render()
+    assert "PRIVATE KEY" not in result.stdout + result.stderr
+
+
+def test_a_key_the_server_does_not_know_gets_the_line_that_fixes_it(
+    tmp_path: Path,
+) -> None:
+    """The one failure a person cannot guess their way out of, so it is spelled
+    out: the exact command, with their own key already in it."""
+    result, calls = _run_installer(tmp_path, ssh_mode="denied")
+    assert result.returncode != 0
+    public = (tmp_path / "home" / ".ssh" / "shelfos-label.pub").read_text().strip()
+    assert f'tunnel-key add "{public}"' in result.stderr
+    assert "run this script again" in result.stderr
+    # And it stopped there: nothing was changed on the way to finding out.
+    assert "sudo" not in calls
+
+
+def test_a_taken_port_is_named_as_a_taken_port(tmp_path: Path) -> None:
+    result, _ = _run_installer(tmp_path, ssh_mode="port-busy")
+    assert result.returncode != 0
+    assert "already listening" in result.stderr
+    assert "9100" in result.stderr
+
+
+def test_an_unaccepted_host_key_is_never_accepted_for_you(tmp_path: Path) -> None:
+    """A script cannot look at a fingerprint and recognise it, so it does not
+    pretend to — it says which command to run by hand."""
+    result, calls = _run_installer(tmp_path, ssh_mode="host-key")
+    assert result.returncode != 0
+    assert "ssh -p 22 adam@shelf.example" in result.stderr
+    assert "StrictHostKeyChecking" not in _render()
+    assert "sudo" not in calls
+
+
+def test_the_tunnel_unit_uses_that_key_and_no_other(tmp_path: Path) -> None:
+    """IdentitiesOnly, because an agent with a dozen keys would otherwise offer
+    them all and be refused for too many authentication failures."""
+    script = _render()
+    unit_line = next(
+        line for line in script.splitlines() if "ExecStart=$SSH_BIN" in line
+    )
+    assert "-i $KEY_PATH" in unit_line
+    assert "IdentitiesOnly=yes" in unit_line
+    assert "BatchMode=yes" in unit_line
 
 
 def test_the_user_is_added_to_a_group_never_moved_into_one(tmp_path: Path) -> None:
