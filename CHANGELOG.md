@@ -44,6 +44,14 @@ the deployment is a server and a browser.
   else, and the page fills its name in. Not the service account: that one has no
   shell and a root-owned home, so sshd would refuse it, and giving it those would
   turn a confined service account into a login account.
+- **`deploy --reinstall` moves the installed code.** It used to skip that step
+  outright as "already a checkout", so an install cloned from `main` stayed on
+  `main` through an update and a re-deploy — every step reporting success, with
+  the only symptom a feature that never appeared. It now brings `/opt/shelfos` to
+  what the clone being deployed has checked out, branch included, and refuses
+  over hand-edited files there. A plain `update` says which branch it is on and
+  points at `--ref`, since an update that changes nothing looks the same as one
+  that had nothing to do.
 - A second `deploy --reinstall` **keeps the domain the first one was given**,
   read back from the Caddy config it wrote. Asked again without `--domain` it
   used to fall back to no TLS, which on a working HTTPS server drops the proxy

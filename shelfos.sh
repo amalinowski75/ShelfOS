@@ -1229,10 +1229,55 @@ deploy_step_dirs() {
     if [ -z "$made" ]; then step_skipped "all exist"; else step_ok; fi
 }
 
+# Bring an installed checkout to what is being deployed, on --reinstall.
+#
+# It used to be skipped outright as "already a checkout", which made --reinstall
+# unable to do the one thing its own help promises — repair an install — and made
+# deploying a different branch impossible: the code stayed at whatever was cloned
+# first, every later step succeeded, and the only symptom was a feature that
+# never appeared. Without --reinstall it is still skipped, because a plain deploy
+# is not a licence to move somebody's running code.
+deploy_reinstall_code() {
+    if [ "$DEPLOY_REINSTALL" = 0 ]; then
+        step_skipped "already a checkout — use --reinstall to move it to this one"
+        return 0
+    fi
+    if [ "$DEPLOY_SOURCE_SHA" = "no git" ]; then
+        step_skipped "deploying from a copy without git history; leaving the checkout alone"
+        return 0
+    fi
+
+    local installed dirty branch
+    installed=$(sudo_run git -C "$INSTALL_DIR" rev-parse --short HEAD 2>/dev/null || printf 'unknown')
+    if [ "$installed" = "$DEPLOY_SOURCE_SHA" ]; then
+        step_skipped "already at $installed"
+        return 0
+    fi
+    dirty=$(sudo_run git -C "$INSTALL_DIR" status --porcelain 2>/dev/null || true)
+    if [ -n "$dirty" ]; then
+        printf '%s\n' "$dirty" >&2
+        die 1 "$INSTALL_DIR has hand-edited files (above); revert them or move them aside first"
+    fi
+
+    # Fetched from the clone being deployed, not from the network: this is the
+    # code the operator is looking at, which is the whole point of deploying
+    # from it. The remote stays whatever it was, so `update` still pulls from
+    # GitHub afterwards.
+    branch=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'HEAD')
+    sudo_run git -C "$INSTALL_DIR" fetch --quiet "$REPO_ROOT" HEAD
+    if [ "$branch" = "HEAD" ]; then
+        # A detached source: there is no branch name worth reproducing.
+        sudo_run git -C "$INSTALL_DIR" checkout --quiet --detach FETCH_HEAD
+    else
+        sudo_run git -C "$INSTALL_DIR" checkout --quiet -B "$branch" FETCH_HEAD
+    fi
+    step_ok "$installed → $DEPLOY_SOURCE_SHA ($branch)"
+}
+
 deploy_step_code() {
     step "code → $INSTALL_DIR"
     if [ -d "$INSTALL_DIR/.git" ]; then
-        step_skipped "already a checkout"
+        deploy_reinstall_code
         return 0
     fi
     if [ "$DEPLOY_SOURCE_SHA" = "no git" ]; then
@@ -1603,7 +1648,12 @@ cmd_update() {
     after=$(sudo_run git -C "$INSTALL_DIR" rev-parse --short HEAD)
 
     if [ "$before" = "$after" ]; then
-        info "Already at $after; nothing to update."
+        local branch; branch=$(sudo_run git -C "$INSTALL_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')
+        info "Already at $after on $branch; nothing to update."
+        # The confusion this exists to prevent: an update that succeeds, changes
+        # nothing, and leaves somebody looking for a feature that is on another
+        # branch entirely.
+        info "  Another branch: ./shelfos.sh update --ref <branch>"
     else
         info "$before → $after"
         sudo_run git -C "$INSTALL_DIR" --no-pager log --oneline "$before..$after" >&2 || true

@@ -47,7 +47,12 @@ security headers. Caddy adds them to everything.
 ### Deploying again over a working install
 
 `deploy` recognises an install and stops; `--reinstall` walks the steps again,
-skipping what is already done. It keeps the domain it finds in the Caddy config
+skipping what is already done — including moving `/opt/shelfos` to whatever the
+clone you run it from has checked out, branch and all. Without `--reinstall` the
+installed code is left where it is, because a plain deploy is not a licence to
+move somebody's running service. To follow a branch afterwards without a full
+re-deploy, `./shelfos.sh update --ref <branch>`; a plain `update` fast-forwards
+whatever the install is already on. It keeps the domain it finds in the Caddy config
 it wrote, so `sudo ./shelfos.sh deploy --reinstall` on an HTTPS server stays an
 HTTPS server; `--domain` overrides it and `--no-tls` turns it off. The
 certificate lives in Caddy's own storage, not in the config, so rewriting the

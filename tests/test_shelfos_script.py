@@ -1483,3 +1483,114 @@ def test_somebody_elses_caddyfile_is_not_a_domain_to_keep(tmp_path: Path) -> Non
 
 def test_no_caddy_config_means_nothing_to_keep(tmp_path: Path) -> None:
     assert _installed_domain(tmp_path, None, None) == ""
+
+
+# --- moving an installed checkout ---------------------------------------------
+
+
+def _git(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+        env={
+            **os.environ,
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        },
+    )
+    return result.stdout.strip()
+
+
+def _code_setup(tmp_path: Path, reinstall: str = "1") -> tuple[Path, Path, Path]:
+    """A source clone on a branch, an install stuck on main, and a probe to run."""
+    source = tmp_path / "source"
+    source.mkdir()
+    _git(source, "init", "--quiet", "-b", "main")
+    (source / "app.txt").write_text("from main\n")
+    _git(source, "add", "-A")
+    _git(source, "commit", "--quiet", "-m", "main")
+
+    install = tmp_path / "install"
+    subprocess.run(
+        [
+            "git",
+            "clone",
+            "--quiet",
+            "--local",
+            "--no-hardlinks",
+            str(source),
+            str(install),
+        ],
+        check=True,
+    )
+
+    _git(source, "checkout", "--quiet", "-b", "the-feature")
+    (source / "app.txt").write_text("from the branch\n")
+    _git(source, "commit", "--quiet", "-a", "-m", "feature")
+    sha = _git(source, "rev-parse", "--short", "HEAD")
+
+    script = _SCRIPT.read_text()
+    body = script[
+        script.index("deploy_reinstall_code() {") : script.index("deploy_step_venv() {")
+    ]
+    probe = tmp_path / "code.sh"
+    probe.write_text(
+        "set -Eeuo pipefail\n"
+        "trap 'echo TRAP-FIRED >&2; exit 9' ERR\n"
+        "step() { :; }\n"
+        "step_ok() { printf 'OK: %s\\n' \"$*\"; }\n"
+        "step_skipped() { printf 'SKIPPED: %s\\n' \"$*\"; }\n"
+        'die() { printf "DIED: %s\\n" "$2" >&2; exit 1; }\n'
+        'sudo_run() { "$@"; }\n'
+        f"INSTALL_DIR={install}\nREPO_ROOT={source}\n"
+        f"DEPLOY_REINSTALL={reinstall}\nDEPLOY_SOURCE_SHA={sha}\n"
+        f"{body}\ndeploy_step_code\n"
+    )
+    return install, source, probe
+
+
+def _run_probe(probe: Path) -> str:
+    result = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    return result.stdout + result.stderr
+
+
+def test_reinstall_moves_the_installed_code_to_what_is_being_deployed(
+    tmp_path: Path,
+) -> None:
+    """The failure this comes from: an install cloned from main stayed on main
+    through an update and a --reinstall, every step reported success, and the
+    only symptom was a page that never appeared."""
+    install, source, probe = _code_setup(tmp_path)
+    output = _run_probe(probe)
+    assert "TRAP-FIRED" not in output
+    assert (install / "app.txt").read_text() == "from the branch\n"
+    assert _git(install, "rev-parse", "--abbrev-ref", "HEAD") == "the-feature"
+    assert _git(install, "rev-parse", "HEAD") == _git(source, "rev-parse", "HEAD")
+
+    # And again: nothing left to do, said as much.
+    assert "SKIPPED: already at" in _run_probe(probe)
+
+
+def test_without_reinstall_the_installed_code_is_left_alone(tmp_path: Path) -> None:
+    """A plain deploy is not a licence to move somebody's running code — but it
+    says how, rather than only that it did nothing."""
+    install, _, probe = _code_setup(tmp_path, reinstall="0")
+    output = _run_probe(probe)
+    assert (install / "app.txt").read_text() == "from main\n"
+    assert "--reinstall" in output
+
+
+def test_hand_edited_files_stop_it(tmp_path: Path) -> None:
+    """Overwriting somebody's edit under /opt/shelfos loses work with no way
+    back, so it is a refusal rather than a decision this makes for them."""
+    install, _, probe = _code_setup(tmp_path)
+    (install / "app.txt").write_text("edited on the server\n")
+    output = _run_probe(probe)
+    assert "DIED" in output
+    assert (install / "app.txt").read_text() == "edited on the server\n"
