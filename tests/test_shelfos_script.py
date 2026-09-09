@@ -1341,3 +1341,22 @@ def test_the_ordinary_deploy_is_unchanged(tmp_path: Path) -> None:
     # The unit's own comments explain what binding 0.0.0.0 would mean, so match
     # the summary's wording rather than the two words it shares with them.
     assert "in plain HTTP, to anything" not in output
+
+
+def test_the_deploy_installs_the_font_the_renderer_looks_for_first() -> None:
+    """Two files that have to agree, tied together rather than remembered.
+
+    A label is a bitmap, and drawing text into one needs a TTF on the host — a
+    server has no desktop to have brought one. The deploy installs the family
+    ShelfOS tries first; if that list is ever reordered, this says so.
+    """
+    from app.services.label_printer import _FONT_CANDIDATES
+
+    first = _FONT_CANDIDATES[0][0]
+    family = first.split("/truetype/")[1].split("/")[0]  # e.g. "dejavu"
+    packages = next(
+        line
+        for line in _SCRIPT.read_text().splitlines()
+        if line.strip().startswith("for pkg in ")
+    )
+    assert family in packages, f"{first} is tried first, but {packages.strip()}"

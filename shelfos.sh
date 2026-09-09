@@ -882,7 +882,12 @@ cmd_deploy() {
 deploy_step_packages() {
     step "system packages"
     local missing="" pkg
-    for pkg in python3-venv git curl; do
+    # fonts-dejavu-core is not decoration: a label is a bitmap, and without a
+    # TTF on the host nothing can be drawn — no preview, no printing, and a
+    # server install has no desktop to have brought one. DejaVu is the first
+    # family the renderer looks for, so installing it needs no setting to go
+    # with it (see _FONT_CANDIDATES in app/services/label_printer.py).
+    for pkg in python3-venv git curl fonts-dejavu-core; do
         dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "^install ok installed$" || missing="$missing $pkg"
     done
     if [ -z "$missing" ]; then

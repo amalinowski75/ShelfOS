@@ -317,7 +317,7 @@ export SHELFOS_LABEL_TAPE="62red"       # DK-22251, the black/red roll in the bo
 # how long each label is, on a CONTINUOUS tape (a die-cut label's length is its die's)
 export SHELFOS_LABEL_LENGTH_MM="30"
 export SHELFOS_LABEL_MARGIN_MM="2"
-# only if the host has no DejaVu, Liberation or Noto
+# only if the host has none of DejaVu, Liberation or Noto (a deploy installs DejaVu)
 export SHELFOS_LABEL_FONT="/path/to/Sans.ttf"
 export SHELFOS_LABEL_FONT_BOLD="/path/to/Sans-Bold.ttf"
 ```

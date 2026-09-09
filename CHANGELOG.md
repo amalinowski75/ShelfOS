@@ -44,6 +44,11 @@ the deployment is a server and a browser.
   else, and the page fills its name in. Not the service account: that one has no
   shell and a root-owned home, so sshd would refuse it, and giving it those would
   turn a confined service account into a login account.
+- A deploy installs **fonts-dejavu-core**. A label is a bitmap and drawing text
+  into one needs a TTF on the host, which a server has no desktop to have brought
+  — so every preview and every print failed with "no label font found" until
+  somebody worked out that a font was the missing piece. No setting goes with it:
+  DejaVu is the first family the renderer looks for.
 - **A registered machine is a configured printer.** Test connection went green
   and the Print buttons still were not there, because `SHELFOS_LABEL_DEVICE` was
   unset — so the page's promise stopped one step short of an administrator

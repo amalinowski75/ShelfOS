@@ -75,6 +75,7 @@ code in one place and the data in another, so replacing the code never touches
 the database:
 
 ```bash
+sudo apt install python3-venv git curl fonts-dejavu-core
 sudo useradd --system --home-dir /opt/shelfos --shell /usr/sbin/nologin shelfos
 sudo mkdir -p /opt/shelfos /var/lib/shelfos /etc/shelfos
 sudo git clone https://github.com/amalinowski75/ShelfOS.git /opt/shelfos
@@ -82,6 +83,12 @@ sudo python3 -m venv /opt/shelfos/.venv
 sudo /opt/shelfos/.venv/bin/pip install --editable /opt/shelfos
 sudo chown -R shelfos:shelfos /opt/shelfos /var/lib/shelfos
 ```
+
+`fonts-dejavu-core` is the one that looks optional and is not. A label is a
+bitmap, and drawing text into it needs a TTF on the host; a server has no desktop
+to have brought one, so without it every preview and every print fails with "no
+label font found". DejaVu is the first family ShelfOS looks for, so installing it
+is the whole of the fix — `SHELFOS_LABEL_FONT` is for a font of your own.
 
 A second account, for a label printer plugged into somebody else's machine (see
 `README.md`). It logs in over ssh and does one thing: bind the printer's port on
