@@ -633,6 +633,11 @@ DEPLOY_PORT=""
 DEPLOY_ADMIN_USER="admin"
 DEPLOY_ADMIN_PASSWORD=""
 DEPLOY_WANT_CADDY=1
+# Whether anything will terminate TLS in front of this. Not the same question as
+# "is Caddy being installed": --no-caddy means somebody is arranging their own,
+# --no-tls means nobody is. The session cookie's Secure flag follows this, and
+# getting it wrong makes signing in impossible with nothing in the log to say so.
+DEPLOY_WANT_TLS=1
 # Which address the service binds. Loopback by default: with a proxy in front
 # that is the only thing that should reach it, and a plain-HTTP port on a network
 # interface carries sign-ins in the clear. Anything else is asked for explicitly.
@@ -725,7 +730,7 @@ deploy_gather() {
         else
             while :; do
                 ask_value DEPLOY_DOMAIN "Hostname Caddy should serve (blank for no TLS)" ""
-                [ -n "$DEPLOY_DOMAIN" ] || { DEPLOY_WANT_CADDY=0; break; }
+                [ -n "$DEPLOY_DOMAIN" ] || { DEPLOY_WANT_CADDY=0; DEPLOY_WANT_TLS=0; break; }
                 case $DEPLOY_DOMAIN in
                     *.*[!.]) break ;;
                     *) warn "that does not look like a hostname" ;;
@@ -828,7 +833,7 @@ cmd_deploy() {
             --admin-password-stdin) IFS= read -r DEPLOY_ADMIN_PASSWORD || true; shift ;;
             --listen)               DEPLOY_LISTEN=${2:-}; shift 2 ;;
             --no-caddy)             DEPLOY_WANT_CADDY=0; shift ;;
-            --no-tls)               DEPLOY_WANT_CADDY=0; DEPLOY_DOMAIN=""; shift ;;
+            --no-tls)               DEPLOY_WANT_CADDY=0; DEPLOY_WANT_TLS=0; DEPLOY_DOMAIN=""; shift ;;
             --printer)              DEPLOY_WANT_PRINTER=1; shift ;;
             --no-printer)           DEPLOY_WANT_PRINTER=0; shift ;;
             --import-db)            DEPLOY_IMPORT_DB=${2:-}; shift 2 ;;
@@ -999,6 +1004,9 @@ deploy_step_tunnel() {
     # is somebody's decision.
     set_env_setting SHELFOS_TUNNEL_USER "$TUNNEL_USER"
     set_env_setting SHELFOS_TUNNEL_KEYS "$TUNNEL_KEYS"
+    if [ "$DEPLOY_WANT_TLS" = 0 ]; then
+        set_env_setting SHELFOS_COOKIE_SECURE 0
+    fi
 }
 
 # set_env_setting KEY VALUE — give a setting a value in the installed env file,
@@ -1238,6 +1246,14 @@ render_env_file() {
             SHELFOS_ADMIN_PASSWORD) printf 'SHELFOS_ADMIN_PASSWORD=%s\n' "$DEPLOY_ADMIN_PASSWORD" ;;
             SHELFOS_TUNNEL_USER)   printf 'SHELFOS_TUNNEL_USER=%s\n' "$TUNNEL_USER" ;;
             SHELFOS_TUNNEL_KEYS)   printf 'SHELFOS_TUNNEL_KEYS=%s\n' "$TUNNEL_KEYS" ;;
+            \#SHELFOS_COOKIE_SECURE|SHELFOS_COOKIE_SECURE)
+                # Secure cookies over plain HTTP mean a sign-in that can never
+                # complete, and nothing anywhere saying why.
+                if [ "$DEPLOY_WANT_TLS" = 1 ]; then
+                    printf '#SHELFOS_COOKIE_SECURE=0\n'
+                else
+                    printf 'SHELFOS_COOKIE_SECURE=0\n'
+                fi ;;
             \#SHELFOS_LABEL_DEVICE|SHELFOS_LABEL_DEVICE)
                 if [ "$DEPLOY_WANT_PRINTER" = 1 ]; then
                     printf 'SHELFOS_LABEL_DEVICE=/dev/shelfos-label\n'
@@ -1445,6 +1461,10 @@ deploy_step_verify() {
         info ""
         warn "This carries sign-ins in the clear. Fine on a private bridge or a test box;"
         warn "put TLS in front of it before anybody types a real password into it."
+        info ""
+        info "  The session cookie is not marked Secure here (SHELFOS_COOKIE_SECURE=0),"
+        info "  because a Secure one is never sent back over plain HTTP and signing in"
+        info "  would fail with nothing to say why. Set it to 1 when TLS goes in front."
     fi
     info "  ./shelfos.sh status     what state it is in"
     info "  ./shelfos.sh backup     take one now; nothing else does it for you"

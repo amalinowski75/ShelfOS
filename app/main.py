@@ -278,6 +278,15 @@ def _check_insecure_defaults() -> None:
         _logger.warning(
             "Using the default SECRET_KEY; set SHELFOS_SECRET_KEY in production."
         )
+    if config.is_production() and not config.cookie_secure():
+        # Said once at startup rather than never: from inside the app a plain
+        # HTTP deployment and a proxied one look identical, so this is the only
+        # place the choice is visible at all.
+        _logger.warning(
+            "SHELFOS_COOKIE_SECURE=0: the session cookie is not marked Secure, "
+            "so it travels in the clear on plain HTTP. Right for a deployment "
+            "served without TLS on purpose, wrong the moment one is in front."
+        )
 
 
 def create_app(*, create_tables: bool = True) -> FastAPI:
@@ -321,7 +330,7 @@ def create_app(*, create_tables: bool = True) -> FastAPI:
     app.add_middleware(
         SessionMiddleware,
         secret_key=config.SECRET_KEY,
-        https_only=config.is_production(),
+        https_only=config.cookie_secure(),
         same_site="lax",
     )
 

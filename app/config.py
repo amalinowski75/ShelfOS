@@ -62,6 +62,31 @@ def is_production() -> bool:
     return ENV == "production"
 
 
+def _flag(name: str, default: bool) -> bool:
+    """A yes/no setting, read the way people write them."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def cookie_secure() -> bool:
+    """Whether the session cookie is marked ``Secure``.
+
+    Production implies yes, and that is right whenever there is TLS in front. It
+    is not right when there is not: a Secure cookie is never sent back over plain
+    HTTP, so the browser silently drops the session, the sign-in form's token has
+    nothing to match, and the only symptom is "that sign-in form has expired" for
+    ever — with nothing in the log, because nothing failed.
+
+    A deployment served over plain HTTP on purpose (a test box, a private
+    bridge) sets ``SHELFOS_COOKIE_SECURE=0`` and gets a working sign-in and the
+    honest consequence: on plain HTTP the cookie travels in the clear, exactly
+    like the password that established it.
+    """
+    return _flag("SHELFOS_COOKIE_SECURE", is_production())
+
+
 def is_using_default_secret() -> bool:
     """True when the (insecure) default secret key is in effect."""
     return SECRET_KEY == _DEFAULT_SECRET

@@ -44,6 +44,12 @@ the deployment is a server and a browser.
   else, and the page fills its name in. Not the service account: that one has no
   shell and a root-owned home, so sshd would refuse it, and giving it those would
   turn a confined service account into a login account.
+- **Signing in works on a deployment served without TLS.** The session cookie is
+  marked `Secure` in production, and no browser sends one of those back over
+  plain HTTP — so the session was dropped, the sign-in form's token had nothing
+  to match, and every attempt said the form had expired, with nothing in the log
+  because nothing had failed. `SHELFOS_COOKIE_SECURE` decides it now, a deploy
+  with `--no-tls` sets it, and the app says so at startup.
 - **`deploy --listen ADDRESS`**, so a server without a proxy can be reached at
   its own address instead of through a forwarded port. Still 127.0.0.1 by
   default — a plain-HTTP port on a network interface carries sign-ins in the

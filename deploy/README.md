@@ -55,6 +55,12 @@ port is a workaround for a decision rather than the decision:
 sudo ./shelfos.sh deploy --no-tls --listen 0.0.0.0
 ```
 
+`--no-tls` also writes `SHELFOS_COOKIE_SECURE=0`. A `Secure` session cookie is
+never sent back over plain HTTP, so without it the browser drops the session, the
+sign-in form's token has nothing to match, and every attempt says the form has
+expired — with nothing in the log, because nothing failed. Set it back to 1 the
+moment TLS goes in front.
+
 Then it answers at the machine's own address, which is also the address the
 label-printer page will offer for ssh. It is plain HTTP: fine on a bridge only
 you can reach, not fine anywhere a password matters. `./shelfos.sh status` reads
