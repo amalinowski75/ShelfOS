@@ -41,6 +41,7 @@ from brother_ql.raster import BrotherQLRaster
 from PIL import Image, ImageDraw, ImageFont
 
 from app import config
+from app.services import tunnel_keys
 from app.services.errors import PrinterError, TapeMismatchError, ValidationError
 from app.services.label_service import LabelData, location_qr_payload
 
@@ -669,6 +670,37 @@ def _decode_status(frame: bytes) -> PrinterStatus | None:
 _TCP_SCHEME = "tcp://"
 
 
+def configured_device() -> str:
+    """The printer this ShelfOS prints to, or ``""`` when there is none.
+
+    ``SHELFOS_LABEL_DEVICE`` decides it whenever it is set — a printer on this
+    machine, or one somewhere else that the administrator pointed at by hand.
+
+    When it is not set, a machine that has registered its printer through
+    ``/label-printer`` IS the answer: somebody said, with a key, that they have
+    one plugged in at the other end of a tunnel that ends on this server's
+    loopback. Requiring an administrator to then edit a settings file and restart
+    the service would undo the point of that page — and there is nothing for them
+    to decide, since the port and the address were settled when the key was
+    authorised.
+
+    The cost is a stale registration: a laptop that has gone for good leaves the
+    print buttons on offer until somebody withdraws its key, and printing then
+    says the printer is not answering. That is the same thing an unplugged
+    printer does, and `tunnel-key remove` is the cure for both.
+    """
+    if config.LABEL_DEVICE:
+        return config.LABEL_DEVICE
+    if tunnel_keys.any_registered():
+        return f"tcp://127.0.0.1:{tunnel_keys.DEFAULT_TUNNEL_PORT}"
+    return ""
+
+
+def printing_configured() -> bool:
+    """Whether the print affordances are worth showing at all."""
+    return bool(configured_device())
+
+
 def is_network_device(device: str) -> bool:
     """Whether ``device`` names a printer reached over TCP rather than a path."""
     return device.startswith(_TCP_SCHEME)
@@ -901,7 +933,7 @@ def status_if_free(device: str | None = None) -> PrinterStatus | None:
     Not answering is a normal outcome and callers handle it: the dialog says
     the printer is not saying what it holds and lets the roll be picked by hand.
     """
-    device = config.LABEL_DEVICE if device is None else device
+    device = configured_device() if device is None else device
     if not device:
         return None
     if not _PRINT_LOCK.acquire(timeout=_STATUS_LOCK_SECONDS):
@@ -1001,7 +1033,7 @@ def read_printer_status(device: str | None = None) -> PrinterStatus | None:
     Assumes the caller owns the printer: see :func:`status_if_free` for the
     version that takes the lock first.
     """
-    device = config.LABEL_DEVICE if device is None else device
+    device = configured_device() if device is None else device
     if not device:
         raise ValidationError(_NOT_CONFIGURED)
     budget = _readback_budget()
@@ -1155,7 +1187,7 @@ def resolve_geometry(device: str | None = None) -> TapeGeometry:
     no printer in the building. The answer is remembered briefly, because this
     is called once per rendered preview and a roll does not change that often.
     """
-    device = config.LABEL_DEVICE if device is None else device
+    device = configured_device() if device is None else device
     if not device:
         return tape_geometry()
     remembered = _remembered_tape()
@@ -1313,7 +1345,7 @@ def print_labels(
     run. Jobs are serialised on a process-wide lock: there is one printer, and
     two interleaved raster streams would print one ruined label.
     """
-    device = config.LABEL_DEVICE if device is None else device
+    device = configured_device() if device is None else device
     if not device:
         raise ValidationError(_NOT_CONFIGURED)
     if copies < 1:

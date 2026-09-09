@@ -440,6 +440,14 @@ ShelfOS that had been compromised — is bind that one loopback port, which is t
 say pretend to be a label printer. There is no shell, no other port, and nothing
 outbound.
 
+**A registered machine is a configured printer.** With `SHELFOS_LABEL_DEVICE`
+unset, a machine that has registered through the page answers the question that
+setting exists to answer: somebody said, with a key, that they have a printer at
+the other end of a tunnel ending on this server's loopback. So the Print buttons
+appear when the first machine registers, and go when the last one is withdrawn —
+no settings file to edit, no restart. Setting `SHELFOS_LABEL_DEVICE` still wins,
+for a printer plugged into the server itself or one pointed at by hand.
+
 Registrations are visible and revocable on the server:
 
 ```bash

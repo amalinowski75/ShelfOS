@@ -364,3 +364,31 @@ def test_a_read_only_account_may_test_the_connection(
         )
     assert response.status_code == 200
     assert response.json()["tape"] == "62"
+
+
+def test_the_locations_page_offers_printing_once_a_machine_has_registered(
+    client: TestClient, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    """The end of the road this page starts: no settings file to edit, no
+    restart, and the Print buttons simply appear."""
+    from app.services import tunnel_keys
+
+    keys = tmp_path / "tunnel-keys"
+    monkeypatch.setattr(config, "TUNNEL_KEYS_FILE", str(keys))
+    monkeypatch.setattr(config, "LABEL_DEVICE", "")
+    client.post("/api/locations", json={"type": "room", "name": "Lab"})
+
+    before = client.get("/locations").text
+    assert "No label printer is set up" in before
+    assert "loc-print" not in before
+
+    tunnel_keys.enroll(
+        "ssh-ed25519 "
+        "AAAAC3NzaC1lZDI1NTE5AAAAIBFEnyJspiC2cerXzPdgVQqUTIhpyNepCIuX1OjaG+2U "
+        "shelfos-label@goofy",
+        port=9100,
+    )
+
+    after = client.get("/locations").text
+    assert "No label printer is set up" not in after
+    assert "loc-print" in after

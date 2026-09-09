@@ -44,6 +44,13 @@ the deployment is a server and a browser.
   else, and the page fills its name in. Not the service account: that one has no
   shell and a root-owned home, so sshd would refuse it, and giving it those would
   turn a confined service account into a login account.
+- **A registered machine is a configured printer.** Test connection went green
+  and the Print buttons still were not there, because `SHELFOS_LABEL_DEVICE` was
+  unset — so the page's promise stopped one step short of an administrator
+  editing a settings file and restarting the service, with nothing left to
+  decide. A registration now answers that question by itself; the setting still
+  wins where it is set, and withdrawing the last key takes the buttons away
+  again.
 - The tunnel asks for `127.0.0.1:<port>` by name rather than for a bare port,
   and the server permits both spellings. sshd matches `PermitListen` against what
   the client *asked* for, and a bare port carries no address at all — so a rule

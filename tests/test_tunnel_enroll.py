@@ -241,3 +241,61 @@ def test_the_file_is_replaced_whole_never_truncated(keys_file: Path) -> None:
     tunnel_keys.enroll(OTHER, port=9100)
     assert keys_file.stat().st_ino != first  # replaced by rename, not rewritten
     assert keys_file.stat().st_mode & 0o777 == 0o644  # readable by sshd's command
+
+
+# --------------------------------- a registered printer IS a configured one
+
+
+def test_registering_a_machine_is_what_makes_printing_available(
+    anon_client: TestClient, engine: Engine, keys_file: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """Otherwise the page's promise stops one step short.
+
+    Test connection goes green, and then an administrator still has to edit a
+    settings file and restart the service before anything can be printed —
+    with nothing left to decide, since the address and the port were settled
+    when the key was authorised.
+    """
+    from app.services import label_printer as lp
+
+    monkeypatch.setattr(config, "LABEL_DEVICE", "")
+    assert lp.printing_configured() is False
+    assert lp.configured_device() == ""
+
+    _enroll(anon_client, _token(engine, "printer-owner-2"), KEY)
+
+    assert lp.printing_configured() is True
+    assert lp.configured_device() == "tcp://127.0.0.1:9100"
+
+
+def test_a_device_named_in_the_settings_always_wins(
+    anon_client: TestClient, engine: Engine, keys_file: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """An administrator who pointed this at something meant it."""
+    from app.services import label_printer as lp
+
+    monkeypatch.setattr(config, "LABEL_DEVICE", "/dev/shelfos-label")
+    _enroll(anon_client, _token(engine, "printer-owner-3"), KEY)
+    assert lp.configured_device() == "/dev/shelfos-label"
+
+
+def test_withdrawing_the_last_machine_takes_the_buttons_away(
+    keys_file: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """The cure for a laptop that has gone for good."""
+    from app.services import label_printer as lp
+
+    monkeypatch.setattr(config, "LABEL_DEVICE", "")
+    tunnel_keys.enroll(KEY, port=9100)
+    assert lp.printing_configured() is True
+    tunnel_keys.remove("shelfos-label@goofy")
+    assert lp.printing_configured() is False
+
+
+def test_a_server_with_no_key_store_is_unaffected(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """No store, no registrations, and nothing to infer from them."""
+    from app.services import label_printer as lp
+
+    monkeypatch.setattr(config, "LABEL_DEVICE", "")
+    monkeypatch.setattr(config, "TUNNEL_KEYS_FILE", "")
+    assert lp.printing_configured() is False

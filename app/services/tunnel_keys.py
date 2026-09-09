@@ -48,6 +48,11 @@ _BODY = re.compile(r"^[A-Za-z0-9+/]{32,}={0,3}$")
 _COMMENT = re.compile(r"^[A-Za-z0-9._@:+-]+([ \t][A-Za-z0-9._@:+-]+)*$")
 _PRINTABLE = re.compile(r"^[\x20-\x7e]+$")
 
+# The port a tunnel lands on unless something says otherwise. HP JetDirect's
+# raw-printing port, which anyone who has set up a network printer recognises;
+# nothing in ShelfOS depends on the number itself.
+DEFAULT_TUNNEL_PORT: Final = 9100
+
 _MAX_LINE = 4096
 _MAX_KEYS = 50
 
@@ -194,6 +199,16 @@ def _parse_line(line: str) -> TunnelKey | None:
 def list_keys() -> list[TunnelKey]:
     """The machines authorised now, oldest first."""
     return [key for key in map(_parse_line, _read_lines()) if key is not None]
+
+
+def any_registered() -> bool:
+    """Whether any machine has registered a printer with this server.
+
+    Which is the same question as "is there a printer", asked of the only thing
+    that knows: registering is somebody saying, with a key, that they have one
+    plugged in at the other end of a tunnel.
+    """
+    return configured() and bool(list_keys())
 
 
 def enroll(public_key: str, *, port: int) -> TunnelKey:

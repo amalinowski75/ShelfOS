@@ -50,6 +50,7 @@ from app.services import bom_take_service as bts
 from app.services import component_service as cs
 from app.services import invoice_import_service as imp
 from app.services import invoice_service as inv
+from app.services import label_printer as lp
 from app.services import label_service as lbl
 from app.services import location_service as ls
 from app.services import manufacturer_service as mfs
@@ -400,7 +401,7 @@ def locations_page(
             "parts_per_location": _PARTS_PER_LOCATION,
             # No printer configured, no print affordances: the dialog would have
             # nothing to offer and the button nothing to do.
-            "label_printing": config.label_printing_configured(),
+            "label_printing": lp.printing_configured(),
             "current_user": user,
         },
     )
@@ -453,7 +454,7 @@ def location_labels_page(
         "labels.html",
         {
             "labels": labels,
-            "label_printing": config.label_printing_configured(),
+            "label_printing": lp.printing_configured(),
             "w": min(max(w, 20.0), 200.0),
             "h": min(max(h, 10.0), 200.0),
             "sheet": sheet,

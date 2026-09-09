@@ -37,6 +37,7 @@ from typing import Final
 
 from app import config
 from app.services import label_printer as lp
+from app.services import tunnel_keys
 from app.services.errors import PrinterError, ValidationError
 
 # The bridge, and the template that installs it. ``scripts/`` is outside the
@@ -50,7 +51,7 @@ TEMPLATE_PATH: Final = Path(__file__).with_name("label_setup_installer.sh")
 INSTALLER_FILENAME: Final = "shelfos-label-setup.sh"
 
 DEFAULT_DEVICE: Final = "/dev/shelfos-label"
-DEFAULT_BRIDGE_PORT: Final = 9100
+DEFAULT_BRIDGE_PORT: Final = tunnel_keys.DEFAULT_TUNNEL_PORT
 DEFAULT_SSH_PORT: Final = 22
 # A closed set, not a pattern: this lands in a udev rule, where shell quoting
 # means nothing at all, and where the only two useful answers are these.

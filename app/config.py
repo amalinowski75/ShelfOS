@@ -249,5 +249,11 @@ LABEL_STATUS_TIMEOUT = float(os.environ.get("SHELFOS_LABEL_STATUS_TIMEOUT", "2")
 
 
 def label_printing_configured() -> bool:
-    """True when a printer device is set, so the print buttons are worth showing."""
+    """True when this SETTING names a printer.
+
+    Not the same question as "can this ShelfOS print", which a registered tunnel
+    can also answer — see :func:`app.services.label_printer.printing_configured`,
+    which is what the pages ask. This one stays because the startup checks are
+    about the setting itself: what it names, and whether it can be opened.
+    """
     return bool(LABEL_DEVICE)
