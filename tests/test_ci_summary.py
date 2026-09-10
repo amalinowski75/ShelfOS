@@ -223,3 +223,77 @@ def test_a_name_that_starts_or_ends_with_a_backtick_is_padded():
     # Markdown strips one leading and trailing space inside a span, so the
     # padding keeps the backtick as content rather than as fence.
     assert _code("`quoted`") == "`` `quoted` ``"
+
+
+# A suite with one test worth noticing and two that are not, so the floor has
+# something to cut.
+SLOW_XML = """<?xml version="1.0" encoding="utf-8"?>
+<testsuites name="pytest tests">
+  <testsuite name="pytest" errors="0" failures="0" skipped="0" tests="3" time="9.0">
+    <testcase classname="tests.test_deploy" name="test_walks_the_steps" time="5.5"/>
+    <testcase classname="tests.test_api" name="test_changes_a_password" time="2.4"/>
+    <testcase classname="tests.test_units" name="test_parses_a_value" time="0.01"/>
+  </testsuite>
+</testsuites>
+"""
+
+
+def test_the_slowest_tests_are_named_worst_first(tmp_path):
+    totals = parse(write(tmp_path, SLOW_XML))
+
+    assert [c.name for c in totals.slowest[:2]] == [
+        "test_walks_the_steps",
+        "test_changes_a_password",
+    ]
+
+
+def test_the_slowest_block_leaves_out_the_quick_ones(tmp_path):
+    # Naming a 10ms test among the slowest is noise, and noise is what trains
+    # a reader to skip the block on the day it matters.
+    block = render("Python (pytest)", parse(write(tmp_path, SLOW_XML)))
+
+    assert "Slowest tests" in block
+    assert "test_walks_the_steps" in block
+    assert "test_parses_a_value" not in block
+
+
+def test_a_suite_with_nothing_slow_gets_no_block(tmp_path):
+    block = render(
+        "Web (vitest)", parse(write(tmp_path, VITEST_XML.replace('"4.5"', '"0.4"')))
+    )
+
+    assert "Slowest tests" not in block
+
+
+def test_the_slowest_block_is_closed_and_the_failures_block_is_open(tmp_path):
+    # Failures are why you opened the page; timings are what you go looking
+    # for. Only one of them should be expanded.
+    body = PYTEST_XML.replace(
+        'name="test_take" time="0.10"', 'name="test_take" time="7.0"'
+    )
+    block = render("Python (pytest)", parse(write(tmp_path, body)))
+
+    assert "<details open><summary>What did not pass</summary>" in block
+    assert "<details><summary>Slowest tests</summary>" in block
+
+
+def test_a_measured_elapsed_time_overrides_the_reports_own(
+    tmp_path, capsys, monkeypatch
+):
+    # Under -n auto pytest writes a duration that is neither the wall clock
+    # nor the sum of the tests, so the workflow measures it and passes it in.
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+    main(
+        [
+            "--title",
+            "Python (pytest)",
+            "--elapsed",
+            "90",
+            str(write(tmp_path, SLOW_XML)),
+        ]
+    )
+
+    out = capsys.readouterr().out
+    assert "| 90.0s |" in out
+    assert "9.0s" not in out
