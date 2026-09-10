@@ -44,6 +44,53 @@ an unhandled exception becomes a 500 from Starlette's error middleware, which
 wraps the app's own header middleware, so that one response goes out without the
 security headers. Caddy adds them to everything.
 
+### Rebuilding the machine, same domain
+
+`deploy` on the new machine does the whole job, and the only thing it cannot
+carry over is what was never in the backup. The archive holds the database and
+the attachments; carry these across as well, before the first deploy:
+
+```bash
+/etc/shelfos/env               # signing secret + shop keys, root:shelfos 640
+/var/lib/shelfos/tunnel-keys   # the machines allowed to bring a label printer
+```
+
+A new signing secret is not fatal — it signs everyone out and invalidates every
+API token — but the shop keys are not recoverable from anywhere, and without the
+tunnel keys every printer has to be registered again from its own machine (which
+is self-service, so a small thing). Restore the env file with the same
+`root:shelfos 640`, and the key file as `shelfos:shelfos 644` — sshd's command
+reads it, and the service writes it.
+
+**The certificate.** Caddy asks for a new one and gets it in seconds, so for a
+one-off rebuild this needs no thought beyond having ports 80 and 443 reachable
+and DNS still pointing here — 80 as well, because that is how the certificate is
+issued. To keep the existing one instead, copy Caddy's storage across (its
+certificates *and* its ACME account key) and restore the ownership:
+
+Caddy's storage follows the `HOME`/`XDG_DATA_HOME` of the process that runs it,
+which for the packaged unit is the `caddy` user with `HOME=/var/lib/caddy` — not
+your shell's, so ask the unit and then look rather than asking Caddy from a root
+prompt:
+
+```bash
+systemctl show caddy -p User -p Environment            # what the unit sets
+sudo find /var/lib/caddy -type d \( -name certificates -o -name acme \)
+sudo tar -C /var/lib -czf caddy-storage.tar.gz caddy   # on the old machine
+sudo tar -C /var/lib -xzf caddy-storage.tar.gz         # on the new one
+sudo chown -R caddy:caddy /var/lib/caddy
+```
+
+If `find` comes back empty, the unit is keeping it somewhere else and the two
+directories it named are what to carry across; the `chown` applies wherever they
+land.
+
+That is worth doing when you expect to rebuild often: Let's Encrypt allows 50
+certificates a week per registered domain, but only **5 identical ones in 7
+days** — which is a limit nobody meets in production and everybody meets while
+testing a rebuild. Failed validations are rate-limited too, so a deploy run
+before DNS or the firewall is ready costs more than it looks.
+
 ### Deploying again over a working install
 
 `deploy` recognises an install and stops; `--reinstall` walks the steps again,

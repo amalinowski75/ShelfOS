@@ -1740,3 +1740,19 @@ def test_writing_a_setting_marks_the_service_for_a_restart(tmp_path: Path) -> No
         ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
     )
     assert "restart=1" in result.stdout, result.stderr
+
+
+def test_the_backup_names_what_it_does_not_hold(tmp_path: Path) -> None:
+    """The archive is the database and the attachments, and a rebuild loses
+    everything else: the signing secret, the shop keys, and the machines allowed
+    to bring a label printer."""
+    script = _SCRIPT.read_text()
+    # Said in two places, and both are the same promise: `backup --help` before
+    # anybody runs it, and the closing note after an archive is written.
+    told_up_front = script[script.index("The archive holds the database") :][:600]
+    assert "/etc/shelfos/env" in told_up_front
+    assert "tunnel-keys" in told_up_front
+
+    afterwards = script[script.index('note "The archive holds') :][:600]
+    assert "$ENV_FILE_SYSTEM" in afterwards
+    assert "$TUNNEL_KEYS" in afterwards

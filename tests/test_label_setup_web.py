@@ -418,3 +418,13 @@ def test_the_probe_knows_which_printer_without_being_told(
     # would not be.
     assert response.status_code == 200, response.text
     assert response.json()["answered"] is False
+
+
+def test_the_page_says_what_it_needs_before_anything_is_downloaded(
+    client: TestClient,
+) -> None:
+    """A .sh file is no use to somebody on Windows, and finding that out after
+    downloading it is finding it out too late."""
+    html = client.get("/label-printer").text
+    assert "Linux with systemd" in html
+    assert "Windows" in html

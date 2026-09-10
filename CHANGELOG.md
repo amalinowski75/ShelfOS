@@ -9,6 +9,20 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## What the printer's own machine has to be
+
+Said out loud rather than discovered: the machine with the printer has to be
+Linux with systemd, because the bridge writes to a `/dev` node and reads status
+frames back from it, and both halves are user units. The setup page says so
+before anybody downloads a script they cannot run.
+
+The alternatives are written down with it — a network-capable printer (nothing to
+install anywhere), a small Linux box beside the printer, or a Windows client,
+which is real work: the tunnel half ports easily, and the bridge needs libusb via
+`brother_ql`'s pyusb backend, because printing through the Windows spooler is
+one-way and this design leans on the status frame for tape detection, the
+two-colour refusal, faults and confirmation.
+
 ## Setting up the label printer from the browser
 
 *(Seven fixes from review, folded into the entry below: the port on the machine

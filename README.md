@@ -381,6 +381,32 @@ point it at one over the network:
 export SHELFOS_LABEL_DEVICE="tcp://127.0.0.1:9100"
 ```
 
+**The machine with the printer has to be Linux with systemd.** That is what the
+setup script and the bridge assume: a `/dev` node to write raster bytes to and
+read status frames back from, and user units to keep the bridge and the tunnel
+running. Windows and macOS are not supported, and the script will not run there.
+
+If the printer is on a Windows machine, three ways out, best first:
+
+1. **A network-capable printer** (QL-810W, QL-1110NWB and the like). Point
+   `SHELFOS_LABEL_DEVICE` at `tcp://<printer>:9100` and there is no client
+   software, no tunnel and no setup page in the picture at all.
+2. **A small Linux box beside the printer** — a Pi, an old laptop. Everything
+   below works unchanged, and the person at the Windows machine never touches it.
+3. **A Windows client**, which is real work rather than a setting. The tunnel
+   half ports easily: Windows 10/11 ship OpenSSH, so the key, the enrolment POST
+   and `ssh -N -R` all have equivalents, with Task Scheduler in place of systemd.
+   The bridge is the problem. Printing through the spooler in RAW mode
+   (`WritePrinter`) is one-way, and this design leans on the status frame —
+   tape detection, the two-colour refusal, fault reporting, print confirmation —
+   so that route gives up most of what makes the printer usable. Reading back
+   needs libusb: `brother_ql` already has a `pyusb` backend, but on Windows the
+   device must be bound to WinUSB with Zadig, which takes it away from Brother's
+   own driver. WSL2 needs `usbipd-win` and an attach per replug. Any of those
+   would want a PowerShell installer and the bridge packaged as an executable,
+   since Python is not a given there — and none of it touches this server: the
+   enrolment endpoint, the key store and the sshd block are transport-agnostic.
+
 **The quick way is `/label-printer`**, a page open to anyone signed in: answer
 three questions, download a script with your answers already in it, read it and
 run it on the machine holding the printer. It carries the bridge below, sets up
