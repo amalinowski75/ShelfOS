@@ -289,10 +289,15 @@ def _check_insecure_defaults() -> None:
         )
 
 
-# Every logger in this codebase is ``app.<module>``, so one name reaches all of
-# them. The format leaves out the timestamp: under systemd the journal stamps
-# every line already, and in a terminal `uvicorn` prints its own.
-_APP_LOGGER = "app"
+# Every module in this codebase logs to ``logging.getLogger("shelfos")`` — one
+# flat logger, not a per-module tree — so this is the one name that reaches all
+# of them, and naming any other silently configures a logger nothing uses.
+# ``_logger`` above is that logger; the test suite ties the two together rather
+# than trusting this comment.
+#
+# The format leaves out the timestamp: under systemd the journal stamps every
+# line already, and in a terminal `uvicorn` prints its own.
+_APP_LOGGER = "shelfos"
 _LOG_FORMAT = "%(levelname)s [%(name)s] %(message)s"
 
 
@@ -317,10 +322,15 @@ def _configure_logging() -> None:
     (pytest, or an operator's own logging setup), so calling this more than
     once — every test that builds an app does — adds nothing the second time.
     """
+    # NOTSET is in the mapping and is not a level anybody can have meant here:
+    # setLevel(0) means "inherit", and what would be inherited is the root
+    # logger basicConfig leaves at WARNING — so SHELFOS_LOG_LEVEL=NOTSET would
+    # be a way to switch logging off with no complaint, which is the very
+    # outcome this fallback exists to prevent.
     level = logging.getLevelNamesMapping().get(config.LOG_LEVEL)
     logging.basicConfig(format=_LOG_FORMAT)
-    logging.getLogger(_APP_LOGGER).setLevel(logging.INFO if level is None else level)
-    if level is None:
+    logging.getLogger(_APP_LOGGER).setLevel(level if level else logging.INFO)
+    if not level:
         # After the level is set, so this warning is itself emitted.
         _logger.warning(
             "SHELFOS_LOG_LEVEL=%r is not a logging level; using INFO.",
