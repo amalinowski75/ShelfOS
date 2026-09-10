@@ -812,9 +812,16 @@ def test_progress_counts_up_as_the_labels_come_out() -> None:
     assert counts[-1] > counts[0], counts  # it moved, rather than merely existing
 
 
-def test_a_run_is_confirmed_only_when_every_label_was() -> None:
+def test_a_run_is_confirmed_only_when_every_label_was(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """Any-label confirmation would report "Printed 8 labels" for seven that
     were only sent — the distinction this module keeps everywhere else."""
+    # Two labels here go unconfirmed, and each waits out the confirmation
+    # budget in real time. At its default that is five seconds apiece, which
+    # bought nothing: what is under test is which labels count as confirmed,
+    # not how long the module is willing to wait for one. Shrink both halves
+    # of the budget so the waits are instant.
+    monkeypatch.setattr(config, "LABEL_STATUS_TIMEOUT", 0.02)
+    monkeypatch.setattr(lp, "_CONFIRM_SECONDS_PER_LABEL", 0.02)
     # One completion frame, then silence: the first label is confirmed and the
     # rest time out.
     frames = [_IDLE_FRAME, frame(b18=lp._STATUS_COMPLETED)]

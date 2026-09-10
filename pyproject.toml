@@ -41,6 +41,10 @@ dev = [
     # opening the log. A no-op outside Actions, so it costs a local run
     # nothing.
     "pytest-github-actions-annotate-failures>=0.2",
+    # Runs the suite across the runner's cores. The suite is CPU-bound and
+    # share-nothing (every test builds its own SQLite database and tmp_path),
+    # so the only thing serial execution bought was wall-clock.
+    "pytest-xdist>=3.6",
     "mypy>=1.13",
     "ruff>=0.8",
     "black>=24.10",

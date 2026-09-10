@@ -344,15 +344,31 @@ def _stub_path(tmp_path: Path, ssh_mode: str = "ok") -> Path:
         # lets the script run to the end, which is the only way to see the order
         # it does things in — and the order is what these tests are about.
         stub.write_text(
-            "#!/bin/sh\n" f'printf "%s %s\\n" {name} "$*" >> "{log}"\n' "exit 0\n"
+            "#!/bin/sh\n"
+            f'printf "%s %s\\n" {name} "$*" >> "{log}"\n'
+            # Drain a piped stdin. The script writes the udev rule with
+            # `printf … | sudo tee …`, and a reader that exits without reading
+            # leaves the writer holding a closed pipe: printf takes SIGPIPE,
+            # pipefail propagates it, and the ERR trap kills the run at that
+            # line. Whether it happens is a scheduling race between the two
+            # ends, so it passed for months and then failed on a loaded runner
+            # once the suite went parallel.
+            "if [ -p /dev/stdin ]; then cat >/dev/null; fi\n"
+            "exit 0\n"
         )
         stub.chmod(0o755)
 
     # The forward test succeeds by NOT returning: `timeout` ends a connection
     # that held, and that is what a working tunnel looks like. The other two
     # modes are the exact words OpenSSH uses, because the script reads them.
+    #
+    # "ok" exits 124 rather than sleeping past the script's `timeout 8`. 124 is
+    # what `timeout` returns when it cuts a connection that was still up, so
+    # the script sees exactly the status a held tunnel produces — and sees it
+    # at once. Sleeping made each of these six tests pay the full eight
+    # seconds to observe a number the stub could simply return.
     behaviour = {
-        "ok": "sleep 30\n",
+        "ok": "exit 124\n",
         "denied": 'echo "Permission denied (publickey)." >&2\nexit 255\n',
         "port-busy": (
             'echo "Warning: remote port forwarding failed for listen port 9100" >&2\n'

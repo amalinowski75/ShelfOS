@@ -9,6 +9,34 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## The Python suite runs in about two minutes, not eleven
+
+Nothing was wrong with the tests; they were just waiting. Seven of them
+accounted for a full minute of every run on their own, and the other ten
+minutes were 1744 tests taken strictly one after another on a machine with
+four cores.
+
+Six installer tests each paid the script's eight-second `timeout` on the ssh
+check, because the ssh stub slept past it. `timeout` returns 124 when it cuts
+a connection that was still up, and 124 is the only thing the script reads, so
+the stub returns it directly. The label-printer test that watches two labels go
+unconfirmed waited out the real confirmation budget, five seconds apiece, to
+learn which labels count as confirmed; it now shrinks the budget it is not
+testing. Both were mutation-checked: break what they guard and they still go
+red.
+
+The rest is `pytest-xdist`. Every test builds its own SQLite database under its
+own `tmp_path`, so there was nothing to share and nothing to serialise, and
+coverage comes out at the same 95.8%.
+
+Running in parallel did surface one latent bug, in the installer tests' own
+`sudo` stub. The script writes the udev rule with `printf … | sudo tee …`, and
+a stub that exits without reading leaves the writer holding a closed pipe:
+`printf` takes SIGPIPE, `pipefail` propagates it, and the ERR trap kills the
+run at that line. Whether it happens is a scheduling race between the two ends,
+which is why it passed for months and then failed on a loaded runner. The stub
+drains a piped stdin now.
+
 ## CI says how many tests ran, not just whether they passed
 
 A finished run reported one word per job. Learning that the Python suite is 1733

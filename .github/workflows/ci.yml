@@ -43,6 +43,12 @@ jobs:
       - name: Type-check (mypy)
         run: mypy app
 
+      # -n auto runs the suite across the runner's cores. Every test builds
+      # its own SQLite database under its own tmp_path, so there is nothing to
+      # share and nothing to serialise; the only thing one worker bought was
+      # wall-clock. On this runner it is the difference between about ten
+      # minutes and about two.
+      #
       # --junitxml feeds the summary step below. --durations names the ten
       # slowest tests in the log, which is how a suite that has quietly grown a
       # sixty-second test gets noticed before it is the whole run.
@@ -53,6 +59,7 @@ jobs:
       - name: Tests (pytest)
         run: >
           pytest
+          -n auto
           --junitxml=junit/pytest.xml
           --durations=10
           --cov=app
