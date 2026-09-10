@@ -18,9 +18,16 @@
     );
   }
 
+  // Both tables carry an inline picker (different classes, sibling panels), and
+  // it is the truth on screen; the row attribute is its backup for a read-only
+  // page, which has no picker to read.
+  function locationPicker(row) {
+    return row.querySelector(".ril-location, .line-location");
+  }
+
   function currentLocation(match) {
-    if (match.kind === "import")
-      return match.row.querySelector(".ril-location")?.value || "";
+    const picker = locationPicker(match.row);
+    if (picker) return picker.value || "";
     return match.row.dataset.locationId || "";
   }
 
@@ -48,22 +55,33 @@
   function applyToRow(match, locationId, path, quantity) {
     if (quantity != null) {
       match.row.dataset.quantity = String(quantity);
-      const qtyCell =
-        match.kind === "import"
-          ? match.row.querySelector("td.num")
-          : match.row.children[3];
+      // Qty is the first of the three right-aligned money-and-count cells, in
+      // both tables. By class rather than by index: the columns have been
+      // reshuffled once already, and an index that drifts writes the count into
+      // whatever cell has taken its place.
+      const qtyCell = match.row.querySelector("td.num");
       if (qtyCell) qtyCell.textContent = String(quantity);
     }
     if (locationId == null) return;
+    match.row.dataset.locationId = String(locationId);
+    const picker = locationPicker(match.row);
+    if (picker) {
+      picker.value = String(locationId);
+      if (path) picker.title = path;
+      // A real line's picker keeps two more things in step, exactly as
+      // invoices.js does after a pick of its own: the placeholder is a lie once
+      // the line HAS a location (that endpoint only assigns, never clears), and
+      // last-value is where a later rejected change puts the cell back to. Not
+      // the review picker — a staged line's location CAN be cleared, so its
+      // blank option has to stay.
+      if (picker.classList.contains("line-location")) {
+        picker.querySelector('option[value=""]')?.remove();
+        picker.dataset.lastValue = picker.value;
+      }
+    }
     if (match.kind === "import") {
-      const select = match.row.querySelector(".ril-location");
-      if (select) select.value = String(locationId);
       // Same completeness rule invoices.js applies after its own edits.
       match.row.classList.toggle("is-incomplete", !match.row.dataset.typeId);
-    } else {
-      match.row.dataset.locationId = String(locationId);
-      const cell = match.row.children[2]; // the Location column
-      if (cell) cell.textContent = path;
     }
   }
 
