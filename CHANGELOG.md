@@ -9,6 +9,31 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## The slowest tests, and an honest clock, in the run summary
+
+`--durations=10` put the slowest tests in the log, which is the one place a
+reader has to go digging for: the run page, then the job, then the step, then
+the bottom of a few hundred lines. They are in the summary now, under a
+collapsed *Slowest tests* — closed because this is the block you go looking
+for, not the one you need in your face. Anything under a second is left out
+entirely; five instant tests only teach a reader to skip the block on the day
+it matters.
+
+The timings come out of the JUnit report, which already carries one per test,
+so no runner flag feeds this and nothing new is installed. They stay honest
+under `-n auto`, because a test's own duration is what it took whatever else
+was running alongside it.
+
+The wall-clock figure beside the counts was not honest, though, and had not
+been since the suite went parallel: pytest writes a duration to its report
+that is neither the elapsed time nor the sum of the tests, and it called a
+90-second run 28 seconds. Nothing in the file can repair that — the mtime
+agrees with the wrong number — so the workflow measures the step itself and
+passes it in. A measurement of zero is read as no measurement, and the
+workflow omits the flag rather than defaulting it, so a run cancelled before
+the step finished falls back to the report's figure instead of claiming the
+suite was instant. Vitest's own figure was right all along and is left alone.
+
 ## The Python suite runs in about two minutes, not eleven
 
 Nothing was wrong with the tests; they were just waiting. Seven of them

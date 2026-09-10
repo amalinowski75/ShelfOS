@@ -56,15 +56,25 @@ jobs:
       # Coverage is measured but nothing is gated on the number: a threshold
       # that fails the build turns every honest refactor into a fight with CI.
       # The figure belongs in front of the reader, not in the exit status.
+      #
+      # The elapsed time is measured here rather than read back out of the
+      # report: under -n auto the duration pytest writes to its JUnit file is
+      # neither the wall clock nor the sum of the tests, and it called a
+      # 90-second run 28 seconds. Written before the exit so a failing suite
+      # still gets a timed summary.
       - name: Tests (pytest)
-        run: >
-          pytest
-          -n auto
-          --junitxml=junit/pytest.xml
-          --durations=10
-          --cov=app
-          --cov-report=term
-          --cov-report=json:coverage.json
+        run: |
+          started=$SECONDS
+          status=0
+          pytest \
+            -n auto \
+            --junitxml=junit/pytest.xml \
+            --durations=10 \
+            --cov=app \
+            --cov-report=term \
+            --cov-report=json:coverage.json || status=$?
+          echo "PYTEST_ELAPSED=$((SECONDS - started))" >> "$GITHUB_ENV"
+          exit $status
 
       # if: always() — the summary is most wanted precisely when the step above
       # failed. Without it the run that needs a table is the one run that has
@@ -72,7 +82,11 @@ jobs:
       - name: Summarise
         if: always()
         run: |
-          python scripts/ci_summary.py --title "Python (pytest)" junit/pytest.xml
+          # ${VAR:+--elapsed VAR} passes the flag only when the variable is
+          # set, so a cancelled run that never reached the echo above leaves
+          # the report's own figure in place instead of claiming zero.
+          python scripts/ci_summary.py --title "Python (pytest)" \
+            ${PYTEST_ELAPSED:+--elapsed "$PYTEST_ELAPSED"} junit/pytest.xml
           python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           # Coverage lives beside the test table rather than in a comment on the
           # pull request: a comment needs write permission on the PR, and this

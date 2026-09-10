@@ -37,6 +37,13 @@ from xml.etree import ElementTree
 # than summarising, and the log is the better tool.
 MAX_LISTED = 20
 
+# How many of the slowest tests to name, and the floor below which naming them
+# is noise. A suite whose worst test is under a second has no slow test worth
+# a reader's attention, and printing five anyway trains people to skip the
+# block that will one day matter.
+MAX_SLOWEST = 5
+SLOW_ENOUGH_SECONDS = 1.0
+
 
 @dataclass
 class Case:
@@ -68,6 +75,7 @@ class Totals:
     skipped: int = 0
     time: float = 0.0
     bad: list[Case] = field(default_factory=list)
+    slowest: list[Case] = field(default_factory=list)
 
     @property
     def passed(self) -> int:
@@ -95,6 +103,7 @@ def parse(path: Path) -> Totals:
     recount is cheap and cannot disagree with the list of failures below it.
     """
     totals = Totals()
+    cases: list[Case] = []
     root = ElementTree.parse(path).getroot()
 
     # The root is <testsuites> for vitest and (usually) <testsuite> for pytest.
@@ -106,6 +115,7 @@ def parse(path: Path) -> Totals:
             time=_float(case.get("time")),
         )
         totals.tests += 1
+        cases.append(entry)
 
         if (failure := case.find("failure")) is not None:
             entry.status = "failed"
@@ -129,6 +139,10 @@ def parse(path: Path) -> Totals:
     totals.time = _float(root.get("time")) or sum(
         _float(s.get("time")) for s in root.iter("testsuite")
     )
+    # Per-case times stay honest under parallelism — each is what that test
+    # took, whatever else was running — so the ranking means the same thing
+    # here as it does in pytest's own --durations.
+    totals.slowest = sorted(cases, key=lambda c: c.time, reverse=True)[:MAX_SLOWEST]
     return totals
 
 
@@ -199,6 +213,23 @@ def render(title: str, totals: Totals) -> str:
             )
         lines += ["", "</details>", ""]
 
+    # Closed by default: this is the block you go looking for, not the one you
+    # need shoved in your face. Omitted entirely when the worst test is quick,
+    # because a list of five instant tests teaches the reader to skip it.
+    if totals.slowest and totals.slowest[0].time >= SLOW_ENOUGH_SECONDS:
+        lines += [
+            "<details><summary>Slowest tests</summary>",
+            "",
+            "| Test | Time |",
+            "| ---- | ---: |",
+        ]
+        lines += [
+            f"| {_code(c.label)} | {c.time:.2f}s |"
+            for c in totals.slowest
+            if c.time >= SLOW_ENOUGH_SECONDS
+        ]
+        lines += ["", "</details>", ""]
+
     return "\n".join(lines)
 
 
@@ -206,10 +237,31 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("report", type=Path, help="JUnit XML written by the runner")
     parser.add_argument("--title", required=True, help="Heading for this suite")
+    parser.add_argument(
+        "--elapsed",
+        type=float,
+        default=None,
+        help=(
+            "Wall-clock seconds the suite took, measured by the caller. Use it "
+            "when the report's own figure cannot be trusted: under pytest-xdist "
+            "the duration pytest writes is neither the elapsed time nor the sum "
+            "of the tests, and it understated a 90-second run as 28. Zero or "
+            "less is read as no measurement and the report's figure stands."
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
-        block = render(args.title, parse(args.report))
+        totals = parse(args.report)
+        # Non-positive means "not measured", not "took no time". The caller
+        # supplies this from a shell variable that is unset whenever the step
+        # that measures it did not finish — a cancelled run, say — and a
+        # default of 0 arriving here would print a table claiming the suite
+        # was instant. That is a worse lie than the report's own bad figure,
+        # which at least looks like a duration.
+        if args.elapsed is not None and args.elapsed > 0:
+            totals.time = args.elapsed
+        block = render(args.title, totals)
     except (OSError, ElementTree.ParseError):
         # Either no report at all, or one that cannot be read: the suite died
         # before it could finish writing. Vitest opens its output file when it
