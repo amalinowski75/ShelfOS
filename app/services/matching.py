@@ -152,11 +152,21 @@ def build_proposal(
 
     description = product.description or ""
     hints = product.shop_category or ""
-    # The type/mounting/package scans look at everything; the unit/value scans look
-    # only at the real description + extra text (a category's stray digits must not
-    # land in a number field as a bogus measurement).
+    # Two texts, both of them the shop's own words. ``scan_text`` is the prose a value
+    # can be read out of; ``blob`` adds the shop's category line, which the
+    # type/mounting/package scans want (TME files a 100nF part under "MLCC SMD
+    # capacitors" and never says SMD in the description) but the unit/value scans must
+    # not see — a category's stray digits would land in a number field as a bogus
+    # measurement.
+    #
+    # Neither carries ``product.category``: that is not something the shop wrote but a
+    # guess a provider already made from these same texts with its own hardcoded
+    # keyword list. Mixing it in would let that guess re-enter as if it were evidence —
+    # a part described "Fiber for LED" arrives with category "led" and would match the
+    # led rule a second time, on a word nobody but us put there. It gets its say in
+    # _resolve_type instead, once the rules have had theirs.
     scan_text = " ".join(t for t in (description, extra_text) if t)
-    blob = " ".join(t for t in (product.category, hints, scan_text) if t)
+    blob = " ".join(t for t in (hints, scan_text) if t)
 
     proposal = MatchProposal()
 
@@ -193,15 +203,45 @@ def build_proposal(
 def _resolve_type(
     session: Session, category: str | None, blob: str, rules: RuleSet
 ) -> int | None:
-    """Resolve a component type: an exact category name first, then TYPE aliases."""
+    """Resolve a component type: the TYPE rules first, then the provider's own guess.
+
+    The rules have to go first, because ``category`` is not a fact — it is what
+    ``infer_category`` made of the shop's text using the hardcoded keyword list that
+    predates this table. Consulting it first made that list outrank every rule an
+    admin writes: a lightpipe described "Fiber for LED" was filed as an LED, and
+    adding a "fiber → lightpipe" rule at order 0 changed nothing, because the type
+    was decided before the rules were read. So the editable vocabulary decides, in
+    its own order, and the provider's guess is what is left when no rule fires.
+
+    That guess still earns its place as the fallback, and it is read the same two ways
+    the shop's own text is: a guess that already IS a type name resolves directly (so
+    the rules only need to carry synonyms, not an identity rule per type), and
+    otherwise it goes through the rules itself. The second half matters because the
+    guess is sometimes the ONLY place a keyword survives: an un-enriched invoice line
+    infers its category from the description *and the manufacturer*, and the
+    manufacturer is text the rules never see — a line reading "czerwona 620nm 0805"
+    from "Kingbright LED" arrives as category "led" with nothing led-ish in the blob.
+    An install whose type is named "Diody LED" resolves that only by letting the rule
+    (led → Diody LED) read the guess. Same shape whenever the old list matched
+    mid-word where the rules' left-anchored regex will not.
+    """
     names = {ctype.name.casefold(): ctype.id for ctype in cs.list_types(session)}
-    # A category that already IS a type name resolves directly — so seeded rules only
-    # need to add synonyms, not an identity rule for every type.
+    from_text = _type_from_rules(blob, names, rules)
+    if from_text is not None:
+        return from_text
     if category:
         exact = names.get(category.strip().casefold())
         if exact is not None:
             return exact
-    lowered = blob.lower()
+        return _type_from_rules(category, names, rules)
+    return None
+
+
+def _type_from_rules(
+    text: str, names: dict[str, int | None], rules: RuleSet
+) -> int | None:
+    """The first TYPE alias present in ``text`` (rules in order), as a type id."""
+    lowered = text.lower()
     for alias, canonical in rules.types:
         if not alias:
             continue
