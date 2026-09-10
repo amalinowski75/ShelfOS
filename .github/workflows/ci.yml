@@ -8,6 +8,18 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+# A push to a branch that already has a run in flight makes that run pointless:
+# it is testing code nobody will merge. Cancel it and keep the minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege, set once here rather than per job. Nothing in this workflow
+# writes to the repository; the summaries go to the run's own summary page,
+# which needs no token at all.
+permissions:
+  contents: read
+
 jobs:
   python:
     name: Python (ruff, mypy, pytest)
@@ -31,8 +43,46 @@ jobs:
       - name: Type-check (mypy)
         run: mypy app
 
+      # -n auto runs the suite across the runner's cores. Every test builds
+      # its own SQLite database under its own tmp_path, so there is nothing to
+      # share and nothing to serialise; the only thing one worker bought was
+      # wall-clock. On this runner it is the difference between about ten
+      # minutes and about two.
+      #
+      # --junitxml feeds the summary step below. --durations names the ten
+      # slowest tests in the log, which is how a suite that has quietly grown a
+      # sixty-second test gets noticed before it is the whole run.
+      #
+      # Coverage is measured but nothing is gated on the number: a threshold
+      # that fails the build turns every honest refactor into a fight with CI.
+      # The figure belongs in front of the reader, not in the exit status.
       - name: Tests (pytest)
-        run: pytest
+        run: >
+          pytest
+          -n auto
+          --junitxml=junit/pytest.xml
+          --durations=10
+          --cov=app
+          --cov-report=term
+          --cov-report=json:coverage.json
+
+      # if: always() — the summary is most wanted precisely when the step above
+      # failed. Without it the run that needs a table is the one run that has
+      # none.
+      - name: Summarise
+        if: always()
+        run: |
+          python scripts/ci_summary.py --title "Python (pytest)" junit/pytest.xml
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          # Coverage lives beside the test table rather than in a comment on the
+          # pull request: a comment needs write permission on the PR, and this
+          # is the same click away.
+          import json, pathlib
+          report = pathlib.Path("coverage.json")
+          if report.is_file():
+              covered = json.loads(report.read_text())["totals"]["percent_covered"]
+              print(f"**Coverage:** {covered:.1f}% of `app`\n")
+          PY
 
   web:
     name: Web (vitest)
@@ -49,8 +99,27 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
+      # The github-actions reporter is built into Vitest and puts a failure
+      # annotation on the offending line in the diff, so a red run is readable
+      # from the Files-changed tab without opening the log. The junit reporter
+      # alongside it feeds the summary step.
+      #
+      # `default` is listed because naming any reporter on the CLI REPLACES the
+      # defaults rather than adding to them. Without it the step's log holds
+      # one line — "JUNIT report written to …" — since junit writes only to its
+      # file and github-actions emits only annotations. The log is the fallback
+      # for every case the summary cannot cover, so it has to keep the list.
       - name: Web UI tests (vitest)
-        run: npm test
+        run: >
+          npm test --
+          --reporter=default
+          --reporter=github-actions
+          --reporter=junit
+          --outputFile=junit/vitest.xml
+
+      - name: Summarise
+        if: always()
+        run: python3 scripts/ci_summary.py --title "Web (vitest)" junit/vitest.xml
 
   # The runtime dependency set, on its own. Every other way of running ShelfOS
   # installs the `dev` extra as well, so a dependency misfiled there works

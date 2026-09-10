@@ -36,6 +36,15 @@ dependencies = [
 dev = [
     "pytest>=8.3",
     "pytest-cov>=6.0",
+    # Turns a pytest failure into a GitHub Actions annotation on the failing
+    # line, so a red CI run is readable from the pull request's diff without
+    # opening the log. A no-op outside Actions, so it costs a local run
+    # nothing.
+    "pytest-github-actions-annotate-failures>=0.2",
+    # Runs the suite across the runner's cores. The suite is CPU-bound and
+    # share-nothing (every test builds its own SQLite database and tmp_path),
+    # so the only thing serial execution bought was wall-clock.
+    "pytest-xdist>=3.6",
     "mypy>=1.13",
     "ruff>=0.8",
     "black>=24.10",

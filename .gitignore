@@ -14,7 +14,10 @@ env/
 # Testing / coverage
 .pytest_cache/
 .coverage
+coverage.json
 htmlcov/
+# JUnit XML for the CI job summary; written by both runners, kept by neither.
+junit/
 .mypy_cache/
 .ruff_cache/
 
