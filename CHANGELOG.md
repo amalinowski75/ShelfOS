@@ -9,6 +9,27 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## Successful sign-ins are logged where sign-ins are looked for
+
+uvicorn configures its own three loggers and leaves the root one with nothing
+below WARNING, so every `_logger.info` in ShelfOS was written to a logger that
+discarded it. Failed sign-ins are WARNING and reached the journal; successful
+ones are INFO and did not — which is backwards for the question an operator
+actually asks. It never showed up in the suite, because pytest installs a
+handler of its own and the lines appear there perfectly.
+
+`create_app` now installs a root handler and sets the `app` logger from
+`SHELFOS_LOG_LEVEL` (default INFO), so `journalctl -u shelfos | grep "Login
+for"` answers who signed in, from where, and when. The tests for it run in a
+subprocess configured the way uvicorn configures one, because that is the only
+place the difference is visible.
+
+It came up on a live server where a tab signed in as a `user` account showed an
+admin after a service restart. A browser keeps one session cookie per site,
+shared by every tab, so signing in as somebody else in a second tab replaces it
+and the first tab shows the new account the moment it next loads a page. That
+reads exactly like a session changing hands on its own, and the log is what
+tells the two apart — `deploy/README.md` now says so.
 ## A scanned location landed in the quantity column
 
 Filing a bag from the invoice's scan panel wrote the shelf into the Qty cell of
