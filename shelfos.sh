@@ -34,6 +34,16 @@ readonly ENV_FILE_SYSTEM="$ETC_DIR/env"
 readonly SERVICE_NAME="shelfos.service"
 readonly SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME"
 readonly SERVICE_USER="shelfos"
+# The nightly backup: a oneshot unit and the timer that fires it. Separate from
+# the service so a backup that fails is a failure of its own — visible in
+# `systemctl list-timers` and in its own journal — rather than something that
+# reflects on whether ShelfOS is up.
+readonly BACKUP_SERVICE_NAME="shelfos-backup.service"
+readonly BACKUP_TIMER_NAME="shelfos-backup.timer"
+# Where the archives go. Named here because three things have to agree on it:
+# `backup create` without -o, the retention sweep in the backup unit, and what
+# `status` reads back.
+readonly BACKUP_DIR="$DATA_DIR/backups"
 # The account a machine with a label printer logs in as to carry it here. Its
 # own, and not the service user: that one is `--system --shell nologin` with a
 # root-owned home under ProtectHome=yes, so it has nowhere to keep an
@@ -657,6 +667,7 @@ settings in /etc/shelfos/env, a systemd unit, and Caddy holding the certificate.
   --printer/--no-printer keep or strip the label-printer support
   --import-db PATH       copy an existing database in before the first start
   --import-attachments D copy an existing attachments directory in with it
+  --no-backup-timer      install without the nightly backup schedule
   --reinstall            repair an existing install instead of refusing
   --dry-run              print what would happen; never calls sudo
   -y, --yes              accept the defaults and skip the confirmation
@@ -694,6 +705,10 @@ DEPLOY_IMPORT_DB=""
 DEPLOY_IMPORT_ATTACHMENTS=""
 DEPLOY_REINSTALL=0
 DEPLOY_SOURCE_SHA=""
+# Whether the nightly backup is scheduled. On by default: an install whose
+# backups wait for somebody to remember them is an install with no backups, and
+# the failure only ever shows up on the day one is needed.
+DEPLOY_WANT_BACKUP=1
 
 deploy_preflight() {
     local ids=""
@@ -855,6 +870,12 @@ deploy_summary() {
     else
         info "  proxy           ${C_YELLOW}none — $DEPLOY_LISTEN:$DEPLOY_PORT, in plain HTTP, to anything that can reach it${C_OFF}"
     fi
+    if [ "$DEPLOY_WANT_BACKUP" = 1 ]; then
+        info "  backups         nightly into $BACKUP_DIR, kept 30 days"
+    else
+        info "  backups         ${C_YELLOW}not scheduled — nothing will take one for you,${C_OFF}"
+        info "  ${C_YELLOW}                and a schedule already here is stopped${C_OFF}"
+    fi
     if [ "$DEPLOY_WANT_PRINTER" = 1 ]; then
         info "  label printer   kept, group $DEPLOY_PRINTER_GROUP, udev rule installed"
     else
@@ -891,6 +912,7 @@ cmd_deploy() {
             --no-printer)           DEPLOY_WANT_PRINTER=0; shift ;;
             --import-db)            DEPLOY_IMPORT_DB=${2:-}; shift 2 ;;
             --import-attachments)   DEPLOY_IMPORT_ATTACHMENTS=${2:-}; shift 2 ;;
+            --no-backup-timer)      DEPLOY_WANT_BACKUP=0; shift ;;
             --reinstall)            DEPLOY_REINSTALL=1; shift ;;
             -h|--help)              usage_deploy; return 0 ;;
             *)                      usage_deploy >&2; die 2 "unknown option for deploy: $1" ;;
@@ -910,7 +932,7 @@ cmd_deploy() {
     fi
 
     trap 'deploy_failed' ERR
-    STEP_TOTAL=13
+    STEP_TOTAL=14
     STEP_INDEX=0
 
     deploy_step_packages
@@ -926,6 +948,11 @@ cmd_deploy() {
     deploy_step_env
     deploy_step_import
     deploy_step_unit
+    # After the unit: the backup unit runs `shelfos.sh backup`, which resolves
+    # its paths out of an install it expects to find — and enabling a schedule
+    # for a service that does not exist yet would put the first failure in a
+    # journal nobody is reading.
+    deploy_step_backup
     deploy_step_printer
     deploy_step_caddy_config
     deploy_step_verify
@@ -1356,7 +1383,7 @@ deploy_step_venv() {
     # root on the operator's next sudo. Stated rather than left alone, so an
     # install made by an earlier version is corrected on the next deploy.
     sudo_run chown -R root:root "$INSTALL_DIR"
-    sudo_run chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR"
+    hand_data_to_service
 }
 
 deploy_step_env() {
@@ -1434,7 +1461,7 @@ deploy_step_import() {
         [ -d "$DEPLOY_IMPORT_ATTACHMENTS" ] || die 1 "no attachments directory at $DEPLOY_IMPORT_ATTACHMENTS"
         sudo_run cp -r "$DEPLOY_IMPORT_ATTACHMENTS/." "$DATA_DIR/attachments/"
     fi
-    sudo_run chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR"
+    hand_data_to_service
     step_ok
 }
 
@@ -1479,6 +1506,76 @@ deploy_step_unit() {
         # what changed above is exactly what a running one has already loaded.
         note "        restarting: what it is running changed"
         sudo_run systemctl restart "$SERVICE_NAME"
+    fi
+}
+
+deploy_step_backup() {
+    step "nightly backup"
+    if [ "$DEPLOY_WANT_BACKUP" = 0 ]; then
+        # Declining a schedule has to mean there is no schedule. Skipping the
+        # step over a timer that is already enabled would leave it firing at
+        # 03:15 under a summary that said "not scheduled" — the operator told
+        # the opposite of the truth in the one place they agreed to the plan.
+        # The units stay on disk; only the schedule stops, so turning it back on
+        # is one `systemctl enable --now` and not another deploy.
+        if [ -e "/etc/systemd/system/$BACKUP_TIMER_NAME" ]; then
+            sudo_run systemctl disable --now "$BACKUP_TIMER_NAME"
+            step_ok "schedule stopped; the units are left where they are"
+        else
+            step_skipped "not scheduled"
+        fi
+        return 0
+    fi
+
+    # Neither file carries anything this machine decided — the paths in them are
+    # the ones this script bakes in — so a difference here is either a new
+    # version of ShelfOS or an operator's own hour and retention. The second is
+    # a choice worth keeping, and nothing outside this file knows which of the
+    # two it is looking at, so it asks.
+    local changed=0 kept=0 name shipped target
+    for name in "$BACKUP_SERVICE_NAME" "$BACKUP_TIMER_NAME"; do
+        shipped="$REPO_ROOT/deploy/$name"
+        target="/etc/systemd/system/$name"
+        if [ -f "$target" ] && cmp -s "$shipped" "$target"; then
+            continue
+        fi
+        if [ -f "$target" ]; then
+            note "        an installed $name differs from this one:"
+            info ""
+            diff -u "$target" "$shipped" >&2 || true
+            info ""
+            if ! ask_yes_no "  Install this $name?" n; then
+                note "        kept the installed $name"
+                kept=1
+                continue
+            fi
+            sudo_run cp "$target" "$target.bak-$(date +%Y%m%d%H%M%S)"
+        fi
+        write_file "$target" 644 "root:root" < "$shipped"
+        changed=1
+    done
+
+    # Three outcomes, not two. "unchanged" over a declined diff would read as
+    # "what is installed is what this version ships", which is the opposite of
+    # what just happened — and the step's own line is the one people take away,
+    # not the note that scrolled past above it.
+    if [ "$changed" = 1 ] && [ "$kept" = 1 ]; then
+        step_ok "one installed, one kept as it was"
+    elif [ "$changed" = 1 ]; then
+        step_ok
+    elif [ "$kept" = 1 ]; then
+        step_ok "kept what is installed"
+    else
+        step_skipped "unchanged"
+    fi
+
+    sudo_run systemctl daemon-reload
+    sudo_run systemctl enable --now "$BACKUP_TIMER_NAME"
+    if [ "$changed" = 1 ]; then
+        # A running timer holds the schedule it was started with, and `enable
+        # --now` does nothing to one that is already running — so a new hour
+        # would sit on disk while the old one kept firing.
+        sudo_run systemctl restart "$BACKUP_TIMER_NAME"
     fi
 }
 
@@ -1623,7 +1720,15 @@ deploy_step_verify() {
         info "  would fail with nothing to say why. Set it to 1 when TLS goes in front."
     fi
     info "  ./shelfos.sh status     what state it is in"
-    info "  ./shelfos.sh backup     take one now; nothing else does it for you"
+    if [ "$DEPLOY_WANT_BACKUP" = 1 ]; then
+        info "  ./shelfos.sh backup     take one now; the timer takes one nightly"
+        info ""
+        info "  The nightly archive holds the database and the attachments. It does not"
+        info "  hold $ENV_FILE_SYSTEM, and it never will — copy that off this machine"
+        info "  once, by hand, or a restore comes back without the shop keys."
+    else
+        info "  ./shelfos.sh backup     take one now; nothing else does it for you"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -1705,14 +1810,28 @@ cmd_update() {
     # Root's, not the service's — see deploy_step_venv.
     sudo_run chown -R root:root "$INSTALL_DIR"
 
-    # The installed unit and Caddyfile carry this machine's port and domain, so
-    # a new version of either cannot simply be copied over them.
+    # The installed unit and Caddyfile carry this machine's port and domain, and
+    # the backup units carry whatever hour and retention were settled on here, so
+    # a new version of any of them cannot simply be copied over them.
     local f
-    for f in deploy/shelfos.service deploy/Caddyfile; do
-        if sudo_run git -C "$INSTALL_DIR" diff --name-only "$before" "$after" 2>/dev/null | grep -q "^$f$"; then
-            warn "$f changed upstream; yours carries this machine's settings, so it was not touched."
-            info "  Compare and apply by hand, or re-run deploy --reinstall."
-        fi
+    for f in deploy/shelfos.service deploy/Caddyfile \
+             "deploy/$BACKUP_SERVICE_NAME" "deploy/$BACKUP_TIMER_NAME"; do
+        sudo_run git -C "$INSTALL_DIR" diff --name-only "$before" "$after" 2>/dev/null \
+            | grep -q "^$f$" || continue
+        # A unit that arrived with this update and has never been installed is
+        # not a conflict, and telling somebody their copy was left alone when
+        # they have no copy sends them looking for a file that is not there.
+        case $f in
+            "deploy/$BACKUP_SERVICE_NAME"|"deploy/$BACKUP_TIMER_NAME")
+                if [ ! -e "/etc/systemd/system/${f#deploy/}" ]; then
+                    info "$f is new in this update and is not installed on this machine."
+                    info "  'sudo ./shelfos.sh deploy --reinstall' installs it, or copy it"
+                    info "  into /etc/systemd/system yourself — deploy/README.md has both."
+                    continue
+                fi ;;
+        esac
+        warn "$f changed upstream; the installed one may carry choices of yours, so it was not touched."
+        info "  Compare and apply by hand, or re-run deploy --reinstall."
     done
 
     if [ "$want_restart" = 1 ]; then
@@ -1799,6 +1918,67 @@ cmd_status() {
         att=${att:-$DATA_DIR/attachments}
         if [ -d "$att" ]; then
             status_line "attachments" "$(find "$att" -maxdepth 1 -type f 2>/dev/null | wc -l) files in $att"
+        fi
+
+        # The timer's state and the newest archive, because they fail apart:
+        # an enabled timer whose service has been erroring every night looks
+        # perfectly healthy until somebody looks at what it has produced.
+        local timer_state timer_fired=0
+        timer_state=$(systemctl is-active "$BACKUP_TIMER_NAME" 2>/dev/null || true)
+        if [ "$timer_state" = active ]; then
+            local next last
+            next=$(systemctl show "$BACKUP_TIMER_NAME" -p NextElapseUSecRealtime --value 2>/dev/null || true)
+            # "n/a" is what a timer that has never been scheduled prints, and it
+            # is not an answer anybody can act on.
+            case ${next:-} in ""|n/a) next="unknown" ;; esac
+            status_line "backups" "nightly, next $next"
+            # Whether it has ever fired, which is what separates "installed this
+            # afternoon and nothing has run yet" from "runs nightly and produces
+            # nothing".
+            last=$(systemctl show "$BACKUP_TIMER_NAME" -p LastTriggerUSecRealtime --value 2>/dev/null || true)
+            case ${last:-} in ""|n/a) ;; *) timer_fired=1 ;; esac
+        elif [ -e "/etc/systemd/system/$BACKUP_TIMER_NAME" ]; then
+            # Installed and not running: somebody disabled or masked it, which is
+            # a state to report as unhealthy rather than merely mention.
+            status_line "backups" "${C_YELLOW}installed but not running${C_OFF}"
+            healthy=1
+        else
+            # Never installed — a deploy that declined the schedule, or an
+            # install older than it. A deliberate choice, so it is said and not
+            # counted against the install.
+            status_line "backups" "${C_YELLOW}not scheduled${C_OFF}"
+        fi
+
+        # Three answers, not two: the directory may be unreadable (0700 and no
+        # sudo) or simply absent — `backup create` makes it, so a machine
+        # deployed this afternoon has none. Reporting "run with sudo" to
+        # somebody already running under sudo sends them after a permission
+        # problem they do not have.
+        if [ ! -d "$BACKUP_DIR" ]; then
+            status_line "" "${C_YELLOW}no archive yet ($BACKUP_DIR does not exist)${C_OFF}"
+            [ "$timer_fired" = 0 ] || healthy=1
+        elif [ -r "$BACKUP_DIR" ]; then
+            local newest
+            newest=$(find "$BACKUP_DIR" -maxdepth 1 -name 'shelfos-backup-*.tar.gz' -printf '%T@ %p\n' 2>/dev/null \
+                | sort -rn | head -1 | cut -d' ' -f2-)
+            if [ -z "$newest" ]; then
+                status_line "" "${C_YELLOW}no archive in $BACKUP_DIR yet${C_OFF}"
+                # A timer that has fired and left nothing behind is a backup
+                # that is failing every night into its own journal.
+                [ "$timer_fired" = 0 ] || healthy=1
+            else
+                status_line "" "newest $(basename "$newest") ($(du -h "$newest" 2>/dev/null | cut -f1), $(date -r "$newest" '+%Y-%m-%d %H:%M' 2>/dev/null))"
+                # Nightly, so anything older than a week means several runs in a
+                # row produced nothing — the same failure, just with an archive
+                # old enough to be reassuring at a glance.
+                if [ "$timer_state" = active ] \
+                    && [ -z "$(find "$BACKUP_DIR" -maxdepth 1 -name 'shelfos-backup-*.tar.gz' -mtime -7 2>/dev/null)" ]; then
+                    status_line "" "${C_YELLOW}nothing newer than a week, on a nightly schedule${C_OFF}"
+                    healthy=1
+                fi
+            fi
+        else
+            status_line "" "$BACKUP_DIR is root's; run with sudo to see the archives"
         fi
 
         if command -v caddy > /dev/null 2>&1; then
@@ -2045,6 +2225,18 @@ restore_password_guard() {
 # directory that is a symlink to external storage, and `chown -R` on a symlinked
 # operand changes the link rather than the tree behind it — so without this the
 # files stay root-owned and the service starts unable to write uploads.
+# The data directory handed to the service — except the archives, which are
+# root's. A plain `chown -R "$DATA_DIR"` is what this exists to replace: it
+# reaches /var/lib/shelfos/backups and gives every archive to the account the
+# web app runs as, so from that moment any file-read bug in the app yields every
+# password hash in the database. `backup create` puts the *directory* back with
+# `install -d -o root`, but nothing ever repairs the files inside it, so the
+# damage outlives the deploy that did it.
+hand_data_to_service() {
+    sudo_run find "$DATA_DIR" -path "$BACKUP_DIR" -prune -o \
+        -exec chown "$SERVICE_USER:$SERVICE_USER" {} +
+}
+
 give_data_back() {
     local db_path att_path
     db_path=$(readlink -f "${DEPLOY_DB#sqlite:///}" 2>/dev/null || printf '%s' "${DEPLOY_DB#sqlite:///}")
@@ -2110,8 +2302,8 @@ cmd_backup() {
             # root:root 0700. The archives are root's business, like
             # /etc/shelfos/env: each one carries every password hash in the
             # database, and the service itself has no reason to read them back.
-            sudo_run install -d -o root -g root -m 700 "$DATA_DIR/backups"
-            set -- "$@" -o "$DATA_DIR/backups/shelfos-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
+            sudo_run install -d -o root -g root -m 700 "$BACKUP_DIR"
+            set -- "$@" -o "$BACKUP_DIR/shelfos-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
         fi
     fi
 

@@ -1,0 +1,22 @@
+# When the backup runs. See shelfos-backup.service next to this file.
+
+[Unit]
+Description=ShelfOS nightly backup
+
+[Timer]
+# Local time, so it follows the clock people read rather than drifting an hour
+# twice a year. Change the hour to suit; `systemctl list-timers` says when it
+# next fires, and it is the answer to check after editing, not the file.
+OnCalendar=*-*-* 03:15:00
+
+# Catch up on a run that was missed because the machine was off or asleep.
+# Without this a box that is shut overnight is a box that is never backed up,
+# and nothing anywhere says so.
+Persistent=true
+
+# Spread the start over ten minutes. It matters where several machines back up
+# to the same NAS at the same minute; it costs nothing where they do not.
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target
