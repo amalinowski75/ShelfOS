@@ -2638,6 +2638,10 @@ def test_settings_menu_holds_the_instance_level_controls(client: TestClient) -> 
     assert 'href="/docs"' in menu
     assert 'id="change-password-btn"' in menu
     assert "/static/settings_menu.js" in html
+    # Plain links and a button: the ARIA menu pattern would promise arrow keys
+    # and a roving tabindex that the script does not implement, and it takes Tab
+    # — the thing that does work here — away from a screen reader.
+    assert 'role="menu' not in menu
 
     # …and none of them is left behind in the nav itself.
     nav = html.split("<nav>", 1)[1].split("</nav>", 1)[0]

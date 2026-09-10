@@ -170,8 +170,10 @@ a { color: var(--accent-strong); text-underline-offset: 2px; }
 /* The Settings menu on the right of the app bar. The panel is absolutely
    positioned against the button, so opening it never nudges the bar. */
 .settings { position: relative; }
-.settings-toggle { padding: 4px 6px; }
-.settings-toggle svg { width: 18px; height: 18px; }
+/* Both carry .btn as well, so they have to out-specify .btn-sm's padding and
+   .btn svg's size, which come later in this file. */
+.btn.settings-toggle { padding: 4px 6px; }
+.btn.settings-toggle svg { width: 18px; height: 18px; }
 .settings-toggle[aria-expanded="true"] { background: var(--surface-2); color: var(--text); }
 .settings-toggle[aria-current] { color: var(--accent-ink); background: var(--accent-soft); }
 .settings-menu {

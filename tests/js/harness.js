@@ -577,11 +577,11 @@ export function settingsMenuFixture() {
   return `
     <div class="settings">
       <button type="button" id="settings-btn" aria-expanded="false"></button>
-      <div class="settings-menu" id="settings-menu" role="menu" hidden>
-        <a role="menuitem" href="/label-printer">Label printer</a>
-        <a role="menuitem" href="/users">Users</a>
-        <a role="menuitem" href="/docs">API</a>
-        <button type="button" role="menuitem" id="change-password-btn">Change password</button>
+      <div class="settings-menu" id="settings-menu" hidden>
+        <a href="/label-printer">Label printer</a>
+        <a href="/users">Users</a>
+        <a href="/docs">API</a>
+        <button type="button" id="change-password-btn">Change password</button>
       </div>
     </div>`;
 }
