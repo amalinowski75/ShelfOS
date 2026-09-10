@@ -152,15 +152,20 @@ def build_proposal(
 
     description = product.description or ""
     hints = product.shop_category or ""
-    # The type/mounting/package scans look at everything; the unit/value scans look
-    # only at the real description + extra text (a category's stray digits must not
-    # land in a number field as a bogus measurement).
+    # Two texts, both of them the shop's own words. ``scan_text`` is the prose a value
+    # can be read out of; ``blob`` adds the shop's category line, which the
+    # type/mounting/package scans want (TME files a 100nF part under "MLCC SMD
+    # capacitors" and never says SMD in the description) but the unit/value scans must
+    # not see — a category's stray digits would land in a number field as a bogus
+    # measurement.
+    #
+    # Neither carries ``product.category``: that is not something the shop wrote but a
+    # guess a provider already made from these same texts with its own hardcoded
+    # keyword list. Mixing it in would let that guess re-enter as if it were evidence —
+    # a part described "Fiber for LED" arrives with category "led" and would match the
+    # led rule a second time, on a word nobody but us put there. It gets its say in
+    # _resolve_type instead, once the rules have had theirs.
     scan_text = " ".join(t for t in (description, extra_text) if t)
-    # The shop's OWN words only. product.category is not one of them: it is already a
-    # guess a provider made from these same texts with its own hardcoded keyword list,
-    # so folding it back in would let that guess re-enter as if the shop had said it —
-    # a part described "Fiber for LED" arriving with category "led" would then match
-    # the led rule twice over, from text nobody wrote.
     blob = " ".join(t for t in (hints, scan_text) if t)
 
     proposal = MatchProposal()
@@ -208,12 +213,35 @@ def _resolve_type(
     was decided before the rules were read. So the editable vocabulary decides, in
     its own order, and the provider's guess is what is left when no rule fires.
 
-    That guess still earns its place as the fallback: a category that already IS a
-    type name resolves directly, so the rules only need to carry synonyms rather than
-    an identity rule for every type.
+    That guess still earns its place as the fallback, and it is read the same two ways
+    the shop's own text is: a guess that already IS a type name resolves directly (so
+    the rules only need to carry synonyms, not an identity rule per type), and
+    otherwise it goes through the rules itself. The second half matters because the
+    guess is sometimes the ONLY place a keyword survives: an un-enriched invoice line
+    infers its category from the description *and the manufacturer*, and the
+    manufacturer is text the rules never see — a line reading "czerwona 620nm 0805"
+    from "Kingbright LED" arrives as category "led" with nothing led-ish in the blob.
+    An install whose type is named "Diody LED" resolves that only by letting the rule
+    (led → Diody LED) read the guess. Same shape whenever the old list matched
+    mid-word where the rules' left-anchored regex will not.
     """
     names = {ctype.name.casefold(): ctype.id for ctype in cs.list_types(session)}
-    lowered = blob.lower()
+    from_text = _type_from_rules(blob, names, rules)
+    if from_text is not None:
+        return from_text
+    if category:
+        exact = names.get(category.strip().casefold())
+        if exact is not None:
+            return exact
+        return _type_from_rules(category, names, rules)
+    return None
+
+
+def _type_from_rules(
+    text: str, names: dict[str, int | None], rules: RuleSet
+) -> int | None:
+    """The first TYPE alias present in ``text`` (rules in order), as a type id."""
+    lowered = text.lower()
     for alias, canonical in rules.types:
         if not alias:
             continue
@@ -226,10 +254,6 @@ def _resolve_type(
             type_id = names.get(canonical.casefold())
             if type_id is not None:
                 return type_id
-    if category:
-        exact = names.get(category.strip().casefold())
-        if exact is not None:
-            return exact
     return None
 
 

@@ -552,3 +552,21 @@ def test_the_providers_guess_resolves_when_no_rule_fires(session: Session) -> No
     mrs.seed_default_rules(session)
     product = ProductData(category="screw", description="M3x10 stainless, DIN 912")
     assert build_proposal(session, product).type_id == ctype.id
+
+
+def test_the_guess_is_read_through_the_rules_too(session: Session) -> None:
+    """A guess that names no type still resolves via the rule that renames it.
+
+    An un-enriched invoice line infers its category from the description AND the
+    manufacturer, and the manufacturer never reaches the rules' own text — so for a
+    "Kingbright LED" line the guess is the only place "led" survives.
+    """
+    diody = cs.create_type(session, "Diody LED")
+    mrs.create_rule(
+        session, domain=MatchDomain.TYPE, alias="led", canonical="Diody LED"
+    )
+    product = ProductData(
+        category="led",  # infer_category, off the manufacturer "Kingbright LED"
+        description="czerwona 620nm 0805",
+    )
+    assert build_proposal(session, product).type_id == diody.id
