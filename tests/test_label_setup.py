@@ -344,7 +344,17 @@ def _stub_path(tmp_path: Path, ssh_mode: str = "ok") -> Path:
         # lets the script run to the end, which is the only way to see the order
         # it does things in — and the order is what these tests are about.
         stub.write_text(
-            "#!/bin/sh\n" f'printf "%s %s\\n" {name} "$*" >> "{log}"\n' "exit 0\n"
+            "#!/bin/sh\n"
+            f'printf "%s %s\\n" {name} "$*" >> "{log}"\n'
+            # Drain a piped stdin. The script writes the udev rule with
+            # `printf … | sudo tee …`, and a reader that exits without reading
+            # leaves the writer holding a closed pipe: printf takes SIGPIPE,
+            # pipefail propagates it, and the ERR trap kills the run at that
+            # line. Whether it happens is a scheduling race between the two
+            # ends, so it passed for months and then failed on a loaded runner
+            # once the suite went parallel.
+            "if [ -p /dev/stdin ]; then cat >/dev/null; fi\n"
+            "exit 0\n"
         )
         stub.chmod(0o755)
 

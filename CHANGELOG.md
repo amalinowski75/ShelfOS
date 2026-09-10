@@ -26,9 +26,16 @@ testing. Both were mutation-checked: break what they guard and they still go
 red.
 
 The rest is `pytest-xdist`. Every test builds its own SQLite database under its
-own `tmp_path`, so there was nothing to share and nothing to serialise. Three
-runs at four and at twelve workers found no ordering or port collisions, and
+own `tmp_path`, so there was nothing to share and nothing to serialise, and
 coverage comes out at the same 95.8%.
+
+Running in parallel did surface one latent bug, in the installer tests' own
+`sudo` stub. The script writes the udev rule with `printf … | sudo tee …`, and
+a stub that exits without reading leaves the writer holding a closed pipe:
+`printf` takes SIGPIPE, `pipefail` propagates it, and the ERR trap kills the
+run at that line. Whether it happens is a scheduling race between the two ends,
+which is why it passed for months and then failed on a loaded runner. The stub
+drains a piped stdin now.
 
 ## CI says how many tests ran, not just whether they passed
 
