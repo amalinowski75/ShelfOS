@@ -68,12 +68,22 @@ and DNS still pointing here — 80 as well, because that is how the certificate 
 issued. To keep the existing one instead, copy Caddy's storage across (its
 certificates *and* its ACME account key) and restore the ownership:
 
+Caddy's storage follows the `HOME`/`XDG_DATA_HOME` of the process that runs it,
+which for the packaged unit is the `caddy` user with `HOME=/var/lib/caddy` — not
+your shell's, so ask the unit and then look rather than asking Caddy from a root
+prompt:
+
 ```bash
-sudo caddy environ | grep -i xdg     # where this build keeps it
+systemctl show caddy -p User -p Environment            # what the unit sets
+sudo find /var/lib/caddy -type d \( -name certificates -o -name acme \)
 sudo tar -C /var/lib -czf caddy-storage.tar.gz caddy   # on the old machine
 sudo tar -C /var/lib -xzf caddy-storage.tar.gz         # on the new one
 sudo chown -R caddy:caddy /var/lib/caddy
 ```
+
+If `find` comes back empty, the unit is keeping it somewhere else and the two
+directories it named are what to carry across; the `chown` applies wherever they
+land.
 
 That is worth doing when you expect to rebuild often: Let's Encrypt allows 50
 certificates a week per registered domain, but only **5 identical ones in 7
