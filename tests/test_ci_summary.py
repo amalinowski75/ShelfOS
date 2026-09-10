@@ -9,6 +9,7 @@ vitest actually write it, including the two places they disagree (a
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -112,10 +113,19 @@ def test_a_long_message_is_truncated_to_one_cell():
     assert line.endswith("…")
 
 
-def test_a_missing_report_is_reported_rather_than_crashing(tmp_path, capsys):
+def test_a_missing_report_is_reported_rather_than_crashing(
+    tmp_path, capsys, monkeypatch
+):
     # The suite died before writing XML (an import error, a killed worker).
     # The summary step must still say something, and must not fail the job a
     # second time with its own traceback.
+    #
+    # The unset is not optional: these tests themselves run inside Actions,
+    # where GITHUB_STEP_SUMMARY is set, and the output would go to that file
+    # instead of stdout. Read from the ambient environment, this passed
+    # locally and failed in CI.
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
     code = main(["--title", "Python (pytest)", str(tmp_path / "absent.xml")])
 
     assert code == 0
@@ -142,12 +152,16 @@ def test_it_runs_as_a_script_the_way_the_workflow_invokes_it(tmp_path):
     # every test above and still fail in CI.
     report = write(tmp_path, VITEST_XML)
     script = Path(__file__).resolve().parents[1] / "scripts" / "ci_summary.py"
+    # Inherit the environment minus the one variable that would redirect the
+    # output into a file: under Actions these tests run with it set.
+    env = {k: v for k, v in os.environ.items() if k != "GITHUB_STEP_SUMMARY"}
 
     done = subprocess.run(
         [sys.executable, str(script), "--title", "Web (vitest)", str(report)],
         capture_output=True,
         text=True,
         check=True,
+        env=env,
     )
 
     assert "### ✅ Web (vitest)" in done.stdout
