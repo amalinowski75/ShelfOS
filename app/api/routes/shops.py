@@ -17,6 +17,7 @@ from app.api.schemas import (
     ScanParseRead,
     ShopLookup,
     ShopParameter,
+    ShopProductLookup,
     ShopProductRead,
 )
 from app.services import shops
@@ -65,10 +66,24 @@ def parse_code(payload: ShopLookup) -> ScanParseRead:
 
 @router.post("/lookup", response_model=ShopProductRead)
 def lookup_product(
-    payload: ShopLookup, session: Session = Depends(get_session)
+    payload: ShopProductLookup, session: Session = Depends(get_session)
 ) -> ShopProductRead:
-    """Look a product up from a URL or a scanned code, normalised for the dialog."""
-    product = shops.import_code(payload.code)  # ValidationError → 422; key never leaks
+    """Look a product up for the dialog: from a URL/scanned code, or by shop index.
+
+    The index form is what the review dialog re-runs when a reviewer corrects a
+    staged line's type — the line has its shop and part numbers, not a URL any
+    provider could look up.
+    """
+    # ValidationError → 422 either way; an API key never leaks into the message.
+    product = (
+        shops.import_code(payload.code)
+        if payload.code
+        else shops.import_by_index(
+            payload.shop_key,
+            payload.part_numbers,
+            manufacturer=payload.manufacturer,
+        )
+    )
     proposal = build_proposal(session, product)
     return ShopProductRead(
         category=product.category,

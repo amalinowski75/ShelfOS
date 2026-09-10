@@ -10,7 +10,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.enums import (
     AttachmentKind,
@@ -494,9 +494,33 @@ class LinkRead(BaseModel):
 
 
 class ShopLookup(BaseModel):
-    """Look a product up from a shop URL or a scanned barcode/QR payload."""
+    """Decode a shop URL or a scanned barcode/QR payload — no shop API call."""
 
     code: str = Field(max_length=2048)
+
+
+class ShopProductLookup(BaseModel):
+    """Look a product up: from a URL/scanned code, or by a shop's catalogue index.
+
+    Exactly one of the two is used. ``code`` is what a user pastes or scans. The
+    index form (``shop_key`` + ``part_numbers``, best candidate first) is what a
+    staged invoice line has: its shop and the numbers off the invoice. The line's
+    display URL cannot stand in for it — for every provider but TME that link is a
+    keyword search carrying no part number (see ``shops.import_by_index``).
+    """
+
+    code: str | None = Field(default=None, max_length=2048)
+    shop_key: str | None = Field(default=None, max_length=32)
+    part_numbers: list[str] = Field(default_factory=list, max_length=4)
+    # The maker as the invoice spells it: breaks ties when a bare MPN is sold under
+    # several of them (same tiebreaker the invoice import passes).
+    manufacturer: str | None = Field(default=None, max_length=200)
+
+    @model_validator(mode="after")
+    def _one_way_in(self) -> ShopProductLookup:
+        if not self.code and not (self.shop_key and any(self.part_numbers)):
+            raise ValueError("a code, or a shop key with a part number, is required")
+        return self
 
 
 class ScanParseRead(BaseModel):

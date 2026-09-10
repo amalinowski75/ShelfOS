@@ -401,7 +401,7 @@ describe("component_dialog.js — stage mode (invoice import review)", () => {
     expect(saved).toHaveLength(1);
   });
 
-  it("re-imports from the shop when the staged line's type is corrected", async () => {
+  it("re-asks the shop by shop + part number when the staged type is corrected", async () => {
     // The type is the guess a reviewer most often fixes, and the parameters were
     // filed under the old one. Nothing about the import is kept between dialogs, so
     // the shop link the row carries is looked up again — the same call the Import
@@ -453,7 +453,10 @@ describe("component_dialog.js — stage mode (invoice import review)", () => {
         mpn: "R-1",
         notes: "a res",
         paramValues: [{ parameter_definition_id: 10, value: "4k7" }],
-        shopUrl: "https://www.tme.eu/en/details/R-1/",
+        manufacturer: "YAGEO",
+        shopKey: "mouser",
+        supplierPartNumber: "SPN-9",
+        shopUrl: "https://www.mouser.com/c/?q=SPN-9",
       },
       { stage: { invoiceId: 7, importLineId: 21 } },
     );
@@ -467,9 +470,15 @@ describe("component_dialog.js — stage mode (invoice import review)", () => {
     await tick();
     await tick();
 
-    // The row's shop link is what the lookup is keyed on, and the product it answers
-    // with is what the engine re-matches for the new type.
-    expect(looked).toEqual([{ code: "https://www.tme.eu/en/details/R-1/" }]);
+    // Keyed on the shop and its own numbers — NOT on the row's link, which for
+    // Mouser (and Digi-Key, and Farnell) is a keyword search naming no part.
+    expect(looked).toEqual([
+      {
+        shop_key: "mouser",
+        part_numbers: ["SPN-9", "R-1"],
+        manufacturer: "YAGEO",
+      },
+    ]);
     expect(proposalBody.type_id).toBe(2);
     expect(proposalBody.description).toBe("10k 1% 0402 resistor");
     expect(proposalBody.parameters).toEqual([
@@ -485,6 +494,212 @@ describe("component_dialog.js — stage mode (invoice import review)", () => {
     await tick();
     await tick();
     expect(looked).toHaveLength(1);
+  });
+
+  it("shares one lookup between two quick type corrections", async () => {
+    // A mis-click on the select is ordinary: the reviewer picks 2, then 1 right
+    // away. The second change must not be dropped because the first one's lookup is
+    // still in flight — that left the chosen type with empty fields and no message.
+    let releaseLookup;
+    let lookups = 0;
+    const proposals = [];
+    const impl = (url, opts) => {
+      if (url === "/api/shops/lookup") {
+        lookups += 1;
+        return new Promise((resolve) => {
+          releaseLookup = () =>
+            resolve({
+              ok: true,
+              json: async () => ({
+                description: "10k 1% 0402 resistor",
+                parameters: [],
+                proposal: {},
+              }),
+            });
+        });
+      }
+      if (url === "/api/matching/proposal") {
+        const body = JSON.parse(opts.body);
+        proposals.push(body.type_id);
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            type_id: body.type_id,
+            mounting_type: null,
+            package: null,
+            parameters: [
+              { parameter_definition_id: 10, value: body.type_id === 1 ? "1k" : "2k" },
+            ],
+          }),
+        });
+      }
+      return fetchImpl(url, opts);
+    };
+    const { window, document } = loadPage(
+      componentPageFixture([
+        { id: 1, name: "resistor" },
+        { id: 2, name: "capacitor" },
+      ]),
+      SCRIPTS,
+      { fetchImpl: impl },
+    );
+    window.openComponentDialog(
+      () => {},
+      { typeId: 1, mpn: "R-1", shopKey: "mouser", supplierPartNumber: "SPN-9" },
+      { stage: { invoiceId: 7, importLineId: 21 } },
+    );
+    await tick();
+
+    const select = document.getElementById("component-type");
+    select.value = "2";
+    fire(select, "change");
+    await tick();
+    select.value = "1";
+    fire(select, "change");
+    await tick();
+
+    expect(lookups).toBe(1); // both corrections wait on the same call
+    releaseLookup();
+    for (let i = 0; i < 4; i += 1) await tick();
+
+    // Both corrections got their answer, and the one the user is actually on wins.
+    expect(proposals).toEqual(expect.arrayContaining([1, 2]));
+    expect(
+      document.querySelector('#component-params [data-definition-id="10"]').value,
+    ).toBe("1k");
+  });
+
+  it("keeps the reviewer's saved values when the staged type is chosen again", async () => {
+    // Switching away and back re-renders the fields empty and refills them from the
+    // shop. What the reviewer had already saved on the line for that type must end
+    // up on top — otherwise a stray type change silently discards their corrections.
+    const impl = (url, opts) => {
+      if (url === "/api/shops/lookup") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            description: "10k 1% 0402 resistor",
+            parameters: [],
+            proposal: {},
+          }),
+        });
+      }
+      if (url === "/api/matching/proposal") {
+        const body = JSON.parse(opts.body);
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            type_id: body.type_id,
+            mounting_type: null,
+            package: null,
+            parameters: [{ parameter_definition_id: 10, value: "10k" }],
+          }),
+        });
+      }
+      return fetchImpl(url, opts);
+    };
+    const { window, document } = loadPage(
+      componentPageFixture([
+        { id: 1, name: "resistor" },
+        { id: 2, name: "capacitor" },
+      ]),
+      SCRIPTS,
+      { fetchImpl: impl },
+    );
+    window.openComponentDialog(
+      () => {},
+      {
+        typeId: 1,
+        mpn: "R-1",
+        shopKey: "mouser",
+        supplierPartNumber: "SPN-9",
+        paramValues: [{ parameter_definition_id: 10, value: "4k7" }],
+      },
+      { stage: { invoiceId: 7, importLineId: 21 } },
+    );
+    await tick();
+
+    const select = document.getElementById("component-type");
+    const value = () =>
+      document.querySelector('#component-params [data-definition-id="10"]').value;
+    expect(value()).toBe("4k7");
+
+    select.value = "2";
+    fire(select, "change");
+    for (let i = 0; i < 4; i += 1) await tick();
+    expect(value()).toBe("10k"); // another type: the engine's guess is all there is
+
+    select.value = "1";
+    fire(select, "change");
+    for (let i = 0; i < 4; i += 1) await tick();
+    expect(value()).toBe("4k7"); // back on the staged type: the human's value
+  });
+
+  it("does not apply a proposal to the line the dialog was reopened on", async () => {
+    // Correcting line A's type, then closing and opening line B before the proposal
+    // lands. B prefills the same type, so the type guard alone would let A's values
+    // through — the dialog session has to be checked too.
+    let releaseProposal;
+    const impl = (url, opts) => {
+      if (url === "/api/shops/lookup") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ description: "line A", parameters: [], proposal: {} }),
+        });
+      }
+      if (url === "/api/matching/proposal") {
+        return new Promise((resolve) => {
+          releaseProposal = () =>
+            resolve({
+              ok: true,
+              json: async () => ({
+                type_id: 2,
+                mounting_type: null,
+                package: null,
+                parameters: [{ parameter_definition_id: 10, value: "A-value" }],
+              }),
+            });
+        });
+      }
+      return fetchImpl(url, opts);
+    };
+    const { window, document } = loadPage(
+      componentPageFixture([
+        { id: 1, name: "resistor" },
+        { id: 2, name: "capacitor" },
+      ]),
+      SCRIPTS,
+      { fetchImpl: impl },
+    );
+    window.openComponentDialog(
+      () => {},
+      { typeId: 1, mpn: "A-1", shopKey: "mouser", supplierPartNumber: "SPN-A" },
+      { stage: { invoiceId: 7, importLineId: 21 } },
+    );
+    await tick();
+    const select = document.getElementById("component-type");
+    select.value = "2";
+    fire(select, "change");
+    await tick();
+    await tick();
+
+    // Line A's dialog is done with; line B opens on the same type, with nothing
+    // reviewed on it yet — so anything appearing in its fields came from line A.
+    document.getElementById("component-dialog").close();
+    window.openComponentDialog(
+      () => {},
+      { typeId: 2, mpn: "B-1" },
+      { stage: { invoiceId: 7, importLineId: 22 } },
+    );
+    await tick();
+
+    releaseProposal();
+    for (let i = 0; i < 4; i += 1) await tick();
+
+    expect(document.getElementById("component-form").mpn.value).toBe("B-1");
+    expect(
+      document.querySelector('#component-params [data-definition-id="10"]').value,
+    ).toBe("");
   });
 });
 

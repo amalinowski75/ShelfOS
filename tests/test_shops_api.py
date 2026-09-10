@@ -60,6 +60,81 @@ def test_lookup_returns_a_normalised_product(
     assert body["parameters"] == [{"name": "Resistance", "value": "10k"}]
 
 
+def test_lookup_by_shop_index_uses_the_shops_own_numbers(
+    client: TestClient, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """A staged invoice line looks its part up by shop + part numbers, not by URL.
+
+    Its display link is a keyword SEARCH for every provider but TME, so a URL lookup
+    would answer for "result"/"search" — some unrelated part. This form carries the
+    numbers themselves, best candidate first, plus the maker as a tiebreaker.
+    """
+    seen: dict[str, object] = {}
+
+    def fake_fetch_by_index(
+        candidates: list[str], *, manufacturer: str | None = None
+    ) -> ProductData:
+        seen["candidates"] = candidates
+        seen["manufacturer"] = manufacturer
+        return ProductData(mpn="MPN-1", description="desc", category="resistor")
+
+    monkeypatch.setattr(
+        shops._BY_INDEX["mouser"], "fetch_by_index", fake_fetch_by_index
+    )
+    resp = client.post(
+        "/api/shops/lookup",
+        json={
+            "shop_key": "mouser",
+            "part_numbers": ["SPN-9", "MPN-1"],
+            "manufacturer": "YAGEO",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["mpn"] == "MPN-1"
+    assert seen == {"candidates": ["SPN-9", "MPN-1"], "manufacturer": "YAGEO"}
+
+
+def test_lookup_by_index_rejects_an_unknown_shop(client: TestClient) -> None:
+    resp = client.post(
+        "/api/shops/lookup", json={"shop_key": "nowhere", "part_numbers": ["X"]}
+    )
+    assert resp.status_code == 422
+
+
+def test_lookup_needs_a_code_or_a_part_number(client: TestClient) -> None:
+    """Neither form given: refused up front rather than looked up as an empty part."""
+    assert client.post("/api/shops/lookup", json={}).status_code == 422
+    assert (
+        client.post(
+            "/api/shops/lookup", json={"shop_key": "mouser", "part_numbers": [""]}
+        ).status_code
+        == 422
+    )
+
+
+def test_import_by_index_refuses_what_it_cannot_look_up(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The service guards its own inputs, not just the API schema above it.
+
+    Asserting the provider was never called, because a blank number reaching it
+    raises anyway (an unconfigured key looks identical) — which would let the guard
+    disappear unnoticed while a pointless API round-trip is spent on "".
+    """
+    import pytest
+    from app.services.errors import ValidationError
+
+    called: list[object] = []
+    monkeypatch.setattr(
+        shops._BY_INDEX["mouser"],
+        "fetch_by_index",
+        lambda candidates, **kwargs: called.append(candidates),
+    )
+    with pytest.raises(ValidationError):
+        shops.import_by_index("nowhere", ["X"])
+    with pytest.raises(ValidationError):
+        shops.import_by_index("mouser", ["", "  "])
+    assert called == []
+
+
 def test_lookup_unsupported_shop_is_422(client: TestClient) -> None:
     resp = client.post("/api/shops/lookup", json={"code": "https://www.example.com/x"})
     assert resp.status_code == 422  # no provider matches → ValidationError

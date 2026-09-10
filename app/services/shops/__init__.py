@@ -112,6 +112,33 @@ def product_url(shop_key: str | None, part_number: str | None) -> str | None:
     return cast(ShopProvider, provider).product_url(part)
 
 
+def import_by_index(
+    shop_key: str | None,
+    candidates: list[str],
+    *,
+    manufacturer: str | None = None,
+) -> ProductData:
+    """Look a product up by the shop's OWN catalogue index, best candidate first.
+
+    The lookup an invoice line needs. Its ``product_url`` is not usable for this:
+    only TME's round-trips through ``fetch`` — every other provider links a keyword
+    SEARCH (no stable product path exists from a part number alone), whose URL
+    carries no part number a ``fetch`` could read, so looking one up would answer
+    with whatever the shop makes of "result"/"search". Keyed on the shop and the
+    numbers themselves, this is the same call ``invoice_import_service._enrich``
+    makes, and it answers for the part the line actually is.
+
+    Raises ValidationError for an unknown shop or no usable number.
+    """
+    provider = _BY_INDEX.get((shop_key or "").lower())
+    if provider is None:
+        raise ValidationError("unsupported shop — no provider for this line")
+    numbers = [n for n in dict.fromkeys(c.strip() for c in candidates) if n]
+    if not numbers:
+        raise ValidationError("no part number to look this line up by")
+    return provider.fetch_by_index(numbers, manufacturer=manufacturer)
+
+
 def resolve(url: str) -> ShopProvider | None:
     """The provider whose host matches ``url``, or None."""
     for provider in _PROVIDERS:

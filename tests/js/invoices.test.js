@@ -692,6 +692,9 @@ describe("invoices.js — review imported lines inline", () => {
       // The distributor product link (built server-side from shop + SPN) is passed
       // through so the dialog's "Open in shop" button can target it.
       shopUrl: "https://www.tme.eu/en/details/ABC123/",
+      // The shop and its own number: what a type correction re-asks the shop with.
+      shopKey: "tme",
+      supplierPartNumber: "SPN-2",
     });
     expect(calls[0].opts).toEqual({
       stage: { invoiceId: "7", importLineId: "21" },

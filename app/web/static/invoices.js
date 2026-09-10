@@ -573,6 +573,11 @@ if (detail && lineDialog) {
           mountingType: row.dataset.mountingType || null,
           notes: row.dataset.description || null,
           paramValues: stored,
+          // Correcting the type in the dialog re-asks the shop for this part, and
+          // that lookup keys on the shop plus its own numbers — never on the link
+          // below, which for most distributors is a keyword search.
+          shopKey: row.dataset.shopKey || null,
+          supplierPartNumber: row.dataset.spn || null,
           // The distributor product page, built from the line's shop + part number
           // (server-side), for the dialog's "open in shop" button.
           shopUrl: row.dataset.sourceUrl || null,
