@@ -96,9 +96,16 @@ jobs:
       # annotation on the offending line in the diff, so a red run is readable
       # from the Files-changed tab without opening the log. The junit reporter
       # alongside it feeds the summary step.
+      #
+      # `default` is listed because naming any reporter on the CLI REPLACES the
+      # defaults rather than adding to them. Without it the step's log holds
+      # one line — "JUNIT report written to …" — since junit writes only to its
+      # file and github-actions emits only annotations. The log is the fallback
+      # for every case the summary cannot cover, so it has to keep the list.
       - name: Web UI tests (vitest)
         run: >
           npm test --
+          --reporter=default
           --reporter=github-actions
           --reporter=junit
           --outputFile=junit/vitest.xml

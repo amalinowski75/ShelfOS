@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from scripts.ci_summary import _one_line, main, parse, render
+from scripts.ci_summary import _code, _one_line, main, parse, render
 
 # pytest writes <testsuites> wrapping a single <testsuite>, dotted module paths
 # in classname, and reports a fixture explosion as <error> rather than
@@ -129,7 +129,7 @@ def test_a_missing_report_is_reported_rather_than_crashing(
     code = main(["--title", "Python (pytest)", str(tmp_path / "absent.xml")])
 
     assert code == 0
-    assert "No test report was written." in capsys.readouterr().out
+    assert "No readable test report was written." in capsys.readouterr().out
 
 
 def test_the_summary_is_appended_so_two_suites_can_share_a_file(tmp_path, monkeypatch):
@@ -165,3 +165,61 @@ def test_it_runs_as_a_script_the_way_the_workflow_invokes_it(tmp_path):
     )
 
     assert "### ✅ Web (vitest)" in done.stdout
+
+
+def test_an_empty_report_is_reported_rather_than_crashing(
+    tmp_path, capsys, monkeypatch
+):
+    # Vitest opens its output file when the run starts and writes it when the
+    # run ends, so a killed worker (or this workflow's own cancel-in-progress)
+    # leaves the file there and empty. That is not a missing file, and
+    # ElementTree raises on it.
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    empty = tmp_path / "vitest.xml"
+    empty.write_text("", encoding="utf-8")
+
+    code = main(["--title", "Web (vitest)", str(empty)])
+
+    assert code == 0
+    assert "No readable test report was written." in capsys.readouterr().out
+
+
+def test_a_truncated_report_is_reported_rather_than_crashing(
+    tmp_path, capsys, monkeypatch
+):
+    # The other half of the same failure: the runner died mid-write.
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    cut = tmp_path / "vitest.xml"
+    cut.write_text(VITEST_XML[: len(VITEST_XML) // 2], encoding="utf-8")
+
+    code = main(["--title", "Web (vitest)", str(cut)])
+
+    assert code == 0
+    assert "No readable test report was written." in capsys.readouterr().out
+
+
+def test_a_pipe_in_a_test_name_cannot_break_the_table(tmp_path):
+    # A parametrized id is ordinary and can hold anything, including the one
+    # character that ends a Markdown cell.
+    body = PYTEST_XML.replace('name="test_over"', 'name="test_rate[10k|1%]"')
+    block = render("Python (pytest)", parse(write(tmp_path, body)))
+
+    row = next(line for line in block.splitlines() if "test_rate" in line)
+    assert "10k\\|1%" in row  # escaped, so it stays inside its cell
+    # Two edges and one divider. Escaped pipes do not count: they are content.
+    assert row.count("|") - row.count("\\|") == 3
+
+
+def test_a_backtick_in_a_test_name_cannot_end_its_code_span():
+    # The name is rendered inside a code span; a backtick in it would close
+    # that span early and spill the rest into the table as markup.
+    assert _code("a `b` c") == "``a `b` c``"
+    # The name both contains and ends with a backtick, so the fence grows to
+    # two and the content is padded away from it.
+    assert _code("it renders `code`") == "`` it renders `code` ``"
+
+
+def test_a_name_that_starts_or_ends_with_a_backtick_is_padded():
+    # Markdown strips one leading and trailing space inside a span, so the
+    # padding keeps the backtick as content rather than as fence.
+    assert _code("`quoted`") == "`` `quoted` ``"

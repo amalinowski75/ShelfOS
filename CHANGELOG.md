@@ -25,7 +25,7 @@ gated on the number, because a threshold turns an honest refactor into an
 argument with CI. `--durations=10` names the slowest tests, which is how a suite
 that has quietly grown an eight-second test gets noticed before it is the run.
 
-The renderer is forty lines of stdlib in `scripts/ci_summary.py` rather than a
+The renderer is one stdlib file, `scripts/ci_summary.py`, rather than a
 marketplace action: a reporter action wants write permission on checks or pull
 requests, and pinning one safely means chasing its commit SHA at every bump.
 Reading a file the job just wrote needs neither. Runs are also now cancelled

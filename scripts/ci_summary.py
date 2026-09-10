@@ -132,14 +132,42 @@ def parse(path: Path) -> Totals:
     return totals
 
 
+def _cell(text: str) -> str:
+    """Make a string safe to sit in a Markdown table cell.
+
+    A pipe ends the cell and a newline ends the row, so both have to go. Test
+    names need this as much as messages do: a parametrized id like
+    ``test_rate[10k|1%]`` would otherwise split its row into extra columns.
+    """
+    return " ".join(text.split()).replace("|", "\\|")
+
+
+def _code(text: str) -> str:
+    """Wrap a test's name in a code span that its own characters cannot end.
+
+    A backtick inside the name would close the span early and spill markup into
+    the table. The fix is the one Markdown itself specifies: fence with more
+    backticks than the content holds, and pad so a leading or trailing one
+    still reads as content.
+    """
+    safe = _cell(text)
+    longest = 0
+    run = 0
+    for char in safe:
+        run = run + 1 if char == "`" else 0
+        longest = max(longest, run)
+    fence = "`" * (longest + 1)
+    padding = " " if safe.startswith("`") or safe.endswith("`") else ""
+    return f"{fence}{padding}{safe}{padding}{fence}"
+
+
 def _one_line(text: str, limit: int = 160) -> str:
     """Squeeze an assertion message onto one table row.
 
-    Pipes and newlines would both break out of a Markdown table cell, so they go
-    first; the truncation is what keeps one enormous diff from pushing the rest
-    of the table off the page.
+    The truncation is what keeps one enormous diff from pushing the rest of the
+    table off the page.
     """
-    flat = " ".join(text.split()).replace("|", "\\|")
+    flat = _cell(text)
     return flat[: limit - 1] + "…" if len(flat) > limit else flat
 
 
@@ -164,7 +192,7 @@ def render(title: str, totals: Totals) -> str:
             "| Test | Why |",
             "| ---- | --- |",
         ]
-        lines += [f"| `{c.label}` | {_one_line(c.message)} |" for c in shown]
+        lines += [f"| {_code(c.label)} | {_one_line(c.message)} |" for c in shown]
         if len(totals.bad) > len(shown):
             lines.append(
                 f"| … | and {len(totals.bad) - len(shown)} more; see the log |"
@@ -180,14 +208,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--title", required=True, help="Heading for this suite")
     args = parser.parse_args(argv)
 
-    if not args.report.is_file():
-        # A missing report means the suite died before it could write one — an
-        # import error, a crashed worker. Say so in the summary instead of
-        # leaving the reader with a heading and no table, and still exit 0: the
-        # suite's own step has already failed the job.
-        block = f"### ⚠️ {args.title}\n\nNo test report was written.\n"
-    else:
+    try:
         block = render(args.title, parse(args.report))
+    except (OSError, ElementTree.ParseError):
+        # Either no report at all, or one that cannot be read: the suite died
+        # before it could finish writing. Vitest opens its output file when it
+        # starts and writes only when it ends, so a killed worker — or this
+        # workflow's own cancel-in-progress — leaves an empty file behind, not
+        # a missing one. Say so in the summary instead of leaving the reader
+        # with a heading and no table, and still exit 0: the suite's own step
+        # has already failed the job, and a summary step that fails too would
+        # bury that behind a traceback.
+        block = f"### ⚠️ {args.title}\n\nNo readable test report was written.\n"
 
     destination = os.environ.get("GITHUB_STEP_SUMMARY")
     if destination:
