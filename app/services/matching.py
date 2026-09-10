@@ -156,7 +156,12 @@ def build_proposal(
     # only at the real description + extra text (a category's stray digits must not
     # land in a number field as a bogus measurement).
     scan_text = " ".join(t for t in (description, extra_text) if t)
-    blob = " ".join(t for t in (product.category, hints, scan_text) if t)
+    # The shop's OWN words only. product.category is not one of them: it is already a
+    # guess a provider made from these same texts with its own hardcoded keyword list,
+    # so folding it back in would let that guess re-enter as if the shop had said it —
+    # a part described "Fiber for LED" arriving with category "led" would then match
+    # the led rule twice over, from text nobody wrote.
+    blob = " ".join(t for t in (hints, scan_text) if t)
 
     proposal = MatchProposal()
 
@@ -193,14 +198,21 @@ def build_proposal(
 def _resolve_type(
     session: Session, category: str | None, blob: str, rules: RuleSet
 ) -> int | None:
-    """Resolve a component type: an exact category name first, then TYPE aliases."""
+    """Resolve a component type: the TYPE rules first, then the provider's own guess.
+
+    The rules have to go first, because ``category`` is not a fact — it is what
+    ``infer_category`` made of the shop's text using the hardcoded keyword list that
+    predates this table. Consulting it first made that list outrank every rule an
+    admin writes: a lightpipe described "Fiber for LED" was filed as an LED, and
+    adding a "fiber → lightpipe" rule at order 0 changed nothing, because the type
+    was decided before the rules were read. So the editable vocabulary decides, in
+    its own order, and the provider's guess is what is left when no rule fires.
+
+    That guess still earns its place as the fallback: a category that already IS a
+    type name resolves directly, so the rules only need to carry synonyms rather than
+    an identity rule for every type.
+    """
     names = {ctype.name.casefold(): ctype.id for ctype in cs.list_types(session)}
-    # A category that already IS a type name resolves directly — so seeded rules only
-    # need to add synonyms, not an identity rule for every type.
-    if category:
-        exact = names.get(category.strip().casefold())
-        if exact is not None:
-            return exact
     lowered = blob.lower()
     for alias, canonical in rules.types:
         if not alias:
@@ -214,6 +226,10 @@ def _resolve_type(
             type_id = names.get(canonical.casefold())
             if type_id is not None:
                 return type_id
+    if category:
+        exact = names.get(category.strip().casefold())
+        if exact is not None:
+            return exact
     return None
 
 

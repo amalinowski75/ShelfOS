@@ -520,3 +520,35 @@ def test_the_eia_pattern_still_backs_the_package_rules(session: Session) -> None
     assert build_proposal(session, eia).package == "0805"
     # Nothing at all to go on.
     assert build_proposal(session, ProductData(category="resistor")).package is None
+
+
+def test_an_admin_rule_outranks_the_providers_own_guess(session: Session) -> None:
+    """A lightpipe is a lightpipe, even though its description says "for LED".
+
+    The provider guessed "led" from the same text using its hardcoded keyword list;
+    the admin's own rule ("fiber" at order 0) says otherwise, and the rules decide.
+    """
+    cs.create_type(session, "led")
+    lightpipe = cs.create_type(session, "lightpipe")
+    mrs.seed_default_rules(session)
+    mrs.create_rule(
+        session,
+        domain=MatchDomain.TYPE,
+        alias="fiber",
+        canonical="lightpipe",
+        sort_order=0,
+    )
+    product = ProductData(
+        category="led",  # what infer_category made of the text below
+        shop_category="Lightpipes for LED",
+        description="Fiber for LED; Ø2mm; No.of mod: 2; round; Front: convex",
+    )
+    assert build_proposal(session, product).type_id == lightpipe.id
+
+
+def test_the_providers_guess_resolves_when_no_rule_fires(session: Session) -> None:
+    """With nothing in the text for a rule to catch, the guessed type name stands."""
+    ctype = cs.create_type(session, "screw")
+    mrs.seed_default_rules(session)
+    product = ProductData(category="screw", description="M3x10 stainless, DIN 912")
+    assert build_proposal(session, product).type_id == ctype.id
