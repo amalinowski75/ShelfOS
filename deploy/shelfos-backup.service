@@ -1,0 +1,53 @@
+# One nightly backup, taken by the timer next to this file.
+#
+#   sudo cp deploy/shelfos-backup.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now shelfos-backup.timer
+#
+# `shelfos.sh deploy` installs and enables both; this is what it installs.
+# Nothing here carries a setting of this machine's — the paths are the ones
+# baked into shelfos.sh — so the two choices worth editing are the hour, in the
+# timer, and how long archives are kept, below.
+
+[Unit]
+Description=ShelfOS nightly backup
+Documentation=https://github.com/amalinowski75/ShelfOS
+
+[Service]
+Type=oneshot
+
+# As root, and not as the shelfos user. The archive carries every password hash
+# in the database, so it lands in a root:root 0700 directory that the service
+# itself has no reason to be able to read — the same reasoning that keeps
+# /etc/shelfos/env out of its reach. `shelfos.sh backup` also expects to be
+# root: run as anyone else it reaches for sudo, and there is nobody here to
+# answer it.
+#
+# The service keeps running throughout. scripts/backup.py takes its snapshot
+# through SQLite's online backup API, which is consistent mid-write and folds
+# the WAL into the archive, so stopping ShelfOS to back it up would buy nothing
+# and cost a nightly outage.
+#
+# With no -o, `backup create` creates /var/lib/shelfos/backups itself and names
+# the archive after the moment it started. That naming is what makes this safe
+# to run twice: backup.py refuses to overwrite an existing archive, so a
+# repeated run cannot quietly replace last night's with a failed one.
+ExecStart=/opt/shelfos/shelfos.sh backup create
+
+# Keep 30 days. Archives are never overwritten, so without this the directory
+# grows until the disk it shares with the database is full — which takes the
+# app down, not just the backups. Only ever after a successful ExecStart:
+# systemd skips ExecStartPost when the command above failed, so a machine that
+# has been off for longer than the retention cannot come back, fail to back up,
+# and delete the last good archive it had.
+ExecStartPost=/usr/bin/find /var/lib/shelfos/backups -maxdepth 1 -name 'shelfos-backup-*.tar.gz' -mtime +30 -delete
+
+# A backup is gzip over the whole attachments tree, and it runs while people may
+# be using the app. Neither number changes what it does, only what it costs
+# everything else on the machine.
+Nice=10
+IOSchedulingClass=idle
+
+# No TimeoutStartSec: Type=oneshot has no start timeout by default, which is
+# what a growing attachments tree needs. Setting one would mean a SIGTERM part
+# way through a tar on the night the archive first outgrew it.

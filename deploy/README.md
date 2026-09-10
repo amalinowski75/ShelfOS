@@ -12,9 +12,9 @@ itself, and performs everything this file describes. Every step reports `ok` or
 something to be afraid of. `--dry-run` prints the whole plan and touches nothing
 — it does not even call `sudo`.
 
-What it deliberately leaves to you: DNS, the firewall, off-host copies of
-`/etc/shelfos/env` (the backups do not contain it), and any schedule for the
-backups themselves.
+What it deliberately leaves to you: DNS, the firewall, and off-host copies of
+`/etc/shelfos/env` (the backups do not contain it, and never will). The backups
+themselves it schedules — nightly, into `/var/lib/shelfos/backups`.
 
 This directory holds what it installs, each file commented in full:
 
@@ -23,6 +23,8 @@ This directory holds what it installs, each file commented in full:
 | `shelfos.service` | The unit: one uvicorn worker on the loopback, sandboxed |
 | `shelfos.env.example` | Settings and secrets, for `/etc/shelfos/env` |
 | `Caddyfile` | TLS, the certificate, and the headers the app cannot always set |
+| `shelfos-backup.service` | One backup, taken as root, with the app still running |
+| `shelfos-backup.timer` | When that happens: 03:15 local, catching up a missed night |
 
 ## Why a proxy at all
 
@@ -206,6 +208,21 @@ sudo cp /opt/shelfos/deploy/Caddyfile /etc/caddy/Caddyfile   # edit the hostname
 sudo systemctl reload caddy
 ```
 
+And the nightly backup, which is two more files and one `enable`:
+
+```bash
+sudo cp /opt/shelfos/deploy/shelfos-backup.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now shelfos-backup.timer
+systemctl list-timers shelfos-backup.timer   # when it next fires
+```
+
+Enabling the **timer**, not the service: enabling the service would run a backup
+at every boot and never again. Nothing has to be stopped for it, and there is no
+reason to wait until tonight to find out whether it works —
+`sudo systemctl start shelfos-backup.service` takes one now and puts whatever
+went wrong in `journalctl -u shelfos-backup`.
+
 ## Things that catch people out
 
 **`export` in the environment file.** systemd's `EnvironmentFile` does not
@@ -285,9 +302,36 @@ overwriting a file that serves somebody else's site takes that site off the air.
 
 **Backups.** `./shelfos.sh backup` wraps `scripts/backup.py` with the right paths
 and the right user; it takes the database and attachments together and verifies
-checksums on restore. Neither carries the environment file, which is where the
-secret lives — back that up separately, or a restore comes back with every
-session invalid. `./shelfos.sh update` takes one before it changes anything.
+checksums on restore. `./shelfos.sh update` takes one before it changes anything,
+and `shelfos-backup.timer` takes one every night at 03:15 into
+`/var/lib/shelfos/backups`, keeping thirty days. The archives are `root:root`
+0700 and every one of them carries every password hash in the database, so
+`sudo` is needed to so much as list them.
+
+Three things about that schedule are worth knowing before the night you need it:
+
+- **It is not an off-host copy.** An archive on the same disk as the database
+  survives a bad restore and a deleted row; it does not survive the disk, or the
+  machine. Add an `ExecStartPost=` to `shelfos-backup.service` that pushes the
+  newest archive to a NAS or to object storage, and the schedule becomes a
+  backup rather than a snapshot.
+- **The environment file is not in it**, and cannot be: `/etc/shelfos/env` holds
+  the signing secret and the shop keys, and the archives are copied around far
+  too casually to carry those. Copy it off once, by hand. A lost secret signs
+  everyone out and invalidates every API token; lost shop keys are not
+  recoverable from anywhere.
+- **An enabled timer is not a working backup.** It can fire faithfully every
+  night into a service that has been failing since a disk filled up, and nothing
+  will say so. `./shelfos.sh status` prints the next firing *and* the newest
+  archive with its date, which is the pair worth reading; `systemctl status
+  shelfos-backup` has the last run.
+
+To move the hour or the retention, edit the installed
+`/etc/systemd/system/shelfos-backup.timer` (or `.service`) and
+`systemctl daemon-reload`. A later `deploy --reinstall` finds the difference,
+shows it, and asks before replacing it — answering no keeps yours, and the
+plain `update` path never touches either file. `deploy --no-backup-timer`
+installs without the schedule at all.
 
 ## Checking a change to this by hand
 
@@ -304,9 +348,12 @@ throwaway Ubuntu 24.04 container or VM, in order:
 5. `./shelfos.sh backup create`, then `restore` of that archive. A restore whose
    archive carries an admin on the default password must say so and offer to fix
    it **before** the service is started.
-6. `sudo ./shelfos.sh update` with nothing new upstream — must say so and stop.
-7. Reboot; the service comes back on its own.
-8. With a Brother QL attached: `/dev/shelfos-label` exists and a test label prints.
+6. `sudo systemctl start shelfos-backup.service` — an archive appears in
+   `/var/lib/shelfos/backups` while the app keeps answering, and
+   `./shelfos.sh status` names it under `backups` along with the next firing.
+7. `sudo ./shelfos.sh update` with nothing new upstream — must say so and stop.
+8. Reboot; the service comes back on its own, and so does the timer.
+9. With a Brother QL attached: `/dev/shelfos-label` exists and a test label prints.
 
 ## Behind a different proxy
 

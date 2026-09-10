@@ -9,6 +9,31 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## A backup every night, without being asked
+
+`deploy` now installs `shelfos-backup.service` and `shelfos-backup.timer` and
+enables the timer, so an install has backups from its first day instead of from
+the day somebody remembers to arrange them. It runs at 03:15 local time, catches
+up a night the machine spent switched off, writes into
+`/var/lib/shelfos/backups` as `root:root` 0700, and sweeps archives older than
+thirty days. The app keeps serving throughout — the snapshot goes through
+SQLite's online backup API, so there was never anything to stop.
+
+`status` now reports the pair that fails apart: when the timer next fires, and
+the newest archive with its date. An enabled timer firing every night into a
+service that has been erroring since a disk filled up looks perfectly healthy
+until somebody asks what it has produced.
+
+The hour and the retention are the operator's, so a re-deploy that finds an
+edited unit shows the difference and asks before replacing it, and `update`
+never touches either file. `deploy --no-backup-timer` installs without the
+schedule.
+
+Two things the schedule still does not do, both written down in
+`deploy/README.md`: it does not copy anything off the machine, and it does not
+carry `/etc/shelfos/env` — the archives are passed around far too casually to
+hold the signing secret and the shop keys.
+
 ## What the printer's own machine has to be
 
 Said out loud rather than discovered: the machine with the printer has to be

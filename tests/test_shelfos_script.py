@@ -147,7 +147,7 @@ def test_a_dry_run_deploy_walks_the_steps_in_order(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     seen = [line for line in result.stderr.splitlines() if line.strip().startswith("[")]
     numbers = [line.split("/")[0].split("[")[-1].strip() for line in seen]
-    assert numbers == [str(n) for n in range(1, 14)], seen
+    assert numbers == [str(n) for n in range(1, 15)], seen
 
 
 def test_a_dry_run_deploy_never_prints_the_password(tmp_path: Path) -> None:
@@ -1054,6 +1054,10 @@ def test_every_step_runs_after_the_step_that_makes_what_it_writes_to(
     # And the settings the app reads are written before it is imported or run.
     assert order.index("deploy_step_env") < order.index("deploy_step_import")
     assert order.index("deploy_step_unit") < order.index("deploy_step_verify")
+    # The backup unit runs `shelfos.sh backup`, which resolves its paths out of
+    # an install: enabling the timer first would schedule a nightly failure.
+    assert order.index("deploy_step_unit") < order.index("deploy_step_backup")
+    assert order.index("deploy_step_code") < order.index("deploy_step_backup")
 
 
 def test_the_key_store_is_written_under_the_data_directory(tmp_path: Path) -> None:
@@ -1176,7 +1180,7 @@ def _sshd_probe(tmp_path: Path, mode: str) -> tuple[str, Path]:
         "overridden": "allowusers adam shelfos-tunnel\npermitlisten 127.0.0.1:2222\n",
     }.get(mode, "permitlisten 127.0.0.1:9100 localhost:9100\n")
     answer_t = (
-        'if [ "$1" = "-T" ]; then\n' f"  printf '%s' '{effective}'\n" "  exit 0\nfi\n"
+        f"if [ \"$1\" = \"-T\" ]; then\n  printf '%s' '{effective}'\n  exit 0\nfi\n"
     )
     behaviour = {
         "needs-run-dir": (
@@ -1391,6 +1395,104 @@ def test_the_deploy_installs_the_font_the_renderer_looks_for_first() -> None:
         if line.strip().startswith("for pkg in ")
     )
     assert family in packages, f"{first} is tried first, but {packages.strip()}"
+
+
+# --- the nightly backup ------------------------------------------------------
+
+
+def test_the_deploy_schedules_the_backup(tmp_path: Path) -> None:
+    """The whole point of shipping the units: an install has backups from the
+    first day, rather than from the day somebody remembers to arrange them."""
+    env, _ = _sudo_trap(tmp_path)
+    result = _run(
+        "deploy",
+        "--dry-run",
+        "--domain",
+        "example.test",
+        "--no-printer",
+        "-y",
+        env_extra=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "write /etc/systemd/system/shelfos-backup.service" in result.stderr
+    assert "write /etc/systemd/system/shelfos-backup.timer" in result.stderr
+    assert "systemctl enable --now shelfos-backup.timer" in result.stderr
+
+
+def test_the_schedule_can_be_declined(tmp_path: Path) -> None:
+    """And says so where somebody will read it, because an install with no
+    backups is not a state to discover from the absence of a line."""
+    env, _ = _sudo_trap(tmp_path)
+    result = _run(
+        "deploy",
+        "--dry-run",
+        "--domain",
+        "example.test",
+        "--no-printer",
+        "--no-backup-timer",
+        "-y",
+        env_extra=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "shelfos-backup.timer" not in result.stderr
+    assert "nothing will take one for you" in result.stderr
+
+
+def test_the_backup_unit_runs_the_script_where_the_deploy_puts_it() -> None:
+    """Three paths that have to agree: where the code is installed, where
+    archives are written, and what the unit next to this says about both. A
+    mismatch is a unit that fails every night into its own journal."""
+    script = _SCRIPT.read_text()
+    unit = (_SCRIPT.parent / "deploy" / "shelfos-backup.service").read_text()
+    assert 'readonly INSTALL_DIR="/opt/shelfos"' in script
+    assert 'readonly BACKUP_DIR="$DATA_DIR/backups"' in script
+    assert 'readonly DATA_DIR="/var/lib/shelfos"' in script
+    assert "ExecStart=/opt/shelfos/shelfos.sh backup create" in unit
+    # The retention sweep must name the directory `backup create` writes to, or
+    # it quietly keeps everything forever while reporting success.
+    sweep = next(
+        line for line in unit.splitlines() if line.startswith("ExecStartPost=")
+    )
+    assert "/var/lib/shelfos/backups" in sweep
+    assert "-delete" in sweep
+
+
+def test_the_retention_the_summary_promises_is_the_one_the_unit_applies() -> None:
+    """A deploy says how long archives are kept before anybody agrees to it, and
+    the number lives in a different file from the sweep that enforces it."""
+    unit = (_SCRIPT.parent / "deploy" / "shelfos-backup.service").read_text()
+    days = re.search(r"-mtime \+(\d+)", unit)
+    assert days, "the backup unit no longer sweeps by age"
+    assert f"kept {days.group(1)} days" in _SCRIPT.read_text()
+
+
+def test_a_missed_night_is_caught_up() -> None:
+    """Persistent= is the difference between backing up a machine that is shut
+    overnight and only appearing to."""
+    timer = (_SCRIPT.parent / "deploy" / "shelfos-backup.timer").read_text()
+    assert "Persistent=true" in timer
+    assert "WantedBy=timers.target" in timer
+
+
+def test_a_new_schedule_reaches_a_timer_that_is_already_running() -> None:
+    """`enable --now` does nothing to a running timer, so a changed hour would
+    sit on disk while the old one kept firing."""
+    script = _SCRIPT.read_text()
+    body = script[
+        script.index("deploy_step_backup() {") : script.index("deploy_step_printer() {")
+    ]
+    assert 'systemctl restart "$BACKUP_TIMER_NAME"' in body
+
+
+def test_an_edited_schedule_is_not_overwritten_without_asking() -> None:
+    """The hour and the retention are the operator's, and nothing here can tell
+    an edit of theirs from a new version of ShelfOS."""
+    script = _SCRIPT.read_text()
+    body = script[
+        script.index("deploy_step_backup() {") : script.index("deploy_step_printer() {")
+    ]
+    assert "ask_yes_no" in body
+    assert "diff -u" in body
 
 
 def test_a_server_that_admits_only_named_accounts_is_pointed_out(
