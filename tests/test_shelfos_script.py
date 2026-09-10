@@ -1466,6 +1466,18 @@ def test_the_retention_the_summary_promises_is_the_one_the_unit_applies() -> Non
     assert f"kept {days.group(1)} days" in _SCRIPT.read_text()
 
 
+def test_a_unit_that_arrived_with_the_update_is_not_reported_as_a_conflict() -> None:
+    """`update` leaves the installed units alone because they carry choices made
+    here — but a unit this update introduced has no installed copy to leave
+    alone, and saying otherwise sends people looking for a file that is not
+    there. It points at the command that installs it instead."""
+    script = _SCRIPT.read_text()
+    body = script[script.index("    local f\n    for f in deploy/shelfos.service") :]
+    body = body[: body.index("\n    done") + 8]
+    assert '[ ! -e "/etc/systemd/system/${f#deploy/}" ]' in body
+    assert "deploy --reinstall" in body
+
+
 def test_a_missed_night_is_caught_up() -> None:
     """Persistent= is the difference between backing up a machine that is shut
     overnight and only appearing to."""

@@ -1795,10 +1795,22 @@ cmd_update() {
     local f
     for f in deploy/shelfos.service deploy/Caddyfile \
              "deploy/$BACKUP_SERVICE_NAME" "deploy/$BACKUP_TIMER_NAME"; do
-        if sudo_run git -C "$INSTALL_DIR" diff --name-only "$before" "$after" 2>/dev/null | grep -q "^$f$"; then
-            warn "$f changed upstream; the installed one may carry choices of yours, so it was not touched."
-            info "  Compare and apply by hand, or re-run deploy --reinstall."
-        fi
+        sudo_run git -C "$INSTALL_DIR" diff --name-only "$before" "$after" 2>/dev/null \
+            | grep -q "^$f$" || continue
+        # A unit that arrived with this update and has never been installed is
+        # not a conflict, and telling somebody their copy was left alone when
+        # they have no copy sends them looking for a file that is not there.
+        case $f in
+            "deploy/$BACKUP_SERVICE_NAME"|"deploy/$BACKUP_TIMER_NAME")
+                if [ ! -e "/etc/systemd/system/${f#deploy/}" ]; then
+                    info "$f is new in this update and is not installed on this machine."
+                    info "  'sudo ./shelfos.sh deploy --reinstall' installs it, or copy it"
+                    info "  into /etc/systemd/system yourself — deploy/README.md has both."
+                    continue
+                fi ;;
+        esac
+        warn "$f changed upstream; the installed one may carry choices of yours, so it was not touched."
+        info "  Compare and apply by hand, or re-run deploy --reinstall."
     done
 
     if [ "$want_restart" = 1 ]; then

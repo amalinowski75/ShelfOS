@@ -110,7 +110,16 @@ config does not reissue anything.
 Where the unit differs from the one in this checkout — a new version usually
 changes it — the diff is shown and installing it is a question, because that
 file carries this machine's port and address. Answering no leaves the unit
-alone and stops.
+alone and stops. The two backup units are asked about the same way, and for the
+same reason: the hour and the retention in them may be yours.
+
+`--reinstall` is also how an install that predates a new unit gets it — the
+backup timer, for one. A plain `update` moves the code and says a unit is new,
+but installs nothing into `/etc/systemd/system` itself; the three commands under
+"Doing it by hand" are the other way, and touch nothing else. Note that
+`--reinstall` re-decides the label printer from what is plugged in at the time,
+so pass `--printer` on a machine whose printer is not attached right now, or the
+rendered unit comes back without it.
 
 ### Reaching it without a proxy
 
