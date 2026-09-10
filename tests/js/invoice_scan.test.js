@@ -17,25 +17,36 @@ function scanFixture({ pendingLocation = "" } = {}) {
     <table id="invoice-review"><tbody>
       <tr data-import-line-id="21" class="is-incomplete" data-type-id="3"
           data-mpn="ABC123" data-spn="71-ABC123" data-description="A widget"
-          data-quantity="7">
+          data-quantity="7" data-location-id="${pendingLocation}">
         <td><span class="mono">ABC123</span></td>
-        <td class="num">7</td>
         <td>
-          <select class="ril-location">
+          <select class="control ril-location">
             <option value=""></option>
             <option value="5" ${selected("5")}>D1</option>
             <option value="9" ${selected("9")}>S2</option>
           </select>
         </td>
+        <td class="num">7</td>
+        <td class="num">1.50 PLN</td>
+        <td class="num">10.50 PLN</td>
+        <td class="line-actions"></td>
       </tr>
     </tbody></table>
     <table id="invoice-lines"><tbody>
       <tr data-line-id="31" data-spn="SPN-9" data-mpn="R-100" data-location-id=""
           data-quantity="5">
         <td><a>R-100</a></td>
-        <td class="mono">SPN-9</td>
-        <td>—</td>
+        <td>
+          <select class="control line-location" data-line-id="31" data-last-value="">
+            <option value="">— choose a location —</option>
+            <option value="5">D1</option>
+            <option value="9">S2</option>
+          </select>
+        </td>
         <td class="num">5</td>
+        <td class="num">1.50 PLN</td>
+        <td class="num">7.50 PLN</td>
+        <td class="line-actions"></td>
       </tr>
     </tbody></table>
     <dialog id="putaway-dialog">
@@ -302,7 +313,18 @@ describe("invoice_scan.js — bag scan", () => {
     expect(fetchBody(fetchMock, 1)).toEqual({ location_id: 9 });
     const row = document.querySelector("#invoice-lines tr");
     expect(row.dataset.locationId).toBe("9");
-    expect(row.children[2].textContent).toBe("Lab / Shelf 02");
+    // The location goes into the line's own picker — which is what the Location
+    // column IS on a draft — and nowhere else. The count and the money keep the
+    // cells they had.
+    const picker = row.querySelector(".line-location");
+    expect(picker.value).toBe("9");
+    expect(picker.title).toBe("Lab / Shelf 02");
+    expect(picker.dataset.lastValue).toBe("9");
+    // The placeholder is a lie once the line has a shelf: the endpoint assigns,
+    // it cannot clear.
+    expect(picker.querySelector('option[value=""]')).toBe(null);
+    const cells = [...row.querySelectorAll("td.num")].map((c) => c.textContent);
+    expect(cells).toEqual(["5", "1.50 PLN", "7.50 PLN"]);
     expect(document.getElementById("putaway-dialog").open).toBe(false);
   });
 
@@ -646,7 +668,8 @@ describe("invoice_scan.js — location scan in the dialog", () => {
     expect(fetchMock.mock.calls[2][0]).toBe("/api/invoices/7/lines/31/location");
     expect(fetchBody(fetchMock, 2)).toEqual({ location_id: 9 });
     const row = document.querySelector("#invoice-lines tr");
-    expect(row.children[3].textContent).toBe("4");
+    expect(row.querySelector("td.num").textContent).toBe("4");
+    expect(row.querySelector(".line-location").value).toBe("9");
   });
 
   it("keeps the row honest when the count saves but the location fails", async () => {
@@ -677,7 +700,9 @@ describe("invoice_scan.js — location scan in the dialog", () => {
 
     const row = document.querySelector("#invoice-lines tr");
     expect(row.dataset.quantity).toBe("4"); // what the server now holds
-    expect(row.children[3].textContent).toBe("4");
+    expect(row.querySelector("td.num").textContent).toBe("4");
+    // The location did not land, so its picker must not claim otherwise.
+    expect(row.querySelector(".line-location").value).toBe("");
     expect(document.getElementById("putaway-error").textContent).toBe(
       "Quantity saved as 4, but the location could not be set: location is full",
     );
