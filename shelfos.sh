@@ -1849,9 +1849,12 @@ Wrap scripts/backup.py with the paths and the user of whichever install is here.
 For a deployed service that means running as the service user against
 /var/lib/shelfos; for a clone, against this directory.
 
-The archive holds the database and the attachments. It does NOT hold
-/etc/shelfos/env, so a restore without that file comes back with a different
-signing secret and every session invalid — back that file up separately.
+The archive holds the database and the attachments, and nothing else. Two files
+are worth keeping beside it, and matter when a machine is rebuilt: /etc/shelfos/env
+(a restore without it comes back with a different signing secret and every session
+invalid, and the shop keys are not recoverable from anywhere) and
+/var/lib/shelfos/tunnel-keys (without it, every machine with a label printer
+registers again).
 EOF
 }
 
@@ -2146,7 +2149,10 @@ cmd_backup() {
     fi
 
     if [ "$action" = create ] && [ "$status" = 0 ]; then
-        note "The archive does not contain $ENV_FILE_SYSTEM — back that up separately."
+        note "The archive holds the database and the attachments, and nothing else."
+        note "Also worth keeping, and not in here: $ENV_FILE_SYSTEM (the signing"
+        note "secret and the shop keys) and $TUNNEL_KEYS (the machines allowed to"
+        note "bring a label printer — without it each one registers again)."
         if is_deployed; then
             note "It is owned by root and readable only with sudo; it holds every password hash."
         fi
