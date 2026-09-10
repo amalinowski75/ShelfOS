@@ -9,6 +9,20 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## Settings moved off the nav, into one button
+
+*Label printer*, *Users*, *API* and *Change password* each sat in the top bar
+beside the pages, so the bar mixed places to work with things you set up once and
+then forget. They now live in a menu behind a gear button on the right of the
+bar, next to the account it belongs to. The nav is what is left: Components,
+Locations, Invoices, BOMs and, for an admin, Types, Match rules and Audit.
+
+The menu closes on a second press of the button, on a click anywhere else, on
+Escape (which hands the focus back to the button), and as soon as an item in it
+is chosen. *Users* is still admin-only; the gear itself shows the current-page
+highlight while one of its pages is open, so nothing is hidden that used to say
+where you are.
+
 ## A backup every night, without being asked
 
 `deploy` now installs `shelfos-backup.service` and `shelfos-backup.timer` and

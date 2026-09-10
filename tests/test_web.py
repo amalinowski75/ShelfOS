@@ -2625,6 +2625,39 @@ def test_both_dialogs_announce_a_failed_load_and_offer_the_action(
         assert f'id="{prefix}-retry"' in html, prefix
 
 
+# --- the Settings menu in the app bar ----------------------------------------
+
+
+def test_settings_menu_holds_the_instance_level_controls(client: TestClient) -> None:
+    """Setting the instance up is not a place to work, so it is not in the nav."""
+    html = client.get("/").text
+
+    menu = html.split('<div class="settings-menu"', 1)[1].split("</div>", 1)[0]
+    assert 'href="/label-printer"' in menu
+    assert 'href="/users"' in menu
+    assert 'href="/docs"' in menu
+    assert 'id="change-password-btn"' in menu
+    assert "/static/settings_menu.js" in html
+
+    # …and none of them is left behind in the nav itself.
+    nav = html.split("<nav>", 1)[1].split("</nav>", 1)[0]
+    for gone in ('href="/label-printer"', 'href="/users"', 'href="/docs"'):
+        assert gone not in nav
+    assert 'href="/locations"' in nav  # a place to work, so still there
+
+
+def test_settings_menu_hides_the_admin_only_entries_from_a_reader(
+    client: TestClient,
+) -> None:
+    html = client.get("/", headers=_read_only_headers(client)).text
+
+    menu = html.split('<div class="settings-menu"', 1)[1].split("</div>", 1)[0]
+    assert 'href="/users"' not in menu
+    # The printer and this account's own password stay available to everyone.
+    assert 'href="/label-printer"' in menu
+    assert 'id="change-password-btn"' in menu
+
+
 def test_no_page_ships_a_front_end_library_nothing_uses(client: TestClient) -> None:
     """HTMX was fetched on every page load for months and never used once.
 

@@ -34,14 +34,11 @@
           <a href="/locations"{% if path.startswith("/locations") %} aria-current="page"{% endif %}>Locations</a>
           <a href="/invoices"{% if path == "/invoices" or path.startswith("/invoices/") %} aria-current="page"{% endif %}>Invoices</a>
           <a href="/boms"{% if path.startswith("/boms") %} aria-current="page"{% endif %}>BOMs</a>
-          <a href="/label-printer"{% if path.startswith("/label-printer") %} aria-current="page"{% endif %}>Label printer</a>
           {% if current_user.role.value == "admin" %}
           <a href="/types"{% if path.startswith("/types") %} aria-current="page"{% endif %}>Types</a>
           <a href="/match-rules"{% if path.startswith("/match-rules") %} aria-current="page"{% endif %}>Match rules</a>
-          <a href="/users"{% if path.startswith("/users") %} aria-current="page"{% endif %}>Users</a>
           <a href="/audit"{% if path.startswith("/audit") %} aria-current="page"{% endif %}>Audit</a>
           {% endif %}
-          <a href="/docs">API</a>
         </nav>
         <span class="spacer"></span>
         <div class="user">
@@ -50,7 +47,29 @@
             {{ current_user.name }}
           </span>
           <span class="badge b-neutral">{{ current_user.role.value }}</span>
-          <button type="button" class="btn btn-ghost btn-sm" id="change-password-btn">Change password</button>
+          {# Settings: the handful of controls that set the instance up rather than
+             record what is on the shelves. They sit behind one button so the nav
+             stays a list of places to work. #}
+          {% set settings_open = path.startswith("/label-printer") or path.startswith("/users") %}
+          <div class="settings">
+            <button type="button" class="btn btn-ghost btn-sm settings-toggle" id="settings-btn"
+                    aria-haspopup="true" aria-expanded="false" aria-controls="settings-menu"
+                    aria-label="Settings" title="Settings"
+                    {% if settings_open %}aria-current="page"{% endif %}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.61.86 1.01 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            </button>
+            <div class="settings-menu" id="settings-menu" role="menu" hidden>
+              <a role="menuitem" href="/label-printer"{% if path.startswith("/label-printer") %} aria-current="page"{% endif %}>Label printer</a>
+              {% if current_user.role.value == "admin" %}
+              <a role="menuitem" href="/users"{% if path.startswith("/users") %} aria-current="page"{% endif %}>Users</a>
+              {% endif %}
+              <a role="menuitem" href="/docs">API</a>
+              <button type="button" role="menuitem" id="change-password-btn">Change password</button>
+            </div>
+          </div>
           <form action="/logout" method="post">
             <input type="hidden" name="csrf_token" value="{{ request.session.get('csrf_token', '') }}" />
             <button type="submit" class="btn btn-ghost btn-sm">Log out</button>
@@ -93,6 +112,7 @@
     {# After location_tree.js: the stock dialog resets that picker on open. #}
     <script src="/static/stock_dialog.js?v={{ static_version() }}"></script>
     <script src="/static/password_dialog.js?v={{ static_version() }}"></script>
+    <script src="/static/settings_menu.js?v={{ static_version() }}"></script>
     {% endif %}
     {% block scripts %}{% endblock %}
   </body>

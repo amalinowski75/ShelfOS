@@ -167,6 +167,28 @@ a { color: var(--accent-strong); text-underline-offset: 2px; }
   background: var(--neutral-soft); color: var(--text); font-size: 12px; font-weight: 650; flex: none;
 }
 
+/* The Settings menu on the right of the app bar. The panel is absolutely
+   positioned against the button, so opening it never nudges the bar. */
+.settings { position: relative; }
+.settings-toggle { padding: 4px 6px; }
+.settings-toggle svg { width: 18px; height: 18px; }
+.settings-toggle[aria-expanded="true"] { background: var(--surface-2); color: var(--text); }
+.settings-toggle[aria-current] { color: var(--accent-ink); background: var(--accent-soft); }
+.settings-menu {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 30;
+  min-width: 190px; padding: 6px;
+  display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow-md);
+}
+.settings-menu > * {
+  appearance: none; font: inherit; font-size: 14px; font-weight: 500; text-align: left;
+  border: none; background: transparent; color: var(--text); text-decoration: none;
+  padding: 7px 10px; border-radius: 7px; cursor: pointer; white-space: nowrap;
+}
+.settings-menu > *:hover { background: var(--surface-2); }
+.settings-menu > *[aria-current] { color: var(--accent-ink); background: var(--accent-soft); }
+
 /* ---------- page header ---------- */
 .head {
   display: flex; align-items: flex-end; justify-content: space-between;
