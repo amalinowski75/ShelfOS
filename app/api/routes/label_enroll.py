@@ -15,6 +15,8 @@ not happen. They are already authenticated to ShelfOS; ShelfOS can take the key.
 
 from __future__ import annotations
 
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlmodel import Session
@@ -84,7 +86,13 @@ def _caller(request: Request, session: Session) -> User:
         )
     expected = credential_fingerprint(user)
     presented = claims.get(CREDENTIAL_CLAIM)
-    if expected is None or presented != expected:
+    # compare_digest, as the session path does for the same value: this is a
+    # secret compared against something an attacker supplies.
+    if (
+        expected is None
+        or not isinstance(presented, str)
+        or not secrets.compare_digest(presented, expected)
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=(

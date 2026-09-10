@@ -658,9 +658,7 @@ def test_hard_delete_component_removes_its_links(session: Session) -> None:
     )
 
     cs.hard_delete_component(session, component.id)
-    remaining = session.exec(
-        select(Link).where(Link.entity_id == component.id)
-    ).all()
+    remaining = session.exec(select(Link).where(Link.entity_id == component.id)).all()
     assert remaining == []
 
 
@@ -695,9 +693,7 @@ def test_set_number_parameter_accepts_engineering_notation(session: Session) -> 
 def test_set_number_parameter_ignores_trailing_unit(session: Session) -> None:
     component, definition = _number_component(session, unit="F")
     assert (
-        cs.set_parameter_value(
-            session, component.id, definition.id, "100 nF"
-        ).value_num
+        cs.set_parameter_value(session, component.id, definition.id, "100 nF").value_num
         == 1e-7
     )
 
@@ -718,13 +714,20 @@ def test_create_component_with_values_applies_own_and_inherited(
 ) -> None:
     parent = cs.create_type(session, "passive")
     cs.add_parameter_definition(
-        session, parent.id, name="tolerance", label="Tol",
+        session,
+        parent.id,
+        name="tolerance",
+        label="Tol",
         data_type=ParameterDataType.TEXT,
     )
     ctype = cs.create_type(session, "resistor", parent_id=parent.id)
     resistance = cs.add_parameter_definition(
-        session, ctype.id, name="resistance", label="Resistance",
-        data_type=ParameterDataType.NUMBER, unit="Ω",
+        session,
+        ctype.id,
+        name="resistance",
+        label="Resistance",
+        data_type=ParameterDataType.NUMBER,
+        unit="Ω",
     )
     tolerance = next(
         d
@@ -733,7 +736,9 @@ def test_create_component_with_values_applies_own_and_inherited(
     )
 
     component = cs.create_component_with_values(
-        session, ctype.id, mpn="R-100",
+        session,
+        ctype.id,
+        mpn="R-100",
         # Engineering-notation number plus an inherited text parameter.
         values=[(resistance.id, "4k7"), (tolerance.id, "1%")],
     )
@@ -751,14 +756,16 @@ def test_create_component_with_values_is_atomic_on_bad_value(
     ctype = cs.create_type(session, "resistor")
     other = cs.create_type(session, "capacitor")
     foreign = cs.add_parameter_definition(
-        session, other.id, name="capacitance", label="C",
-        data_type=ParameterDataType.NUMBER, unit="F",
+        session,
+        other.id,
+        name="capacitance",
+        label="C",
+        data_type=ParameterDataType.NUMBER,
+        unit="F",
     )
     # A definition from another type must abort the whole create.
     with pytest.raises(ValidationError):
-        cs.create_component_with_values(
-            session, ctype.id, values=[(foreign.id, "1n")]
-        )
+        cs.create_component_with_values(session, ctype.id, values=[(foreign.id, "1n")])
     assert cs.list_components(session, type_id=ctype.id) == []
 
 
@@ -767,8 +774,12 @@ def test_create_component_with_values_rejects_duplicate_definition(
 ) -> None:
     ctype = cs.create_type(session, "resistor")
     definition = cs.add_parameter_definition(
-        session, ctype.id, name="resistance", label="R",
-        data_type=ParameterDataType.NUMBER, unit="Ω",
+        session,
+        ctype.id,
+        name="resistance",
+        label="R",
+        data_type=ParameterDataType.NUMBER,
+        unit="Ω",
     )
     with pytest.raises(ValidationError):
         cs.create_component_with_values(
@@ -791,8 +802,12 @@ def test_create_component_with_values_audits_initial_values(session: Session) ->
     user = ensure_demo_user(session)
     ctype = cs.create_type(session, "resistor")
     definition = cs.add_parameter_definition(
-        session, ctype.id, name="resistance", label="R",
-        data_type=ParameterDataType.NUMBER, unit="Ω",
+        session,
+        ctype.id,
+        name="resistance",
+        label="R",
+        data_type=ParameterDataType.NUMBER,
+        unit="Ω",
     )
     component = cs.create_component_with_values(
         session, ctype.id, values=[(definition.id, "4k7")], user_id=user.id
@@ -811,8 +826,12 @@ def test_create_component_with_values_skips_audit_without_user(
 
     ctype = cs.create_type(session, "resistor")
     definition = cs.add_parameter_definition(
-        session, ctype.id, name="resistance", label="R",
-        data_type=ParameterDataType.NUMBER, unit="Ω",
+        session,
+        ctype.id,
+        name="resistance",
+        label="R",
+        data_type=ParameterDataType.NUMBER,
+        unit="Ω",
     )
     component = cs.create_component_with_values(
         session, ctype.id, values=[(definition.id, "4k7")]
@@ -832,9 +851,7 @@ def test_find_duplicate_component_matches_case_insensitively(session: Session) -
         is not None
     )
     # A different manufacturer with the same MPN is NOT a duplicate.
-    assert (
-        cs.find_duplicate_component(session, mpn="R-100", manufacturer="TDK") is None
-    )
+    assert cs.find_duplicate_component(session, mpn="R-100", manufacturer="TDK") is None
 
 
 def test_find_duplicate_component_exempts_a_blank_mpn(session: Session) -> None:
@@ -906,8 +923,7 @@ def test_create_normalises_blank_and_whitespace_mpn_manufacturer(
     assert component.manufacturer is None
     # A blank ("" / whitespace) manufacturer matches the normalised row.
     assert (
-        cs.find_duplicate_component(session, mpn=" r-100 ", manufacturer="")
-        is not None
+        cs.find_duplicate_component(session, mpn=" r-100 ", manufacturer="") is not None
     )
 
 
@@ -920,19 +936,24 @@ def test_find_duplicate_component_ignores_soft_deleted(session: Session) -> None
     session.add(component)
     session.commit()
     # A deleted part doesn't block re-adding it.
-    assert (
-        cs.find_duplicate_component(session, mpn="R-9", manufacturer="YAGEO") is None
-    )
+    assert cs.find_duplicate_component(session, mpn="R-9", manufacturer="YAGEO") is None
 
 
 def _resistor_with_params(session: Session):  # type: ignore[no-untyped-def]
     ctype = cs.create_type(session, "resistor")
     resistance = cs.add_parameter_definition(
-        session, ctype.id, name="resistance", label="R",
-        data_type=ParameterDataType.NUMBER, unit="Ω",
+        session,
+        ctype.id,
+        name="resistance",
+        label="R",
+        data_type=ParameterDataType.NUMBER,
+        unit="Ω",
     )
     tolerance = cs.add_parameter_definition(
-        session, ctype.id, name="tolerance", label="Tol",
+        session,
+        ctype.id,
+        name="tolerance",
+        label="Tol",
         data_type=ParameterDataType.TEXT,
     )
     return ctype, resistance, tolerance
@@ -943,12 +964,19 @@ def test_update_component_edits_fields_and_values(session: Session) -> None:
 
     ctype, resistance, tolerance = _resistor_with_params(session)
     component = cs.create_component_with_values(
-        session, ctype.id, mpn="R-1", manufacturer="YAGEO",
+        session,
+        ctype.id,
+        mpn="R-1",
+        manufacturer="YAGEO",
         values=[(resistance.id, "1k"), (tolerance.id, "5%")],
     )
     cs.update_component(
-        session, component.id, manufacturer="TDK", package="0402",
-        mounting_type=MountingType.SMT, notes="edited",
+        session,
+        component.id,
+        manufacturer="TDK",
+        package="0402",
+        mounting_type=MountingType.SMT,
+        notes="edited",
         values=[(resistance.id, "2k2"), (tolerance.id, "1%")],
     )
     session.refresh(component)
@@ -976,7 +1004,9 @@ def test_update_component_leaves_type_and_mpn_untouched(session: Session) -> Non
 def test_update_component_clears_a_blank_parameter(session: Session) -> None:
     ctype, resistance, tolerance = _resistor_with_params(session)
     component = cs.create_component_with_values(
-        session, ctype.id, values=[(tolerance.id, "5%")],
+        session,
+        ctype.id,
+        values=[(tolerance.id, "5%")],
     )
     cs.update_component(session, component.id, values=[(tolerance.id, None)])
     stored = {
@@ -991,12 +1021,17 @@ def test_update_component_is_atomic_on_a_bad_value(session: Session) -> None:
 
     ctype, resistance, _ = _resistor_with_params(session)
     component = cs.create_component_with_values(
-        session, ctype.id, manufacturer="YAGEO", values=[(resistance.id, "1k")],
+        session,
+        ctype.id,
+        manufacturer="YAGEO",
+        values=[(resistance.id, "1k")],
     )
     # A non-numeric resistance aborts the whole edit — the manufacturer change with it.
     with pytest.raises(ValidationError):
         cs.update_component(
-            session, component.id, manufacturer="TDK",
+            session,
+            component.id,
+            manufacturer="TDK",
             values=[(resistance.id, "not-a-number")],
         )
     fresh = session.get(Component, component.id)
@@ -1007,8 +1042,12 @@ def test_update_component_rejects_a_foreign_parameter(session: Session) -> None:
     ctype, _, _ = _resistor_with_params(session)
     other = cs.create_type(session, "capacitor")
     foreign = cs.add_parameter_definition(
-        session, other.id, name="capacitance", label="C",
-        data_type=ParameterDataType.NUMBER, unit="F",
+        session,
+        other.id,
+        name="capacitance",
+        label="C",
+        data_type=ParameterDataType.NUMBER,
+        unit="F",
     )
     component = cs.create_component(session, ctype.id)
     with pytest.raises(ValidationError):
@@ -1020,11 +1059,17 @@ def test_update_component_audits_each_change(session: Session) -> None:
 
     ctype, resistance, _ = _resistor_with_params(session)
     component = cs.create_component_with_values(
-        session, ctype.id, manufacturer="YAGEO", values=[(resistance.id, "1k")],
+        session,
+        ctype.id,
+        manufacturer="YAGEO",
+        values=[(resistance.id, "1k")],
     )
     cs.update_component(
-        session, component.id, manufacturer="TDK",
-        values=[(resistance.id, "2k")], user_id=7,
+        session,
+        component.id,
+        manufacturer="TDK",
+        values=[(resistance.id, "2k")],
+        user_id=7,
     )
     fields = {
         e.field
@@ -1055,11 +1100,17 @@ def test_update_component_skips_audit_for_an_unchanged_field(session: Session) -
 def test_update_component_validates_an_enum_value(session: Session) -> None:
     ctype = cs.create_type(session, "capacitor")
     dielectric = cs.add_parameter_definition(
-        session, ctype.id, name="dielectric", label="Dielectric",
-        data_type=ParameterDataType.ENUM, enum_values=["X7R", "C0G"],
+        session,
+        ctype.id,
+        name="dielectric",
+        label="Dielectric",
+        data_type=ParameterDataType.ENUM,
+        enum_values=["X7R", "C0G"],
     )
     component = cs.create_component_with_values(
-        session, ctype.id, values=[(dielectric.id, "X7R")],
+        session,
+        ctype.id,
+        values=[(dielectric.id, "X7R")],
     )
     # A valid token is accepted…
     cs.update_component(session, component.id, values=[(dielectric.id, "C0G")])
@@ -1173,13 +1224,20 @@ def test_delete_type_removes_its_definitions_enum_values_and_scoped_rules(
 ) -> None:
     ctype = cs.create_type(session, "cable")
     definition = cs.add_parameter_definition(
-        session, ctype.id, name="ctype", label="Type",
-        data_type=ParameterDataType.ENUM, enum_values=["Flat", "Round"],
+        session,
+        ctype.id,
+        name="ctype",
+        label="Type",
+        data_type=ParameterDataType.ENUM,
+        enum_values=["Flat", "Round"],
     )
     # A rule scoped to this definition, and a TYPE rule that names the type.
     mrs.create_rule(
-        session, domain=MatchDomain.ENUM_VALUE, alias="wstazkowy",
-        canonical="Flat", parameter_definition_id=definition.id,
+        session,
+        domain=MatchDomain.ENUM_VALUE,
+        alias="wstazkowy",
+        canonical="Flat",
+        parameter_definition_id=definition.id,
     )
     mrs.create_rule(
         session, domain=MatchDomain.TYPE, alias="przewod", canonical="cable"
@@ -1209,8 +1267,13 @@ def test_delete_type_blocked_by_a_staged_invoice_line(session: Session) -> None:
     ctype = cs.create_type(session, "resistor")
     session.add(
         InvoiceImportLine(
-            invoice_id=1, line_no=1, quantity=1, unit_price=Decimal("1"),
-            shop_key="tme", type_id=ctype.id, reason="",
+            invoice_id=1,
+            line_no=1,
+            quantity=1,
+            unit_price=Decimal("1"),
+            shop_key="tme",
+            type_id=ctype.id,
+            reason="",
         )
     )
     session.commit()
@@ -1223,9 +1286,7 @@ def test_rename_type_repoints_a_case_different_type_rule(session: Session) -> No
     # The engine resolves TYPE rules by name case-insensitively, so a rule stored as
     # "Resistor" legitimately targets type "resistor" — the rename must carry it too.
     ctype = cs.create_type(session, "resistor")
-    mrs.create_rule(
-        session, domain=MatchDomain.TYPE, alias="rez", canonical="Resistor"
-    )
+    mrs.create_rule(session, domain=MatchDomain.TYPE, alias="rez", canonical="Resistor")
     cs.rename_type(session, ctype.id, name="res")
     assert mrs.list_rules(session, domain=MatchDomain.TYPE)[0].canonical == "res"
 
@@ -1238,9 +1299,7 @@ def test_rename_type_leaves_rules_when_another_type_shares_the_name(
     passive = cs.create_type(session, "passive")
     root = cs.create_type(session, "resistor")
     cs.create_type(session, "resistor", parent_id=passive.id)  # a second "resistor"
-    mrs.create_rule(
-        session, domain=MatchDomain.TYPE, alias="rez", canonical="resistor"
-    )
+    mrs.create_rule(session, domain=MatchDomain.TYPE, alias="rez", canonical="resistor")
     cs.rename_type(session, root.id, name="flat-resistor")
     assert mrs.list_rules(session, domain=MatchDomain.TYPE)[0].canonical == "resistor"
 
@@ -1251,9 +1310,7 @@ def test_delete_type_keeps_rules_when_another_type_shares_the_name(
     passive = cs.create_type(session, "passive")
     cs.create_type(session, "resistor")  # a root "resistor"
     child = cs.create_type(session, "resistor", parent_id=passive.id)
-    mrs.create_rule(
-        session, domain=MatchDomain.TYPE, alias="rez", canonical="resistor"
-    )
+    mrs.create_rule(session, domain=MatchDomain.TYPE, alias="rez", canonical="resistor")
     cs.delete_type(session, child.id)  # the root "resistor" still answers to the name
     assert mrs.list_rules(session, domain=MatchDomain.TYPE)[0].canonical == "resistor"
 
@@ -1291,7 +1348,10 @@ def test_delete_type_is_audited(session: Session) -> None:
 def _cable_enum(session: Session, values: list[str] | None = None):  # type: ignore[no-untyped-def]
     ctype = cs.create_type(session, "cable")
     definition = cs.add_parameter_definition(
-        session, ctype.id, name="ctype", label="Type",
+        session,
+        ctype.id,
+        name="ctype",
+        label="Type",
         data_type=ParameterDataType.ENUM,
         enum_values=values if values is not None else ["Flat", "Round"],
     )
@@ -1301,12 +1361,22 @@ def _cable_enum(session: Session, values: list[str] | None = None):  # type: ign
 def test_update_parameter_definition_edits_scalars(session: Session) -> None:
     ctype = cs.create_type(session, "resistor")
     d = cs.add_parameter_definition(
-        session, ctype.id, name="resistance", label="R",
-        data_type=ParameterDataType.NUMBER, unit="ohm",
+        session,
+        ctype.id,
+        name="resistance",
+        label="R",
+        data_type=ParameterDataType.NUMBER,
+        unit="ohm",
     )
     updated = cs.update_parameter_definition(
-        session, d.id, name="resistance", label="Resistance", unit="Ω",
-        sort_order=5, is_table_column=True, is_filterable=True,
+        session,
+        d.id,
+        name="resistance",
+        label="Resistance",
+        unit="Ω",
+        sort_order=5,
+        is_table_column=True,
+        is_filterable=True,
     )
     assert updated.label == "Resistance"
     assert updated.unit == "Ω"
@@ -1319,12 +1389,18 @@ def test_update_parameter_definition_rename_propagates_param_name_rules(
 ) -> None:
     ctype = cs.create_type(session, "resistor")
     d = cs.add_parameter_definition(
-        session, ctype.id, name="resistance", label="R",
+        session,
+        ctype.id,
+        name="resistance",
+        label="R",
         data_type=ParameterDataType.NUMBER,
     )
     mrs.create_rule(
-        session, domain=MatchDomain.PARAM_NAME, alias="rezystancja",
-        canonical="resistance", parameter_definition_id=d.id,
+        session,
+        domain=MatchDomain.PARAM_NAME,
+        alias="rezystancja",
+        canonical="resistance",
+        parameter_definition_id=d.id,
     )
     cs.update_parameter_definition(session, d.id, name="res", label="R")
     assert session.get(ParameterDefinition, d.id).name == "res"
@@ -1334,11 +1410,17 @@ def test_update_parameter_definition_rename_propagates_param_name_rules(
 def test_update_parameter_definition_rejects_duplicate_name(session: Session) -> None:
     ctype = cs.create_type(session, "resistor")
     cs.add_parameter_definition(
-        session, ctype.id, name="resistance", label="R",
+        session,
+        ctype.id,
+        name="resistance",
+        label="R",
         data_type=ParameterDataType.NUMBER,
     )
     other = cs.add_parameter_definition(
-        session, ctype.id, name="power", label="P",
+        session,
+        ctype.id,
+        name="power",
+        label="P",
         data_type=ParameterDataType.NUMBER,
     )
     with pytest.raises(ValidationError):
@@ -1349,7 +1431,10 @@ def test_update_parameter_definition_rejects_duplicate_name(session: Session) ->
 def test_update_parameter_definition_adds_enum_token(session: Session) -> None:
     _, d = _cable_enum(session)
     cs.update_parameter_definition(
-        session, d.id, name="ctype", label="Type",
+        session,
+        d.id,
+        name="ctype",
+        label="Type",
         enum_values=["Flat", "Round", "Coax"],
     )
     assert cs.enum_values_of(session, d.id) == ["Flat", "Round", "Coax"]
@@ -1376,7 +1461,10 @@ def test_update_parameter_definition_rejects_enum_values_on_non_enum(
 ) -> None:
     ctype = cs.create_type(session, "resistor")
     d = cs.add_parameter_definition(
-        session, ctype.id, name="resistance", label="R",
+        session,
+        ctype.id,
+        name="resistance",
+        label="R",
         data_type=ParameterDataType.NUMBER,
     )
     with pytest.raises(ValidationError, match="enum_values only apply"):
@@ -1388,7 +1476,10 @@ def test_update_parameter_definition_rejects_enum_values_on_non_enum(
 def test_delete_parameter_definition_blocked_when_in_use(session: Session) -> None:
     ctype = cs.create_type(session, "resistor")
     d = cs.add_parameter_definition(
-        session, ctype.id, name="resistance", label="R",
+        session,
+        ctype.id,
+        name="resistance",
+        label="R",
         data_type=ParameterDataType.NUMBER,
     )
     cs.create_component_with_values(session, ctype.id, values=[(d.id, "4k7")])
@@ -1402,8 +1493,11 @@ def test_delete_parameter_definition_removes_enum_values_and_scoped_rules(
 ) -> None:
     _, d = _cable_enum(session)
     mrs.create_rule(
-        session, domain=MatchDomain.ENUM_VALUE, alias="wstazkowy",
-        canonical="Flat", parameter_definition_id=d.id,
+        session,
+        domain=MatchDomain.ENUM_VALUE,
+        alias="wstazkowy",
+        canonical="Flat",
+        parameter_definition_id=d.id,
     )
     cs.delete_parameter_definition(session, d.id)
     assert session.get(ParameterDefinition, d.id) is None
@@ -1426,8 +1520,12 @@ def _staged_line(session: Session, definition_id: int, value: str) -> None:
 
     session.add(
         InvoiceImportLine(
-            invoice_id=1, line_no=1, quantity=1, unit_price=Decimal("1"),
-            shop_key="tme", reason="",
+            invoice_id=1,
+            line_no=1,
+            quantity=1,
+            unit_price=Decimal("1"),
+            shop_key="tme",
+            reason="",
             parameters=[{"parameter_definition_id": definition_id, "value": value}],
         )
     )
@@ -1439,7 +1537,10 @@ def test_delete_parameter_definition_blocked_by_a_staged_invoice_line(
 ) -> None:
     ctype = cs.create_type(session, "resistor")
     d = cs.add_parameter_definition(
-        session, ctype.id, name="resistance", label="R",
+        session,
+        ctype.id,
+        name="resistance",
+        label="R",
         data_type=ParameterDataType.NUMBER,
     )
     _staged_line(session, d.id, "4k7")
@@ -1461,9 +1562,15 @@ def test_update_parameter_definition_is_a_partial_patch(session: Session) -> Non
     # Editing one field must not reset the others (no falsy-default footgun).
     ctype = cs.create_type(session, "resistor")
     d = cs.add_parameter_definition(
-        session, ctype.id, name="resistance", label="R",
-        data_type=ParameterDataType.NUMBER, unit="Ω", sort_order=5,
-        is_table_column=True, is_filterable=True,
+        session,
+        ctype.id,
+        name="resistance",
+        label="R",
+        data_type=ParameterDataType.NUMBER,
+        unit="Ω",
+        sort_order=5,
+        is_table_column=True,
+        is_filterable=True,
     )
     cs.update_parameter_definition(session, d.id, label="Resistance")
     got = session.get(ParameterDefinition, d.id)
@@ -1491,8 +1598,11 @@ def test_update_parameter_definition_removed_token_drops_its_enum_rules(
 ) -> None:
     _, d = _cable_enum(session)  # ["Flat", "Round"]
     mrs.create_rule(
-        session, domain=MatchDomain.ENUM_VALUE, alias="wstazkowy",
-        canonical="Flat", parameter_definition_id=d.id,
+        session,
+        domain=MatchDomain.ENUM_VALUE,
+        alias="wstazkowy",
+        canonical="Flat",
+        parameter_definition_id=d.id,
     )
     cs.update_parameter_definition(session, d.id, enum_values=["Round"])  # drop Flat
     assert cs.enum_values_of(session, d.id) == ["Round"]
@@ -1504,8 +1614,12 @@ def test_enum_tokens_are_stored_stripped(session: Session) -> None:
     # back reads as remove+add and can lock an in-use definition.
     ctype = cs.create_type(session, "cable")
     d = cs.add_parameter_definition(
-        session, ctype.id, name="ctype", label="Type",
-        data_type=ParameterDataType.ENUM, enum_values=["Flat ", " Round"],
+        session,
+        ctype.id,
+        name="ctype",
+        label="Type",
+        data_type=ParameterDataType.ENUM,
+        enum_values=["Flat ", " Round"],
     )
     assert cs.enum_values_of(session, d.id) == ["Flat", "Round"]  # stored stripped
     cs.create_component_with_values(session, ctype.id, values=[(d.id, "Flat")])
@@ -1521,8 +1635,12 @@ def test_update_parameter_definition_is_audited(session: Session) -> None:
 
     _, d = _cable_enum(session)  # enum Flat/Round, label "Type"
     cs.update_parameter_definition(
-        session, d.id, name="kind", label="Kind",
-        enum_values=["Flat", "Round", "Coax"], user_id=1,
+        session,
+        d.id,
+        name="kind",
+        label="Kind",
+        enum_values=["Flat", "Round", "Coax"],
+        user_id=1,
     )
     entries = {
         e.field: (e.old_value, e.new_value)
@@ -1533,7 +1651,8 @@ def test_update_parameter_definition_is_audited(session: Session) -> None:
     assert entries[audit_service.FIELD_NAME] == ("ctype", "kind")
     assert entries[audit_service.FIELD_LABEL] == ("Type", "Kind")
     assert entries[audit_service.FIELD_ENUM_VALUES] == (
-        "Flat, Round", "Flat, Round, Coax"
+        "Flat, Round",
+        "Flat, Round, Coax",
     )
 
 
@@ -1542,7 +1661,10 @@ def test_delete_parameter_definition_is_audited(session: Session) -> None:
 
     ctype = cs.create_type(session, "resistor")
     d = cs.add_parameter_definition(
-        session, ctype.id, name="resistance", label="R",
+        session,
+        ctype.id,
+        name="resistance",
+        label="R",
         data_type=ParameterDataType.NUMBER,
     )
     definition_id = d.id
@@ -1565,14 +1687,20 @@ def test_staged_definition_ids_and_type_counts(session: Session) -> None:
     ctype, definition = _cable_enum(session)
     session.add(
         InvoiceImportLine(
-            invoice_id=1, line_no=1, quantity=1, unit_price=Decimal("1"),
-            shop_key="tme", reason="", type_id=ctype.id,
+            invoice_id=1,
+            line_no=1,
+            quantity=1,
+            unit_price=Decimal("1"),
+            shop_key="tme",
+            reason="",
+            type_id=ctype.id,
             parameters=[{"parameter_definition_id": definition.id, "value": "Flat"}],
         )
     )
     session.commit()
     assert cs.staged_definition_ids(session) == {definition.id}
     assert cs.staged_type_counts(session) == {ctype.id: 1}
+
 
 # --- taking a component out of use (§20) -------------------------------------
 

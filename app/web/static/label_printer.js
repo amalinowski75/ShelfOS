@@ -5,17 +5,15 @@
 // browser saves the response because of its Content-Disposition, which is one
 // less moving part than building a Blob and clicking an invented link.
 (function () {
-  const portField = document.getElementById("bridge_port");
   const probeField = document.getElementById("probe-device");
   const button = document.getElementById("probe-btn");
   const output = document.getElementById("probe-result");
-  if (!portField || !probeField || !button || !output) return;
+  if (!probeField || !button || !output) return;
 
-  function syncAddress() {
-    const port = portField.value.trim();
-    probeField.value = port ? `tcp://127.0.0.1:${port}` : "";
-  }
-  portField.addEventListener("input", syncAddress);
+  // The address here is the SERVER's end of the tunnel, rendered by the server
+  // and left alone: it is fixed by that machine's ssh configuration. It used to
+  // follow the port field above, which is this computer's — so changing that
+  // pointed the test at a port nothing was ever going to answer on.
 
   function show(text, state) {
     output.textContent = text;
@@ -26,7 +24,7 @@
   button.addEventListener("click", async () => {
     const device = probeField.value.trim();
     if (!device) {
-      show("Fill in the port first.", "bad");
+      show("This ShelfOS has no printer port to test.", "bad");
       return;
     }
     button.disabled = true;

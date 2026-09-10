@@ -207,7 +207,7 @@ def probe_printer(device: str | None = None) -> PrinterProbeRead:
     point, since it is about the machine in front of the person rather than
     their permissions in ShelfOS.
     """
-    target = setup.probe_target(device or config.LABEL_DEVICE)
+    target = setup.probe_target(device or lp.configured_device())
     result = lp.probe_device(target)
     return PrinterProbeRead(
         answered=result.answered,

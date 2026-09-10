@@ -11,6 +11,17 @@ pull request, which carries the reasoning and the verification.
 
 ## Setting up the label printer from the browser
 
+*(Seven fixes from review, folded into the entry below: the port on the machine
+with the printer and the port on the server are now kept apart — choosing one on
+the form asked the server to bind it, which its sshd refuses, after the page had
+said the printer was registered; `--dry-run` no longer reaches for sudo to read a
+world-readable file; `tunnel-key` run as an ordinary user no longer reads the
+root-only settings file as "unset" and writes keys to the wrong place or for the
+wrong port; a settings change during a deploy restarts the service like every
+other change; the same key under a new comment replaces its entry rather than
+adding a second; the connection probe asks `configured_device()` like everything
+else; and the enrolment token's fingerprint is compared with `compare_digest`.)*
+
 Printing to a printer on someone else's desk worked, and standing it up meant
 reading the README, cloning this repository onto a laptop for one file, and
 writing two systemd units and a udev rule without a typo. Nobody has a clone:

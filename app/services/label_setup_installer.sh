@@ -26,7 +26,15 @@ SSH_USER="@SSH_USER@"
 SSH_HOST="@SSH_HOST@"
 SSH_PORT="@SSH_PORT@"
 DEVICE="@DEVICE@"
+# Two ports, and they are not the same question.
+#
+# BRIDGE_PORT is on THIS machine: which port the bridge listens on, free to be
+# anything not already taken here. SERVER_PORT is on the server: the one its ssh
+# configuration permits and the one ShelfOS connects to, decided when it was
+# installed and not ours to pick. The tunnel joins them — that is what a tunnel
+# is for — so a laptop with something on 9100 changes only its own end.
 BRIDGE_PORT="@BRIDGE_PORT@"
+SERVER_PORT="@SERVER_PORT@"
 GROUP="@GROUP@"
 BRIDGE_SHA256="@BRIDGE_SHA256@"
 # Where this machine registers its own key, and the token that lets it. Both are
@@ -304,7 +312,7 @@ else
     if timeout 8 ssh -N -T \
         -o BatchMode=yes -o NumberOfPasswordPrompts=0 -o ConnectTimeout=10 \
         -o ExitOnForwardFailure=yes -o IdentitiesOnly=yes -i "$KEY_PATH" \
-        -p "$SSH_PORT" -R "127.0.0.1:$BRIDGE_PORT:127.0.0.1:$BRIDGE_PORT" \
+        -p "$SSH_PORT" -R "127.0.0.1:$SERVER_PORT:127.0.0.1:$BRIDGE_PORT" \
         "$SSH_USER@$SSH_HOST" 2>"$ssh_error"
     then
         ssh_status=0
@@ -314,7 +322,7 @@ else
     # 124 is `timeout` ending a connection that was still up — which is success:
     # the forward was granted and held. Anything else is ssh giving up.
     if [ "$ssh_status" = 124 ]; then
-        step_ok "the tunnel comes up, and $SSH_HOST let it bind $BRIDGE_PORT"
+        step_ok "the tunnel comes up, and $SSH_HOST let it bind $SERVER_PORT"
         rm -f "$ssh_error"
     else
         ssh_says="$(cat "$ssh_error")"
@@ -342,11 +350,10 @@ else
                 # ssh says the same sentence for a port in use and a port its
                 # configuration will not hand over, so name both rather than
                 # send someone looking for a process that is not there.
-                die "$SSH_HOST would not let this bind port $BRIDGE_PORT. Either something
-    there is already using it, or that server does not allow this port. If you
-    changed the port on the ShelfOS page, download the script again so that all
-    three ends agree; otherwise ask whoever runs the server to look at
-    'journalctl -u ssh' there, which says which of the two it is." ;;
+                die "$SSH_HOST would not let this bind port $SERVER_PORT. Either something
+    there is already using it, or that server does not allow this port. That port
+    belongs to the server and is not the one you chose here, so this is for
+    whoever runs it: 'journalctl -u ssh' there says which of the two it is." ;;
             *)
                 die "ssh to $SSH_USER@$SSH_HOST did not work:
 
@@ -358,7 +365,9 @@ fi
 # ------------------------------------------------------------------ udev
 
 step "Naming the printer /dev/shelfos-label (sudo)"
-if [ -e "$UDEV_RULE" ] && [ "$(sudo cat "$UDEV_RULE" 2>/dev/null || true)" = "$UDEV_LINE" ]; then
+# Plain cat, not sudo: /etc/udev/rules.d is world-readable, and asking for a
+# password here would break the one promise --dry-run makes.
+if [ -e "$UDEV_RULE" ] && [ "$(cat "$UDEV_RULE" 2>/dev/null || true)" = "$UDEV_LINE" ]; then
     skipped "$UDEV_RULE is already what it should be"
 else
     other_rule="$(grep -rl 'shelfos-label' /etc/udev/rules.d 2>/dev/null | grep -v "^$UDEV_RULE$" || true)"
@@ -460,11 +469,11 @@ bridge_unit="$(printf '%s\n' \
 
 tunnel_unit="$(printf '%s\n' \
     "[Unit]" \
-    "Description=Reverse tunnel carrying the label printer to $SSH_HOST" \
+    "Description=Reverse tunnel carrying the label printer to $SSH_HOST:$SERVER_PORT" \
     "After=shelfos-label.service" \
     "" \
     "[Service]" \
-    "ExecStart=$SSH_BIN -N -T -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o IdentitiesOnly=yes -o BatchMode=yes -i $KEY_PATH -p $SSH_PORT -R 127.0.0.1:$BRIDGE_PORT:127.0.0.1:$BRIDGE_PORT $SSH_USER@$SSH_HOST" \
+    "ExecStart=$SSH_BIN -N -T -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o IdentitiesOnly=yes -o BatchMode=yes -i $KEY_PATH -p $SSH_PORT -R 127.0.0.1:$SERVER_PORT:127.0.0.1:$BRIDGE_PORT $SSH_USER@$SSH_HOST" \
     "Restart=always" \
     "RestartSec=5" \
     "" \

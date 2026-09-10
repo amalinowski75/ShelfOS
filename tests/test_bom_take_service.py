@@ -46,9 +46,7 @@ def shop(session: Session):  # type: ignore[no-untyped-def]
 
         @staticmethod
         def part(mpn: str) -> int:
-            component = cs.create_component_with_values(
-                session, ctype.id, mpn=mpn
-            )
+            component = cs.create_component_with_values(session, ctype.id, mpn=mpn)
             return cast(int, component.id)
 
         @staticmethod
@@ -75,7 +73,8 @@ def shop(session: Session):  # type: ignore[no-untyped-def]
         @staticmethod
         def assign(bom_id: int, references: str, component_id: int) -> None:
             line = next(
-                ln for ln in bs.get_bom_lines(session, bom_id)
+                ln
+                for ln in bs.get_bom_lines(session, bom_id)
                 if ln.references == references
             )
             bs.assign_component(
@@ -348,8 +347,11 @@ def test_two_lines_sharing_a_component_do_not_plan_the_same_bin_twice(
     assert second.shortfall == 20
 
     take = bts.execute_take(
-        session, cast(int, bom.id), boards=1,
-        source_location_id=shop.gathering_id, user_id=1,
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+        user_id=1,
     )
 
     assert ss.get_quantity(session, part, shop.resistors_id) == 0
@@ -405,14 +407,20 @@ def test_a_typed_quantity_beats_the_board_count_in_both_directions(
     line_id = _line_id(session, bom)
 
     more = bts.plan_take(
-        session, cast(int, bom.id), boards=3,
-        source_location_id=shop.gathering_id, overrides={line_id: 15},
+        session,
+        cast(int, bom.id),
+        boards=3,
+        source_location_id=shop.gathering_id,
+        overrides={line_id: 15},
     )
     assert more.lines[0].requested == 15
 
     fewer = bts.plan_take(
-        session, cast(int, bom.id), boards=3,
-        source_location_id=shop.gathering_id, overrides={line_id: 2},
+        session,
+        cast(int, bom.id),
+        boards=3,
+        source_location_id=shop.gathering_id,
+        overrides={line_id: 2},
     )
     assert fewer.lines[0].requested == 2
 
@@ -437,8 +445,11 @@ def test_an_unassigned_line_refuses_the_whole_run(  # type: ignore[no-untyped-de
 
     with pytest.raises(ValidationError):
         bts.execute_take(
-            session, cast(int, bom.id), boards=1,
-            source_location_id=shop.gathering_id, user_id=1,
+            session,
+            cast(int, bom.id),
+            boards=1,
+            source_location_id=shop.gathering_id,
+            user_id=1,
         )
 
     assert _no_removals(session)
@@ -458,8 +469,11 @@ def test_a_retired_component_is_refused_in_the_plan_not_mid_run(
     assert plan.lines[0].blocked == bts.BLOCKED_RETIRED
     with pytest.raises(ValidationError):
         bts.execute_take(
-            session, cast(int, bom.id), boards=1,
-            source_location_id=shop.gathering_id, user_id=1,
+            session,
+            cast(int, bom.id),
+            boards=1,
+            source_location_id=shop.gathering_id,
+            user_id=1,
         )
 
 
@@ -472,8 +486,11 @@ def test_an_unanswered_choice_refuses_the_run(  # type: ignore[no-untyped-def]
 
     with pytest.raises(ValidationError):
         bts.execute_take(
-            session, cast(int, bom.id), boards=1,
-            source_location_id=shop.gathering_id, user_id=1,
+            session,
+            cast(int, bom.id),
+            boards=1,
+            source_location_id=shop.gathering_id,
+            user_id=1,
         )
 
 
@@ -498,8 +515,11 @@ def test_the_take_removes_the_stock_and_records_where_it_came_from(
     )
 
     take = bts.execute_take(
-        session, cast(int, bom.id), boards=1,
-        source_location_id=shop.gathering_id, user_id=1,
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+        user_id=1,
     )
 
     assert ss.get_quantity(session, part, shop.resistors_id) == 0
@@ -529,8 +549,11 @@ def test_the_snapshot_is_named_after_the_bom_and_the_moment(
     bom, part = _one_line(session, shop, stocked={shop.resistors_id: 10}, qty=1)
 
     take = bts.execute_take(
-        session, cast(int, bom.id), boards=1,
-        source_location_id=shop.gathering_id, user_id=1,
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+        user_id=1,
     )
 
     assert take.name.startswith("Kontroler CNC ")
@@ -554,8 +577,11 @@ def test_a_shortfall_is_recorded_and_the_other_lines_are_unaffected(
     shop.assign(cast(int, bom.id), "U2", scarce)
 
     take = bts.execute_take(
-        session, cast(int, bom.id), boards=1,
-        source_location_id=shop.gathering_id, user_id=1,
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+        user_id=1,
     )
 
     lines = {ln.references: ln for ln in bts.take_lines(session, cast(int, take.id))}
@@ -571,8 +597,11 @@ def test_every_line_gets_a_row_even_when_it_moved_nothing(
     bom, part = _one_line(session, shop, stocked={}, qty=5)
 
     take = bts.execute_take(
-        session, cast(int, bom.id), boards=1,
-        source_location_id=shop.gathering_id, user_id=1,
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+        user_id=1,
     )
 
     lines = bts.take_lines(session, cast(int, take.id))
@@ -605,8 +634,11 @@ def test_a_failure_partway_leaves_nothing_behind(
 
     with pytest.raises(RuntimeError):
         bts.execute_take(
-            session, cast(int, bom.id), boards=1,
-            source_location_id=shop.gathering_id, user_id=1,
+            session,
+            cast(int, bom.id),
+            boards=1,
+            source_location_id=shop.gathering_id,
+            user_id=1,
         )
 
     assert ss.get_quantity(session, first, shop.resistors_id) == 100
@@ -625,8 +657,11 @@ def test_reversing_puts_every_part_back_where_it_came_from(
         session, shop, stocked={shop.resistors_id: 3, shop.shelf_a_id: 50}, qty=10
     )
     take = bts.execute_take(
-        session, cast(int, bom.id), boards=1,
-        source_location_id=shop.gathering_id, user_id=1,
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+        user_id=1,
     )
 
     reversed_take = bts.reverse_take(
@@ -654,8 +689,11 @@ def test_a_reversal_with_no_reason_moves_nothing(  # type: ignore[no-untyped-def
     """A reversal that does not say what happened is a hole in the record."""
     bom, part = _one_line(session, shop, stocked={shop.resistors_id: 10}, qty=4)
     take = bts.execute_take(
-        session, cast(int, bom.id), boards=1,
-        source_location_id=shop.gathering_id, user_id=1,
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+        user_id=1,
     )
 
     with pytest.raises(ValidationError):
@@ -670,8 +708,11 @@ def test_reversing_twice_returns_the_stock_once(  # type: ignore[no-untyped-def]
 ) -> None:
     bom, part = _one_line(session, shop, stocked={shop.resistors_id: 10}, qty=4)
     take = bts.execute_take(
-        session, cast(int, bom.id), boards=1,
-        source_location_id=shop.gathering_id, user_id=1,
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+        user_id=1,
     )
     bts.reverse_take(session, cast(int, take.id), reason="scrapped", user_id=1)
 
@@ -697,8 +738,11 @@ def test_a_reversal_blocked_by_a_retired_part_says_which_line(
     shop.assign(cast(int, bom.id), "U1", good)
     shop.assign(cast(int, bom.id), "U2", doomed)
     take = bts.execute_take(
-        session, cast(int, bom.id), boards=1,
-        source_location_id=shop.gathering_id, user_id=1,
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+        user_id=1,
     )
     # Emptying the drawer is what the service demands before a part goes out of
     # use, and it is the real order of events after a take anyway.
@@ -744,8 +788,11 @@ def test_takes_by_movement_asks_in_chunks(
     """
     bom, part = _one_line(session, shop, stocked={shop.resistors_id: 10}, qty=1)
     take = bts.execute_take(
-        session, cast(int, bom.id), boards=1,
-        source_location_id=shop.gathering_id, user_id=1,
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+        user_id=1,
     )
     real = bts.take_allocations(session, cast(int, take.id))[0].movement_id
     monkeypatch.setattr(bts, "_MOVEMENT_CHUNK", 2)
@@ -770,8 +817,11 @@ def test_a_movement_maps_back_to_its_snapshot_both_ways(
     """The link that makes a movement's note clickable, without a schema change."""
     bom, part = _one_line(session, shop, stocked={shop.resistors_id: 10}, qty=4)
     take = bts.execute_take(
-        session, cast(int, bom.id), boards=1,
-        source_location_id=shop.gathering_id, user_id=1,
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+        user_id=1,
     )
     bts.reverse_take(session, cast(int, take.id), reason="scrapped", user_id=1)
     allocation = bts.take_allocations(session, cast(int, take.id))[0]
@@ -811,8 +861,11 @@ def test_a_bom_cannot_be_deleted_while_a_take_of_it_stands(
     """Those parts are off the shelves, and the snapshot is the only way back."""
     bom, part = _one_line(session, shop, stocked={shop.resistors_id: 10}, qty=4)
     take = bts.execute_take(
-        session, cast(int, bom.id), boards=1,
-        source_location_id=shop.gathering_id, user_id=1,
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+        user_id=1,
     )
 
     with pytest.raises(ValidationError, match=take.name):
@@ -829,8 +882,11 @@ def test_a_reversed_take_no_longer_holds_its_bom(
     snapshot stays behind as the record of what happened."""
     bom, part = _one_line(session, shop, stocked={shop.resistors_id: 10}, qty=4)
     take = bts.execute_take(
-        session, cast(int, bom.id), boards=1,
-        source_location_id=shop.gathering_id, user_id=1,
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+        user_id=1,
     )
     bts.reverse_take(session, cast(int, take.id), reason="scrapped", user_id=1)
 

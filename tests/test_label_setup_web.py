@@ -392,3 +392,29 @@ def test_the_locations_page_offers_printing_once_a_machine_has_registered(
     after = client.get("/locations").text
     assert "No label printer is set up" not in after
     assert "loc-print" in after
+
+
+def test_the_probe_knows_which_printer_without_being_told(
+    client: TestClient, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    """Asked with no device, it should answer for the printer this server has.
+
+    On the deployment this feature is built for — no SHELFOS_LABEL_DEVICE, one
+    registered machine — it used to read the setting directly and refuse with
+    "say which printer to test", though the server knew perfectly well.
+    """
+    from app.services import tunnel_keys
+
+    monkeypatch.setattr(config, "TUNNEL_KEYS_FILE", str(tmp_path / "keys"))
+    monkeypatch.setattr(config, "LABEL_DEVICE", "")
+    tunnel_keys.enroll(
+        "ssh-ed25519 "
+        "AAAAC3NzaC1lZDI1NTE5AAAAIBFEnyJspiC2cerXzPdgVQqUTIhpyNepCIuX1OjaG+2U "
+        "shelfos-label@goofy",
+        port=9100,
+    )
+    response = client.get("/api/labels/setup/probe")
+    # Nothing is listening, which is a fine answer — 422 "say which printer"
+    # would not be.
+    assert response.status_code == 200, response.text
+    assert response.json()["answered"] is False

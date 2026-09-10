@@ -837,6 +837,9 @@ def test_the_permitted_port_follows_the_installed_setting(tmp_path: Path) -> Non
     probe.write_text(
         f"ENV_FILE_SYSTEM={env}\n"
         'valid_port() { [ "$1" -ge 1 ] 2>/dev/null && [ "$1" -le 65535 ]; }\n'
+        # The installed settings are root-only and read through sudo_run; a
+        # test has no root, and needs none for a file of its own.
+        'sudo_run() { "$@"; }\n'
         f"{helpers}\n{body}\ntunnel_port\n"
     )
     result = subprocess.run(
@@ -883,6 +886,7 @@ def _dropin(tmp_path: Path, env: str = "") -> str:
         "TUNNEL_USER=shelfos-tunnel\n"
         "TUNNEL_KEYS_COMMAND=/usr/local/lib/shelfos/tunnel-keys\n"
         'valid_port() { [ "$1" -ge 1 ] 2>/dev/null && [ "$1" -le 65535 ]; }\n'
+        'sudo_run() { "$@"; }\n'
         f"{helpers}\n{body}\nsshd_dropin_body\n"
     )
     result = subprocess.run(
@@ -1141,10 +1145,16 @@ def _sshd_probe(tmp_path: Path, mode: str) -> tuple[str, Path]:
     """
     script = _SCRIPT.read_text()
     # From tunnel_port on: the drop-in's body is built from it, and the step
-    # writes what that produces.
-    body = script[
-        script.index("tunnel_port() {") : script.index("deploy_step_dirs() {")
+    # writes what that produces. system_env_value comes along because the port
+    # is read out of the installed settings, which only root may open.
+    rule = "# " + "-" * 75
+    reader = script[
+        script.index("system_env_value() {") : script.index(f"{rule}\n# Shared helpers")
     ]
+    body = (
+        reader
+        + script[script.index("tunnel_port() {") : script.index("deploy_step_dirs() {")]
+    )
     dropin = tmp_path / "60-shelfos-tunnel.conf"
     run_dir = tmp_path / "run-sshd"
     # `sshd -T` answers with the effective configuration for the connection it is
@@ -1648,3 +1658,85 @@ def test_a_deploy_that_changed_nothing_leaves_it_running(tmp_path: Path) -> None
 def test_a_new_version_of_the_unit_restarts_it_by_itself(tmp_path: Path) -> None:
     """Writing a unit and not restarting leaves the old command line running."""
     assert "restart shelfos.service" in _unit_probe(tmp_path, restart="0")
+
+
+# --- what review found ---------------------------------------------------------
+
+
+def test_a_settings_file_it_cannot_read_is_not_an_empty_one(tmp_path: Path) -> None:
+    """/etc/shelfos/env is 640 root:shelfos.
+
+    Read as an ordinary user, the redirect used to fail with a bare "Permission
+    denied" on stderr and an empty answer — which every caller read as "unset"
+    and replaced with a default. For the tunnel settings that is not a degraded
+    answer but a wrong one: a key written to the wrong file, or authorised for
+    the wrong port, fails exactly like a key nobody authorised.
+    """
+    script = _SCRIPT.read_text()
+    rule = "# " + "-" * 75
+    helpers = script[
+        script.index("env_file_value() {") : script.index(f"{rule}\n# Shared helpers")
+    ]
+    secret = tmp_path / "env"
+    secret.write_text("SHELFOS_TUNNEL_KEYS=/srv/keys\n")
+    secret.chmod(0o000)
+    probe = tmp_path / "unreadable.sh"
+    probe.write_text(
+        f"{helpers}\nvalue=$(env_file_value {secret} SHELFOS_TUNNEL_KEYS)\n"
+        'printf "[%s]\\n" "$value"\n'
+    )
+    result = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    assert result.stdout.strip() == "[]"
+    assert result.stderr == "", result.stderr  # and it says nothing on the way
+
+
+def test_the_same_key_under_a_new_name_replaces_its_entry(
+    tmp_path: Path, good_key: str
+) -> None:
+    """A machine that was renamed sends the same key with a different comment.
+
+    Matching whole lines leaves the older entry authorised for ever — with its
+    older permitlisten, after a port change — and nothing in `list` to suggest
+    the two are one machine.
+    """
+    renamed = " ".join(good_key.split(" ")[:2]) + " shelfos-label@renamed"
+    result = _tunnel_probe(
+        tmp_path,
+        f"tunnel_key_add {shlex.quote(good_key)}\n"
+        f"tunnel_key_add {shlex.quote(renamed)}\n"
+        "tunnel_key_list",
+    )
+    assert result.returncode == 0, result.stderr
+    keys = (tmp_path / "tunnel-home" / "tunnel-keys").read_text()
+    assert keys.count("ssh-ed25519") == 1, keys
+    assert "shelfos-label@renamed" in keys
+    assert "shelfos-label@goofy" not in keys
+
+
+def test_writing_a_setting_marks_the_service_for_a_restart(tmp_path: Path) -> None:
+    """The path set_env_setting exists for is a --reinstall where nothing else
+    changed: the settings land in the file, and the process goes on with the
+    environment it read at start-up."""
+    script = _SCRIPT.read_text()
+    body = script[
+        script.index("set_env_setting() {") : script.index("deploy_tunnel_account() {")
+    ]
+    env_file = tmp_path / "env"
+    env_file.write_text("SHELFOS_SECRET_KEY=abc\n")
+    probe = tmp_path / "restart.sh"
+    probe.write_text(
+        "set -Eeuo pipefail\n"
+        f"ENV_FILE_SYSTEM={env_file}\nSERVICE_USER=$(id -un)\nDRY_RUN=0\n"
+        "DEPLOY_RESTART=0\n"
+        "info() { :; }\n"
+        'sudo_run() { "$@"; }\n'
+        'write_file() { cat > "$1"; }\n'
+        f"{body}\nset_env_setting SHELFOS_TUNNEL_USER shelfos-tunnel\n"
+        'printf "restart=%s\\n" "$DEPLOY_RESTART"\n'
+    )
+    result = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    assert "restart=1" in result.stdout, result.stderr

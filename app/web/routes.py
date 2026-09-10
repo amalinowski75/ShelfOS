@@ -775,9 +775,13 @@ def label_printer_page(
             in label_setup.LOOPBACK_HOSTS,
             "default_device": label_setup.DEFAULT_DEVICE,
             "default_ssh_port": label_setup.DEFAULT_SSH_PORT,
-            # The port the server is already listening for, so the form comes
-            # out consistent without saying a word about the server's settings.
+            # Two ports. The one offered for the machine with the printer is
+            # its own, and it may change it freely; the server's is fixed by its
+            # own configuration, is what the tunnel must land on, and is what the
+            # connection test asks about. They start out the same, which is why
+            # the difference went unnoticed until somebody changed one.
             "default_bridge_port": label_setup.default_bridge_port(),
+            "server_port": label_setup.default_bridge_port(),
             "groups": label_setup.ALLOWED_GROUPS,
         },
     )

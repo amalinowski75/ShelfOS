@@ -241,10 +241,20 @@ def test_the_ipv6_loopback_actually_listens() -> None:
     """The one IPv6 spelling the loopback check blessed used to be the one that
     could not work: the socket was AF_INET, so `--host ::1` died at bind."""
     process = subprocess.Popen(
-        [sys.executable, str(_SCRIPT), "--device", "/nonexistent", "--host", "::1",
-         "--port", "19144"],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        stdin=subprocess.DEVNULL, text=True,
+        [
+            sys.executable,
+            str(_SCRIPT),
+            "--device",
+            "/nonexistent",
+            "--host",
+            "::1",
+            "--port",
+            "19144",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        text=True,
     )
     try:
         deadline = time.monotonic() + 5
@@ -270,10 +280,20 @@ def test_binding_a_routable_address_says_so() -> None:
     """The warning has to survive the move to getaddrinfo, and it is the only
     thing standing between a typo and an unauthenticated printer on the LAN."""
     process = subprocess.Popen(
-        [sys.executable, str(_SCRIPT), "--device", "/nonexistent",
-         "--host", "0.0.0.0", "--port", "19145"],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        stdin=subprocess.DEVNULL, text=True,
+        [
+            sys.executable,
+            str(_SCRIPT),
+            "--device",
+            "/nonexistent",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "19145",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        text=True,
     )
     time.sleep(0.5)
     process.terminate()

@@ -22,12 +22,19 @@ def test_seed_default_rules_is_idempotent(session: Session) -> None:
 def test_load_rules_groups_and_normalizes(session: Session) -> None:
     ctype = cs.create_type(session, "resistor")
     definition = cs.add_parameter_definition(
-        session, ctype.id, name="resistance", label="Resistance",
-        data_type=cs.ParameterDataType.NUMBER, unit="Ω",
+        session,
+        ctype.id,
+        name="resistance",
+        label="Resistance",
+        data_type=cs.ParameterDataType.NUMBER,
+        unit="Ω",
     )
     mrs.create_rule(
-        session, domain=MatchDomain.PARAM_NAME, alias="Rezystancja",
-        canonical="resistance", parameter_definition_id=definition.id,
+        session,
+        domain=MatchDomain.PARAM_NAME,
+        alias="Rezystancja",
+        canonical="resistance",
+        parameter_definition_id=definition.id,
     )
     rules = mrs.load_rules(session)
     # The alias is stored normalized (lowercase, punctuation stripped).
@@ -37,7 +44,9 @@ def test_load_rules_groups_and_normalizes(session: Session) -> None:
 def test_scoped_rule_requires_a_definition(session: Session) -> None:
     with pytest.raises(ValidationError, match="must name a parameter definition"):
         mrs.create_rule(
-            session, domain=MatchDomain.ENUM_VALUE, alias="X7R Dielectric",
+            session,
+            domain=MatchDomain.ENUM_VALUE,
+            alias="X7R Dielectric",
             canonical="X7R",
         )
 
@@ -45,8 +54,11 @@ def test_scoped_rule_requires_a_definition(session: Session) -> None:
 def test_global_rule_rejects_a_definition(session: Session) -> None:
     with pytest.raises(ValidationError, match="global"):
         mrs.create_rule(
-            session, domain=MatchDomain.TYPE, alias="rezystor",
-            canonical="resistor", parameter_definition_id=1,
+            session,
+            domain=MatchDomain.TYPE,
+            alias="rezystor",
+            canonical="resistor",
+            parameter_definition_id=1,
         )
 
 
@@ -57,15 +69,16 @@ def test_scoped_rule_rejects_an_unknown_definition(session: Session) -> None:
     # itself — otherwise a permanently-unusable orphan rule is created.
     with pytest.raises(NotFoundError, match="parameter definition"):
         mrs.create_rule(
-            session, domain=MatchDomain.ENUM_VALUE, alias="czerwony",
-            canonical="red", parameter_definition_id=9999,
+            session,
+            domain=MatchDomain.ENUM_VALUE,
+            alias="czerwony",
+            canonical="red",
+            parameter_definition_id=9999,
         )
 
 
 def test_duplicate_alias_is_rejected(session: Session) -> None:
-    mrs.create_rule(
-        session, domain=MatchDomain.MOUNTING, alias="SMD", canonical="SMT"
-    )
+    mrs.create_rule(session, domain=MatchDomain.MOUNTING, alias="SMD", canonical="SMT")
     with pytest.raises(ValidationError) as exc:
         # Same domain + same alias (case-insensitively) is a duplicate.
         mrs.create_rule(
@@ -98,8 +111,8 @@ def test_update_rule_changes_alias_target_and_order(session: Session) -> None:
         session, domain=MatchDomain.TYPE, alias="rezystor", canonical="resistor"
     )
     updated = mrs.update_rule(
-        session, rule.id, alias="opornik", canonical="resistor", sort_order=5
-    , user_id=1)
+        session, rule.id, alias="opornik", canonical="resistor", sort_order=5, user_id=1
+    )
     assert updated.alias == "opornik"
     assert updated.sort_order == 5
     # The rename is what the engine now loads.
@@ -173,7 +186,10 @@ def _cable_enum_def(session: Session, values: list[str] | None = None):  # type:
     """A cable type with a "Type" enum def — for scoped-rule tests."""
     ctype = cs.create_type(session, "cable")
     return cs.add_parameter_definition(
-        session, ctype.id, name="ctype", label="Type",
+        session,
+        ctype.id,
+        name="ctype",
+        label="Type",
         data_type=cs.ParameterDataType.ENUM,
         enum_values=values if values is not None else ["Flat", "Round"],
     )
@@ -187,13 +203,19 @@ def test_duplicate_scoped_alias_collides_after_accent_folding(
     # second, or it silently overwrites the first in the loaded RuleSet.
     definition = _cable_enum_def(session)
     mrs.create_rule(
-        session, domain=MatchDomain.ENUM_VALUE, alias="wstążkowy",
-        canonical="Flat", parameter_definition_id=definition.id,
+        session,
+        domain=MatchDomain.ENUM_VALUE,
+        alias="wstążkowy",
+        canonical="Flat",
+        parameter_definition_id=definition.id,
     )
     with pytest.raises(ValidationError, match="already exists"):
         mrs.create_rule(
-            session, domain=MatchDomain.ENUM_VALUE, alias="wstazkowy",
-            canonical="Round", parameter_definition_id=definition.id,
+            session,
+            domain=MatchDomain.ENUM_VALUE,
+            alias="wstazkowy",
+            canonical="Round",
+            parameter_definition_id=definition.id,
         )
     # Only the first rule survives — the second never displaced it.
     loaded = mrs.load_rules(session)
@@ -208,8 +230,11 @@ def test_create_rule_folds_an_enum_value_target_to_its_stored_case(
     # sit in the table looking alive but never fire.
     definition = _cable_enum_def(session, ["Flat", "Round"])
     rule = mrs.create_rule(
-        session, domain=MatchDomain.ENUM_VALUE, alias="wstazkowy",
-        canonical="flat", parameter_definition_id=definition.id,
+        session,
+        domain=MatchDomain.ENUM_VALUE,
+        alias="wstazkowy",
+        canonical="flat",
+        parameter_definition_id=definition.id,
     )
     assert rule.canonical == "Flat"
 
@@ -220,8 +245,11 @@ def test_create_rule_rejects_an_enum_value_target_that_is_not_a_member(
     definition = _cable_enum_def(session, ["Flat", "Round"])
     with pytest.raises(ValidationError, match="enum_value rule's target"):
         mrs.create_rule(
-            session, domain=MatchDomain.ENUM_VALUE, alias="wstazkowy",
-            canonical="Flatt", parameter_definition_id=definition.id,
+            session,
+            domain=MatchDomain.ENUM_VALUE,
+            alias="wstazkowy",
+            canonical="Flatt",
+            parameter_definition_id=definition.id,
         )
 
 
@@ -230,8 +258,11 @@ def test_update_rule_rejects_an_enum_value_target_that_is_not_a_member(
 ) -> None:
     definition = _cable_enum_def(session, ["Flat", "Round"])
     rule = mrs.create_rule(
-        session, domain=MatchDomain.ENUM_VALUE, alias="wstazkowy",
-        canonical="Flat", parameter_definition_id=definition.id,
+        session,
+        domain=MatchDomain.ENUM_VALUE,
+        alias="wstazkowy",
+        canonical="Flat",
+        parameter_definition_id=definition.id,
     )
     with pytest.raises(ValidationError, match="enum_value rule's target"):
         mrs.update_rule(session, rule.id, canonical="Coax", user_id=1)
@@ -252,8 +283,11 @@ def test_package_rules_are_global_and_keep_their_target_verbatim(
     # Global, like type and mounting: naming a parameter is an error.
     with pytest.raises(ValidationError, match="global"):
         mrs.create_rule(
-            session, domain=MatchDomain.PACKAGE, alias="TO220",
-            canonical="TO-220", parameter_definition_id=1,
+            session,
+            domain=MatchDomain.PACKAGE,
+            alias="TO220",
+            canonical="TO-220",
+            parameter_definition_id=1,
         )
 
 
@@ -261,11 +295,17 @@ def test_package_rules_load_in_order_and_reject_a_duplicate_alias(
     session: Session,
 ) -> None:
     mrs.create_rule(
-        session, domain=MatchDomain.PACKAGE, alias="SOT-23-3",
-        canonical="SOT-23", sort_order=0,
+        session,
+        domain=MatchDomain.PACKAGE,
+        alias="SOT-23-3",
+        canonical="SOT-23",
+        sort_order=0,
     )
     mrs.create_rule(
-        session, domain=MatchDomain.PACKAGE, alias="SOT", canonical="SOT-23",
+        session,
+        domain=MatchDomain.PACKAGE,
+        alias="SOT",
+        canonical="SOT-23",
         sort_order=5,
     )
     # Lowest sort_order first, aliases lowercased — the engine takes the first match,

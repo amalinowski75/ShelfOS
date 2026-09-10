@@ -519,9 +519,7 @@ def test_farnell_a_charge_shaped_description_stays_with_its_item() -> None:
         "ABCDEF LDO FIXED                                   3.30 0.15",
     )
     invoice = FarnellInvoiceParser().parse(poisoned)
-    line = next(
-        row for row in invoice.lines if row.supplier_part_number == "3367839"
-    )
+    line = next(row for row in invoice.lines if row.supplier_part_number == "3367839")
     assert line.mpn == "ABCDEF"  # not None: the row stayed with its item
     assert [row.description for row in invoice.lines if row.kind != "component"] == [
         "EXPRESS"
@@ -569,9 +567,7 @@ def test_farnell_currency_requires_an_amount_beside_the_code() -> None:
     # pattern itself rather than claim a coverage that isn't there.
     from app.services.invoice_import.farnell import _CURRENCY
 
-    match = _CURRENCY.search(
-        "Invoice Total\n     PAY NOW\nInvoice Total  PLN 577.91\n"
-    )
+    match = _CURRENCY.search("Invoice Total\n     PAY NOW\nInvoice Total  PLN 577.91\n")
     assert match is not None
     assert match.group(1) == "PLN"
 

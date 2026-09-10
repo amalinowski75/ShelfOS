@@ -215,9 +215,7 @@ def test_finalize_is_atomic_when_a_movement_fails(
     # No stock leaked from the first (already-flushed) line.
     assert ss.get_quantity(session, setup["component_id"], setup["location_id"]) == 0
     assert (
-        ss.quantity_from_movements(
-            session, setup["component_id"], setup["location_id"]
-        )
+        ss.quantity_from_movements(session, setup["component_id"], setup["location_id"])
         == 0
     )
 
@@ -339,9 +337,7 @@ def test_add_line_to_unknown_invoice_raises(setup, session: Session) -> None:
         )
 
 
-def test_list_invoices_orders_newest_first_and_filters(
-    setup, session: Session
-) -> None:
+def test_list_invoices_orders_newest_first_and_filters(setup, session: Session) -> None:
     older = inv.create_invoice(
         session,
         supplier="Mouser",
@@ -636,9 +632,7 @@ def test_update_invoice_empty_string_clears_notes(setup, session: Session) -> No
     assert invoice is not None and invoice.notes == ""
 
 
-def test_update_line_empty_string_clears_part_number(
-    setup, session: Session
-) -> None:
+def test_update_line_empty_string_clears_part_number(setup, session: Session) -> None:
     """Same contract for a line's supplier part number (cleared vs unchanged)."""
     invoice_id = _new_invoice(session)
     line = inv.add_line(

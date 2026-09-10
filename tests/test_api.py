@@ -2574,9 +2574,7 @@ def test_a_collision_on_the_leading_number_still_tries_the_others(
         json={"type_id": ctype["id"], "mpn": "DK-9911", "manufacturer": "Amphenol"},
     ).json()
 
-    code = (
-        "[)>\x1e06\x1d1PCOLLIDES-1\x1d1VAmphenol\x1d30PDK-9911\x1dQ5\x1e\x04"
-    )
+    code = "[)>\x1e06\x1d1PCOLLIDES-1\x1d1VAmphenol\x1d30PDK-9911\x1dQ5\x1e\x04"
     body = client.post("/api/components/scan", json={"code": code}).json()
 
     found = {m["id"]: m["same_manufacturer"] for m in body["matches"]}

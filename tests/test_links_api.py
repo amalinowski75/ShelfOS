@@ -205,9 +205,7 @@ def test_read_only_can_list_but_not_create(
     client: TestClient, anon_client: TestClient
 ) -> None:
     cid = _component_id(client)
-    headers = _account_headers(
-        client, anon_client, role="read-only", username="viewer"
-    )
+    headers = _account_headers(client, anon_client, role="read-only", username="viewer")
     # GET is allowed…
     assert (
         anon_client.get(

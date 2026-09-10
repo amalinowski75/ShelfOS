@@ -27,20 +27,40 @@ def _resistor(session: Session) -> dict[str, int]:
     ids = {
         "type": rtype.id,
         "resistance": cs.add_parameter_definition(
-            session, rtype.id, name="resistance", label="Resistance",
-            data_type=DT.NUMBER, unit="Ω", sort_order=0,
+            session,
+            rtype.id,
+            name="resistance",
+            label="Resistance",
+            data_type=DT.NUMBER,
+            unit="Ω",
+            sort_order=0,
         ).id,
         "power": cs.add_parameter_definition(
-            session, rtype.id, name="power", label="Power",
-            data_type=DT.NUMBER, unit="W", sort_order=2,
+            session,
+            rtype.id,
+            name="power",
+            label="Power",
+            data_type=DT.NUMBER,
+            unit="W",
+            sort_order=2,
         ).id,
         "tolerance": cs.add_parameter_definition(
-            session, rtype.id, name="tolerance", label="Tolerance",
-            data_type=DT.NUMBER, unit="%", sort_order=3,
+            session,
+            rtype.id,
+            name="tolerance",
+            label="Tolerance",
+            data_type=DT.NUMBER,
+            unit="%",
+            sort_order=3,
         ).id,
         "dielectric": cs.add_parameter_definition(
-            session, rtype.id, name="dielectric", label="Dielectric",
-            data_type=DT.ENUM, enum_values=["C0G", "X7R"], sort_order=4,
+            session,
+            rtype.id,
+            name="dielectric",
+            label="Dielectric",
+            data_type=DT.ENUM,
+            enum_values=["C0G", "X7R"],
+            sort_order=4,
         ).id,
     }
     mrs.seed_default_rules(session)  # type + mounting defaults
@@ -115,8 +135,11 @@ def test_unitless_value_fills_the_primary_parameter(session: Session) -> None:
 def test_enum_alias_resolves_and_a_non_member_is_dropped(session: Session) -> None:
     ids = _resistor(session)
     mrs.create_rule(
-        session, domain=MatchDomain.ENUM_VALUE, alias="X7R Dielectric",
-        canonical="X7R", parameter_definition_id=ids["dielectric"],
+        session,
+        domain=MatchDomain.ENUM_VALUE,
+        alias="X7R Dielectric",
+        canonical="X7R",
+        parameter_definition_id=ids["dielectric"],
     )
     good = ProductData(
         category="resistor", parameters=[("Dielectric", "X7R Dielectric")]
@@ -136,8 +159,13 @@ def _cable_with_type_enum(session: Session) -> tuple[int, int]:
     """A cable type with a "Type" enum (Flat/Round) — for free-text enum matching."""
     ctype = cs.create_type(session, "cable")
     type_def = cs.add_parameter_definition(
-        session, ctype.id, name="ctype", label="Type",
-        data_type=DT.ENUM, enum_values=["Flat", "Round"], sort_order=0,
+        session,
+        ctype.id,
+        name="ctype",
+        label="Type",
+        data_type=DT.ENUM,
+        enum_values=["Flat", "Round"],
+        sort_order=0,
     )
     mrs.seed_default_rules(session)
     return ctype.id, type_def.id
@@ -146,8 +174,11 @@ def _cable_with_type_enum(session: Session) -> tuple[int, int]:
 def test_enum_value_matched_from_free_text_by_a_polish_alias(session: Session) -> None:
     _, def_id = _cable_with_type_enum(session)
     mrs.create_rule(
-        session, domain=MatchDomain.ENUM_VALUE, alias="wstążkowy",
-        canonical="Flat", parameter_definition_id=def_id,
+        session,
+        domain=MatchDomain.ENUM_VALUE,
+        alias="wstążkowy",
+        canonical="Flat",
+        parameter_definition_id=def_id,
     )
     # A bare adjective in the description (no "label: value" structure) — the
     # invoice case that used to leave the enum unset.
@@ -158,8 +189,11 @@ def test_enum_value_matched_from_free_text_by_a_polish_alias(session: Session) -
 def test_enum_free_text_match_ignores_polish_accents(session: Session) -> None:
     _, def_id = _cable_with_type_enum(session)
     mrs.create_rule(
-        session, domain=MatchDomain.ENUM_VALUE, alias="wstążkowy",
-        canonical="Flat", parameter_definition_id=def_id,
+        session,
+        domain=MatchDomain.ENUM_VALUE,
+        alias="wstążkowy",
+        canonical="Flat",
+        parameter_definition_id=def_id,
     )
     # The shop wrote it without diacritics — must still hit the accented alias.
     product = ProductData(category="cable", description="kabel wstazkowy plaski")
@@ -171,8 +205,11 @@ def test_enum_value_matched_from_free_text_by_a_multi_word_alias(
 ) -> None:
     _, def_id = _cable_with_type_enum(session)
     mrs.create_rule(
-        session, domain=MatchDomain.ENUM_VALUE, alias="taśma płaska",
-        canonical="Flat", parameter_definition_id=def_id,
+        session,
+        domain=MatchDomain.ENUM_VALUE,
+        alias="taśma płaska",
+        canonical="Flat",
+        parameter_definition_id=def_id,
     )
     # The alias spans two words in the description (no "label: value" structure); it
     # must still match, not just fire on structured shop attributes.
@@ -185,8 +222,11 @@ def test_enum_value_matched_from_free_text_by_a_hyphenated_alias(
 ) -> None:
     _, def_id = _cable_with_type_enum(session)
     mrs.create_rule(
-        session, domain=MatchDomain.ENUM_VALUE, alias="flat-flex",
-        canonical="Flat", parameter_definition_id=def_id,
+        session,
+        domain=MatchDomain.ENUM_VALUE,
+        alias="flat-flex",
+        canonical="Flat",
+        parameter_definition_id=def_id,
     )
     # "flat-flex" folds to "flatflex"; the description tokenises to "flat" + "flex",
     # which the adjacent-word window rejoins.
@@ -199,8 +239,11 @@ def test_enum_free_text_does_not_match_an_unrelated_description(
 ) -> None:
     _, def_id = _cable_with_type_enum(session)
     mrs.create_rule(
-        session, domain=MatchDomain.ENUM_VALUE, alias="wstążkowy",
-        canonical="Flat", parameter_definition_id=def_id,
+        session,
+        domain=MatchDomain.ENUM_VALUE,
+        alias="wstążkowy",
+        canonical="Flat",
+        parameter_definition_id=def_id,
     )
     product = ProductData(category="cable", description="Przewód okrągły ekranowany")
     assert def_id not in _by_id(build_proposal(session, product))
@@ -214,8 +257,10 @@ def test_enum_free_text_alias_to_a_non_member_is_dropped(session: Session) -> No
     # path would reject a non-member). Inserted directly to bypass the store's guard.
     session.add(
         MatchRule(
-            domain=MatchDomain.ENUM_VALUE, alias="wstążkowy",
-            canonical="Ribbon", parameter_definition_id=def_id,
+            domain=MatchDomain.ENUM_VALUE,
+            alias="wstążkowy",
+            canonical="Ribbon",
+            parameter_definition_id=def_id,
         )
     )
     session.commit()
@@ -226,8 +271,11 @@ def test_enum_free_text_alias_to_a_non_member_is_dropped(session: Session) -> No
 def test_param_name_synonym_matches_cross_language(session: Session) -> None:
     ids = _resistor(session)
     mrs.create_rule(
-        session, domain=MatchDomain.PARAM_NAME, alias="Rezystancja",
-        canonical="resistance", parameter_definition_id=ids["resistance"],
+        session,
+        domain=MatchDomain.PARAM_NAME,
+        alias="Rezystancja",
+        canonical="resistance",
+        parameter_definition_id=ids["resistance"],
     )
     product = ProductData(category="resistor", parameters=[("Rezystancja", "4.7k")])
     assert _by_id(build_proposal(session, product))[ids["resistance"]] == "4.7k"
@@ -383,6 +431,8 @@ def test_description_mounting_beats_an_incidental_attribute_word(
         parameters=[("Alternative package", "also available as SMD")],
     )
     assert build_proposal(session, product).mounting_type is MountingType.THT
+
+
 def test_package_rule_reads_a_case_out_of_the_description(session: Session) -> None:
     # The EIA pattern only knows chip sizes; a named case ("obudowa SOT-23") needs a
     # rule, which is what the package domain is for.
@@ -425,12 +475,18 @@ def test_two_overlapping_package_aliases_are_settled_by_order(
     # be measuring the regex rather than the ordering it claims to test.
     _resistor(session)
     mrs.create_rule(
-        session, domain=MatchDomain.PACKAGE, alias="SOT-23", canonical="SOT-23",
+        session,
+        domain=MatchDomain.PACKAGE,
+        alias="SOT-23",
+        canonical="SOT-23",
         sort_order=broad_order,
     )
     mrs.create_rule(
-        session, domain=MatchDomain.PACKAGE, alias="SOT-23-3",
-        canonical="SOT-23-3", sort_order=specific_order,
+        session,
+        domain=MatchDomain.PACKAGE,
+        alias="SOT-23-3",
+        canonical="SOT-23-3",
+        sort_order=specific_order,
     )
     product = ProductData(category="resistor", description="Tranzystor SOT-23-3")
     assert build_proposal(session, product).package == expected

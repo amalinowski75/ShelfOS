@@ -203,7 +203,7 @@ def bridge_sha256() -> str:
     return hashlib.sha256(bridge_source().encode("utf-8")).hexdigest()
 
 
-def render_installer(
+def render_installer(  # noqa: PLR0913 - a form's worth of answers, each named
     *,
     ssh_user: str,
     ssh_host: str,
@@ -256,6 +256,11 @@ def render_installer(
             "SSH_PORT": str(ssh_port_number),
             "DEVICE": device,
             "BRIDGE_PORT": str(bridge_port_number),
+            # Not a parameter: this one belongs to the server, whose sshd permits
+            # exactly it and whose ShelfOS connects to exactly it. Taking it from
+            # the caller would let a form field ask for a forward that is refused
+            # — which is what the field looked like it could do, and could not.
+            "SERVER_PORT": str(default_bridge_port()),
             "GROUP": group,
             "BRIDGE_SHA256": bridge_sha256(),
             "SHELFOS_URL": shelfos_url,

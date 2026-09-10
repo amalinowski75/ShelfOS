@@ -271,9 +271,9 @@ def test_concurrent_fetches_leave_a_coherent_cache() -> None:
 
     def run() -> None:
         results.append(
-            DigiKeyProvider().fetch(
-                "https://www.digikey.com/x", transport=transport
-            ).mpn
+            DigiKeyProvider()
+            .fetch("https://www.digikey.com/x", transport=transport)
+            .mpn
         )
 
     threads = [threading.Thread(target=run) for _ in range(8)]
@@ -338,7 +338,8 @@ def test_a_non_finite_expiry_does_not_disable_caching() -> None:
         if req.url.path.endswith("/oauth2/token"):
             calls["token"] += 1
             return httpx.Response(
-                200, content=b'{"access_token": "t", "expires_in": NaN}',
+                200,
+                content=b'{"access_token": "t", "expires_in": NaN}',
                 headers={"Content-Type": "application/json"},
             )
         return httpx.Response(200, json=_PRODUCT)
@@ -388,9 +389,7 @@ def test_fetch_by_index_first_hit_wins(monkeypatch) -> None:  # type: ignore[no-
         return hit
 
     monkeypatch.setattr(DigiKeyProvider, "fetch_by_mpn", fake)
-    result = DigiKeyProvider().fetch_by_index(
-        ["AP22615AWU-7DICT-ND", "AP22615AWU-7"]
-    )
+    result = DigiKeyProvider().fetch_by_index(["AP22615AWU-7DICT-ND", "AP22615AWU-7"])
     assert result is hit
     # The Digi-Key "-ND" number is tried first and, succeeding, is the only call.
     assert calls == ["AP22615AWU-7DICT-ND"]

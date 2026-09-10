@@ -305,7 +305,11 @@ load_env_file() {
 # the whole production environment into their own process.
 env_file_value() {
     local file=$1 want=$2 line key value
-    [ -f "$file" ] || return 0
+    # -r, not just -f: /etc/shelfos/env is 640 root:shelfos, and an unreadable
+    # file used to fall through the redirect below with a bare "Permission
+    # denied" on stderr and an empty answer — which every caller then read as
+    # "unset" and quietly replaced with a default.
+    [ -r "$file" ] || return 0
     while IFS= read -r line || [ -n "$line" ]; do
         case $line in ''|'#'*) continue ;; esac
         line=${line#export }
@@ -319,6 +323,20 @@ env_file_value() {
         printf '%s' "$value"
         return 0
     done < "$file"
+}
+
+# A setting out of the INSTALLED settings file, which only root may read.
+#
+# Everything that decides where this command writes comes from here, so reading
+# it as an ordinary user and silently getting a default is not a degraded answer
+# but a wrong one: a key authorised into the wrong file, or for the wrong port,
+# fails exactly like a key nobody authorised.
+system_env_value() {
+    local want=$1
+    [ -e "$ENV_FILE_SYSTEM" ] || return 0
+    sudo_run cat "$ENV_FILE_SYSTEM" 2> /dev/null \
+        | sed -n "s/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}$want=//p" \
+        | head -1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
 }
 
 # ---------------------------------------------------------------------------
@@ -998,7 +1016,7 @@ deploy_step_user() {
 # setup page offers.
 tunnel_port() {
     local device port
-    device=$(env_file_value "$ENV_FILE_SYSTEM" SHELFOS_LABEL_DEVICE)
+    device=$(system_env_value SHELFOS_LABEL_DEVICE)
     case $device in
         tcp://*)
             port=${device##*:}
@@ -1087,6 +1105,11 @@ set_env_setting() {
     fi
     [ "$changed" = 1 ] || return 0
     printf '%s' "$output" | write_file "$ENV_FILE_SYSTEM" 640 "root:$SERVICE_USER"
+    # The running process read this file once, at start-up. This is the whole
+    # path this function exists for — a --reinstall over an install that
+    # predates these settings, where nothing else changed — so without it the
+    # deploy succeeds and the app goes on with the old environment.
+    DEPLOY_RESTART=1
     info "set $key in $ENV_FILE_SYSTEM"
 }
 
@@ -2202,7 +2225,7 @@ ensure_tunnel_user() {
 # keep them somewhere else is still managed by this command.
 tunnel_keys_path() {
     local configured
-    configured=$(env_file_value "$ENV_FILE_SYSTEM" SHELFOS_TUNNEL_KEYS)
+    configured=$(system_env_value SHELFOS_TUNNEL_KEYS)
     printf '%s' "${configured:-$TUNNEL_KEYS}"
 }
 
@@ -2301,11 +2324,14 @@ tunnel_key_add() {
     fi
 
     existing=$(tunnel_keys_read)
-    # Compared on the key itself, not the whole line: the same laptop coming
-    # back after the port changed must replace its entry rather than gain a
-    # second one that permits the old port for ever.
-    if printf '%s\n' "$existing" | grep -qF -- "$key"; then
-        existing=$(printf '%s\n' "$existing" | grep -vF -- "$key" || true)
+    # Compared on the key material alone. The comment is a label — a machine
+    # that was renamed, or re-registered from a different account, sends the
+    # same key with a different one — so matching whole lines would leave the
+    # older entry authorised for ever, with nothing in `list` to suggest the two
+    # are one machine. (The web path, tunnel_keys.enroll, matches this way too.)
+    local body; body=$(printf '%s' "$key" | awk '{print $2}')
+    if printf '%s\n' "$existing" | grep -qF -- " $body"; then
+        existing=$(printf '%s\n' "$existing" | grep -vF -- " $body" || true)
         info "replacing the entry this key already had"
     fi
     { [ -z "$existing" ] || printf '%s\n' "$existing"; printf '%s\n' "$line"; } \

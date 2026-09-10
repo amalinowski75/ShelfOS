@@ -269,8 +269,12 @@ def test_substitutes_exclude_soft_deleted_components(
 
     ctype = cs.create_type(session, "resistor")
     rdef = cs.add_parameter_definition(
-        session, ctype.id, name="resistance", label="R",
-        data_type=ParameterDataType.NUMBER, unit="ohm",
+        session,
+        ctype.id,
+        name="resistance",
+        label="R",
+        data_type=ParameterDataType.NUMBER,
+        unit="ohm",
     )
     drawer = ls.create_location(session, type=LocationType.DRAWER, name="D1")
     comp = cs.create_component_with_values(
@@ -307,9 +311,7 @@ def test_delete_bom_removes_lines_and_attachment(
     from app.models.attachment import Attachment
     from sqlmodel import select
 
-    bom = bs.create_bom(
-        session, name="b", filename="b.csv", data=_FIXTURE, user_id=1
-    )
+    bom = bs.create_bom(session, name="b", filename="b.csv", data=_FIXTURE, user_id=1)
     bom_id = bom.id
     assert bs.get_bom_lines(session, bom_id)  # lines exist
 
@@ -356,9 +358,7 @@ def test_reimport_without_a_stored_csv_is_refused(
 ) -> None:  # type: ignore[no-untyped-def]
     from app.services import attachment_service as ats
 
-    bom = bs.create_bom(
-        session, name="b", filename="b.csv", data=_FIXTURE, user_id=1
-    )
+    bom = bs.create_bom(session, name="b", filename="b.csv", data=_FIXTURE, user_id=1)
     ats.delete_attachments_for(session, entity_type="bom", entity_id=bom.id)
 
     with pytest.raises(ValidationError):
@@ -405,9 +405,7 @@ def test_reimport_keeps_the_lines_when_the_csv_no_longer_parses(
     """Parse first, delete second — a broken file must not empty the BOM."""
     from app.services import attachment_service as ats
 
-    bom = bs.create_bom(
-        session, name="b", filename="b.csv", data=_FIXTURE, user_id=1
-    )
+    bom = bs.create_bom(session, name="b", filename="b.csv", data=_FIXTURE, user_id=1)
     before = [ln.references for ln in bs.get_bom_lines(session, bom.id)]
     attachment = ats.list_attachments(session, entity_type="bom", entity_id=bom.id)[0]
     ats.stored_file_path(attachment).write_bytes(b"nothing,useful\n1,2\n")
@@ -438,9 +436,7 @@ def test_assignment_stands_in_for_the_mpn_lookup(
     before = bs.build_bom_report(session, bom.id)["lines"][0]
     assert before["status"] == "unresolved" and before["stock"] == 0
 
-    bs.assign_component(
-        session, bom.id, line.id, component_id=other.id, user_id=1
-    )
+    bs.assign_component(session, bom.id, line.id, component_id=other.id, user_id=1)
 
     after = bs.build_bom_report(session, bom.id)["lines"][0]
     assert after["status"] == "ok"  # 40 in stock covers the 10 it needs
@@ -522,9 +518,7 @@ def test_substitutes_stay_suppressed_when_the_assigned_part_is_retired(
     cs.soft_delete_component(session, picked.id, user_id=1)
 
     report = bs.build_bom_report(session, bom.id)["lines"][0]
-    assert (
-        report["status"] == "unresolved" and report["assigned"]["deleted"] is True
-    )
+    assert report["status"] == "unresolved" and report["assigned"]["deleted"] is True
     assert report["substitutes"] == []
 
 
@@ -736,9 +730,7 @@ def test_a_line_from_another_bom_cannot_be_ticked(
         session, name="other", filename="o.csv", data=_FIXTURE, user_id=1
     )
     with pytest.raises(NotFoundError):
-        bs.set_line_ordered(
-            session, elsewhere.id, line.id, ordered=True, user_id=1
-        )
+        bs.set_line_ordered(session, elsewhere.id, line.id, ordered=True, user_id=1)
 
 
 # --- building several boards -----------------------------------------------
@@ -891,9 +883,7 @@ def test_assign_all_obvious_ignores_a_retired_component(
     assert bs.assign_all_obvious(session, bom.id, user_id=1) == 0
 
 
-def test_assign_all_obvious_on_an_unknown_bom_raises(
-    session: Session, store
-) -> None:
+def test_assign_all_obvious_on_an_unknown_bom_raises(session: Session, store) -> None:
     with pytest.raises(NotFoundError):
         bs.assign_all_obvious(session, 9999, user_id=1)
 

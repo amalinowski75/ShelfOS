@@ -102,9 +102,7 @@ def _transport(
         if path.endswith("/auth/token"):
             if token_status >= 400:
                 return httpx.Response(token_status, json={"error": "invalid_client"})
-            return httpx.Response(
-                200, json={"access_token": "tok", "expires_in": 300}
-            )
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 300})
         if path.endswith("/products/parameters"):
             return httpx.Response(parameters_status, json=parameters)
         if path.endswith("/products/files"):
@@ -373,9 +371,7 @@ def test_fetch_keeps_an_already_absolute_datasheet_url() -> None:
             "elements": [
                 {
                     "documents": {
-                        "elements": [
-                            {"url": "https://cdn.tme.eu/d.pdf", "type": "DTE"}
-                        ]
+                        "elements": [{"url": "https://cdn.tme.eu/d.pdf", "type": "DTE"}]
                     }
                 }
             ]
@@ -726,7 +722,8 @@ def test_a_non_finite_expiry_does_not_disable_caching() -> None:
         if req.url.path.endswith("/auth/token"):
             calls["token"] += 1
             return httpx.Response(
-                200, content=b'{"access_token": "t", "expires_in": NaN}',
+                200,
+                content=b'{"access_token": "t", "expires_in": NaN}',
                 headers={"Content-Type": "application/json"},
             )
         return httpx.Response(200, json=_PRODUCT)
@@ -798,9 +795,7 @@ def test_fetch_by_symbols_rejects_no_usable_candidates() -> None:
 
 
 def test_fetch_by_index_is_the_uniform_entry() -> None:
-    product = TmeProvider().fetch_by_index(
-        ["MR04X1201FTL"], transport=_transport()
-    )
+    product = TmeProvider().fetch_by_index(["MR04X1201FTL"], transport=_transport())
     assert product.mpn == "MR04X1201FTL"
 
 

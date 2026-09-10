@@ -214,6 +214,7 @@ def test_the_second_wall_holds_on_its_own(tmp_path: Path) -> None:
             "BRIDGE_SHA256": setup.bridge_sha256(),
             "SHELFOS_URL": "https://shelf.example",
             "ENROLL_TOKEN": "a.b.c",
+            "SERVER_PORT": "9100",
         }
     )
     _parses(script, tmp_path)
@@ -233,6 +234,7 @@ def test_an_unfilled_token_is_a_failure_not_a_download() -> None:
                 "GROUP": "lp",
                 "SHELFOS_URL": "",
                 "ENROLL_TOKEN": "",
+                "SERVER_PORT": "9100",
                 # BRIDGE_SHA256 deliberately absent.
             }
         )
@@ -258,20 +260,35 @@ def test_the_rendered_script_passes_shellcheck(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout
 
 
-def test_the_port_reaches_the_three_places_that_must_agree() -> None:
-    """The bridge unit, the tunnel's -R, and the check the script runs at the end.
+def test_the_two_ports_are_kept_apart(monkeypatch: pytest.MonkeyPatch) -> None:
+    """They are different questions, and treating them as one was a bug.
 
-    "Three things that have to match" is the kind of agreement that drifts
-    silently, so it is asserted rather than remembered. One assignment feeds all
-    three, which is the point — and the fourth place, the server's own setting,
-    is deliberately absent: this page says nothing about the server.
+    The port on the machine with the printer is its own — the only reason to
+    change it is that something there already uses it. The server's is fixed by
+    its ssh configuration (`PermitListen`) and by what ShelfOS connects to, and
+    no answer on a form can change either. The tunnel joins them.
+
+    Before this, choosing 9101 on the form produced a script that asked the
+    server to bind 9101, which its sshd refuses — after the page had said the
+    printer was registered.
     """
-    script = _render(bridge_port=9223)
-    assert "BRIDGE_PORT=9223" in script
-    assert script.count("BRIDGE_PORT=") == 1, "more than one source for the port"
-    assert "--device $DEVICE --port $BRIDGE_PORT" in script  # the bridge unit
-    assert "-R 127.0.0.1:$BRIDGE_PORT:127.0.0.1:$BRIDGE_PORT" in script  # the tunnel
-    assert '"$PYTHON" - "$BRIDGE_PORT"' in script  # the check at the end
+    monkeypatch.setattr(setup, "default_bridge_port", lambda: 9100)
+    script = _render(bridge_port=9101)
+
+    assert "BRIDGE_PORT=9101" in script  # this machine's
+    assert "SERVER_PORT=9100" in script  # the server's, whatever the form said
+    # The bridge listens where it was told; the tunnel carries the server's port
+    # to it; the printer is asked for on this machine's.
+    assert "--device $DEVICE --port $BRIDGE_PORT" in script
+    assert "-R 127.0.0.1:$SERVER_PORT:127.0.0.1:$BRIDGE_PORT" in script
+    assert '"$PYTHON" - "$BRIDGE_PORT"' in script
+
+
+def test_the_same_port_on_both_ends_is_still_the_ordinary_case() -> None:
+    """Nothing above should make the common setup read differently."""
+    script = _render()
+    assert "BRIDGE_PORT=9100" in script
+    assert "SERVER_PORT=9100" in script
 
 
 def test_the_bridge_travels_byte_for_byte() -> None:
@@ -418,7 +435,7 @@ def test_the_connection_it_tests_is_the_one_the_unit_makes(tmp_path: Path) -> No
     # The bind address is spelled out rather than left to the server's default:
     # sshd matches PermitListen against what was ASKED for, and a bare port asks
     # for no address at all.
-    assert "-R 127.0.0.1:9100:127.0.0.1:9100" in attempt
+    assert "-R 127.0.0.1:9100:127.0.0.1:9100" in attempt  # server's:this one's
     assert "ExitOnForwardFailure=yes" in attempt
     assert "shelfos-label" in attempt  # its own key, not whatever the agent has
     assert " true" not in attempt
@@ -747,3 +764,12 @@ def test_the_address_it_finds_is_one_it_could_be_reached_at() -> None:
         assert setup._valid_host(address)
         parsed = ipaddress.ip_address(address)
         assert not parsed.is_loopback and not parsed.is_link_local
+
+
+def test_nothing_in_the_script_reaches_for_sudo_to_read(tmp_path: Path) -> None:
+    """A --dry-run that asks for a sudo password has broken its one promise.
+
+    The udev comparison used `sudo cat` on a world-readable file, so every
+    re-run of `--dry-run` prompted — and then printed "sudo was never called".
+    """
+    assert "sudo cat" not in _render()

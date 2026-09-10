@@ -28,12 +28,15 @@ async function press(page) {
 }
 
 describe("label_printer.js", () => {
-  it("keeps the address to test in step with the port field", async () => {
+  it("leaves the address to test alone when the local port changes", async () => {
+    // Two different ports: the field above is this computer's, the address here
+    // is the server's end of the tunnel. Following one with the other pointed
+    // the test at a port nothing was ever going to answer on.
     const { document, window } = open();
     const port = document.getElementById("bridge_port");
     port.value = "9223";
     port.dispatchEvent(new window.Event("input"));
-    expect(document.getElementById("probe-device").value).toBe("tcp://127.0.0.1:9223");
+    expect(document.getElementById("probe-device").value).toBe("tcp://127.0.0.1:9100");
   });
 
   it("tests the address shown, and says what the printer holds", async () => {
@@ -79,18 +82,17 @@ describe("label_printer.js", () => {
     expect(page.document.getElementById("probe-btn").disabled).toBe(false);
   });
 
-  it("asks for a port before asking the printer anything", async () => {
+  it("says so rather than asking about nothing", async () => {
+    // A server with no printer port renders an empty field; pressing the button
+    // must not send a request for "".
     const calls = [];
     const page = open((url) => {
       calls.push(url);
       return ok({});
     });
-    page.document.getElementById("bridge_port").value = "";
-    page.document
-      .getElementById("bridge_port")
-      .dispatchEvent(new page.window.Event("input"));
+    page.document.getElementById("probe-device").value = "";
     const result = await press(page);
     expect(calls).toEqual([]);
-    expect(result.textContent).toContain("port");
+    expect(result.textContent).toContain("no printer port");
   });
 });

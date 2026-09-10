@@ -249,9 +249,7 @@ def test_fetch_by_mpn_rejects_a_partial_match(monkeypatch) -> None:  # type: ign
     # the returned part must be a miss, not a silent import of the wrong variant.
     monkeypatch.setattr(config, "MOUSER_API_KEY", "key")
     with pytest.raises(ShopLookupMiss, match="no exact match"):
-        MouserProvider().fetch_by_mpn(
-            "CRCW04021", transport=_transport(_MOUSER_OK)
-        )
+        MouserProvider().fetch_by_mpn("CRCW04021", transport=_transport(_MOUSER_OK))
 
 
 # --- disambiguating a shared MPN by manufacturer -----------------------------

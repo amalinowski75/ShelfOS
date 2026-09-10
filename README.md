@@ -561,6 +561,12 @@ sit behind NAT without anything on the server changing — and no port is expose
 that sleeps otherwise leaves the server with a port that accepts connections and
 does nothing with them.
 
+The port on the machine with the printer and the port on the server are two
+different answers: the first is free to be anything not already taken there, the
+second is fixed by the server's `PermitListen` and by what ShelfOS connects to.
+The tunnel joins them, which is what a tunnel is for — so a laptop with something
+on 9100 changes only its own end, on the setup page, and the server is untouched.
+
 **9100 is a convention, not a requirement.** It is the port HP JetDirect used for
 raw printing, so anyone who has set up a network printer recognises what this is —
 but nothing in ShelfOS knows the number. It appears in three places, and any free

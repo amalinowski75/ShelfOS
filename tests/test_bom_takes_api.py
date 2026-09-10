@@ -158,9 +158,10 @@ def test_two_places_outside_ask_first_and_then_honour_the_answer(
         shelf_a["id"],
         shelf_b["id"],
     }
-    assert client.post(
-        f"/api/boms/{take_ready['bom_id']}/takes", json=body
-    ).status_code == 422
+    assert (
+        client.post(f"/api/boms/{take_ready['bom_id']}/takes", json=body).status_code
+        == 422
+    )
 
     answered = {
         **body,
@@ -218,20 +219,27 @@ def test_a_reversal_needs_a_reason(client: TestClient, take_ready) -> None:  # t
         json={"boards": 1, "source_location_id": take_ready["gathering_id"]},
     ).json()
 
-    assert client.post(
-        f"/api/bom-takes/{take['id']}/reverse", json={"reason": "  "}
-    ).status_code == 422
+    assert (
+        client.post(
+            f"/api/bom-takes/{take['id']}/reverse", json={"reason": "  "}
+        ).status_code
+        == 422
+    )
 
 
 def test_unknown_ids_are_404(client: TestClient, take_ready) -> None:  # type: ignore[no-untyped-def]
     assert client.get("/api/bom-takes/9999").status_code == 404
-    assert client.post(
-        "/api/bom-takes/9999/reverse", json={"reason": "x"}
-    ).status_code == 404
-    assert client.post(
-        "/api/boms/9999/take/preview",
-        json={"boards": 1, "source_location_id": take_ready["gathering_id"]},
-    ).status_code == 404
+    assert (
+        client.post("/api/bom-takes/9999/reverse", json={"reason": "x"}).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            "/api/boms/9999/take/preview",
+            json={"boards": 1, "source_location_id": take_ready["gathering_id"]},
+        ).status_code
+        == 404
+    )
 
 
 def test_read_only_can_look_but_not_take(
@@ -251,16 +259,28 @@ def test_read_only_can_look_but_not_take(
     headers = {"Authorization": f"Bearer {token}"}
     body = {"boards": 1, "source_location_id": take_ready["gathering_id"]}
 
-    assert anon_client.post(
-        f"/api/boms/{take_ready['bom_id']}/takes", json=body, headers=headers
-    ).status_code == 403
-    assert anon_client.post(
-        f"/api/boms/{take_ready['bom_id']}/take/preview", json=body, headers=headers
-    ).status_code == 403
-    assert anon_client.post(
-        f"/api/bom-takes/{take['id']}/reverse", json={"reason": "x"}, headers=headers
-    ).status_code == 403
+    assert (
+        anon_client.post(
+            f"/api/boms/{take_ready['bom_id']}/takes", json=body, headers=headers
+        ).status_code
+        == 403
+    )
+    assert (
+        anon_client.post(
+            f"/api/boms/{take_ready['bom_id']}/take/preview", json=body, headers=headers
+        ).status_code
+        == 403
+    )
+    assert (
+        anon_client.post(
+            f"/api/bom-takes/{take['id']}/reverse",
+            json={"reason": "x"},
+            headers=headers,
+        ).status_code
+        == 403
+    )
     # …but the record itself is readable.
-    assert anon_client.get(
-        f"/api/bom-takes/{take['id']}", headers=headers
-    ).status_code == 200
+    assert (
+        anon_client.get(f"/api/bom-takes/{take['id']}", headers=headers).status_code
+        == 200
+    )
