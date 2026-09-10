@@ -15,7 +15,7 @@ from app.models.enums import ParameterDataType as DT
 from app.models.match_rule import MatchRule
 from app.services import component_service as cs
 from app.services import match_rule_service as mrs
-from app.services.matching import build_proposal
+from app.services.matching import build_proposal, find_value_for_unit
 from app.services.shops.base import ProductData
 from app.services.shops.farnell import FarnellProvider
 from sqlmodel import Session
@@ -570,3 +570,128 @@ def test_the_guess_is_read_through_the_rules_too(session: Session) -> None:
         description="czerwona 620nm 0805",
     )
     assert build_proposal(session, product).type_id == diody.id
+
+
+def _lightpipe(session: Session) -> dict[str, int]:
+    """A type whose parameters are shape, not rating: mm, nm and a °C limit."""
+    ltype = cs.create_type(session, "lightpipe")
+    return {
+        "type": ltype.id,
+        "diameter": cs.add_parameter_definition(
+            session,
+            ltype.id,
+            name="diameter",
+            label="Diameter",
+            data_type=DT.NUMBER,
+            unit="mm",
+            sort_order=0,
+        ).id,
+        "wavelength": cs.add_parameter_definition(
+            session,
+            ltype.id,
+            name="wavelength",
+            label="Wavelength",
+            data_type=DT.NUMBER,
+            unit="nm",
+            sort_order=1,
+        ).id,
+        "max_temp": cs.add_parameter_definition(
+            session,
+            ltype.id,
+            name="max_temp",
+            label="Max temperature",
+            data_type=DT.NUMBER,
+            unit="°C",
+            sort_order=2,
+        ).id,
+    }
+
+
+def test_mechanical_units_are_read_out_of_the_description(session: Session) -> None:
+    ids = _lightpipe(session)
+    product = ProductData(
+        description="Fiber for LED; Ø2mm; 620nm; up to +85°C; round; Front: convex",
+    )
+    values = _by_id(build_proposal(session, product, type_id=ids["type"]))
+    assert values[ids["diameter"]] == "2"
+    assert values[ids["wavelength"]] == "620"
+    assert values[ids["max_temp"]] == "85"
+
+
+def test_a_millimetre_is_not_a_milli(session: Session) -> None:
+    """A structured "2mm" is 2 mm, not 2 milli-mm — the field's own unit says so."""
+    ids = _lightpipe(session)
+    product = ProductData(parameters=[("Diameter", "2mm"), ("Wavelength", "620 nm")])
+    values = _by_id(build_proposal(session, product, type_id=ids["type"]))
+    assert values[ids["diameter"]] == "2"
+    assert values[ids["wavelength"]] == "620"
+
+
+def test_a_prefix_the_field_does_not_spell_is_still_read(session: Session) -> None:
+    """Stripping the field's unit must not cost us the milli of "100 mW"."""
+    ids = _resistor(session)
+    product = ProductData(
+        category="resistor",
+        parameters=[("Power", "100 mW"), ("Resistance", "10 kOhms")],
+    )
+    values = _by_id(build_proposal(session, product))
+    assert values[ids["power"]] == "100m"
+    assert values[ids["resistance"]] == "10k"
+
+
+def test_a_bare_c_is_not_taken_for_a_temperature(session: Session) -> None:
+    """"1206 C0G" is a dielectric code, and a °C field must not read 1206 from it."""
+    ids = _lightpipe(session)
+    product = ProductData(description="X7R 1206 C0G 50V ceramic")
+    assert ids["max_temp"] not in _by_id(
+        build_proposal(session, product, type_id=ids["type"])
+    )
+
+
+def test_a_unit_spelled_the_other_way_is_still_the_field_s_unit(
+    session: Session,
+) -> None:
+    """"0.5mm2" against a field in mm² is 0.5, not 0.5 milli.
+
+    The two spellings are the ones _UNIT_PATTERNS itself carries twice (² for 2,
+    µ for u), so a strip that missed them would leave the value in exactly the trap
+    the strip exists to close.
+    """
+    ltype = cs.create_type(session, "wire")
+    area = cs.add_parameter_definition(
+        session,
+        ltype.id,
+        name="area",
+        label="Cross-section",
+        data_type=DT.NUMBER,
+        unit="mm²",
+        sort_order=0,
+    ).id
+    pitch = cs.add_parameter_definition(
+        session,
+        ltype.id,
+        name="pitch",
+        label="Pitch",
+        data_type=DT.NUMBER,
+        unit="µm",
+        sort_order=1,
+    ).id
+    product = ProductData(parameters=[("Cross-section", "0.5mm2"), ("Pitch", "5um")])
+    values = _by_id(build_proposal(session, product, type_id=ltype.id))
+    assert values[area] == "0.5"
+    assert values[pitch] == "5"
+
+
+def test_a_part_number_is_not_a_force(session: Session) -> None:
+    """"1N4148" is a diode, not one newton — the N is followed by a digit."""
+    assert find_value_for_unit("Diode 1N4148 switching 75V", "N") is None
+    assert find_value_for_unit("2N3904 NPN transistor", "N") is None
+    # A force actually stated still reads, spaced or not.
+    assert find_value_for_unit("Insertion force 2.5 N", "N") == "2.5"
+    assert find_value_for_unit("Insertion force 20N", "N") == "20"
+
+
+def test_a_temperature_range_gives_its_upper_end(session: Session) -> None:
+    """"-40°C to +85°C" must not be read as 40: the sign is not part of the number."""
+    assert find_value_for_unit("Temp. range -40°C to +85°C", "°C") == "85"
+    assert find_value_for_unit("Range −40°C .. 105°C", "°C") == "105"  # unicode minus

@@ -59,9 +59,42 @@ def _fold_prefix(char: str) -> str:
     return {"µ": "u", "K": "k"}.get(char, char)
 
 
-def clean_number_value(raw: object) -> str:
-    """"10 kOhms" -> "10k": keep the number and a valid SI prefix, drop the unit."""
+# The spelling differences that are not differences: a superscript two written out,
+# and the micro sign typed as a u. Both are one-for-one, so folding never changes a
+# string's length and a folded comparison can still be sliced by the raw length.
+_UNIT_SPELLINGS = {"²": "2", "µ": "u"}
+
+
+def _fold_unit(text: str) -> str:
+    """A unit spelled one of the ways ShelfOS treats as the same unit."""
+    return "".join(_UNIT_SPELLINGS.get(c, c) for c in text.lower())
+
+
+def clean_number_value(raw: object, unit: str | None = None) -> str:
+    """"10 kOhms" -> "10k": keep the number and a valid SI prefix, drop the unit.
+
+    ``unit`` is the parameter's own unit, and is stripped off the end of the value
+    before anything else is read. Without it a millimetre is a trap: the "mm" of
+    "2mm" begins with a valid SI prefix, so the m is taken for milli and a 2 mm lens
+    is stored as 2 — of a millimetre. Knowing the field is in mm settles it, and the
+    same holds for every unit whose name starts with a prefix letter (nm, mA, mΩ,
+    kHz).
+
+    The comparison folds case and the spellings _UNIT_PATTERNS already treats as one
+    unit — ² for 2, µ for u — because those are exactly the ones that would fall into
+    the trap: TME writes a wire's cross-section "0.5mm2" against a field declared in
+    mm², and unfolded that misses and is read as 0.5 milli. A unit the shop spells
+    differently in some OTHER way ("10 kOhms" against a field in Ω) still misses, but
+    harmlessly — the prefix reading below is right for it anyway.
+    """
     text = str(raw if raw is not None else "").strip()
+    suffix = (unit or "").strip()
+    if (
+        suffix
+        and len(text) > len(suffix)
+        and _fold_unit(text).endswith(_fold_unit(suffix))
+    ):
+        text = text[: -len(suffix)].strip()
     match = re.match(r"^[±\s]*([0-9]+(?:\.[0-9]+)?)\s*([A-Za-zµΩ]*)", text)
     if not match:
         return text
@@ -74,6 +107,9 @@ def clean_number_value(raw: object) -> str:
 # Resistors - SMD 1.2 kOhms 50 V 100 mW 1 % 0402"). Rather than a parser per category,
 # scan the description with the TYPE'S OWN parameter units: a resistor's Ω/W/% params
 # pick up their values and the stray "50 V" is ignored (no volt parameter to hold it).
+# The electrical units are matched case-sensitively (a lone "w" in prose is a word,
+# "W" is watts), and each pattern is anchored on the right by find_value_for_unit so
+# it can't fire on the head of a longer unit.
 _UNIT_PATTERNS = {
     "ohm": r"(?:[Oo]hms?|Ω)",
     "ω": r"(?:[Oo]hms?|Ω)",
@@ -84,19 +120,62 @@ _UNIT_PATTERNS = {
     "a": r"A",
     "h": r"H",
     "hz": r"Hz",
+    # Mechanical/optical units, for the parts a catalogue describes by shape rather
+    # than by rating — a lightpipe's "Ø2mm", an LED's "620nm", a heatsink's "35x35mm",
+    # a wire's "0.5mm2". These are spelled lowercase in every catalogue, so unlike the
+    # electrical ones they are matched case-insensitively; a bare "m" for metres is
+    # deliberately absent, since it is indistinguishable from the milli prefix in
+    # running text.
+    "mm": r"[Mm][Mm](?![²2])",
+    "cm": r"[Cc][Mm]",
+    "nm": r"[Nn][Mm]",
+    "µm": r"(?:[µu][Mm])",
+    "um": r"(?:[µu][Mm])",
+    "mm2": r"[Mm][Mm]\s*[²2]",
+    "mm²": r"[Mm][Mm]\s*[²2]",
+    "mil": r"[Mm]il",
+    # A single-letter unit needs a digit guard of its own on top of the shared letter
+    # one: the N of "1N4148" (and of "2N3904") is followed by a digit, so without it
+    # a connector's insertion force in N reads a switching diode as 1 N. It does not
+    # save grams from wire gauge ("24g" is 24 grams to this scan) — nothing in the
+    # text tells them apart — but a part number is common in a description where a
+    # gauge is not, so the one worth guarding is guarded.
+    "g": r"g(?![0-9])",
+    "n": r"N(?![0-9])",
+    # The degree sign is required: a bare C would read "1206 C0G" as 1206 °C, since
+    # the C is followed by a digit rather than a letter. A field named just "C" is
+    # left unmatched rather than matched wrongly.
+    "°c": r"°\s*C",
 }
 # A number, possibly a fraction ("1/16W" is 1/16 W, not 16 W).
 _NUMBER = r"\d+(?:\.\d+)?(?:/\d+(?:\.\d+)?)?"
 
 
 def find_value_for_unit(text: str, unit: str | None) -> str | None:
-    """The value carrying ``unit`` in ``text`` ("… 1.2 kOhms …", unit Ω -> "1.2k")."""
+    """The value carrying ``unit`` in ``text`` ("… 1.2 kOhms …", unit Ω -> "1.2k").
+
+    A negative number is passed over. The reason is temperature, which a catalogue
+    almost always states as a range — "Temp. range: -40°C to +85°C" — and the number
+    pattern carries no sign, so the first match there is the 40 of -40: not the
+    minimum (that is -40) and not the maximum, just a magnitude that looks entirely
+    plausible on review. Skipping it leaves the +85 a "max temperature" field wants.
+    A field meaning the minimum gets the wrong end of the range either way, and no
+    parameter name is examined here to tell the two apart.
+    """
     pattern = _UNIT_PATTERNS.get(str(unit or "").strip().lower())
     if not pattern:
         return None
     # The multiplier stays case-sensitive (m milli vs M mega); the unit is tolerant.
-    match = re.search(rf"({_NUMBER})\s*([pnµukKMGm])?\s*{pattern}(?![A-Za-z])", text)
-    if not match:
+    match = None
+    for candidate in re.finditer(
+        rf"({_NUMBER})\s*([pnµukKMGm])?\s*{pattern}(?![A-Za-z])", text
+    ):
+        start = candidate.start(1)
+        if start and text[start - 1] in "-−":
+            continue
+        match = candidate
+        break
+    if match is None:
         return None
     number = match.group(1)
     if "/" in number:
@@ -451,7 +530,7 @@ def _gate_value(
         return None
     match definition.data_type:
         case ParameterDataType.NUMBER:
-            cleaned = clean_number_value(text)
+            cleaned = clean_number_value(text, definition.unit)
             try:
                 parse_engineering(cleaned)
             except UnitParseError:
