@@ -124,8 +124,8 @@ carry no fingerprint and are refused, so everyone signs in once more.
 The bootstrap admin is seeded **only when the database has no admin who can sign
 in** — so on any install past its first run, changing `SHELFOS_ADMIN_USERNAME` or
 `SHELFOS_ADMIN_PASSWORD` does nothing to the account that already exists. Change
-that account's password in the app (*Change password*, top bar), or with the app
-stopped:
+that account's password in the app (*Settings → Change password*, top bar), or
+with the app stopped:
 
 ```bash
 python scripts/set_password.py admin        # prompts, without echoing
@@ -408,15 +408,16 @@ If the printer is on a Windows machine, three ways out, best first:
    since Python is not a given there — and none of it touches this server: the
    enrolment endpoint, the key store and the sshd block are transport-agnostic.
 
-**The quick way is `/label-printer`**, a page open to anyone signed in: answer
-three questions, download a script with your answers already in it, read it and
-run it on the machine holding the printer. It carries the bridge below, sets up
-both services, and checks the ssh connection before it changes anything — then
-the page's Test connection button asks the printer what tape it holds. The rest
-of this section is what that script does, for setting it up by hand, for
-checking its work, and for the reasons behind each step, which are the part a
-script cannot carry. The one thing it deliberately does not do is touch the
-server: the setting above is the administrator's to make.
+**The quick way is `/label-printer`** (*Settings → Label printer* in the top
+bar), a page open to anyone signed in: answer three questions, download a script
+with your answers already in it, read it and run it on the machine holding the
+printer. It carries the bridge below, sets up both services, and checks the ssh
+connection before it changes anything — then the page's Test connection button
+asks the printer what tape it holds. The rest of this section is what that
+script does, for setting it up by hand, for checking its work, and for the
+reasons behind each step, which are the part a script cannot carry. The one
+thing it deliberately does not do is touch the server: the setting above is the
+administrator's to make.
 
 If the server has no proxy in front of it — a test container, say — deploy it
 with `--no-tls --listen 0.0.0.0` and reach it at its own address; the service otherwise

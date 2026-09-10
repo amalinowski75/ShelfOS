@@ -571,6 +571,21 @@ export function bomListFixture() {
     </tbody></table>`;
 }
 
+// The top-bar Settings button + its menu (mirrors base.html): the instance-level
+// controls live in here, "Change password" among them.
+export function settingsMenuFixture() {
+  return `
+    <div class="settings">
+      <button type="button" id="settings-btn" aria-expanded="false"></button>
+      <div class="settings-menu" id="settings-menu" hidden>
+        <a href="/label-printer">Label printer</a>
+        <a href="/users">Users</a>
+        <a href="/docs">API</a>
+        <button type="button" id="change-password-btn">Change password</button>
+      </div>
+    </div>`;
+}
+
 // The global "Change password" control + dialog (mirrors base.html); present on
 // every authenticated page.
 export function passwordDialogFixture() {
