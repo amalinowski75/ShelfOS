@@ -300,6 +300,15 @@ the label printer's job lock is per process, so a second worker doubles the
 allowance and lets two prints reach the printer at once. Both need shared state
 before `--workers` is worth raising.
 
+**Who was signed in, and when.** `journalctl -u shelfos | grep "Login for"` —
+successful sign-ins are logged with the account and the client address,
+refusals and failures alongside them. Worth knowing because a browser keeps one
+session cookie per site, shared by every tab: signing in as somebody else in a
+second tab replaces it, and the first tab shows the new account the moment it
+next loads a page. That reads exactly like a session changing hands on its own,
+and the log is what tells the two apart. `SHELFOS_LOG_LEVEL=WARNING` keeps the
+refusals and drops the rest.
+
 **Everyone signs in again after an upgrade** that changes `SHELFOS_SECRET_KEY`,
 and once more after the release that tied sessions to the current password.
 

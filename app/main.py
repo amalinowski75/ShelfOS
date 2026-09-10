@@ -289,6 +289,55 @@ def _check_insecure_defaults() -> None:
         )
 
 
+# Every module in this codebase logs to ``logging.getLogger("shelfos")`` — one
+# flat logger, not a per-module tree — so this is the one name that reaches all
+# of them, and naming any other silently configures a logger nothing uses.
+# ``_logger`` above is that logger; the test suite ties the two together rather
+# than trusting this comment.
+#
+# The format leaves out the timestamp: under systemd the journal stamps every
+# line already, and in a terminal `uvicorn` prints its own.
+_APP_LOGGER = "shelfos"
+_LOG_FORMAT = "%(levelname)s [%(name)s] %(message)s"
+
+
+def _configure_logging() -> None:
+    """Give this application's own log lines somewhere to go.
+
+    uvicorn configures its three loggers (``uvicorn``, ``uvicorn.error``,
+    ``uvicorn.access``) and nothing else, and the root logger it leaves behind
+    has no handler at all — only logging's last-resort one, which starts at
+    WARNING. So every ``_logger.info`` here was written to a logger that threw
+    it away, silently and only in production, because pytest installs a handler
+    of its own and the lines show up perfectly in the test suite.
+
+    The line this was written for is ``"Login for '%s' from %s"`` in
+    :mod:`app.auth.throttle`. Failed sign-ins are logged at WARNING and reached
+    the journal; successful ones are INFO and did not — which is exactly
+    backwards for the question an operator actually asks, "who was signed in,
+    and when". It came up on a live server where the answer would have settled
+    an apparent session mix-up in one grep, and could not be had at all.
+
+    ``basicConfig`` installs the root handler unless something already did
+    (pytest, or an operator's own logging setup), so calling this more than
+    once — every test that builds an app does — adds nothing the second time.
+    """
+    # NOTSET is in the mapping and is not a level anybody can have meant here:
+    # setLevel(0) means "inherit", and what would be inherited is the root
+    # logger basicConfig leaves at WARNING — so SHELFOS_LOG_LEVEL=NOTSET would
+    # be a way to switch logging off with no complaint, which is the very
+    # outcome this fallback exists to prevent.
+    level = logging.getLevelNamesMapping().get(config.LOG_LEVEL)
+    logging.basicConfig(format=_LOG_FORMAT)
+    logging.getLogger(_APP_LOGGER).setLevel(level if level else logging.INFO)
+    if not level:
+        # After the level is set, so this warning is itself emitted.
+        _logger.warning(
+            "SHELFOS_LOG_LEVEL=%r is not a logging level; using INFO.",
+            config.LOG_LEVEL,
+        )
+
+
 def create_app(*, create_tables: bool = True) -> FastAPI:
     """Build and configure the ShelfOS FastAPI application.
 
@@ -297,6 +346,10 @@ def create_app(*, create_tables: bool = True) -> FastAPI:
     tests never touches a real database. Tests pass ``create_tables=False`` and
     bind their own in-memory engine.
     """
+
+    # Before anything else here: the startup checks below log warnings of their
+    # own, and a handler installed after them would miss them.
+    _configure_logging()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:

@@ -25,6 +25,12 @@ DEFAULT_ADMIN_PASSWORD = "admin"
 ADMIN_USERNAME = os.environ.get("SHELFOS_ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("SHELFOS_ADMIN_PASSWORD", DEFAULT_ADMIN_PASSWORD)
 
+# How much the application's own loggers say. uvicorn configures its three
+# loggers and leaves the root one without a handler below WARNING, so this is
+# also what decides whether anything at INFO is emitted at all — successful
+# sign-ins among them (see app.main._configure_logging).
+LOG_LEVEL = os.environ.get("SHELFOS_LOG_LEVEL", "INFO").strip().upper()
+
 # JWT access-token lifetime, in hours.
 TOKEN_EXPIRE_HOURS = int(os.environ.get("SHELFOS_TOKEN_EXPIRE_HOURS", "24"))
 
