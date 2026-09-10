@@ -12,19 +12,21 @@ pull request, which carries the reasoning and the verification.
 ## A scanned location landed in the quantity column
 
 Filing a bag from the invoice's scan panel wrote the shelf into the Qty cell of
-the matched line and the count into the Unit price cell — one column to the left
-of where each belonged, and the picker that actually holds the location was left
-untouched. The page had been telling this lie since the two invoice tables were
-given the same five columns; a reload (any *Edit line* → *Save*) put every row
-right again, which is why it looked like a display glitch rather than a wrong
-write.
+the matched line and the count into the Unit price cell — each one column to the
+right of where it belonged, and the picker that actually holds the location was
+left untouched. The page had been telling this lie since the two invoice tables
+were given the same five columns; a reload (any *Edit line* → *Save*) put every
+row right again, which is why it looked like a display glitch rather than a
+wrong write.
 
 The adapter reached for its cells by index, so the reshuffle moved the ground
 under it. It now finds the count by class and the location by its picker — the
-same picker a person clicks — and keeps the row's `data-location-id`, the
-picker's title and its last-value in step, as a manual pick already did. The
-placeholder option is dropped on a real line once it has a shelf (that endpoint
-only assigns) and kept on a staged one (which can still be cleared).
+same picker a person clicks. Two of the things it keeps in step, the row's
+`data-location-id` and the picker's last-value, are what an inline pick in
+`invoices.js` already does; the picker's `title` is new here, because nothing
+updated it after the server rendered it. The placeholder option is dropped on a
+real line once it has a shelf (that endpoint only assigns) and kept on a staged
+one (which can still be cleared).
 
 The test fixture had drifted from `invoice_detail.html`, which is how a wrong
 column stayed green: its rows now mirror the template, and the three assertions
