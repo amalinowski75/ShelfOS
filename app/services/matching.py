@@ -59,9 +59,22 @@ def _fold_prefix(char: str) -> str:
     return {"µ": "u", "K": "k"}.get(char, char)
 
 
-def clean_number_value(raw: object) -> str:
-    """"10 kOhms" -> "10k": keep the number and a valid SI prefix, drop the unit."""
+def clean_number_value(raw: object, unit: str | None = None) -> str:
+    """"10 kOhms" -> "10k": keep the number and a valid SI prefix, drop the unit.
+
+    ``unit`` is the parameter's own unit, and is stripped off the end of the value
+    before anything else is read. Without it a millimetre is a trap: the "mm" of
+    "2mm" begins with a valid SI prefix, so the m is taken for milli and a 2 mm lens
+    is stored as 2 — of a millimetre. Knowing the field is in mm settles it, and the
+    same holds for every unit whose name starts with a prefix letter (nm, mA, mΩ,
+    kHz). Stripping is exact and case-insensitive; a unit written differently by the
+    shop ("10 kOhms" against a field in Ω) simply doesn't match and falls through to
+    the prefix reading below, which handles it.
+    """
     text = str(raw if raw is not None else "").strip()
+    suffix = (unit or "").strip()
+    if suffix and len(text) > len(suffix) and text.lower().endswith(suffix.lower()):
+        text = text[: -len(suffix)].strip()
     match = re.match(r"^[±\s]*([0-9]+(?:\.[0-9]+)?)\s*([A-Za-zµΩ]*)", text)
     if not match:
         return text
@@ -74,6 +87,9 @@ def clean_number_value(raw: object) -> str:
 # Resistors - SMD 1.2 kOhms 50 V 100 mW 1 % 0402"). Rather than a parser per category,
 # scan the description with the TYPE'S OWN parameter units: a resistor's Ω/W/% params
 # pick up their values and the stray "50 V" is ignored (no volt parameter to hold it).
+# The electrical units are matched case-sensitively (a lone "w" in prose is a word,
+# "W" is watts), and each pattern is anchored on the right by find_value_for_unit so
+# it can't fire on the head of a longer unit.
 _UNIT_PATTERNS = {
     "ohm": r"(?:[Oo]hms?|Ω)",
     "ω": r"(?:[Oo]hms?|Ω)",
@@ -84,6 +100,26 @@ _UNIT_PATTERNS = {
     "a": r"A",
     "h": r"H",
     "hz": r"Hz",
+    # Mechanical/optical units, for the parts a catalogue describes by shape rather
+    # than by rating — a lightpipe's "Ø2mm", an LED's "620nm", a heatsink's "35x35mm",
+    # a wire's "0.5mm2". These are spelled lowercase in every catalogue, so unlike the
+    # electrical ones they are matched case-insensitively; a bare "m" for metres is
+    # deliberately absent, since it is indistinguishable from the milli prefix in
+    # running text.
+    "mm": r"[Mm][Mm](?![²2])",
+    "cm": r"[Cc][Mm]",
+    "nm": r"[Nn][Mm]",
+    "µm": r"(?:[µu][Mm])",
+    "um": r"(?:[µu][Mm])",
+    "mm2": r"[Mm][Mm]\s*[²2]",
+    "mm²": r"[Mm][Mm]\s*[²2]",
+    "mil": r"[Mm]il",
+    "g": r"g",
+    "n": r"N",
+    # The degree sign is required: a bare C would read "1206 C0G" as 1206 °C, since
+    # the C is followed by a digit rather than a letter. A field named just "C" is
+    # left unmatched rather than matched wrongly.
+    "°c": r"°\s*C",
 }
 # A number, possibly a fraction ("1/16W" is 1/16 W, not 16 W).
 _NUMBER = r"\d+(?:\.\d+)?(?:/\d+(?:\.\d+)?)?"
@@ -451,7 +487,7 @@ def _gate_value(
         return None
     match definition.data_type:
         case ParameterDataType.NUMBER:
-            cleaned = clean_number_value(text)
+            cleaned = clean_number_value(text, definition.unit)
             try:
                 parse_engineering(cleaned)
             except UnitParseError:

@@ -570,3 +570,79 @@ def test_the_guess_is_read_through_the_rules_too(session: Session) -> None:
         description="czerwona 620nm 0805",
     )
     assert build_proposal(session, product).type_id == diody.id
+
+
+def _lightpipe(session: Session) -> dict[str, int]:
+    """A type whose parameters are shape, not rating: mm, nm and a °C limit."""
+    ltype = cs.create_type(session, "lightpipe")
+    return {
+        "type": ltype.id,
+        "diameter": cs.add_parameter_definition(
+            session,
+            ltype.id,
+            name="diameter",
+            label="Diameter",
+            data_type=DT.NUMBER,
+            unit="mm",
+            sort_order=0,
+        ).id,
+        "wavelength": cs.add_parameter_definition(
+            session,
+            ltype.id,
+            name="wavelength",
+            label="Wavelength",
+            data_type=DT.NUMBER,
+            unit="nm",
+            sort_order=1,
+        ).id,
+        "max_temp": cs.add_parameter_definition(
+            session,
+            ltype.id,
+            name="max_temp",
+            label="Max temperature",
+            data_type=DT.NUMBER,
+            unit="°C",
+            sort_order=2,
+        ).id,
+    }
+
+
+def test_mechanical_units_are_read_out_of_the_description(session: Session) -> None:
+    ids = _lightpipe(session)
+    product = ProductData(
+        description="Fiber for LED; Ø2mm; 620nm; up to +85°C; round; Front: convex",
+    )
+    values = _by_id(build_proposal(session, product, type_id=ids["type"]))
+    assert values[ids["diameter"]] == "2"
+    assert values[ids["wavelength"]] == "620"
+    assert values[ids["max_temp"]] == "85"
+
+
+def test_a_millimetre_is_not_a_milli(session: Session) -> None:
+    """A structured "2mm" is 2 mm, not 2 milli-mm — the field's own unit says so."""
+    ids = _lightpipe(session)
+    product = ProductData(parameters=[("Diameter", "2mm"), ("Wavelength", "620 nm")])
+    values = _by_id(build_proposal(session, product, type_id=ids["type"]))
+    assert values[ids["diameter"]] == "2"
+    assert values[ids["wavelength"]] == "620"
+
+
+def test_a_prefix_the_field_does_not_spell_is_still_read(session: Session) -> None:
+    """Stripping the field's unit must not cost us the milli of "100 mW"."""
+    ids = _resistor(session)
+    product = ProductData(
+        category="resistor",
+        parameters=[("Power", "100 mW"), ("Resistance", "10 kOhms")],
+    )
+    values = _by_id(build_proposal(session, product))
+    assert values[ids["power"]] == "100m"
+    assert values[ids["resistance"]] == "10k"
+
+
+def test_a_bare_c_is_not_taken_for_a_temperature(session: Session) -> None:
+    """"1206 C0G" is a dielectric code, and a °C field must not read 1206 from it."""
+    ids = _lightpipe(session)
+    product = ProductData(description="X7R 1206 C0G 50V ceramic")
+    assert ids["max_temp"] not in _by_id(
+        build_proposal(session, product, type_id=ids["type"])
+    )
