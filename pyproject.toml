@@ -36,6 +36,11 @@ dependencies = [
 dev = [
     "pytest>=8.3",
     "pytest-cov>=6.0",
+    # Turns a pytest failure into a GitHub Actions annotation on the failing
+    # line, so a red CI run is readable from the pull request's diff without
+    # opening the log. A no-op outside Actions, so it costs a local run
+    # nothing.
+    "pytest-github-actions-annotate-failures>=0.2",
     "mypy>=1.13",
     "ruff>=0.8",
     "black>=24.10",

@@ -9,6 +9,33 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## CI says how many tests ran, not just whether they passed
+
+A finished run reported one word per job. Learning that the Python suite is 1733
+tests, or which of them failed, meant opening the log and reading to the end —
+and a red run is exactly when nobody wants to. Both runners now write JUnit XML
+and a summary step renders it into the table at the top of the run: counts,
+wall time, and every test that failed with the first line of its assertion.
+
+Vitest's built-in `github-actions` reporter puts a failure on the offending line
+in the diff, and `pytest-github-actions-annotate-failures` does the same for
+Python, so a red run is readable from *Files changed* without opening a log at
+all. Coverage of `app` is measured and printed beside the table; nothing is
+gated on the number, because a threshold turns an honest refactor into an
+argument with CI. `--durations=10` names the slowest tests, which is how a suite
+that has quietly grown an eight-second test gets noticed before it is the run.
+
+The renderer is forty lines of stdlib in `scripts/ci_summary.py` rather than a
+marketplace action: a reporter action wants write permission on checks or pull
+requests, and pinning one safely means chasing its commit SHA at every bump.
+Reading a file the job just wrote needs neither. Runs are also now cancelled
+when a newer push supersedes them, and the workflow declares read-only
+permissions.
+
+There is no progress bar, and there is no way to build one: job summaries render
+only after a step ends. What the split into parallel jobs already gives is the
+job list itself, which fills in as each suite lands.
+
 ## Successful sign-ins are logged where sign-ins are looked for
 
 uvicorn configures its own three loggers and leaves the root one with nothing
