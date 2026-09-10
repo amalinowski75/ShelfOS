@@ -54,8 +54,20 @@
       if (pendingShopUrl) window.open(pendingShopUrl, SHOP_WINDOW_NAME);
     });
   }
-  // The last shop-imported product, kept so switching type can re-run the engine.
+  // The shop product this dialog session is working from, kept so switching type can
+  // re-run the engine without asking the shop twice. Cleared with the dialog.
   let lastImport = null;
+  // How to ask the shop for that product when we don't have it: {shop_key,
+  // part_numbers, manufacturer}, as a staged invoice line knows itself. Null when
+  // nothing named a part (a BOM or blank prefill).
+  let lookupBody = null;
+  // The in-flight lookup, so simultaneous callers share one answer (and one call
+  // against the shop's quota) instead of the later ones being dropped.
+  let productRequest = null;
+  // What a staged line already had saved on it: the reviewer's own values, and the
+  // type they belong to. Re-applied over a proposal for that same type.
+  let stagedTypeId = null;
+  let stagedParams = null;
   // Bumped on every open so a slow shop-lookup can't prefill a reopened dialog.
   let openToken = 0;
   // The shop-import runner, exposed here so openComponentDialog can fire it for a
@@ -232,14 +244,89 @@
 
   typeSelect.addEventListener("change", async (event) => {
     const typeId = event.target.value;
+    const token = openToken; // this dialog session; see the check before applying
     await loadParams(typeId);
-    // After a shop import, picking a different type refills its parameters from the
-    // engine (the import filled the auto-inferred type; a correction should too).
-    if (lastImport && typeId) {
-      const proposal = await fetchProposal(typeId, lastImport);
-      if (proposal && typeSelect.value === typeId) applyProposal(proposal);
-    }
+    // The auto-inferred type is the guess most often wrong, and every parameter the
+    // engine filled was filed under it — so a correction has to refill them. That
+    // needs the shop's own product data: in hand right after an Import, and asked
+    // for here (the same lookup that button runs) on a form prefilled from an
+    // invoice line.
+    if (!typeId) return;
+    const product = await ensureShopProduct();
+    if (!product) return;
+    const proposal = await fetchProposal(typeId, product);
+    // Both guards matter: the type may have moved on, and the dialog may have been
+    // closed and reopened on ANOTHER line entirely while this was in flight — with
+    // the same type selected, which would let one line's values land in another's.
+    if (!proposal || token !== openToken || typeSelect.value !== typeId) return;
+    applyProposal(proposal);
+    // The engine's guesses must not bury what a reviewer already saved on this line.
+    // Coming back to the staged type re-renders empty fields, so the stored values
+    // are re-applied on top, exactly as they were when the dialog opened.
+    if (stagedParams && typeId === stagedTypeId) setParamsById(stagedParams);
+    refreshGaps();
   });
+
+  // The shop product behind this form, looked up if we don't already hold it.
+  // Nothing is stored between dialogs: re-asking the shop's API for the part is
+  // exactly what Import does, so the answer is as fresh as a re-import's. Returns
+  // null when there is nothing to ask about (a BOM/blank prefill names no part) or
+  // the lookup fails — the type change then leaves the new type's fields empty.
+  //
+  // Keyed on the SHOP AND THE NUMBERS, never on the line's shop link: for every
+  // provider but TME that link is a keyword search with no part number in it, and
+  // looking it up would answer with whatever the shop makes of "result"/"search" —
+  // an unrelated part's parameters, silently filled into the reviewer's row.
+  //
+  // Concurrent callers share one request rather than the second being dropped: two
+  // quick type corrections (a mis-click on the select is ordinary) would otherwise
+  // leave the second one's fields empty, with the answer arriving for a type nobody
+  // is on any more.
+  function ensureShopProduct() {
+    if (lastImport) return Promise.resolve(lastImport);
+    if (!lookupBody || importing) return Promise.resolve(null);
+    if (!productRequest) {
+      productRequest = lookupProduct().finally(() => {
+        productRequest = null;
+      });
+    }
+    return productRequest;
+  }
+
+  async function lookupProduct() {
+    const token = openToken; // ignore a late answer for a dialog since reopened
+    if (importStatus) {
+      importStatus.hidden = false;
+      importStatus.className = "muted";
+      importStatus.textContent = "Looking the part up for the new type…";
+    }
+    try {
+      const resp = await fetch("/api/shops/lookup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body: JSON.stringify(lookupBody),
+      });
+      if (token !== openToken) return null;
+      if (!resp.ok) {
+        if (importStatus) {
+          importStatus.className = "error";
+          importStatus.textContent = await errorMessage(resp);
+        }
+        return null;
+      }
+      const product = await resp.json();
+      if (token !== openToken) return null;
+      if (importStatus) importStatus.hidden = true;
+      lastImport = product;
+      return product;
+    } catch {
+      if (importStatus) {
+        importStatus.className = "error";
+        importStatus.textContent = "Could not reach the server.";
+      }
+      return null;
+    }
+  }
 
   // Download a datasheet URL as a file attachment via the SSRF-guarded endpoint.
   // Returns true on success; a non-2xx or a network error is a handled false, never
@@ -637,6 +724,9 @@
   }
 
   // Pre-fill the dialog. From a BOM line: { category, value, mpn, manufacturer }.
+  // From a staged invoice line, additionally: { typeId, paramValues, shopKey,
+  // supplierPartNumber } — the shop and numbers being how a type correction re-asks
+  // the shop for the part.
   // From a shop import, additionally: { notes, package, proposal }, where the SERVER's
   // matching engine already worked out the type, mounting and parameter values (the
   // dialog no longer guesses). Runs async (loads the type's parameters); fired after
@@ -662,6 +752,25 @@
     // none. A later shop lookup (runImport) overrides this with its source_url.
     setShopUrl(prefill && prefill.shopUrl);
     lastImport = null; // no shop import behind a BOM/blank prefill
+    productRequest = null;
+    // How a later type correction re-asks the shop for this part, and what the
+    // reviewer had already saved on the line. A staged invoice line knows its shop
+    // and its numbers; a BOM/blank prefill names no part, so nothing is asked.
+    lookupBody =
+      prefill && prefill.shopKey && (prefill.supplierPartNumber || prefill.mpn)
+        ? {
+            shop_key: prefill.shopKey,
+            // Best candidate first: the shop's own catalogue number, then the MPN —
+            // the order the invoice import itself tries them in.
+            part_numbers: [prefill.supplierPartNumber, prefill.mpn].filter(Boolean),
+            manufacturer: prefill.manufacturer || null,
+          }
+        : null;
+    stagedTypeId =
+      prefill && prefill.typeId != null && prefill.typeId !== ""
+        ? String(prefill.typeId)
+        : null;
+    stagedParams = (prefill && prefill.paramValues) || null;
     if (!prefill) {
       loadParams(""); // clears the fields and shows the hint
       return;

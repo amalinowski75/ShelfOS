@@ -142,6 +142,10 @@
             data-mounting-type="{{ p.mounting_type.value }}"
             data-description="{{ p.description or '' }}"
             data-source-url="{{ shop_product_url(p.shop_key, p.supplier_part_number) or '' }}"
+            {# The shop this line came from. The dialog needs it (with the numbers,
+               not the display link above) to ask that shop's API for the part again
+               when a reviewer corrects the type. #}
+            data-shop-key="{{ p.shop_key }}"
             data-parameters='{{ p.parameters | tojson }}'
             class="{{ '' if (p.type_id and p.location_id) else 'is-incomplete' }}">
           <td>
