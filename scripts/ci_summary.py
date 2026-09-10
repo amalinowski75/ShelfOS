@@ -245,14 +245,21 @@ def main(argv: list[str] | None = None) -> int:
             "Wall-clock seconds the suite took, measured by the caller. Use it "
             "when the report's own figure cannot be trusted: under pytest-xdist "
             "the duration pytest writes is neither the elapsed time nor the sum "
-            "of the tests, and it understated a 90-second run as 28."
+            "of the tests, and it understated a 90-second run as 28. Zero or "
+            "less is read as no measurement and the report's figure stands."
         ),
     )
     args = parser.parse_args(argv)
 
     try:
         totals = parse(args.report)
-        if args.elapsed is not None:
+        # Non-positive means "not measured", not "took no time". The caller
+        # supplies this from a shell variable that is unset whenever the step
+        # that measures it did not finish — a cancelled run, say — and a
+        # default of 0 arriving here would print a table claiming the suite
+        # was instant. That is a worse lie than the report's own bad figure,
+        # which at least looks like a duration.
+        if args.elapsed is not None and args.elapsed > 0:
             totals.time = args.elapsed
         block = render(args.title, totals)
     except (OSError, ElementTree.ParseError):

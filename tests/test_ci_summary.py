@@ -297,3 +297,19 @@ def test_a_measured_elapsed_time_overrides_the_reports_own(
     out = capsys.readouterr().out
     assert "| 90.0s |" in out
     assert "9.0s" not in out
+
+
+def test_a_zero_elapsed_is_read_as_no_measurement(tmp_path, capsys, monkeypatch):
+    # The workflow sources this from a shell variable that is unset whenever
+    # the measuring step did not finish. A default of 0 reaching here would
+    # render a table claiming the suite was instant, which is a worse lie than
+    # the report's own bad figure.
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+    main(
+        ["--title", "Python (pytest)", "--elapsed", "0", str(write(tmp_path, SLOW_XML))]
+    )
+
+    out = capsys.readouterr().out
+    assert "| 9.0s |" in out  # the report's figure, not the zero
+    assert "0.0s |" not in out

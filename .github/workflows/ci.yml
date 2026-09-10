@@ -82,8 +82,11 @@ jobs:
       - name: Summarise
         if: always()
         run: |
+          # ${VAR:+--elapsed VAR} passes the flag only when the variable is
+          # set, so a cancelled run that never reached the echo above leaves
+          # the report's own figure in place instead of claiming zero.
           python scripts/ci_summary.py --title "Python (pytest)" \
-            --elapsed "${PYTEST_ELAPSED:-0}" junit/pytest.xml
+            ${PYTEST_ELAPSED:+--elapsed "$PYTEST_ELAPSED"} junit/pytest.xml
           python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           # Coverage lives beside the test table rather than in a comment on the
           # pull request: a comment needs write permission on the PR, and this

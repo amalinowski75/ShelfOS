@@ -29,7 +29,10 @@ been since the suite went parallel: pytest writes a duration to its report
 that is neither the elapsed time nor the sum of the tests, and it called a
 90-second run 28 seconds. Nothing in the file can repair that — the mtime
 agrees with the wrong number — so the workflow measures the step itself and
-passes it in. Vitest's own figure was right all along and is left alone.
+passes it in. A measurement of zero is read as no measurement, and the
+workflow omits the flag rather than defaulting it, so a run cancelled before
+the step finished falls back to the report's figure instead of claiming the
+suite was instant. Vitest's own figure was right all along and is left alone.
 
 ## The Python suite runs in about two minutes, not eleven
 
