@@ -873,7 +873,8 @@ deploy_summary() {
     if [ "$DEPLOY_WANT_BACKUP" = 1 ]; then
         info "  backups         nightly into $BACKUP_DIR, kept 30 days"
     else
-        info "  backups         ${C_YELLOW}not scheduled — nothing will take one for you${C_OFF}"
+        info "  backups         ${C_YELLOW}not scheduled — nothing will take one for you,${C_OFF}"
+        info "  ${C_YELLOW}                and a schedule already here is stopped${C_OFF}"
     fi
     if [ "$DEPLOY_WANT_PRINTER" = 1 ]; then
         info "  label printer   kept, group $DEPLOY_PRINTER_GROUP, udev rule installed"
@@ -1382,7 +1383,7 @@ deploy_step_venv() {
     # root on the operator's next sudo. Stated rather than left alone, so an
     # install made by an earlier version is corrected on the next deploy.
     sudo_run chown -R root:root "$INSTALL_DIR"
-    sudo_run chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR"
+    hand_data_to_service
 }
 
 deploy_step_env() {
@@ -1460,7 +1461,7 @@ deploy_step_import() {
         [ -d "$DEPLOY_IMPORT_ATTACHMENTS" ] || die 1 "no attachments directory at $DEPLOY_IMPORT_ATTACHMENTS"
         sudo_run cp -r "$DEPLOY_IMPORT_ATTACHMENTS/." "$DATA_DIR/attachments/"
     fi
-    sudo_run chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR"
+    hand_data_to_service
     step_ok
 }
 
@@ -1511,7 +1512,18 @@ deploy_step_unit() {
 deploy_step_backup() {
     step "nightly backup"
     if [ "$DEPLOY_WANT_BACKUP" = 0 ]; then
-        step_skipped "not scheduled"
+        # Declining a schedule has to mean there is no schedule. Skipping the
+        # step over a timer that is already enabled would leave it firing at
+        # 03:15 under a summary that said "not scheduled" — the operator told
+        # the opposite of the truth in the one place they agreed to the plan.
+        # The units stay on disk; only the schedule stops, so turning it back on
+        # is one `systemctl enable --now` and not another deploy.
+        if [ -e "/etc/systemd/system/$BACKUP_TIMER_NAME" ]; then
+            sudo_run systemctl disable --now "$BACKUP_TIMER_NAME"
+            step_ok "schedule stopped; the units are left where they are"
+        else
+            step_skipped "not scheduled"
+        fi
         return 0
     fi
 
@@ -1520,7 +1532,7 @@ deploy_step_backup() {
     # version of ShelfOS or an operator's own hour and retention. The second is
     # a choice worth keeping, and nothing outside this file knows which of the
     # two it is looking at, so it asks.
-    local changed=0 name shipped target
+    local changed=0 kept=0 name shipped target
     for name in "$BACKUP_SERVICE_NAME" "$BACKUP_TIMER_NAME"; do
         shipped="$REPO_ROOT/deploy/$name"
         target="/etc/systemd/system/$name"
@@ -1534,6 +1546,7 @@ deploy_step_backup() {
             info ""
             if ! ask_yes_no "  Install this $name?" n; then
                 note "        kept the installed $name"
+                kept=1
                 continue
             fi
             sudo_run cp "$target" "$target.bak-$(date +%Y%m%d%H%M%S)"
@@ -1542,8 +1555,16 @@ deploy_step_backup() {
         changed=1
     done
 
-    if [ "$changed" = 1 ]; then
+    # Three outcomes, not two. "unchanged" over a declined diff would read as
+    # "what is installed is what this version ships", which is the opposite of
+    # what just happened — and the step's own line is the one people take away,
+    # not the note that scrolled past above it.
+    if [ "$changed" = 1 ] && [ "$kept" = 1 ]; then
+        step_ok "one installed, one kept as it was"
+    elif [ "$changed" = 1 ]; then
         step_ok
+    elif [ "$kept" = 1 ]; then
+        step_ok "kept what is installed"
     else
         step_skipped "unchanged"
     fi
@@ -1902,29 +1923,59 @@ cmd_status() {
         # The timer's state and the newest archive, because they fail apart:
         # an enabled timer whose service has been erroring every night looks
         # perfectly healthy until somebody looks at what it has produced.
-        local timer_state
+        local timer_state timer_fired=0
         timer_state=$(systemctl is-active "$BACKUP_TIMER_NAME" 2>/dev/null || true)
         if [ "$timer_state" = active ]; then
-            local next
+            local next last
             next=$(systemctl show "$BACKUP_TIMER_NAME" -p NextElapseUSecRealtime --value 2>/dev/null || true)
             # "n/a" is what a timer that has never been scheduled prints, and it
             # is not an answer anybody can act on.
             case ${next:-} in ""|n/a) next="unknown" ;; esac
             status_line "backups" "nightly, next $next"
+            # Whether it has ever fired, which is what separates "installed this
+            # afternoon and nothing has run yet" from "runs nightly and produces
+            # nothing".
+            last=$(systemctl show "$BACKUP_TIMER_NAME" -p LastTriggerUSecRealtime --value 2>/dev/null || true)
+            case ${last:-} in ""|n/a) ;; *) timer_fired=1 ;; esac
+        elif [ -e "/etc/systemd/system/$BACKUP_TIMER_NAME" ]; then
+            # Installed and not running: somebody disabled or masked it, which is
+            # a state to report as unhealthy rather than merely mention.
+            status_line "backups" "${C_YELLOW}installed but not running${C_OFF}"
+            healthy=1
         else
+            # Never installed — a deploy that declined the schedule, or an
+            # install older than it. A deliberate choice, so it is said and not
+            # counted against the install.
             status_line "backups" "${C_YELLOW}not scheduled${C_OFF}"
         fi
-        # Read as root or not at all: the directory is 0700, and a `find` that
-        # cannot enter it prints nothing, which would read as "no backups yet"
-        # to somebody who has plenty.
-        if [ -r "$BACKUP_DIR" ]; then
+
+        # Three answers, not two: the directory may be unreadable (0700 and no
+        # sudo) or simply absent — `backup create` makes it, so a machine
+        # deployed this afternoon has none. Reporting "run with sudo" to
+        # somebody already running under sudo sends them after a permission
+        # problem they do not have.
+        if [ ! -d "$BACKUP_DIR" ]; then
+            status_line "" "${C_YELLOW}no archive yet ($BACKUP_DIR does not exist)${C_OFF}"
+            [ "$timer_fired" = 0 ] || healthy=1
+        elif [ -r "$BACKUP_DIR" ]; then
             local newest
             newest=$(find "$BACKUP_DIR" -maxdepth 1 -name 'shelfos-backup-*.tar.gz' -printf '%T@ %p\n' 2>/dev/null \
                 | sort -rn | head -1 | cut -d' ' -f2-)
-            if [ -n "$newest" ]; then
-                status_line "" "newest $(basename "$newest") ($(du -h "$newest" 2>/dev/null | cut -f1), $(date -r "$newest" '+%Y-%m-%d %H:%M' 2>/dev/null))"
-            else
+            if [ -z "$newest" ]; then
                 status_line "" "${C_YELLOW}no archive in $BACKUP_DIR yet${C_OFF}"
+                # A timer that has fired and left nothing behind is a backup
+                # that is failing every night into its own journal.
+                [ "$timer_fired" = 0 ] || healthy=1
+            else
+                status_line "" "newest $(basename "$newest") ($(du -h "$newest" 2>/dev/null | cut -f1), $(date -r "$newest" '+%Y-%m-%d %H:%M' 2>/dev/null))"
+                # Nightly, so anything older than a week means several runs in a
+                # row produced nothing — the same failure, just with an archive
+                # old enough to be reassuring at a glance.
+                if [ "$timer_state" = active ] \
+                    && [ -z "$(find "$BACKUP_DIR" -maxdepth 1 -name 'shelfos-backup-*.tar.gz' -mtime -7 2>/dev/null)" ]; then
+                    status_line "" "${C_YELLOW}nothing newer than a week, on a nightly schedule${C_OFF}"
+                    healthy=1
+                fi
             fi
         else
             status_line "" "$BACKUP_DIR is root's; run with sudo to see the archives"
@@ -2174,6 +2225,18 @@ restore_password_guard() {
 # directory that is a symlink to external storage, and `chown -R` on a symlinked
 # operand changes the link rather than the tree behind it — so without this the
 # files stay root-owned and the service starts unable to write uploads.
+# The data directory handed to the service — except the archives, which are
+# root's. A plain `chown -R "$DATA_DIR"` is what this exists to replace: it
+# reaches /var/lib/shelfos/backups and gives every archive to the account the
+# web app runs as, so from that moment any file-read bug in the app yields every
+# password hash in the database. `backup create` puts the *directory* back with
+# `install -d -o root`, but nothing ever repairs the files inside it, so the
+# damage outlives the deploy that did it.
+hand_data_to_service() {
+    sudo_run find "$DATA_DIR" -path "$BACKUP_DIR" -prune -o \
+        -exec chown "$SERVICE_USER:$SERVICE_USER" {} +
+}
+
 give_data_back() {
     local db_path att_path
     db_path=$(readlink -f "${DEPLOY_DB#sqlite:///}" 2>/dev/null || printf '%s' "${DEPLOY_DB#sqlite:///}")

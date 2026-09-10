@@ -22,7 +22,14 @@ SQLite's online backup API, so there was never anything to stop.
 `status` now reports the pair that fails apart: when the timer next fires, and
 the newest archive with its date. An enabled timer firing every night into a
 service that has been erroring since a disk filled up looks perfectly healthy
-until somebody asks what it has produced.
+until somebody asks what it has produced — so it also exits non-zero on a timer
+that was stopped, on one that has fired and left nothing behind, and on a newest
+archive older than a week.
+
+The archives are `root`'s, and the deploy now keeps them that way: handing
+`/var/lib/shelfos` to the service user used to be a recursive `chown` over the
+whole tree, which reached the archives and gave every password hash in the
+database to the account the web app runs as.
 
 The hour and the retention are the operator's, so a re-deploy that finds an
 edited unit shows the difference and asks before replacing it, and `update`

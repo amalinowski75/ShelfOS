@@ -333,14 +333,27 @@ Three things about that schedule are worth knowing before the night you need it:
   night into a service that has been failing since a disk filled up, and nothing
   will say so. `./shelfos.sh status` prints the next firing *and* the newest
   archive with its date, which is the pair worth reading; `systemctl status
-  shelfos-backup` has the last run.
+  shelfos-backup` has the last run. `status` also fails — a non-zero exit, the
+  one machine-readable thing it produces — on a timer that was installed and
+  then stopped, on a timer that has fired and left nothing behind, and on a
+  newest archive older than a week under a nightly schedule. An install that
+  never had a schedule is reported and not counted against it: that one is a
+  choice somebody made.
 
 To move the hour or the retention, edit the installed
 `/etc/systemd/system/shelfos-backup.timer` (or `.service`) and
 `systemctl daemon-reload`. A later `deploy --reinstall` finds the difference,
 shows it, and asks before replacing it — answering no keeps yours, and the
 plain `update` path never touches either file. `deploy --no-backup-timer`
-installs without the schedule at all.
+installs without the schedule, and stops one that is already running: the units
+stay on disk, so turning it back on later is one `systemctl enable --now` rather
+than another deploy.
+
+The archives stay `root`'s across all of this. The deploy hands
+`/var/lib/shelfos` to the service user, but steps around
+`/var/lib/shelfos/backups` while doing it — a recursive `chown` over the tree
+would give every archive, and so every password hash in the database, to the
+account the web app runs as.
 
 ## Checking a change to this by hand
 
