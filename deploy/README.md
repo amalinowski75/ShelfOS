@@ -44,6 +44,48 @@ an unhandled exception becomes a 500 from Starlette's error middleware, which
 wraps the app's own header middleware, so that one response goes out without the
 security headers. Caddy adds them to everything.
 
+### Deploying again over a working install
+
+`deploy` recognises an install and stops; `--reinstall` walks the steps again,
+skipping what is already done — including moving `/opt/shelfos` to whatever the
+clone you run it from has checked out, branch and all. Without `--reinstall` the
+installed code is left where it is, because a plain deploy is not a licence to
+move somebody's running service. To follow a branch afterwards without a full
+re-deploy, `./shelfos.sh update --ref <branch>`; a plain `update` fast-forwards
+whatever the install is already on. It keeps the domain it finds in the Caddy config
+it wrote, so `sudo ./shelfos.sh deploy --reinstall` on an HTTPS server stays an
+HTTPS server; `--domain` overrides it and `--no-tls` turns it off. The
+certificate lives in Caddy's own storage, not in the config, so rewriting the
+config does not reissue anything.
+
+Where the unit differs from the one in this checkout — a new version usually
+changes it — the diff is shown and installing it is a question, because that
+file carries this machine's port and address. Answering no leaves the unit
+alone and stops.
+
+### Reaching it without a proxy
+
+The service binds 127.0.0.1, because with Caddy in front that is the only thing
+that should reach it. Without a proxy — a test container, a private bridge —
+that leaves it reachable from nowhere but the machine itself, and a forwarded
+port is a workaround for a decision rather than the decision:
+
+```bash
+sudo ./shelfos.sh deploy --no-tls --listen 0.0.0.0
+```
+
+`--no-tls` also writes `SHELFOS_COOKIE_SECURE=0`. A `Secure` session cookie is
+never sent back over plain HTTP, so without it the browser drops the session, the
+sign-in form's token has nothing to match, and every attempt says the form has
+expired — with nothing in the log, because nothing failed. Set it back to 1 the
+moment TLS goes in front.
+
+Then it answers at the machine's own address, which is also the address the
+label-printer page will offer for ssh. It is plain HTTP: fine on a bridge only
+you can reach, not fine anywhere a password matters. `./shelfos.sh status` reads
+the address back out of the unit, so it reports on the service that is actually
+running rather than on loopback.
+
 ## Doing it by hand
 
 The script does exactly this, and this is the only path on a host it refuses —
@@ -52,6 +94,7 @@ code in one place and the data in another, so replacing the code never touches
 the database:
 
 ```bash
+sudo apt install python3-venv git curl fonts-dejavu-core
 sudo useradd --system --home-dir /opt/shelfos --shell /usr/sbin/nologin shelfos
 sudo mkdir -p /opt/shelfos /var/lib/shelfos /etc/shelfos
 sudo git clone https://github.com/amalinowski75/ShelfOS.git /opt/shelfos
@@ -59,6 +102,42 @@ sudo python3 -m venv /opt/shelfos/.venv
 sudo /opt/shelfos/.venv/bin/pip install --editable /opt/shelfos
 sudo chown -R shelfos:shelfos /opt/shelfos /var/lib/shelfos
 ```
+
+`fonts-dejavu-core` is the one that looks optional and is not. A label is a
+bitmap, and drawing text into it needs a TTF on the host; a server has no desktop
+to have brought one, so without it every preview and every print fails with "no
+label font found". DejaVu is the first family ShelfOS looks for, so installing it
+is the whole of the fix — `SHELFOS_LABEL_FONT` is for a font of your own.
+
+A second account, for a label printer plugged into somebody else's machine (see
+`README.md`). It logs in over ssh and does one thing: bind the printer's port on
+this host. Not the service user — that one has no shell and a root-owned home, so
+sshd would refuse it, and giving it those would turn a confined service account
+into a login account:
+
+```bash
+sudo useradd --system --create-home --home-dir /var/lib/shelfos-tunnel \
+     --shell /usr/sbin/nologin --comment "ShelfOS label-printer tunnel" shelfos-tunnel
+sudo chmod 0700 /var/lib/shelfos-tunnel
+```
+
+It can do nothing until a key is authorised. Keys are not kept in its home: sshd
+refuses a key file owned by a third account, and ShelfOS has to write it so that a
+machine with a printer can register itself from the browser. So sshd is pointed at
+a command instead:
+
+```bash
+sudo install -D -m 0644 -o shelfos -g shelfos /dev/null /var/lib/shelfos/tunnel-keys
+sudo install -D -m 0755 -o root -g root /opt/shelfos/deploy/tunnel-keys.sh \
+     /usr/local/lib/shelfos/tunnel-keys     # replace @TUNNEL_USER@ / @TUNNEL_KEYS@
+sudoedit /etc/ssh/sshd_config.d/60-shelfos-tunnel.conf   # the Match block, see README.md
+sudo sshd -t && sudo systemctl reload ssh                # never reload an untested config
+```
+
+Put both names in `/etc/shelfos/env` (`SHELFOS_TUNNEL_USER`, `SHELFOS_TUNNEL_KEYS`)
+and the setup page fills the form in and registers keys by itself. Without them
+everything still works, with a key authorised by hand
+(`./shelfos.sh tunnel-key add`).
 
 Settings, readable by the service and nobody else — it holds the signing secret
 and every shop key:

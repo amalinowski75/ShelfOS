@@ -227,9 +227,7 @@ def test_update_rejects_a_non_web_url(session: Session) -> None:
         url="https://ok.example",
     )
     with pytest.raises(ValidationError):
-        ls.update_link(
-            session, link.id, kind=LinkKind.OTHER, url="javascript:alert(1)"
-        )
+        ls.update_link(session, link.id, kind=LinkKind.OTHER, url="javascript:alert(1)")
 
 
 def test_update_of_a_missing_link_is_not_found(session: Session) -> None:

@@ -34,9 +34,11 @@ WorkingDirectory=/opt/shelfos
 # checks and says which setting is wrong, which is the more useful message.
 EnvironmentFile=-/etc/shelfos/env
 
-# --host 127.0.0.1: the proxy is the only thing that should reach this. Binding
+# --host: written by shelfos.sh from --listen, 127.0.0.1 unless told otherwise.
+# Loopback because the proxy is the only thing that should reach this; binding
 # 0.0.0.0 publishes the app on the port directly, in plain HTTP, past every
-# certificate and header the proxy adds.
+# certificate and header the proxy adds. Worth it on a private bridge or a test
+# box, where the alternative is a port forward to reach it at all.
 #
 # No --reload: it watches the source tree and restarts on writes, which a server
 # has no use for.

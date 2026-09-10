@@ -186,7 +186,9 @@ def test_redirect_to_a_private_host_is_blocked(monkeypatch) -> None:  # type: ig
 
     monkeypatch.setattr(socket, "getaddrinfo", resolve)
     transport = httpx.MockTransport(
-        lambda req: httpx.Response(302, headers={"location": "http://internal.example/x"})
+        lambda req: httpx.Response(
+            302, headers={"location": "http://internal.example/x"}
+        )
     )
     with pytest.raises(ValidationError):
         url_fetch.fetch_url("https://public.example/a", transport=transport)
@@ -195,7 +197,9 @@ def test_redirect_to_a_private_host_is_blocked(monkeypatch) -> None:  # type: ig
 def test_too_many_redirects(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     _resolve_to(monkeypatch, "93.184.216.34")
     transport = httpx.MockTransport(
-        lambda req: httpx.Response(302, headers={"location": "https://example.com/loop"})
+        lambda req: httpx.Response(
+            302, headers={"location": "https://example.com/loop"}
+        )
     )
     with pytest.raises(ValidationError):
         url_fetch.fetch_url("https://example.com/loop", transport=transport)

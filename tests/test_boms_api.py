@@ -58,7 +58,12 @@ def test_report_has_summary_and_lines(client: TestClient) -> None:
     bom_id = _upload(client).json()["id"]
     report = client.get(f"/api/boms/{bom_id}/report").json()
     assert set(report["summary"]) >= {
-        "lines", "ok", "short", "out", "unresolved", "buildable",
+        "lines",
+        "ok",
+        "short",
+        "out",
+        "unresolved",
+        "buildable",
     }
     assert len(report["lines"]) == report["summary"]["lines"]
     # A freshly uploaded BOM has been assigned nothing, so nothing is resolved —
@@ -69,9 +74,7 @@ def test_report_has_summary_and_lines(client: TestClient) -> None:
 def test_assign_obvious_settles_the_unambiguous_lines(client: TestClient) -> None:
     """One request clears every line whose MPN admits only one component."""
     bom_id = _upload(client).json()["id"]
-    mpns = {
-        line["mpn"] for line in client.get(f"/api/boms/{bom_id}").json()["lines"]
-    }
+    mpns = {line["mpn"] for line in client.get(f"/api/boms/{bom_id}").json()["lines"]}
     mpn = next(m for m in mpns if m)
     ctype = client.post("/api/types", json={"name": "Resistor"}).json()
     client.post(
@@ -166,9 +169,7 @@ def test_assign_and_unassign_a_component_to_a_line(client: TestClient) -> None:
     assert row["stock"] == 25  # read from the assigned component
 
     assert (
-        client.delete(
-            f"/api/boms/{bom_id}/lines/{line['id']}/component"
-        ).status_code
+        client.delete(f"/api/boms/{bom_id}/lines/{line['id']}/component").status_code
         == 204
     )
     row = next(
@@ -287,9 +288,7 @@ def test_read_only_can_read_but_not_write(
         headers=headers,
     )
     assert ordered.status_code == 403
-    obvious = anon_client.post(
-        f"/api/boms/{bom_id}/assign-obvious", headers=headers
-    )
+    obvious = anon_client.post(f"/api/boms/{bom_id}/assign-obvious", headers=headers)
     assert obvious.status_code == 403
     # ...but reading the list, the detail and the report works.
     assert anon_client.get("/api/boms", headers=headers).status_code == 200

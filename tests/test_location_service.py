@@ -217,8 +217,13 @@ def test_update_location_renames_retypes_and_moves(session: Session) -> None:
     )
 
     updated = ls.update_location(
-        session, rack.id, name="Shelf X", type=LocationType.SHELF, parent_id=bench.id
-    , user_id=1)
+        session,
+        rack.id,
+        name="Shelf X",
+        type=LocationType.SHELF,
+        parent_id=bench.id,
+        user_id=1,
+    )
     assert (updated.name, updated.type, updated.parent_id) == (
         "Shelf X",
         LocationType.SHELF,

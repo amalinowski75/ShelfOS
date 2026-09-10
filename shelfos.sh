@@ -34,6 +34,31 @@ readonly ENV_FILE_SYSTEM="$ETC_DIR/env"
 readonly SERVICE_NAME="shelfos.service"
 readonly SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME"
 readonly SERVICE_USER="shelfos"
+# The account a machine with a label printer logs in as to carry it here. Its
+# own, and not the service user: that one is `--system --shell nologin` with a
+# root-owned home under ProtectHome=yes, so it has nowhere to keep an
+# authorized_keys and sshd would refuse it — and giving it those would turn a
+# deliberately confined service account into a login account, which is the
+# opposite of why it is confined. It also buys nothing: a reverse forward binds
+# the server's loopback whoever made it, and the service just connects to
+# 127.0.0.1 without caring whose session is holding the other end.
+readonly TUNNEL_USER="shelfos-tunnel"
+readonly TUNNEL_HOME="/var/lib/shelfos-tunnel"
+# The keys that account may be reached with. NOT ~/.ssh/authorized_keys: sshd
+# refuses a key file owned by a third account, and ShelfOS — which is a third
+# account here — has to be able to write it, so that a machine with a printer can
+# register itself from the browser instead of somebody logging in to this server.
+# So sshd is pointed at a command that prints this file, and the file is the
+# service's own data. What a key in it may DO is capped by the Match block below,
+# not by trusting whatever wrote the file.
+readonly TUNNEL_KEYS="$DATA_DIR/tunnel-keys"
+readonly TUNNEL_KEYS_COMMAND="/usr/local/lib/shelfos/tunnel-keys"
+readonly SSHD_BIN="/usr/sbin/sshd"
+# sshd's privilege-separation directory. systemd makes it when ssh starts
+# (RuntimeDirectory=sshd); `sshd -t` refuses to test anything without it.
+readonly SSHD_RUN_DIR="/run/sshd"
+readonly SSHD_DROPIN_DIR="/etc/ssh/sshd_config.d"
+readonly SSHD_DROPIN="$SSHD_DROPIN_DIR/60-shelfos-tunnel.conf"
 readonly CADDYFILE="/etc/caddy/Caddyfile"
 readonly UDEV_RULE="/etc/udev/rules.d/99-brother-ql.rules"
 readonly DEFAULT_PORT=9000
@@ -280,7 +305,11 @@ load_env_file() {
 # the whole production environment into their own process.
 env_file_value() {
     local file=$1 want=$2 line key value
-    [ -f "$file" ] || return 0
+    # -r, not just -f: /etc/shelfos/env is 640 root:shelfos, and an unreadable
+    # file used to fall through the redirect below with a bare "Permission
+    # denied" on stderr and an empty answer — which every caller then read as
+    # "unset" and quietly replaced with a default.
+    [ -r "$file" ] || return 0
     while IFS= read -r line || [ -n "$line" ]; do
         case $line in ''|'#'*) continue ;; esac
         line=${line#export }
@@ -294,6 +323,20 @@ env_file_value() {
         printf '%s' "$value"
         return 0
     done < "$file"
+}
+
+# A setting out of the INSTALLED settings file, which only root may read.
+#
+# Everything that decides where this command writes comes from here, so reading
+# it as an ordinary user and silently getting a default is not a degraded answer
+# but a wrong one: a key authorised into the wrong file, or for the wrong port,
+# fails exactly like a key nobody authorised.
+system_env_value() {
+    local want=$1
+    [ -e "$ENV_FILE_SYSTEM" ] || return 0
+    sudo_run cat "$ENV_FILE_SYSTEM" 2> /dev/null \
+        | sed -n "s/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}$want=//p" \
+        | head -1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
 }
 
 # ---------------------------------------------------------------------------
@@ -319,6 +362,17 @@ require_checkout() {
         [ -e "$REPO_ROOT/$f" ] || missing="$missing $f"
     done
     [ -z "$missing" ] || die 1 "this does not look like a ShelfOS checkout; missing:$missing"
+}
+
+# An address the service can bind: an IP literal, and nothing else. A name would
+# be resolved by uvicorn at start-up, which turns a typo or a DNS wobble into a
+# service that will not start, for a reason two layers down in the journal.
+valid_bind_address() {
+    python3 -c 'import ipaddress,sys; ipaddress.ip_address(sys.argv[1])' "$1" 2> /dev/null
+}
+
+is_loopback_address() {
+    python3 -c 'import ipaddress,sys; sys.exit(0 if ipaddress.ip_address(sys.argv[1]).is_loopback else 1)' "$1" 2> /dev/null
 }
 
 valid_port() {
@@ -362,6 +416,39 @@ is_deployed() { [ -e "$SERVICE_PATH" ] || [ -d "$INSTALL_DIR" ]; }
 # it. Deploy templates --port into ExecStart, so the unit is the one place that
 # knows; assuming the default here made `status` report a healthy install as
 # unreachable, and made `update` tell the operator to roll back a good update.
+# Which address the installed unit binds, read from the unit itself for the same
+# reason the port is: it is where the answer actually lives, and asking anywhere
+# else makes `status` report on a service nobody is running.
+# The domain an install already serves, out of the Caddy config it was given.
+#
+# A second deploy should not have to be told what the first one was told: asked
+# again without --domain, this install used to fall back to "no TLS", which on a
+# working HTTPS server means dropping the proxy from the summary and loosening
+# the session cookie — a re-run that quietly undoes the thing it is re-running.
+installed_domain() {
+    local domain="" file
+    # Our own site file first, and the shared Caddyfile only when it carries our
+    # marker: a Caddyfile serving somebody else's site names somebody else's
+    # domain, and inheriting that would point ShelfOS at a name that is not its.
+    for file in /etc/caddy/sites/shelfos.caddy "$CADDYFILE"; do
+        [ -r "$file" ] || continue
+        case $file in
+            "$CADDYFILE") grep -qF "$CADDY_MARKER" "$file" 2>/dev/null || continue ;;
+        esac
+        domain=$(sed -n 's/^\([A-Za-z0-9][A-Za-z0-9.-]*\)[[:space:]]*{[[:space:]]*$/\1/p' "$file" | head -1)
+        [ -n "$domain" ] && break
+    done
+    printf '%s' "$domain"
+}
+
+installed_listen() {
+    local host=""
+    if [ -r "$SERVICE_PATH" ]; then
+        host=$(sed -n 's/^[[:space:]]*--host[[:space:]]\{1,\}\([^[:space:]\\]\{1,\}\).*/\1/p' "$SERVICE_PATH" | head -1)
+    fi
+    printf '%s' "${host:-127.0.0.1}"
+}
+
 installed_port() {
     local port=""
     if [ -r "$SERVICE_PATH" ]; then
@@ -378,10 +465,16 @@ gen_secret() {
 }
 
 # health_probe PORT SECONDS — poll /health until it answers or time runs out.
+# health_probe PORT SECONDS [HOST] — wait for /health to answer.
+#
+# HOST because a service that binds one address does not answer on another, and
+# asking the wrong one reads as "it never started". A wildcard bind is asked at
+# loopback, which it answers and which needs no route.
 health_probe() {
-    local port=$1 seconds=$2 waited=0
+    local port=$1 seconds=$2 host=${3:-127.0.0.1} waited=0
+    case $host in 0.0.0.0|::|"") host=127.0.0.1 ;; esac
     while [ "$waited" -lt "$seconds" ]; do
-        if curl -fsS --max-time 2 "http://127.0.0.1:$port/health" > /dev/null 2>&1; then
+        if curl -fsS --max-time 2 "http://$host:$port/health" > /dev/null 2>&1; then
             return 0
         fi
         sleep 1
@@ -557,6 +650,8 @@ settings in /etc/shelfos/env, a systemd unit, and Caddy holding the certificate.
   --port N               port the service listens on (default 9000)
   --admin-user NAME      first admin's username (default admin)
   --admin-password-stdin read the first admin's password from stdin
+  --listen ADDRESS       address the service binds (default 127.0.0.1; 0.0.0.0
+                         to reach it from another machine, in plain HTTP)
   --no-caddy             install the service only; arrange TLS yourself
   --no-tls               no domain, no Caddy (implies --no-caddy)
   --printer/--no-printer keep or strip the label-printer support
@@ -578,6 +673,21 @@ DEPLOY_PORT=""
 DEPLOY_ADMIN_USER="admin"
 DEPLOY_ADMIN_PASSWORD=""
 DEPLOY_WANT_CADDY=1
+# Whether anything will terminate TLS in front of this. Not the same question as
+# "is Caddy being installed": --no-caddy means somebody is arranging their own,
+# --no-tls means nobody is. The session cookie's Secure flag follows this, and
+# getting it wrong makes signing in impossible with nothing in the log to say so.
+DEPLOY_WANT_TLS=1
+# Which address the service binds. Loopback by default: with a proxy in front
+# that is the only thing that should reach it, and a plain-HTTP port on a network
+# interface carries sign-ins in the clear. Anything else is asked for explicitly.
+DEPLOY_LISTEN="127.0.0.1"
+# Set by any step that changes what a running service is executing. `enable
+# --now` starts a stopped service and does nothing to a running one, so without
+# this a re-deploy would leave the old process serving the old code — with the
+# new templates on disk, which is a service that half-changed: a new link in the
+# navigation, and a 404 behind it, because routes are registered at import.
+DEPLOY_RESTART=0
 DEPLOY_WANT_PRINTER=""
 DEPLOY_PRINTER_GROUP="plugdev"
 DEPLOY_IMPORT_DB=""
@@ -657,6 +767,15 @@ deploy_gather() {
         DEPLOY_PORT=$DEFAULT_PORT
     fi
     valid_port "$DEPLOY_PORT" || die 2 "port must be a number between 1 and 65535, not '$DEPLOY_PORT'"
+    valid_bind_address "$DEPLOY_LISTEN" \
+        || die 2 "--listen takes an IP address, not '$DEPLOY_LISTEN' (0.0.0.0 for every interface)"
+
+    # What this machine already serves, when nobody said otherwise. Only ever a
+    # starting point: --domain overrides it, --no-tls turns the whole thing off.
+    if [ "$DEPLOY_WANT_CADDY" = 1 ] && [ -z "$DEPLOY_DOMAIN" ]; then
+        DEPLOY_DOMAIN=$(installed_domain)
+        [ -z "$DEPLOY_DOMAIN" ] || note "        keeping the domain this install serves: $DEPLOY_DOMAIN"
+    fi
 
     if [ "$DEPLOY_WANT_CADDY" = 1 ] && [ -z "$DEPLOY_DOMAIN" ]; then
         if [ "$DRY_RUN" = 1 ] || ! have_tty; then
@@ -664,7 +783,7 @@ deploy_gather() {
         else
             while :; do
                 ask_value DEPLOY_DOMAIN "Hostname Caddy should serve (blank for no TLS)" ""
-                [ -n "$DEPLOY_DOMAIN" ] || { DEPLOY_WANT_CADDY=0; break; }
+                [ -n "$DEPLOY_DOMAIN" ] || { DEPLOY_WANT_CADDY=0; DEPLOY_WANT_TLS=0; break; }
                 case $DEPLOY_DOMAIN in
                     *.*[!.]) break ;;
                     *) warn "that does not look like a hostname" ;;
@@ -722,10 +841,19 @@ deploy_summary() {
         info "  settings        $ENV_FILE_SYSTEM  (new, with a generated secret key)"
     fi
     info "  service         $SERVICE_NAME  port $DEPLOY_PORT, user $SERVICE_USER"
-    if [ "$DEPLOY_WANT_CADDY" = 1 ]; then
+    if [ "$DEPLOY_WANT_CADDY" = 1 ] && ! is_loopback_address "$DEPLOY_LISTEN"; then
+        # Both at once is almost certainly not what somebody meant: the app is
+        # then reachable past the proxy, so the certificate, the security
+        # headers Caddy adds and the trusted-proxy setting all apply to one way
+        # in and not to the other.
         info "  proxy           Caddy on $DEPLOY_DOMAIN"
+        info "  ${C_YELLOW}                and $DEPLOY_LISTEN:$DEPLOY_PORT directly, in plain HTTP, past it${C_OFF}"
+    elif [ "$DEPLOY_WANT_CADDY" = 1 ]; then
+        info "  proxy           Caddy on $DEPLOY_DOMAIN"
+    elif is_loopback_address "$DEPLOY_LISTEN"; then
+        info "  proxy           none — reachable at $DEPLOY_LISTEN:$DEPLOY_PORT, from this machine only"
     else
-        info "  proxy           none — the service listens on 127.0.0.1:$DEPLOY_PORT only"
+        info "  proxy           ${C_YELLOW}none — $DEPLOY_LISTEN:$DEPLOY_PORT, in plain HTTP, to anything that can reach it${C_OFF}"
     fi
     if [ "$DEPLOY_WANT_PRINTER" = 1 ]; then
         info "  label printer   kept, group $DEPLOY_PRINTER_GROUP, udev rule installed"
@@ -756,8 +884,9 @@ cmd_deploy() {
             --port)                 DEPLOY_PORT=${2:-}; shift 2 ;;
             --admin-user)           DEPLOY_ADMIN_USER=${2:-}; shift 2 ;;
             --admin-password-stdin) IFS= read -r DEPLOY_ADMIN_PASSWORD || true; shift ;;
+            --listen)               DEPLOY_LISTEN=${2:-}; shift 2 ;;
             --no-caddy)             DEPLOY_WANT_CADDY=0; shift ;;
-            --no-tls)               DEPLOY_WANT_CADDY=0; DEPLOY_DOMAIN=""; shift ;;
+            --no-tls)               DEPLOY_WANT_CADDY=0; DEPLOY_WANT_TLS=0; DEPLOY_DOMAIN=""; shift ;;
             --printer)              DEPLOY_WANT_PRINTER=1; shift ;;
             --no-printer)           DEPLOY_WANT_PRINTER=0; shift ;;
             --import-db)            DEPLOY_IMPORT_DB=${2:-}; shift 2 ;;
@@ -781,13 +910,17 @@ cmd_deploy() {
     fi
 
     trap 'deploy_failed' ERR
-    STEP_TOTAL=12
+    STEP_TOTAL=13
     STEP_INDEX=0
 
     deploy_step_packages
     deploy_step_caddy_package
     deploy_step_user
     deploy_step_dirs
+    # After the directories: the key store lives in the data directory, and this
+    # step writes it. Before the unit and the service: nothing here needs the
+    # service, and a printer registering itself needs sshd told about it first.
+    deploy_step_tunnel
     deploy_step_code
     deploy_step_venv
     deploy_step_env
@@ -802,7 +935,12 @@ cmd_deploy() {
 deploy_step_packages() {
     step "system packages"
     local missing="" pkg
-    for pkg in python3-venv git curl; do
+    # fonts-dejavu-core is not decoration: a label is a bitmap, and without a
+    # TTF on the host nothing can be drawn — no preview, no printing, and a
+    # server install has no desktop to have brought one. DejaVu is the first
+    # family the renderer looks for, so installing it needs no setting to go
+    # with it (see _FONT_CANDIDATES in app/services/label_printer.py).
+    for pkg in python3-venv git curl fonts-dejavu-core; do
         dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "^install ok installed$" || missing="$missing $pkg"
     done
     if [ -z "$missing" ]; then
@@ -872,6 +1010,242 @@ deploy_step_user() {
     step_ok
 }
 
+# The port the tunnel is allowed to bind, and the only one. Taken from the
+# installed setting so the key's permission and the service's expectation cannot
+# drift apart; 9100 when there is nothing to read, which is the same default the
+# setup page offers.
+tunnel_port() {
+    local device port
+    device=$(system_env_value SHELFOS_LABEL_DEVICE)
+    case $device in
+        tcp://*)
+            port=${device##*:}
+            if valid_port "$port"; then printf '%s' "$port"; return 0; fi ;;
+    esac
+    printf '9100'
+}
+
+# The Match block. Everything a registered key may do is here rather than in the
+# key's own options, so it holds however the key got there: remote forwarding of
+# one loopback port, no session, no other port, nothing outbound. `Match all` at
+# the end is load-bearing — drop-ins are included at the TOP of sshd_config, and
+# a Match block left open would swallow the whole global configuration after it.
+sshd_dropin_body() {
+    printf '%s\n' \
+        "# Written by shelfos.sh. Lets a machine with a label printer reach this" \
+        "# host over ssh, and nothing else. Remove this file and the printer" \
+        "# tunnel stops working; nothing else changes." \
+        "Match User $TUNNEL_USER" \
+        "    AuthorizedKeysCommand $TUNNEL_KEYS_COMMAND %u" \
+        "    AuthorizedKeysCommandUser root" \
+        "    AllowTcpForwarding remote" \
+        "# Both spellings of one binding: a client that asks for a bare port sends" \
+        "# no address at all, and sshd matches what was ASKED against this list —" \
+        "# so an entry that only names the address it would resolve to can refuse" \
+        "# a request for exactly that. Neither reaches beyond loopback." \
+        "    PermitListen 127.0.0.1:$(tunnel_port) localhost:$(tunnel_port)" \
+        "    PermitOpen none" \
+        "    PermitTTY no" \
+        "    AllowAgentForwarding no" \
+        "    X11Forwarding no" \
+        "    PermitTunnel no" \
+        "    ForceCommand /usr/sbin/nologin" \
+        "Match all"
+}
+
+deploy_step_tunnel() {
+    step "tunnel account"
+    deploy_tunnel_account
+    deploy_tunnel_keys_file
+    deploy_tunnel_sshd
+    # An install made before this existed keeps its own settings file — it holds
+    # the signing secret and the shop keys, so it is never replaced — and would
+    # otherwise never learn these two. Without them the page cannot fill the
+    # account in and cannot register a printer, on a server that is set up for
+    # both. Only ever fills in what is missing or empty; an answer already there
+    # is somebody's decision.
+    set_env_setting SHELFOS_TUNNEL_USER "$TUNNEL_USER"
+    set_env_setting SHELFOS_TUNNEL_KEYS "$TUNNEL_KEYS"
+    if [ "$DEPLOY_WANT_TLS" = 0 ]; then
+        set_env_setting SHELFOS_COOKIE_SECURE 0
+    fi
+}
+
+# set_env_setting KEY VALUE — give a setting a value in the installed env file,
+# if it has none. Reads and rewrites the whole file rather than appending: a key
+# that is present but empty (as the template ships it) has to be filled in, not
+# repeated further down where the second line would win and the first would
+# confuse whoever read the file next.
+set_env_setting() {
+    local key=$1 value=$2 line current="" output="" seen=0 changed=0
+    [ -f "$ENV_FILE_SYSTEM" ] || return 0
+    current=$(sudo_run cat "$ENV_FILE_SYSTEM") || return 0
+    [ -n "$current" ] || return 0
+    local existing
+    while IFS= read -r line || [ -n "$line" ]; do
+        case $line in
+            "$key="*)
+                seen=1
+                existing=${line#"$key="}
+                if [ -n "$existing" ]; then
+                    # Already answered. Even an answer that disagrees with what
+                    # this deploy would have written is somebody's, and a deploy
+                    # is not the place to overrule it.
+                    output="$output$line"$'\n'
+                else
+                    output="$output$key=$value"$'\n'
+                    changed=1
+                fi ;;
+            *) output="$output$line"$'\n' ;;
+        esac
+    done <<< "$current"
+    if [ "$seen" = 0 ]; then
+        output="$output$key=$value"$'\n'
+        changed=1
+    fi
+    [ "$changed" = 1 ] || return 0
+    printf '%s' "$output" | write_file "$ENV_FILE_SYSTEM" 640 "root:$SERVICE_USER"
+    # The running process read this file once, at start-up. This is the whole
+    # path this function exists for — a --reinstall over an install that
+    # predates these settings, where nothing else changed — so without it the
+    # deploy succeeds and the app goes on with the old environment.
+    DEPLOY_RESTART=1
+    info "set $key in $ENV_FILE_SYSTEM"
+}
+
+deploy_tunnel_account() {
+    if getent passwd "$TUNNEL_USER" > /dev/null 2>&1; then
+        step_skipped "account exists"
+        return 0
+    fi
+    # Inert until a key is authorised: no password, no shell, and an empty
+    # authorized_keys. `nologin` is not a problem for what it is for — a reverse
+    # forward opens no session, so the shell is never run — and it means the
+    # account cannot be used for anything else even if a key's restrictions were
+    # ever loosened.
+    sudo_run useradd --system --create-home --home-dir "$TUNNEL_HOME" \
+        --shell /usr/sbin/nologin --comment "ShelfOS label-printer tunnel" "$TUNNEL_USER"
+    sudo_run chmod 0700 "$TUNNEL_HOME"
+    step_ok "$TUNNEL_USER"
+}
+
+deploy_tunnel_keys_file() {
+    # Owned by the service, so it can register a machine on its own; world
+    # readable, because the command sshd runs reads it, and a public key is
+    # public. Never truncated here — an existing one holds machines that work.
+    if [ -e "$TUNNEL_KEYS" ]; then
+        step_skipped "keeping the registered machines"
+    else
+        sudo_run install -m 0644 -o "$SERVICE_USER" -g "$SERVICE_USER" \
+            /dev/null "$TUNNEL_KEYS"
+    fi
+}
+
+# Whether sshd accepts the configuration as it now stands.
+#
+# `sshd -t` refuses to test anything at all when its run directory is missing —
+# "Missing privilege separation directory" — and on a machine where ssh has
+# never started, it IS missing: systemd makes it (RuntimeDirectory=sshd) when
+# the service comes up. A deploy on a fresh container therefore fails its own
+# check for a reason that has nothing to do with what it wrote. Making the
+# directory is exactly what ssh.service does, costs nothing, and does not
+# survive a reboot.
+sshd_config_is_good() {
+    [ -d "$SSHD_RUN_DIR" ] || sudo_run install -d -m 0755 -o root -g root "$SSHD_RUN_DIR"
+    sudo_run "$SSHD_BIN" -t
+}
+
+deploy_tunnel_sshd() {
+    # No sshd, nothing to configure: a server nobody can ssh into cannot carry a
+    # tunnel either, and installing an ssh server unasked is not this script's
+    # business.
+    if [ ! -d "$SSHD_DROPIN_DIR" ] || [ ! -x "$SSHD_BIN" ]; then
+        warn "no ssh server here, so a printer cannot register itself; install openssh-server and run this again"
+        return 0
+    fi
+    sudo_run install -d -m 0755 -o root -g root "$(dirname "$TUNNEL_KEYS_COMMAND")"
+    sed -e "s|@TUNNEL_USER@|$TUNNEL_USER|g" -e "s|@TUNNEL_KEYS@|$TUNNEL_KEYS|g" \
+        "$REPO_ROOT/deploy/tunnel-keys.sh" | write_file "$TUNNEL_KEYS_COMMAND" 755 "root:root"
+
+    if [ "$DRY_RUN" = 0 ] && [ -f "$SSHD_DROPIN" ] \
+        && [ "$(sudo cat "$SSHD_DROPIN" 2>/dev/null || true)" = "$(sshd_dropin_body)" ]; then
+        step_skipped "sshd already configured"
+        return 0
+    fi
+    sshd_dropin_body | write_file "$SSHD_DROPIN" 644 "root:root"
+
+    # Validated before anything is reloaded, and withdrawn if WE are what it
+    # rejects: a bad sshd config that gets reloaded is how somebody loses the
+    # only way into their own server. `reload` rather than `restart` for the same
+    # reason — open sessions, including the one running this, survive it.
+    if [ "$DRY_RUN" = 0 ]; then
+        if ! sshd_config_is_good; then
+            sudo_run rm -f "$SSHD_DROPIN"
+            if sshd_config_is_good; then
+                die 1 "sshd rejected the configuration this would have added, so it was removed and nothing was reloaded"
+            fi
+            # It rejects the configuration WITHOUT ours as well, so ours is not
+            # what is wrong and withdrawing it fixes nothing. Put it back, and
+            # say so rather than blaming this deploy for what was already there.
+            sshd_dropin_body | write_file "$SSHD_DROPIN" 644 "root:root"
+            warn "sshd will not validate its own existing configuration, so this one could not be checked; run 'sudo sshd -t' and fix what it reports"
+            step_ok "sshd configuration written but not verified"
+            return 0
+        fi
+        # A validated config that could not be reloaded is not a failed install:
+        # sshd may simply not be running here yet, and it reads this file when it
+        # starts. Ending the deploy at this point would leave the service
+        # installed and stopped over something that fixes itself.
+        if sudo_run systemctl reload ssh 2> /dev/null \
+            || sudo_run systemctl reload sshd 2> /dev/null; then
+            :
+        elif systemctl is-active --quiet ssh.socket 2> /dev/null; then
+            # Socket activation (Ubuntu 22.10 and later): there is no long-lived
+            # sshd to reload, because one is started per connection and reads
+            # this file as it starts. Nothing to do, and nothing to report.
+            :
+        else
+            warn "sshd would not reload; the configuration is in place and valid, and applies the next time it starts"
+        fi
+        deploy_tunnel_sshd_check
+    fi
+    step_ok "sshd will take registered printers"
+}
+
+# Ask sshd what it will actually do for this account, rather than trusting that
+# a file we wrote is a file that applies.
+#
+# On a server somebody else set up, two things can quietly undo all of it, and
+# both look identical from the machine with the printer -- "Permission denied",
+# which the installer would report as a key nobody has authorised:
+#
+#   * AllowUsers/AllowGroups naming the humans who may log in. It cannot go in a
+#     Match block, so nothing in our file can add this account to it;
+#   * a Match block of theirs later in the configuration, which for a connection
+#     matching both would win on the settings it repeats.
+deploy_tunnel_sshd_check() {
+    local effective
+    effective=$(sudo_run "$SSHD_BIN" -T \
+        -C "user=$TUNNEL_USER,host=localhost,addr=127.0.0.1" 2> /dev/null || true)
+    [ -n "$effective" ] || return 0
+
+    case $effective in
+        *"allowusers "*|*"allowgroups "*)
+            if ! printf '%s\n' "$effective" \
+                | grep -Eq "^allow(users|groups) (.* )?$TUNNEL_USER( |\$)"; then
+                warn "this sshd only admits named accounts, and $TUNNEL_USER is not among them:"
+                printf '%s\n' "$effective" | grep -E '^allow(users|groups) ' >&2
+                warn "add it there, or no printer will be able to connect however its key is authorised"
+            fi ;;
+    esac
+
+    if ! printf '%s\n' "$effective" | grep -qi "^permitlisten .*:$(tunnel_port)"; then
+        warn "sshd does not apply this configuration to $TUNNEL_USER — something later in
+    /etc/ssh/sshd_config overrides it. Check with:
+        sudo sshd -T -C user=$TUNNEL_USER,host=localhost,addr=127.0.0.1 | grep -i permitlisten"
+    fi
+}
+
 deploy_step_dirs() {
     step "directories"
     local made=""
@@ -884,10 +1258,56 @@ deploy_step_dirs() {
     if [ -z "$made" ]; then step_skipped "all exist"; else step_ok; fi
 }
 
+# Bring an installed checkout to what is being deployed, on --reinstall.
+#
+# It used to be skipped outright as "already a checkout", which made --reinstall
+# unable to do the one thing its own help promises — repair an install — and made
+# deploying a different branch impossible: the code stayed at whatever was cloned
+# first, every later step succeeded, and the only symptom was a feature that
+# never appeared. Without --reinstall it is still skipped, because a plain deploy
+# is not a licence to move somebody's running code.
+deploy_reinstall_code() {
+    if [ "$DEPLOY_REINSTALL" = 0 ]; then
+        step_skipped "already a checkout — use --reinstall to move it to this one"
+        return 0
+    fi
+    if [ "$DEPLOY_SOURCE_SHA" = "no git" ]; then
+        step_skipped "deploying from a copy without git history; leaving the checkout alone"
+        return 0
+    fi
+
+    local installed dirty branch
+    installed=$(sudo_run git -C "$INSTALL_DIR" rev-parse --short HEAD 2>/dev/null || printf 'unknown')
+    if [ "$installed" = "$DEPLOY_SOURCE_SHA" ]; then
+        step_skipped "already at $installed"
+        return 0
+    fi
+    dirty=$(sudo_run git -C "$INSTALL_DIR" status --porcelain 2>/dev/null || true)
+    if [ -n "$dirty" ]; then
+        printf '%s\n' "$dirty" >&2
+        die 1 "$INSTALL_DIR has hand-edited files (above); revert them or move them aside first"
+    fi
+
+    # Fetched from the clone being deployed, not from the network: this is the
+    # code the operator is looking at, which is the whole point of deploying
+    # from it. The remote stays whatever it was, so `update` still pulls from
+    # GitHub afterwards.
+    branch=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'HEAD')
+    sudo_run git -C "$INSTALL_DIR" fetch --quiet "$REPO_ROOT" HEAD
+    if [ "$branch" = "HEAD" ]; then
+        # A detached source: there is no branch name worth reproducing.
+        sudo_run git -C "$INSTALL_DIR" checkout --quiet --detach FETCH_HEAD
+    else
+        sudo_run git -C "$INSTALL_DIR" checkout --quiet -B "$branch" FETCH_HEAD
+    fi
+    DEPLOY_RESTART=1
+    step_ok "$installed → $DEPLOY_SOURCE_SHA ($branch)"
+}
+
 deploy_step_code() {
     step "code → $INSTALL_DIR"
     if [ -d "$INSTALL_DIR/.git" ]; then
-        step_skipped "already a checkout"
+        deploy_reinstall_code
         return 0
     fi
     if [ "$DEPLOY_SOURCE_SHA" = "no git" ]; then
@@ -926,6 +1346,7 @@ deploy_step_venv() {
         sudo_run "$INSTALL_DIR/.venv/bin/pip" install --quiet --upgrade pip
         sudo_run "$INSTALL_DIR/.venv/bin/pip" install --quiet --editable "$INSTALL_DIR"
         sudo_run touch "$INSTALL_DIR/.venv/.shelfos-installed"
+        DEPLOY_RESTART=1
         step_ok
     fi
     # The data is the service's; the code is not. ProtectSystem=strict already
@@ -972,6 +1393,16 @@ render_env_file() {
             SHELFOS_SECRET_KEY)    printf 'SHELFOS_SECRET_KEY=%s\n' "$secret" ;;
             SHELFOS_ADMIN_USERNAME) printf 'SHELFOS_ADMIN_USERNAME=%s\n' "$DEPLOY_ADMIN_USER" ;;
             SHELFOS_ADMIN_PASSWORD) printf 'SHELFOS_ADMIN_PASSWORD=%s\n' "$DEPLOY_ADMIN_PASSWORD" ;;
+            SHELFOS_TUNNEL_USER)   printf 'SHELFOS_TUNNEL_USER=%s\n' "$TUNNEL_USER" ;;
+            SHELFOS_TUNNEL_KEYS)   printf 'SHELFOS_TUNNEL_KEYS=%s\n' "$TUNNEL_KEYS" ;;
+            \#SHELFOS_COOKIE_SECURE|SHELFOS_COOKIE_SECURE)
+                # Secure cookies over plain HTTP mean a sign-in that can never
+                # complete, and nothing anywhere saying why.
+                if [ "$DEPLOY_WANT_TLS" = 1 ]; then
+                    printf '#SHELFOS_COOKIE_SECURE=0\n'
+                else
+                    printf 'SHELFOS_COOKIE_SECURE=0\n'
+                fi ;;
             \#SHELFOS_LABEL_DEVICE|SHELFOS_LABEL_DEVICE)
                 if [ "$DEPLOY_WANT_PRINTER" = 1 ]; then
                     printf 'SHELFOS_LABEL_DEVICE=/dev/shelfos-label\n'
@@ -1011,9 +1442,10 @@ deploy_step_unit() {
     step "systemd unit"
     local rendered tmp
     tmp=$(mktemp "${TMPDIR:-/tmp}/shelfos-unit.XXXXXX")
-    # The unit in deploy/ is the source of truth; only the port and the printer
-    # block are decided here.
-    sed -e "s|^    --port [0-9]*|    --port $DEPLOY_PORT|" \
+    # The unit in deploy/ is the source of truth; only the address, the port and
+    # the printer block are decided here.
+    sed -e "s|^    --host .*|    --host $DEPLOY_LISTEN \\\\|" \
+        -e "s|^    --port [0-9]*|    --port $DEPLOY_PORT|" \
         -e "s|^SupplementaryGroups=.*|SupplementaryGroups=$DEPLOY_PRINTER_GROUP|" \
         "$REPO_ROOT/deploy/shelfos.service" > "$tmp"
     if [ "$DEPLOY_WANT_PRINTER" = 0 ]; then
@@ -1037,10 +1469,17 @@ deploy_step_unit() {
             sudo_run cp "$SERVICE_PATH" "$SERVICE_PATH.bak-$(date +%Y%m%d%H%M%S)"
         fi
         printf '%s\n' "$rendered" | write_file "$SERVICE_PATH" 644 "root:root"
+        DEPLOY_RESTART=1
         step_ok
     fi
     sudo_run systemctl daemon-reload
     sudo_run systemctl enable --now "$SERVICE_NAME"
+    if [ "$DEPLOY_RESTART" = 1 ]; then
+        # `enable --now` does nothing to a service that is already running, and
+        # what changed above is exactly what a running one has already loaded.
+        note "        restarting: what it is running changed"
+        sudo_run systemctl restart "$SERVICE_NAME"
+    fi
 }
 
 deploy_step_printer() {
@@ -1058,8 +1497,16 @@ deploy_step_printer() {
     else
         printf '# Installed by shelfos.sh — a stable name and a group the service is in.\n%s\n' "$rule" \
             | write_file "$UDEV_RULE" 644 "root:root"
-        sudo_run udevadm control --reload
-        sudo_run udevadm trigger --subsystem-match=usbmisc
+        # Applying the rule may not be possible, and that is not a failed
+        # install. In a container /sys is not writable even for root, so
+        # `udevadm trigger` reports "Permission denied" for every device it can
+        # see and exits non-zero — which used to end the deploy at this step,
+        # having installed everything and started nothing. The rule is written
+        # either way, and takes effect when the printer is next plugged in.
+        if ! sudo_run udevadm control --reload \
+            || ! sudo_run udevadm trigger --subsystem-match=usbmisc; then
+            warn "udev would not re-apply the rule to what is already plugged in (normal in a container, where /sys is read-only). The rule is installed; replug the printer, or reboot, for it to take effect."
+        fi
         step_ok "group $DEPLOY_PRINTER_GROUP"
     fi
     # Say now whether the rule matched. A missing symlink here is far easier to
@@ -1132,12 +1579,12 @@ deploy_step_verify() {
         step_skipped "dry run"
         return 0
     fi
-    if health_probe "$DEPLOY_PORT" 30; then
+    if health_probe "$DEPLOY_PORT" 30 "$DEPLOY_LISTEN"; then
         step_ok
     else
         step_ok "no answer within 30 seconds"
         info ""
-        warn "ShelfOS did not answer on 127.0.0.1:$DEPLOY_PORT within 30 seconds."
+        warn "ShelfOS did not answer on $DEPLOY_LISTEN:$DEPLOY_PORT within 30 seconds."
         info ""
         systemctl status "$SERVICE_NAME" --no-pager -l 2>&1 | head -20 >&2 || true
         info ""
@@ -1150,12 +1597,30 @@ deploy_step_verify() {
     fi
     info ""
     info "${C_GREEN}ShelfOS is running.${C_OFF}"
+    if [ "$DEPLOY_WANT_CADDY" = 1 ] && ! is_loopback_address "$DEPLOY_LISTEN"; then
+        warn "The service also answers directly on $DEPLOY_LISTEN:$DEPLOY_PORT, in plain HTTP,"
+        warn "which is a way in that skips Caddy's certificate and its headers. Deploy"
+        warn "without --listen if that was not deliberate."
+    fi
     if [ "$DEPLOY_WANT_CADDY" = 1 ]; then
         info "  https://$DEPLOY_DOMAIN  (Caddy will get the certificate on the first request;"
         info "  the name has to resolve here and ports 80 and 443 have to be open — 80 too,"
         info "  because that is how the certificate is issued and renewed)"
+    elif is_loopback_address "$DEPLOY_LISTEN"; then
+        info "  http://$DEPLOY_LISTEN:$DEPLOY_PORT  — put your own TLS in front of it"
+        info ""
+        info "  Nothing outside this machine can reach that. To open it up, either put a"
+        info "  proxy in front of it, or re-run with --listen 0.0.0.0, which serves it"
+        info "  directly in plain HTTP — sign-ins and all — to whatever can route here."
     else
-        info "  http://127.0.0.1:$DEPLOY_PORT  — put your own TLS in front of it"
+        info "  http://$DEPLOY_LISTEN:$DEPLOY_PORT  — plain HTTP, on every network that can reach it"
+        info ""
+        warn "This carries sign-ins in the clear. Fine on a private bridge or a test box;"
+        warn "put TLS in front of it before anybody types a real password into it."
+        info ""
+        info "  The session cookie is not marked Secure here (SHELFOS_COOKIE_SECURE=0),"
+        info "  because a Secure one is never sent back over plain HTTP and signing in"
+        info "  would fail with nothing to say why. Set it to 1 when TLS goes in front."
     fi
     info "  ./shelfos.sh status     what state it is in"
     info "  ./shelfos.sh backup     take one now; nothing else does it for you"
@@ -1221,7 +1686,12 @@ cmd_update() {
     after=$(sudo_run git -C "$INSTALL_DIR" rev-parse --short HEAD)
 
     if [ "$before" = "$after" ]; then
-        info "Already at $after; nothing to update."
+        local branch; branch=$(sudo_run git -C "$INSTALL_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')
+        info "Already at $after on $branch; nothing to update."
+        # The confusion this exists to prevent: an update that succeeds, changes
+        # nothing, and leaves somebody looking for a feature that is on another
+        # branch entirely.
+        info "  Another branch: ./shelfos.sh update --ref <branch>"
     else
         info "$before → $after"
         sudo_run git -C "$INSTALL_DIR" --no-pager log --oneline "$before..$after" >&2 || true
@@ -1247,7 +1717,7 @@ cmd_update() {
 
     if [ "$want_restart" = 1 ]; then
         sudo_run systemctl restart "$SERVICE_NAME"
-        if health_probe "$port" 30; then
+        if health_probe "$port" 30 "$(installed_listen)"; then
             info "${C_GREEN}Updated and answering.${C_OFF}"
         else
             warn "ShelfOS did not come back on port $port."
@@ -1294,11 +1764,11 @@ cmd_status() {
         status_line "service" "${active:-unknown} (${enabled:-unknown} at boot)"
         [ "$active" = active ] || healthy=1
 
-        local port; port=$(installed_port)
-        if health_probe "$port" 1; then
-            status_line "health" "answering on 127.0.0.1:$port"
+        local port listen; port=$(installed_port); listen=$(installed_listen)
+        if health_probe "$port" 1 "$listen"; then
+            status_line "health" "answering on $listen:$port"
         else
-            status_line "health" "no answer on 127.0.0.1:$port"
+            status_line "health" "no answer on $listen:$port"
             healthy=1
         fi
 
@@ -1507,7 +1977,7 @@ cmd_password() {
         if [ "$(systemctl is-active "$SERVICE_NAME" 2>/dev/null)" != active ]; then
             if ask_yes_no "The service is not running. Start it now?" y; then
                 sudo_run systemctl start "$SERVICE_NAME"
-                if health_probe "$(installed_port)" 30; then
+                if health_probe "$(installed_port)" 30 "$(installed_listen)"; then
                     info "${C_GREEN}Running.${C_OFF}"
                 else
                     warn "still not answering; ./shelfos.sh status has the log"
@@ -1684,6 +2154,236 @@ cmd_backup() {
     return "$status"
 }
 
+
+# ---------------------------------------------------------------------------
+# tunnel-key: let a machine with a label printer carry it here
+# ---------------------------------------------------------------------------
+
+# The options every authorised key carries. `restrict` turns everything off —
+# shell, pty, agent and X11 forwarding, user rc — and the two that follow put
+# back exactly one capability: binding ONE loopback port on this machine.
+#
+# `permitopen` is not redundant. `port-forwarding` re-enables forwarding in both
+# directions, and without a permitopen the same key could open connections FROM
+# this server to anywhere it can reach — a private account turned into a proxy
+# into the network behind it. There is no "remote only" keyword, so the outgoing
+# side is narrowed to a port nothing listens on rather than left open.
+#
+# An sshd older than 7.8 does not know `restrict` and refuses the key outright.
+# That is the right way round: a key that cannot be read is a key that grants
+# nothing.
+tunnel_key_options() {
+    printf 'restrict,port-forwarding,permitopen="127.0.0.1:1",permitlisten="127.0.0.1:%s"' "$1"
+}
+
+# Whether a line is a plain public key and nothing else.
+#
+# Rejected rather than escaped, because this line is appended to a file sshd
+# reads as configuration: a value carrying its own options, a second key on a
+# second line, or a comment with a newline in it would be authorising something
+# nobody looked at. The shape is `type base64 [comment]`, and each of the three
+# is checked.
+valid_public_key() {
+    local line=$1 type rest body comment
+    # Printable characters only, which is what rules out the shape that matters
+    # most: a second key on a second line, authorised without anyone seeing it.
+    # A pattern rather than a `case` over escapes, because a bracket expression
+    # holding $'\n' silently matches nothing and the check would pass everything.
+    [[ $line =~ ^[[:print:]]+$ ]] || return 1
+    [ ${#line} -le 4096 ] || return 1
+    line=${line#"${line%%[![:space:]]*}"}
+    line=${line%"${line##*[![:space:]]}"}
+    type=${line%% *}
+    rest=${line#* }
+    body=${rest%% *}
+    comment=""
+    [ "$rest" = "$body" ] || comment=${rest#* }
+    case $type in
+        ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521) ;;
+        sk-ssh-ed25519@openssh.com|sk-ecdsa-sha2-nistp256@openssh.com) ;;
+        *) return 1 ;;
+    esac
+    [[ $body =~ ^[A-Za-z0-9+/]{32,}={0,3}$ ]] || return 1
+    [ ${#comment} -le 128 ] || return 1
+    [ -z "$comment" ] || [[ $comment =~ ^[A-Za-z0-9._@:+-]+([[:space:]][A-Za-z0-9._@:+-]+)*$ ]] || return 1
+    return 0
+}
+
+# The account, made on demand. `deploy` creates it, but an install that predates
+# this command has not got one, and authorising a key is exactly the moment to
+# notice.
+ensure_tunnel_user() {
+    if ! getent passwd "$TUNNEL_USER" > /dev/null 2>&1; then
+        sudo_run useradd --system --create-home --home-dir "$TUNNEL_HOME" \
+            --shell /usr/sbin/nologin --comment "ShelfOS label-printer tunnel" "$TUNNEL_USER"
+        sudo_run chmod 0700 "$TUNNEL_HOME"
+        info "created the $TUNNEL_USER account"
+    fi
+}
+
+# Where the keys live now. Read from the installed settings, so a server told to
+# keep them somewhere else is still managed by this command.
+tunnel_keys_path() {
+    local configured
+    configured=$(system_env_value SHELFOS_TUNNEL_KEYS)
+    printf '%s' "${configured:-$TUNNEL_KEYS}"
+}
+
+# The comment a person named the machine with, out of a line that also carries
+# the options this script put in front of it. Field four onwards: options, type,
+# key, then whatever the laptop called itself — which may have spaces in it.
+tunnel_key_comment() {
+    printf '%s' "$1" | awk '{
+        if (NF < 4) { print "(no comment)"; next }
+        out = $4; for (i = 5; i <= NF; i++) out = out " " $i; print out
+    }'
+}
+
+# What is authorised now, or nothing. Public keys in a world-readable file, so
+# reading needs nothing — which also keeps `list` honest in a dry run.
+tunnel_keys_read() {
+    cat "$(tunnel_keys_path)" 2>/dev/null || true
+}
+
+tunnel_keys_write() {
+    ensure_tunnel_user
+    write_file "$(tunnel_keys_path)" 644 "$SERVICE_USER:$SERVICE_USER"
+}
+
+usage_tunnel_key() {
+    cat <<EOF
+Usage: ./shelfos.sh tunnel-key <add|list|remove> [argument]
+
+Authorise a machine with a label printer to bring it here over ssh. The key is
+made on THAT machine by the setup script from /label-printer, which prints the
+line to paste after 'add'. The private half never leaves it.
+
+  add "<public key>"   authorise one key, forwarding only, one port only
+  list                 what is authorised now
+  remove <comment>     withdraw a key, by its comment or its number in 'list'
+
+An authorised key can do exactly one thing: bind 127.0.0.1:$(tunnel_port) on this
+machine. No shell, no other port, no connections out.
+
+  ./shelfos.sh tunnel-key add "ssh-ed25519 AAAAC3Nza... shelfos-label@goofy"
+  ./shelfos.sh tunnel-key list
+  ./shelfos.sh tunnel-key remove shelfos-label@goofy
+EOF
+}
+
+cmd_tunnel_key() {
+    local action="" argument=""
+    while [ $# -gt 0 ]; do
+        case $1 in
+            -h|--help) usage_tunnel_key; return 0 ;;
+            -*)        usage_tunnel_key >&2; die 2 "unknown option: $1" ;;
+            *)         if [ -z "$action" ]; then action=$1; elif [ -z "$argument" ]; then argument=$1;
+                       else usage_tunnel_key >&2; die 2 "too many arguments"; fi ;;
+        esac
+        shift
+    done
+
+    case $action in
+        add)    tunnel_key_add "$argument" ;;
+        list)   tunnel_key_list ;;
+        remove) tunnel_key_remove "$argument" ;;
+        "")     usage_tunnel_key; return 0 ;;
+        *)      usage_tunnel_key >&2; die 2 "unknown action: $action" ;;
+    esac
+}
+
+tunnel_key_add() {
+    local key=$1 port line existing
+    [ -n "$key" ] || { usage_tunnel_key >&2; die 2 "give the public key to authorise, in quotes"; }
+    if ! valid_public_key "$key"; then
+        die 2 "that is not a plain public key.
+  Expected one line of 'type base64 comment', as printed by the setup script or
+  by 'cat ~/.ssh/shelfos-label.pub' on the machine with the printer. A line
+  carrying its own options is refused: what this authorises is decided here."
+    fi
+    # A second opinion from ssh itself where it is available: the checks above
+    # are about the shape of the line, this one is about the key being a key.
+    if command -v ssh-keygen > /dev/null 2>&1; then
+        local probe
+        probe=$(mktemp "${TMPDIR:-/tmp}/shelfos-key.XXXXXX")
+        printf '%s\n' "$key" > "$probe"
+        if ! ssh-keygen -l -f "$probe" > /dev/null 2>&1; then
+            rm -f "$probe"
+            die 2 "ssh-keygen does not recognise that as a public key"
+        fi
+        rm -f "$probe"
+    fi
+
+    port=$(tunnel_port)
+    line="$(tunnel_key_options "$port") $key"
+
+    if [ "$DRY_RUN" = 1 ]; then
+        info "would authorize for $TUNNEL_USER:"
+        note "  $line"
+        return 0
+    fi
+
+    existing=$(tunnel_keys_read)
+    # Compared on the key material alone. The comment is a label — a machine
+    # that was renamed, or re-registered from a different account, sends the
+    # same key with a different one — so matching whole lines would leave the
+    # older entry authorised for ever, with nothing in `list` to suggest the two
+    # are one machine. (The web path, tunnel_keys.enroll, matches this way too.)
+    local body; body=$(printf '%s' "$key" | awk '{print $2}')
+    if printf '%s\n' "$existing" | grep -qF -- " $body"; then
+        existing=$(printf '%s\n' "$existing" | grep -vF -- " $body" || true)
+        info "replacing the entry this key already had"
+    fi
+    { [ -z "$existing" ] || printf '%s\n' "$existing"; printf '%s\n' "$line"; } \
+        | grep -v '^$' | tunnel_keys_write
+    info "authorized for $TUNNEL_USER: may bind 127.0.0.1:$port here, and nothing else"
+}
+
+tunnel_key_list() {
+    if [ "$DRY_RUN" = 1 ]; then
+        info "would read $(tunnel_keys_path)"
+        return 0
+    fi
+    local keys index=0 line comment
+    keys=$(tunnel_keys_read)
+    if [ -z "$keys" ]; then
+        info "no keys are authorized for $TUNNEL_USER"
+        return 0
+    fi
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        index=$((index + 1))
+        # The comment is the only part a person can recognise a machine by.
+        comment=$(tunnel_key_comment "$line")
+        printf '  %d  %s\n' "$index" "$comment"
+    done <<< "$keys"
+}
+
+tunnel_key_remove() {
+    local want=$1 keys kept index=0 line comment removed=0
+    [ -n "$want" ] || { usage_tunnel_key >&2; die 2 "say which key to remove (a comment, or a number from 'list')"; }
+    if [ "$DRY_RUN" = 1 ]; then
+        info "would remove '$want' from $(tunnel_keys_path)"
+        return 0
+    fi
+    keys=$(tunnel_keys_read)
+    [ -n "$keys" ] || die 1 "no keys are authorized for $TUNNEL_USER"
+    kept=""
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        index=$((index + 1))
+        comment=$(tunnel_key_comment "$line")
+        if [ "$want" = "$index" ] || [ "$want" = "$comment" ]; then
+            removed=$((removed + 1))
+            continue
+        fi
+        kept="${kept}${line}"$'\n'
+    done <<< "$keys"
+    [ "$removed" -gt 0 ] || die 1 "nothing matched '$want' — './shelfos.sh tunnel-key list' shows what is there"
+    printf '%s' "$kept" | tunnel_keys_write
+    info "removed $removed key(s); the machine it belonged to can no longer connect"
+}
+
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
@@ -1700,6 +2400,7 @@ Usage: ./shelfos.sh <command> [options]
   status    what is installed, and whether it is healthy
   backup    create or restore a backup of whichever install is here
   password  set an account's password, with the app stopped
+  tunnel-key  authorise a machine to carry its label printer here over ssh
 
 Options that work anywhere:
   --dry-run   print what would happen and change nothing (never calls sudo)
@@ -1741,6 +2442,7 @@ main() {
         status)   cmd_status "${rest[@]+"${rest[@]}"}" ;;
         backup)   cmd_backup "${rest[@]+"${rest[@]}"}" ;;
         password) cmd_password "${rest[@]+"${rest[@]}"}" ;;
+        tunnel-key) cmd_tunnel_key "${rest[@]+"${rest[@]}"}" ;;
         *)        usage >&2; die 2 "unknown command: $command" ;;
     esac
 }

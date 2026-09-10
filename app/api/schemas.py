@@ -191,6 +191,17 @@ class TapesRead(BaseModel):
     loaded: str | None
 
 
+class PrinterProbeRead(BaseModel):
+    """What one connection test came to, in a sentence plus the details."""
+
+    answered: bool
+    busy: bool
+    detail: str
+    tape: str | None = None
+    width_mm: int | None = None
+    errors: list[str] = []
+
+
 class LabelPrintResult(BaseModel):
     """How many labels went to the printer, and whether it confirmed printing.
 

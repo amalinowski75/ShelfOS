@@ -16,7 +16,12 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlmodel import Session
 
 from app.api.deps import get_session
-from app.auth.tokens import CREDENTIAL_CLAIM, credential_fingerprint, decode_token
+from app.auth.tokens import (
+    CREDENTIAL_CLAIM,
+    SCOPE_CLAIM,
+    credential_fingerprint,
+    decode_token,
+)
 from app.models.enums import UserRole
 from app.models.user import User
 
@@ -49,6 +54,12 @@ def get_optional_user(
     header = request.headers.get("Authorization", "")
     if header.lower().startswith("bearer "):
         claims = decode_token(header[7:].strip())
+        # A scoped token may do one named thing, at the endpoint that names it.
+        # Letting it authenticate here would make a token written into a
+        # downloaded script a full sign-in for whoever downloaded it, which is
+        # the opposite of why it is scoped.
+        if claims is not None and claims.get(SCOPE_CLAIM) is not None:
+            claims = None
         sub = claims.get("sub") if claims else None
         if sub is not None:
             try:

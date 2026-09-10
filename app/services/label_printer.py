@@ -41,6 +41,7 @@ from brother_ql.raster import BrotherQLRaster
 from PIL import Image, ImageDraw, ImageFont
 
 from app import config
+from app.services import tunnel_keys
 from app.services.errors import PrinterError, TapeMismatchError, ValidationError
 from app.services.label_service import LabelData, location_qr_payload
 
@@ -669,6 +670,37 @@ def _decode_status(frame: bytes) -> PrinterStatus | None:
 _TCP_SCHEME = "tcp://"
 
 
+def configured_device() -> str:
+    """The printer this ShelfOS prints to, or ``""`` when there is none.
+
+    ``SHELFOS_LABEL_DEVICE`` decides it whenever it is set — a printer on this
+    machine, or one somewhere else that the administrator pointed at by hand.
+
+    When it is not set, a machine that has registered its printer through
+    ``/label-printer`` IS the answer: somebody said, with a key, that they have
+    one plugged in at the other end of a tunnel that ends on this server's
+    loopback. Requiring an administrator to then edit a settings file and restart
+    the service would undo the point of that page — and there is nothing for them
+    to decide, since the port and the address were settled when the key was
+    authorised.
+
+    The cost is a stale registration: a laptop that has gone for good leaves the
+    print buttons on offer until somebody withdraws its key, and printing then
+    says the printer is not answering. That is the same thing an unplugged
+    printer does, and `tunnel-key remove` is the cure for both.
+    """
+    if config.LABEL_DEVICE:
+        return config.LABEL_DEVICE
+    if tunnel_keys.any_registered():
+        return f"tcp://127.0.0.1:{tunnel_keys.DEFAULT_TUNNEL_PORT}"
+    return ""
+
+
+def printing_configured() -> bool:
+    """Whether the print affordances are worth showing at all."""
+    return bool(configured_device())
+
+
 def is_network_device(device: str) -> bool:
     """Whether ``device`` names a printer reached over TCP rather than a path."""
     return device.startswith(_TCP_SCHEME)
@@ -901,7 +933,7 @@ def status_if_free(device: str | None = None) -> PrinterStatus | None:
     Not answering is a normal outcome and callers handle it: the dialog says
     the printer is not saying what it holds and lets the roll be picked by hand.
     """
-    device = config.LABEL_DEVICE if device is None else device
+    device = configured_device() if device is None else device
     if not device:
         return None
     if not _PRINT_LOCK.acquire(timeout=_STATUS_LOCK_SECONDS):
@@ -914,13 +946,94 @@ def status_if_free(device: str | None = None) -> PrinterStatus | None:
         _PRINT_LOCK.release()
 
 
+@dataclass(frozen=True)
+class ProbeResult:
+    """What one look at a printer came to, in terms a person can act on.
+
+    ``status_if_free`` answers the only question printing needs — can this be
+    asked anything right now — and collapses every failure into ``None``. A
+    setup page is asking a different question: *why* is it not working. So this
+    keeps the outcomes apart, and the one that matters most is the one nothing
+    else distinguishes — a connection accepted and then silent, which means the
+    tunnel and the bridge are both up and the printer is the missing piece.
+    """
+
+    answered: bool
+    busy: bool
+    detail: str
+    tape: str | None = None
+    width_mm: int | None = None
+    errors: tuple[str, ...] = ()
+
+
+def probe_device(device: str) -> ProbeResult:
+    """Ask a printer how it is, and say what came of asking.
+
+    Takes the print lock like :func:`status_if_free`, for the same reason: three
+    status bytes sent during a job are spliced into the raster, and nothing
+    downstream can tell them from the label. The lock is why this lives here
+    rather than in the web layer, which has no business holding it.
+    """
+    if not _PRINT_LOCK.acquire(timeout=_STATUS_LOCK_SECONDS):
+        return ProbeResult(
+            answered=False,
+            busy=True,
+            detail="a print is running just now — ask again in a moment",
+        )
+    try:
+        status = read_printer_status(device)
+    except PrinterError as error:
+        return ProbeResult(answered=False, busy=False, detail=str(error))
+    except ValidationError as error:
+        return ProbeResult(answered=False, busy=False, detail=str(error))
+    finally:
+        _PRINT_LOCK.release()
+
+    if status is None:
+        # Reached, and then nothing. Over a bridge that means the far end is
+        # listening but the printer behind it is not talking — which is a
+        # different problem from "the bridge is not running", and the one people
+        # otherwise spend an afternoon on.
+        return ProbeResult(
+            answered=False,
+            busy=False,
+            detail=(
+                "the connection was accepted and then went quiet: the far end is "
+                "there, but the printer is not answering. It is usually unplugged, "
+                "still in Editor Lite mode, or held by CUPS."
+            ),
+        )
+    if status.errors:
+        return ProbeResult(
+            answered=True,
+            busy=False,
+            detail="the printer reports: " + ", ".join(status.errors),
+            tape=detect_tape(status),
+            width_mm=status.media_width_mm,
+            errors=status.errors,
+        )
+    tape = detect_tape(status)
+    return ProbeResult(
+        answered=True,
+        busy=False,
+        detail=(
+            f"the printer answered: it is holding {tape} tape"
+            if tape
+            else f"the printer answered, holding {status.media_width_mm} mm tape "
+            "this build does not recognise"
+        ),
+        tape=tape,
+        width_mm=status.media_width_mm,
+    )
+
+
 def read_printer_status(device: str | None = None) -> PrinterStatus | None:
     """Ask the printer how it is, or ``None`` if it does not answer.
 
     Assumes the caller owns the printer: see :func:`status_if_free` for the
     version that takes the lock first.
     """
-    device = config.LABEL_DEVICE if device is None else device
+    device = configured_device() if device is None else device
     if not device:
         raise ValidationError(_NOT_CONFIGURED)
     budget = _readback_budget()
@@ -1074,7 +1187,7 @@ def resolve_geometry(device: str | None = None) -> TapeGeometry:
     no printer in the building. The answer is remembered briefly, because this
     is called once per rendered preview and a roll does not change that often.
     """
-    device = config.LABEL_DEVICE if device is None else device
+    device = configured_device() if device is None else device
     if not device:
         return tape_geometry()
     remembered = _remembered_tape()
@@ -1232,7 +1345,7 @@ def print_labels(
     run. Jobs are serialised on a process-wide lock: there is one printer, and
     two interleaved raster streams would print one ruined label.
     """
-    device = config.LABEL_DEVICE if device is None else device
+    device = configured_device() if device is None else device
     if not device:
         raise ValidationError(_NOT_CONFIGURED)
     if copies < 1:

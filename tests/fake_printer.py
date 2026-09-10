@@ -208,9 +208,7 @@ class PrinterBridge:
                 if fragment in line:
                     return line
             time.sleep(0.02)
-        raise AssertionError(
-            f"the bridge never said {fragment!r}; it said: {self.log}"
-        )
+        raise AssertionError(f"the bridge never said {fragment!r}; it said: {self.log}")
 
     def _wait_until_listening(self, timeout: float = 5.0) -> bool:
         deadline = time.monotonic() + timeout

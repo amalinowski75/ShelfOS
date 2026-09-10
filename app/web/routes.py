@@ -44,12 +44,13 @@ from app.models.enums import (
 from app.models.invoice import InvoiceImportLine
 from app.models.user import User
 from app.services import attachment_service as ats
-from app.services import audit_service, shops
+from app.services import audit_service, label_setup, shops, tunnel_keys
 from app.services import bom_service as boms_svc
 from app.services import bom_take_service as bts
 from app.services import component_service as cs
 from app.services import invoice_import_service as imp
 from app.services import invoice_service as inv
+from app.services import label_printer as lp
 from app.services import label_service as lbl
 from app.services import location_service as ls
 from app.services import manufacturer_service as mfs
@@ -400,7 +401,7 @@ def locations_page(
             "parts_per_location": _PARTS_PER_LOCATION,
             # No printer configured, no print affordances: the dialog would have
             # nothing to offer and the button nothing to do.
-            "label_printing": config.label_printing_configured(),
+            "label_printing": lp.printing_configured(),
             "current_user": user,
         },
     )
@@ -453,7 +454,7 @@ def location_labels_page(
         "labels.html",
         {
             "labels": labels,
-            "label_printing": config.label_printing_configured(),
+            "label_printing": lp.printing_configured(),
             "w": min(max(w, 20.0), 200.0),
             "h": min(max(h, 10.0), 200.0),
             "sheet": sheet,
@@ -732,6 +733,56 @@ def types_page(
             # For the inline "Create matcher" dialog on a parameter (admin page).
             "mounting_types": [mt.value for mt in MountingType],
             "domains": [d.value for d in MatchDomain],
+        },
+    )
+
+
+@router.get("/label-printer", response_class=HTMLResponse)
+def label_printer_page(
+    request: Request,
+    user: User = Depends(require_web_user),
+) -> HTMLResponse:
+    """Set up a label printer attached to the machine you are sitting at (§7).
+
+    Open to every signed-in account, read-only included: it is about the printer
+    on someone's desk and the machine it is plugged into, not about what they may
+    change in ShelfOS, and the page itself changes nothing here.
+
+    The ssh target is proposed from the Host header — which the client controls,
+    and which is fine, because it is a suggestion in an editable field and every
+    value is validated again when the installer is rendered — except when that
+    header is loopback, which says the browser came through a proxy or a tunnel
+    that ssh cannot follow. See :func:`label_setup.propose_ssh_host`.
+    """
+    return templates.TemplateResponse(
+        request,
+        "label_printer.html",
+        {
+            "current_user": user,
+            # Filled in by the deploy that created the account; blank on an
+            # install that predates it, and typed by hand there.
+            "ssh_user": config.TUNNEL_USER,
+            # Whether the downloaded script can hand its own key back, which
+            # decides whether this page describes a trip to the server or not.
+            # A read-only account may read all of this and still not register a
+            # machine: that changes what the server accepts.
+            "can_register": tunnel_keys.configured()
+            and user.role is not UserRole.READ_ONLY,
+            "ssh_host": label_setup.propose_ssh_host(request.url.hostname or ""),
+            # Whether that proposal came from somewhere other than the address
+            # in the browser's bar, which is worth a sentence when it happens.
+            "ssh_host_is_ours": (request.url.hostname or "").lower()
+            in label_setup.LOOPBACK_HOSTS,
+            "default_device": label_setup.DEFAULT_DEVICE,
+            "default_ssh_port": label_setup.DEFAULT_SSH_PORT,
+            # Two ports. The one offered for the machine with the printer is
+            # its own, and it may change it freely; the server's is fixed by its
+            # own configuration, is what the tunnel must land on, and is what the
+            # connection test asks about. They start out the same, which is why
+            # the difference went unnoticed until somebody changed one.
+            "default_bridge_port": label_setup.default_bridge_port(),
+            "server_port": label_setup.default_bridge_port(),
+            "groups": label_setup.ALLOWED_GROUPS,
         },
     )
 

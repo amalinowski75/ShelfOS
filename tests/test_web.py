@@ -2739,9 +2739,7 @@ def test_a_reversed_take_shows_the_reason_and_drops_undo(
     client: TestClient, tmp_path, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
     take_id = _take_ready(client, tmp_path, monkeypatch)["take_id"]
-    client.post(
-        f"/api/bom-takes/{take_id}/reverse", json={"reason": "board scrapped"}
-    )
+    client.post(f"/api/bom-takes/{take_id}/reverse", json={"reason": "board scrapped"})
 
     html = client.get(f"/bom-takes/{take_id}").text
 
@@ -2839,9 +2837,7 @@ def test_an_ordinary_movement_note_is_not_a_link(
     component = client.post(
         "/api/components", json={"name": "B", "type_id": ctype["id"]}
     ).json()
-    drawer = client.post(
-        "/api/locations", json={"type": "drawer", "name": "D9"}
-    ).json()
+    drawer = client.post("/api/locations", json={"type": "drawer", "name": "D9"}).json()
     client.post(
         "/api/stock/add",
         json={

@@ -317,7 +317,7 @@ export SHELFOS_LABEL_TAPE="62red"       # DK-22251, the black/red roll in the bo
 # how long each label is, on a CONTINUOUS tape (a die-cut label's length is its die's)
 export SHELFOS_LABEL_LENGTH_MM="30"
 export SHELFOS_LABEL_MARGIN_MM="2"
-# only if the host has no DejaVu, Liberation or Noto
+# only if the host has none of DejaVu, Liberation or Noto (a deploy installs DejaVu)
 export SHELFOS_LABEL_FONT="/path/to/Sans.ttf"
 export SHELFOS_LABEL_FONT_BOLD="/path/to/Sans-Bold.ttf"
 ```
@@ -380,6 +380,99 @@ point it at one over the network:
 ```bash
 export SHELFOS_LABEL_DEVICE="tcp://127.0.0.1:9100"
 ```
+
+**The quick way is `/label-printer`**, a page open to anyone signed in: answer
+three questions, download a script with your answers already in it, read it and
+run it on the machine holding the printer. It carries the bridge below, sets up
+both services, and checks the ssh connection before it changes anything — then
+the page's Test connection button asks the printer what tape it holds. The rest
+of this section is what that script does, for setting it up by hand, for
+checking its work, and for the reasons behind each step, which are the part a
+script cannot carry. The one thing it deliberately does not do is touch the
+server: the setting above is the administrator's to make.
+
+If the server has no proxy in front of it — a test container, say — deploy it
+with `--no-tls --listen 0.0.0.0` and reach it at its own address; the service otherwise
+binds loopback and needs a forwarded port to be reachable at all, which is what
+makes the address in the browser useless as an ssh target. `--no-tls` also
+writes `SHELFOS_COOKIE_SECURE=0`, without which signing in cannot work at all:
+the session cookie would be marked `Secure`, no browser sends one of those back
+over plain HTTP, and every attempt would say the sign-in form had expired.
+
+The page proposes the ssh target from the address you are reading it at, with
+one exception that matters in a container: when that address is loopback, the
+browser has come through a proxy or a forwarded port, and ssh from the machine
+with the printer cannot follow it back — so what is offered instead is the
+address this server sees itself at. Both are proposals in a field you can
+change, and the port beside it is there for the same reason (an `lxc proxy`
+device in front of ssh, say).
+
+**The key stays on the machine with the printer, and registers itself.** The
+script makes its own ssh key there and hands the *public* half to ShelfOS over
+the session the person is already signed in with — so setting up a printer needs
+no account on this server, no ssh, and nothing typed here. ShelfOS never hands
+out a credential: what comes down is a script, and what goes up is a public key.
+
+That works because sshd does not read the tunnel account's keys from its home. A
+deploy points `AuthorizedKeysCommand` at a small root-owned script that prints a
+file ShelfOS owns (`SHELFOS_TUNNEL_KEYS`), so the service writes ordinary data
+and needs no privileges of its own. What a key in that file may then do is capped
+by the server, not by trusting whatever wrote it:
+
+```
+Match User shelfos-tunnel
+    AuthorizedKeysCommand /usr/local/lib/shelfos/tunnel-keys %u
+    AuthorizedKeysCommandUser root
+    AllowTcpForwarding remote        # -R only: no outbound connections
+    PermitListen 127.0.0.1:9100 localhost:9100   # and only this port
+    PermitTTY no
+    ForceCommand /usr/sbin/nologin
+Match all
+```
+
+On a server somebody else set up, two things can quietly undo all of this, and
+the deploy checks for both by asking sshd what it will actually do
+(`sshd -T -C user=shelfos-tunnel,…`) rather than trusting that a file it wrote
+is a file that applies: an `AllowUsers`/`AllowGroups` list, which cannot go in a
+`Match` block and so cannot be extended from ours, and a `Match` block of theirs
+further down that wins on whatever it repeats. Either one refuses the tunnel in
+exactly the words an unauthorised key produces.
+
+`Match all` closes the block: drop-ins are included at the *top* of `sshd_config`,
+and a Match left open would swallow every global setting after it. The deploy
+validates with `sshd -t` before reloading and withdraws the file if it does not
+pass, and reloads rather than restarts, so the session running it survives.
+
+The upshot is that the worst a registered key can do — even one written by a
+ShelfOS that had been compromised — is bind that one loopback port, which is to
+say pretend to be a label printer. There is no shell, no other port, and nothing
+outbound.
+
+**A registered machine is a configured printer.** With `SHELFOS_LABEL_DEVICE`
+unset, a machine that has registered through the page answers the question that
+setting exists to answer: somebody said, with a key, that they have a printer at
+the other end of a tunnel ending on this server's loopback. So the Print buttons
+appear when the first machine registers, and go when the last one is withdrawn —
+no settings file to edit, no restart. Setting `SHELFOS_LABEL_DEVICE` still wins,
+for a printer plugged into the server itself or one pointed at by hand.
+
+Registrations are visible and revocable on the server:
+
+```bash
+./shelfos.sh tunnel-key list              # which machines may connect
+./shelfos.sh tunnel-key remove goofy      # withdraw one
+./shelfos.sh tunnel-key add "ssh-..."     # authorise one by hand
+```
+
+`add` is for the cases the browser cannot cover: a server without the sshd block,
+or a read-only account, which may read the page but not change what this server
+accepts. The page says which of the two it is and prints the line to run.
+
+The service account is deliberately not usable for this: it has no shell and a
+root-owned home, so sshd would refuse it, and giving it those would turn a
+confined service account into a login one. Whoever holds the tunnel makes no
+difference to ShelfOS — a reverse forward binds this machine's loopback whoever
+opened it, and the service just connects to `127.0.0.1`.
 
 Everything else is unchanged: the tape is still read off the printer, a fault
 still stops the job before any tape moves, and each label is still confirmed.
@@ -467,6 +560,12 @@ sit behind NAT without anything on the server changing — and no port is expose
 `ServerAliveInterval` and `Restart=always` matter more than they look: a laptop
 that sleeps otherwise leaves the server with a port that accepts connections and
 does nothing with them.
+
+The port on the machine with the printer and the port on the server are two
+different answers: the first is free to be anything not already taken there, the
+second is fixed by the server's `PermitListen` and by what ShelfOS connects to.
+The tunnel joins them, which is what a tunnel is for — so a laptop with something
+on 9100 changes only its own end, on the setup page, and the server is untouched.
 
 **9100 is a convention, not a requirement.** It is the port HP JetDirect used for
 raw printing, so anyone who has set up a network printer recognises what this is —

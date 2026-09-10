@@ -28,6 +28,7 @@ from app.api.routes import (
     boms,
     components,
     invoices,
+    label_enroll,
     labels,
     links,
     locations,
@@ -277,6 +278,16 @@ def _check_insecure_defaults() -> None:
         _logger.warning(
             "Using the default SECRET_KEY; set SHELFOS_SECRET_KEY in production."
         )
+    if config.is_production() and not config.cookie_secure():
+        # Said once at startup rather than never: from inside the app a plain
+        # HTTP deployment and a proxied one look identical, so this is the only
+        # place the choice is visible at all.
+        _logger.warning(
+            "SHELFOS_COOKIE_SECURE=0: the session cookie is not marked Secure, "
+            "so it travels in the clear on plain HTTP. Right for a deployment "
+            "served without TLS on purpose, wrong the moment one is in front."
+        )
+
 
 def create_app(*, create_tables: bool = True) -> FastAPI:
     """Build and configure the ShelfOS FastAPI application.
@@ -319,7 +330,7 @@ def create_app(*, create_tables: bool = True) -> FastAPI:
     app.add_middleware(
         SessionMiddleware,
         secret_key=config.SECRET_KEY,
-        https_only=config.is_production(),
+        https_only=config.cookie_secure(),
         same_site="lax",
     )
 
@@ -372,6 +383,11 @@ def create_app(*, create_tables: bool = True) -> FastAPI:
     app.include_router(
         admin.router, dependencies=[Depends(require_admin), Depends(require_csrf)]
     )
+
+    # The setup script registering its own key: not a person, not a browser, and
+    # not a sign-in — it carries a token scoped to this one action, which the
+    # route checks itself. See app/api/routes/label_enroll.py.
+    app.include_router(label_enroll.router)
 
     app.include_router(web_routes.router)
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")

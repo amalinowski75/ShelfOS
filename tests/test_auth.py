@@ -5,9 +5,11 @@ from __future__ import annotations
 import re
 
 import pytest
+from app import config
 from fastapi.testclient import TestClient
+from sqlmodel import Session
 
-from tests.conftest import web_login
+from tests.conftest import _build_app, web_login
 
 
 def _bearer(token: str) -> dict[str, str]:
@@ -303,3 +305,78 @@ def test_change_own_password_enforces_policy(session, anon_client: TestClient) -
     )
     assert resp.status_code == 422
     assert "at least" in resp.json()["detail"]
+
+
+# --- signing in over plain HTTP ----------------------------------------------
+
+
+def test_a_secure_cookie_is_never_sent_back_over_plain_http(
+    engine, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    """The mechanism behind "that sign-in form has expired", reproduced.
+
+    The login form's token lives in the session cookie. Marked Secure, the
+    browser will not return it over http://, so the token has nothing to match
+    and every attempt fails — with nothing in the log, because nothing failed.
+    """
+    from app.models.enums import UserRole
+    from app.services import user_service as us
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(config, "ENV", "production")
+    with Session(engine) as session:
+        us.create_user(
+            session, username="admin", password="admin-password", role=UserRole.ADMIN
+        )
+
+    app = _build_app(engine)
+    with TestClient(app, base_url="http://shelf.test") as client:
+        page = client.get("/login")
+        assert "Set-Cookie" in page.headers
+        assert "secure" in page.headers["set-cookie"].lower()
+        # httpx stores it and, like a browser, will not send it back over http.
+        response = web_login(client, "admin", "admin-password")
+        assert response.status_code == 400
+        assert "sign-in form has expired" in response.text
+
+
+def test_turning_it_off_makes_a_plain_http_deployment_usable(
+    engine, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    """What a deploy without TLS writes, and why it can sign in afterwards."""
+    from app.models.enums import UserRole
+    from app.services import user_service as us
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(config, "ENV", "production")
+    monkeypatch.setenv("SHELFOS_COOKIE_SECURE", "0")
+    with Session(engine) as session:
+        us.create_user(
+            session, username="admin", password="admin-password", role=UserRole.ADMIN
+        )
+
+    app = _build_app(engine)
+    with TestClient(app, base_url="http://shelf.test") as client:
+        assert "secure" not in client.get("/login").headers["set-cookie"].lower()
+        response = web_login(client, "admin", "admin-password")
+        assert response.status_code == 303, response.text
+        assert response.headers["location"] == "/"
+
+
+@pytest.mark.parametrize(
+    ("value", "secure"),
+    [("0", False), ("1", True), ("false", False), ("yes", True), ("", True)],
+)
+def test_the_setting_is_read_the_way_people_write_it(
+    monkeypatch: pytest.MonkeyPatch, value: str, secure: bool
+) -> None:
+    monkeypatch.setattr(config, "ENV", "production")
+    monkeypatch.setenv("SHELFOS_COOKIE_SECURE", value)
+    assert config.cookie_secure() is secure
+
+
+def test_development_does_not_mark_it_secure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Otherwise nobody could sign in to a local instance either."""
+    monkeypatch.setattr(config, "ENV", "development")
+    monkeypatch.delenv("SHELFOS_COOKIE_SECURE", raising=False)
+    assert config.cookie_secure() is False

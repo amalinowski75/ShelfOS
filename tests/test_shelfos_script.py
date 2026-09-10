@@ -147,7 +147,7 @@ def test_a_dry_run_deploy_walks_the_steps_in_order(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     seen = [line for line in result.stderr.splitlines() if line.strip().startswith("[")]
     numbers = [line.split("/")[0].split("[")[-1].strip() for line in seen]
-    assert numbers == [str(n) for n in range(1, 13)], seen
+    assert numbers == [str(n) for n in range(1, 14)], seen
 
 
 def test_a_dry_run_deploy_never_prints_the_password(tmp_path: Path) -> None:
@@ -644,3 +644,1099 @@ def test_a_clone_names_its_database_absolutely() -> None:
     body = body[: body.index("\n}\n") + 3]
     assert 'DEPLOY_DB="sqlite:///$REPO_ROOT/data/shelfos.db"' in body
     assert "${DATABASE_URL:-$DEPLOY_DB}" in body  # a caller's value still wins
+
+
+# --- tunnel-key: who may bring a label printer here ---------------------------
+
+
+def _tunnel_probe(tmp_path: Path, body: str) -> subprocess.CompletedProcess:  # type: ignore[no-untyped-def]
+    """Run the tunnel-key functions against a home of our own.
+
+    The real ones write to /var/lib/shelfos-tunnel through sudo, which a test
+    cannot have; everything else about them — validation, the options line, the
+    add/list/remove bookkeeping — is exactly what wants testing, so the file
+    operations are pointed at tmp_path and sudo is replaced by running the
+    command directly.
+    """
+    script = _SCRIPT.read_text()
+    rule = "# " + "-" * 75
+    start = script.index("tunnel_key_options() {")
+    end = script.index(f"{rule}\n# main")
+    # tunnel_port lives up with the deploy steps, and the permitted port comes
+    # from it — so take the real one rather than stub the answer being asserted.
+    port_fn = script[
+        script.index("tunnel_port() {") : script.index("sshd_dropin_body() {")
+    ]
+    home = tmp_path / "tunnel-home"
+    home.mkdir()
+    probe = tmp_path / "probe.sh"
+    probe.write_text(
+        "set -uo pipefail\n"
+        f"TUNNEL_USER=$(id -un)\nSERVICE_USER=$(id -un)\n"
+        f"TUNNEL_HOME={home}\nTUNNEL_KEYS={home}/tunnel-keys\nDRY_RUN=0\n"
+        'info() { printf "%s\\n" "$*"; }\n'
+        'note() { printf "%s\\n" "$*"; }\n'
+        'die() { printf "%s\\n" "$2" >&2; exit "$1"; }\n'
+        'valid_port() { [ "$1" -ge 1 ] 2>/dev/null && [ "$1" -le 65535 ]; }\n'
+        "env_file_value() { :; }\n"
+        "ENV_FILE_SYSTEM=/nonexistent\n"
+        # Writes land here directly: the point of the test is what gets written.
+        'sudo_run() { "$@"; }\n'
+        'write_file() { cat > "$1"; }\n'
+        "ensure_tunnel_user() { :; }\n"
+        # Anything this probe forgot to bring along must fail the test rather
+        # than quietly expand to nothing — which is how an empty port reached an
+        # authorized_keys line here once.
+        'command_not_found_handle() { printf "MISSING: %s\\n" "$1" >&2; exit 127; }\n'
+        f"{port_fn}\n{script[start:end]}\n{body}\n"
+    )
+    return subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+
+
+def _make_key(directory: Path, comment: str) -> str:
+    """A real ed25519 public key, made the way the installer makes one.
+
+    Not a hand-written string that looks like one: `tunnel-key add` asks
+    ssh-keygen for a second opinion, and a fake would be refused there for a
+    reason that has nothing to do with what each test is about.
+    """
+    path = directory / comment.replace("@", "-")
+    subprocess.run(
+        ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", comment, "-f", str(path)],
+        check=True,
+        stdin=subprocess.DEVNULL,
+    )
+    return path.with_suffix(".pub").read_text().strip()
+
+
+@pytest.fixture(scope="module")
+def good_key(tmp_path_factory: pytest.TempPathFactory) -> str:
+    return _make_key(tmp_path_factory.mktemp("keys"), "shelfos-label@goofy")
+
+
+@pytest.mark.parametrize(
+    "mangle",
+    [
+        # Options of its own: this line is appended to a file sshd reads as
+        # configuration, so a key that brings its own permissions is the whole
+        # attack. Refused, never escaped.
+        lambda key: 'command="/bin/sh" ' + key,
+        lambda key: "no-pty," + key,
+        # A second key smuggled in on a second line, authorised unseen.
+        lambda key: key + "\nssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB7iVYt x",
+        lambda key: key + "\r\nssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC7iVYt y",
+        lambda key: key.replace("ssh-ed25519", "ssh-dss"),
+        lambda key: key.split(" ", 1)[1],  # the type stripped off
+        lambda key: key.replace("AAAA", "not-base64!!", 1),
+        lambda key: key + " $(id)",
+        lambda _key: "",
+    ],
+)
+def test_a_key_that_is_more_than_a_key_is_refused(
+    tmp_path: Path, good_key: str, mangle
+) -> None:  # type: ignore[no-untyped-def]
+    key = mangle(good_key)
+    result = _tunnel_probe(
+        tmp_path,
+        f"if valid_public_key {shlex.quote(key)};"
+        " then echo accepted; else echo refused; fi",
+    )
+    assert result.stdout.strip() == "refused", result.stdout
+
+
+def test_an_ordinary_public_key_is_accepted(tmp_path: Path, good_key: str) -> None:
+    result = _tunnel_probe(
+        tmp_path,
+        f"if valid_public_key {shlex.quote(good_key)};"
+        " then echo accepted; else echo refused; fi",
+    )
+    assert result.stdout.strip() == "accepted", result.stdout + result.stderr
+
+
+def test_an_authorized_key_may_only_bind_the_one_port(
+    tmp_path: Path, good_key: str
+) -> None:
+    """The options are the whole security story of this feature.
+
+    `restrict` turns everything off; `port-forwarding` puts back forwarding in
+    BOTH directions, which is why permitopen has to close the outgoing half —
+    without it the same key would turn the server into a proxy into whatever
+    network it sits on.
+    """
+    result = _tunnel_probe(tmp_path, f"tunnel_key_add {shlex.quote(good_key)}")
+    assert result.returncode == 0, result.stderr
+    line = (tmp_path / "tunnel-home" / "tunnel-keys").read_text().strip()
+    assert line.startswith("restrict,port-forwarding,")
+    assert 'permitlisten="127.0.0.1:9100"' in line
+    assert 'permitopen="127.0.0.1:1"' in line
+    assert line.endswith(good_key)
+
+
+def test_the_same_machine_coming_back_replaces_its_entry(
+    tmp_path: Path, good_key: str
+) -> None:
+    """Never two lines for one key: the older one would keep permitting an
+    older port for ever, and nothing would ever say so."""
+    result = _tunnel_probe(
+        tmp_path,
+        f"tunnel_key_add {shlex.quote(good_key)}\n"
+        f"tunnel_key_add {shlex.quote(good_key)}\n"
+        "tunnel_key_list",
+    )
+    assert result.returncode == 0, result.stderr
+    keys = (tmp_path / "tunnel-home" / "tunnel-keys").read_text()
+    assert keys.count("ssh-ed25519") == 1, keys
+    assert result.stdout.count("shelfos-label@goofy") == 1, result.stdout
+
+
+def test_a_key_can_be_withdrawn_by_the_name_it_was_added_under(
+    tmp_path: Path, good_key: str
+) -> None:
+    other = _make_key(tmp_path, "shelfos-label@dopey")
+    result = _tunnel_probe(
+        tmp_path,
+        f"tunnel_key_add {shlex.quote(good_key)}\n"
+        f"tunnel_key_add {shlex.quote(other)}\n"
+        "tunnel_key_remove shelfos-label@goofy\n"
+        "tunnel_key_list",
+    )
+    assert result.returncode == 0, result.stderr
+    keys = (tmp_path / "tunnel-home" / "tunnel-keys").read_text()
+    assert "dopey" in keys and "goofy" not in keys
+    assert "shelfos-label@dopey" in result.stdout
+
+
+def test_removing_something_that_is_not_there_fails_loudly(
+    tmp_path: Path, good_key: str
+) -> None:
+    """Silence here would read as "withdrawn" for a key that still works."""
+    result = _tunnel_probe(
+        tmp_path,
+        f"tunnel_key_add {shlex.quote(good_key)}\ntunnel_key_remove nobody@nowhere",
+    )
+    assert result.returncode != 0
+    assert "nobody@nowhere" in result.stderr
+
+
+def test_the_permitted_port_follows_the_installed_setting(tmp_path: Path) -> None:
+    """One source for the port: a key permitted to bind 9100 while the service
+    listens for 9241 is a tunnel that comes up and carries nothing."""
+    env = tmp_path / "env"
+    env.write_text("SHELFOS_LABEL_DEVICE=tcp://127.0.0.1:9241\n")
+    script = _SCRIPT.read_text()
+    body = script[
+        script.index("tunnel_port() {") : script.index("sshd_dropin_body() {")
+    ]
+    rule = "# " + "-" * 75
+    helpers = script[
+        script.index("env_file_value() {") : script.index(f"{rule}\n# Shared helpers")
+    ]
+    probe = tmp_path / "port.sh"
+    probe.write_text(
+        f"ENV_FILE_SYSTEM={env}\n"
+        'valid_port() { [ "$1" -ge 1 ] 2>/dev/null && [ "$1" -le 65535 ]; }\n'
+        # The installed settings are root-only and read through sudo_run; a
+        # test has no root, and needs none for a file of its own.
+        'sudo_run() { "$@"; }\n'
+        f"{helpers}\n{body}\ntunnel_port\n"
+    )
+    result = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    assert result.stdout.strip() == "9241", result.stderr
+
+
+def test_a_dry_run_tunnel_key_never_reaches_sudo(tmp_path: Path, good_key: str) -> None:
+    env, log = _sudo_trap(tmp_path)
+    result = _run("tunnel-key", "--dry-run", "add", good_key, env_extra=env)
+    assert result.returncode == 0, result.stderr
+    assert not log.exists(), log.read_text()
+    assert "would authorize" in result.stderr
+
+
+def test_tunnel_key_refuses_a_key_carrying_its_own_options(
+    tmp_path: Path, good_key: str
+) -> None:
+    """End to end through the real command, not only the helper."""
+    result = _run("tunnel-key", "add", 'command="/bin/sh" ' + good_key)
+    assert result.returncode == 2
+    assert "not a plain public key" in result.stderr
+
+
+# --- the sshd block, which is the ceiling on every registered key -------------
+
+
+def _dropin(tmp_path: Path, env: str = "") -> str:
+    """Render the sshd drop-in the deploy installs."""
+    script = _SCRIPT.read_text()
+    rule = "# " + "-" * 75
+    body = script[
+        script.index("tunnel_port() {") : script.index("deploy_step_tunnel() {")
+    ]
+    helpers = script[
+        script.index("env_file_value() {") : script.index(f"{rule}\n# Shared helpers")
+    ]
+    env_file = tmp_path / "env"
+    env_file.write_text(env)
+    probe = tmp_path / "dropin.sh"
+    probe.write_text(
+        f"ENV_FILE_SYSTEM={env_file}\n"
+        "TUNNEL_USER=shelfos-tunnel\n"
+        "TUNNEL_KEYS_COMMAND=/usr/local/lib/shelfos/tunnel-keys\n"
+        'valid_port() { [ "$1" -ge 1 ] 2>/dev/null && [ "$1" -le 65535 ]; }\n'
+        'sudo_run() { "$@"; }\n'
+        f"{helpers}\n{body}\nsshd_dropin_body\n"
+    )
+    result = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+def test_the_sshd_block_closes_itself(tmp_path: Path) -> None:
+    """`Match all` at the end, and it is not a nicety.
+
+    Drop-ins are included at the TOP of sshd_config, so a Match block left open
+    would swallow every global setting after it — the whole server's ssh
+    configuration would silently apply to one account and nothing else.
+    """
+    lines = [line for line in _dropin(tmp_path).splitlines() if line.strip()]
+    matches = [line for line in lines if line.startswith("Match ")]
+    assert matches == ["Match User shelfos-tunnel", "Match all"]
+    assert lines[-1] == "Match all"
+
+
+def test_a_registered_key_may_only_carry_the_printer(tmp_path: Path) -> None:
+    """The ceiling lives here rather than in the key's own options, so it holds
+    however the key got into the file — including if ShelfOS itself were made to
+    write one."""
+    block = _dropin(tmp_path)
+    assert "Match User shelfos-tunnel" in block
+    assert "AllowTcpForwarding remote" in block  # -R only; no outbound tunnels
+    assert "PermitOpen none" in block
+    # Both spellings of the one binding: sshd matches PermitListen against what
+    # the client ASKED for, and a request for a bare port carries no address —
+    # so an entry naming only the address it resolves to can refuse exactly the
+    # forward it was written to allow. Neither reaches past loopback.
+    assert "PermitListen 127.0.0.1:9100 localhost:9100" in block
+    assert "PermitTTY no" in block
+    assert "ForceCommand /usr/sbin/nologin" in block
+    assert "AuthorizedKeysCommandUser root" in block
+
+
+def test_the_permitted_port_follows_the_setting(tmp_path: Path) -> None:
+    """A key allowed to bind 9100 while the service listens for 9241 is a tunnel
+    that comes up and carries nothing."""
+    block = _dropin(tmp_path, env="SHELFOS_LABEL_DEVICE=tcp://127.0.0.1:9241\n")
+    assert "PermitListen 127.0.0.1:9241 localhost:9241" in block
+
+
+def test_the_keys_command_answers_for_one_account_only(tmp_path: Path) -> None:
+    """sshd runs it as root, so it does one thing: print one file for one name."""
+    command = (_SCRIPT.parent / "deploy" / "tunnel-keys.sh").read_text()
+    rendered = command.replace("@TUNNEL_USER@", "shelfos-tunnel").replace(
+        "@TUNNEL_KEYS@", str(tmp_path / "keys")
+    )
+    path = tmp_path / "tunnel-keys.sh"
+    path.write_text(rendered)
+    (tmp_path / "keys").write_text("ssh-ed25519 AAAA test@machine\n")
+
+    asked_for_ours = subprocess.run(
+        ["sh", str(path), "shelfos-tunnel"], capture_output=True, text=True
+    )
+    assert asked_for_ours.stdout.strip() == "ssh-ed25519 AAAA test@machine"
+
+    for other in ("root", "shelfos", ""):
+        answer = subprocess.run(
+            ["sh", str(path), other], capture_output=True, text=True
+        )
+        assert answer.stdout == "", other
+        assert answer.returncode == 0
+
+
+def test_a_missing_key_file_is_not_an_error(tmp_path: Path) -> None:
+    """No printer has registered yet. sshd reads empty output as "no keys"; an
+    error would be logged as a broken server instead."""
+    command = (_SCRIPT.parent / "deploy" / "tunnel-keys.sh").read_text()
+    path = tmp_path / "tunnel-keys.sh"
+    path.write_text(
+        command.replace("@TUNNEL_USER@", "shelfos-tunnel").replace(
+            "@TUNNEL_KEYS@", str(tmp_path / "nothing-here")
+        )
+    )
+    answer = subprocess.run(
+        ["sh", str(path), "shelfos-tunnel"], capture_output=True, text=True
+    )
+    assert answer.returncode == 0
+    assert answer.stdout == ""
+
+
+# --- steps that must not fail the whole deploy --------------------------------
+
+
+def _step_probe(tmp_path: Path, setup: str, call: str) -> subprocess.CompletedProcess:  # type: ignore[no-untyped-def]
+    """Run one deploy step with everything privileged replaced.
+
+    `deploy` traps ERR and stops on the first failing command, which is right
+    for a step that has actually failed and wrong for one that merely could not
+    finish a cosmetic part of its job. That distinction is only visible with the
+    trap in place, so the probe installs it too.
+    """
+    script = _SCRIPT.read_text()
+    body = script[
+        script.index("deploy_step_printer() {") : script.index(
+            'readonly CADDY_MARKER="'
+        )
+    ]
+    probe = tmp_path / "step.sh"
+    probe.write_text(
+        "set -Eeuo pipefail\n"
+        "trap 'echo TRAP-FIRED >&2; exit 9' ERR\n"
+        "step() { :; }\nstep_ok() { :; }\nstep_skipped() { :; }\n"
+        'warn() { printf "WARNED: %s\\n" "$*" >&2; }\n'
+        "write_file() { cat > /dev/null; }\n"
+        "DRY_RUN=0\nDEPLOY_WANT_PRINTER=1\nDEPLOY_PRINTER_GROUP=plugdev\n"
+        "BROTHER_VENDOR=04f9\n"
+        f"UDEV_RULE={tmp_path}/rules\n"
+        f"{setup}\n{body}\n{call}\n"
+    )
+    return subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+
+
+def test_udev_refusing_to_reapply_the_rule_does_not_fail_the_deploy(
+    tmp_path: Path,
+) -> None:
+    """What killed a real deploy at step 10 of 12, with everything installed and
+    nothing started.
+
+    In a container /sys is not writable even for root, so `udevadm trigger`
+    prints "Permission denied" for every device and exits non-zero. The rule is
+    written either way and takes effect at the next replug; ending the deploy
+    there is much worse than saying so.
+    """
+    result = _step_probe(
+        tmp_path,
+        setup='sudo_run() { [ "$1" = udevadm ] && return 1; return 0; }',
+        call="deploy_step_printer",
+    )
+    assert "TRAP-FIRED" not in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "WARNED" in result.stderr
+    assert "replug" in result.stderr
+
+
+def test_every_step_runs_after_the_step_that_makes_what_it_writes_to(
+    tmp_path: Path,
+) -> None:
+    """Ordering, asserted rather than remembered.
+
+    The tunnel step went in before the one that creates /var/lib/shelfos and
+    died on a real deploy with "cannot create regular file ... No such file or
+    directory" — at step 4 of 13, having made an account and nothing else. The
+    dependency is invisible when reading either function on its own, so it is
+    written down here.
+    """
+    script = _SCRIPT.read_text()
+    order = [
+        line.strip()
+        for line in script[
+            script.index("    deploy_step_packages") : script.index("    trap - ERR")
+        ].splitlines()
+        if line.strip().startswith("deploy_step_")
+    ]
+    assert order.index("deploy_step_dirs") < order.index("deploy_step_tunnel")
+    assert order.index("deploy_step_user") < order.index("deploy_step_tunnel")
+    # And the settings the app reads are written before it is imported or run.
+    assert order.index("deploy_step_env") < order.index("deploy_step_import")
+    assert order.index("deploy_step_unit") < order.index("deploy_step_verify")
+
+
+def test_the_key_store_is_written_under_the_data_directory(tmp_path: Path) -> None:
+    """The two paths that have to agree: what the deploy creates, and what the
+    app is told to write. A mismatch is only visible when a printer registers."""
+    script = _SCRIPT.read_text()
+    assert 'readonly TUNNEL_KEYS="$DATA_DIR/tunnel-keys"' in script
+    made = script[
+        script.index("deploy_step_dirs() {") : script.index("deploy_step_code() {")
+    ]
+    assert '"$DATA_DIR"' in made
+
+
+def _env_probe(tmp_path: Path, content: str, calls: str) -> tuple[str, str]:
+    """Run set_env_setting against a settings file of our own."""
+    script = _SCRIPT.read_text()
+    body = script[
+        script.index("set_env_setting() {") : script.index("deploy_tunnel_account() {")
+    ]
+    env_file = tmp_path / "env"
+    env_file.write_text(content)
+    probe = tmp_path / "env-probe.sh"
+    probe.write_text(
+        "set -Eeuo pipefail\n"
+        f"ENV_FILE_SYSTEM={env_file}\nSERVICE_USER=$(id -un)\nDRY_RUN=0\n"
+        'info() { printf "INFO: %s\\n" "$*" >&2; }\n'
+        'sudo_run() { "$@"; }\n'
+        'write_file() { cat > "$1"; }\n'
+        f"{body}\n{calls}\n"
+    )
+    result = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    assert result.returncode == 0, result.stderr
+    return env_file.read_text(), result.stderr
+
+
+def test_a_settings_file_from_before_learns_the_new_settings(tmp_path: Path) -> None:
+    """The upgrade case, and the one a real deploy walked into.
+
+    An existing /etc/shelfos/env is never replaced — it holds the signing secret
+    and the shop keys — so a server set up for registering printers would have
+    gone on saying it was not.
+    """
+    text, log = _env_probe(
+        tmp_path,
+        "SHELFOS_SECRET_KEY=abc\nSHELFOS_LABEL_DEVICE=tcp://127.0.0.1:9100\n",
+        "set_env_setting SHELFOS_TUNNEL_USER shelfos-tunnel\n"
+        "set_env_setting SHELFOS_TUNNEL_KEYS /var/lib/shelfos/tunnel-keys\n",
+    )
+    assert "SHELFOS_TUNNEL_USER=shelfos-tunnel" in text
+    assert "SHELFOS_TUNNEL_KEYS=/var/lib/shelfos/tunnel-keys" in text
+    # Everything that was there is still there, once.
+    assert text.count("SHELFOS_SECRET_KEY=abc") == 1
+    assert "INFO" in log
+
+
+def test_an_empty_setting_is_filled_in_where_it_stands(tmp_path: Path) -> None:
+    """In place, not appended: a second line for the same key would win, and the
+    first would mislead whoever read the file next."""
+    text, _ = _env_probe(
+        tmp_path,
+        "SHELFOS_TUNNEL_USER=\nSHELFOS_SECRET_KEY=abc\n",
+        "set_env_setting SHELFOS_TUNNEL_USER shelfos-tunnel\n",
+    )
+    assert text.splitlines()[0] == "SHELFOS_TUNNEL_USER=shelfos-tunnel"
+    assert text.count("SHELFOS_TUNNEL_USER") == 1
+
+
+def test_an_answer_already_there_is_left_alone(tmp_path: Path) -> None:
+    """Including one that disagrees with this deploy: it is somebody's choice,
+    and a deploy is not the place to overrule it."""
+    text, log = _env_probe(
+        tmp_path,
+        "SHELFOS_TUNNEL_KEYS=/srv/keys\n",
+        "set_env_setting SHELFOS_TUNNEL_KEYS /var/lib/shelfos/tunnel-keys\n",
+    )
+    assert text == "SHELFOS_TUNNEL_KEYS=/srv/keys\n"
+    assert "INFO" not in log
+
+
+def _sshd_probe(tmp_path: Path, mode: str) -> tuple[str, Path]:
+    """Run the sshd half of the tunnel step against a stand-in for sshd.
+
+    ``mode`` is how that stand-in behaves, and the three are the three ways this
+    can go: it will not test anything until its run directory exists; it rejects
+    what this step wrote; or it rejects the machine's own configuration, ours or
+    no ours.
+    """
+    script = _SCRIPT.read_text()
+    # From tunnel_port on: the drop-in's body is built from it, and the step
+    # writes what that produces. system_env_value comes along because the port
+    # is read out of the installed settings, which only root may open.
+    rule = "# " + "-" * 75
+    reader = script[
+        script.index("system_env_value() {") : script.index(f"{rule}\n# Shared helpers")
+    ]
+    body = (
+        reader
+        + script[script.index("tunnel_port() {") : script.index("deploy_step_dirs() {")]
+    )
+    dropin = tmp_path / "60-shelfos-tunnel.conf"
+    run_dir = tmp_path / "run-sshd"
+    # `sshd -T` answers with the effective configuration for the connection it is
+    # asked about; the step reads that to find out whether its own file applies.
+    effective = {
+        "no-allow-list": "permitlisten 127.0.0.1:9100 localhost:9100\n",
+        "allow-list-without-us": (
+            "allowusers adam maria\npermitlisten 127.0.0.1:9100 localhost:9100\n"
+        ),
+        "allow-list-with-us": (
+            "allowusers adam shelfos-tunnel\npermitlisten 127.0.0.1:9100\n"
+        ),
+        # The same, with the account named FIRST: a pattern that expects a space
+        # in front of it misses this one and warns about a server that is
+        # already set up correctly.
+        "allow-list-with-us-first": (
+            "allowusers shelfos-tunnel adam\npermitlisten 127.0.0.1:9100\n"
+        ),
+        "overridden": "allowusers adam shelfos-tunnel\npermitlisten 127.0.0.1:2222\n",
+    }.get(mode, "permitlisten 127.0.0.1:9100 localhost:9100\n")
+    answer_t = (
+        'if [ "$1" = "-T" ]; then\n' f"  printf '%s' '{effective}'\n" "  exit 0\nfi\n"
+    )
+    behaviour = {
+        "needs-run-dir": (
+            f'if [ ! -d "{run_dir}" ]; then\n'
+            '  echo "Missing privilege separation directory: /run/sshd" >&2\n'
+            "  exit 1\nfi\nexit 0\n"
+        ),
+        "rejects-ours": (
+            f'if [ -f "{dropin}" ]; then\n'
+            f'  echo "{dropin}: line 4: Bad configuration option" >&2\n'
+            "  exit 1\nfi\nexit 0\n"
+        ),
+        "broken-anyway": 'echo "/etc/ssh/sshd_config: line 12: bad" >&2\nexit 1\n',
+    }.get(mode, "exit 0\n")
+    fake = tmp_path / "sshd"
+    fake.write_text("#!/bin/sh\n" + answer_t + behaviour)
+    fake.chmod(0o755)
+    probe = tmp_path / "sshd-probe.sh"
+    probe.write_text(
+        "set -Eeuo pipefail\n"
+        "trap 'echo TRAP-FIRED >&2; exit 9' ERR\n"
+        "step_ok() { printf 'OK: %s\\n' \"$*\"; }\n"
+        "step_skipped() { printf 'SKIPPED: %s\\n' \"$*\"; }\n"
+        'warn() { printf "WARNED: %s\\n" "$*" >&2; }\n'
+        'die() { printf "DIED: %s\\n" "$2" >&2; exit 1; }\n'
+        'write_file() { cat > "$1"; }\n'
+        # Ownership is not what these tests are about, and a test cannot have
+        # root; everything else runs for real, including the stand-in sshd.
+        "sudo_run() {\n"
+        '  case "$1" in\n'
+        f'    {fake}) shift; "{fake}" "$@" ;;\n'
+        '    install) mkdir -p "${@: -1}" ;;\n'
+        "    systemctl) return 1 ;;\n"
+        '    *) "$@" ;;\n'
+        "  esac\n"
+        "}\n"
+        "systemctl() { return 1; }\n"
+        "DRY_RUN=0\nTUNNEL_USER=shelfos-tunnel\n"
+        f"TUNNEL_KEYS={tmp_path}/keys\n"
+        f"TUNNEL_KEYS_COMMAND={tmp_path}/bin/tunnel-keys\n"
+        f"SSHD_DROPIN={dropin}\nSSHD_BIN={fake}\n"
+        f"SSHD_DROPIN_DIR={tmp_path}\nSSHD_RUN_DIR={run_dir}\n"
+        f"REPO_ROOT={_SCRIPT.parent}\n"
+        "ENV_FILE_SYSTEM=/nonexistent\n"
+        'valid_port() { [ "$1" -ge 1 ] 2>/dev/null && [ "$1" -le 65535 ]; }\n'
+        "env_file_value() { :; }\n"
+        f"{body}\ndeploy_tunnel_sshd\n"
+    )
+    result = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    return result.stdout + result.stderr, dropin
+
+
+def test_sshd_refusing_to_test_anything_is_not_our_configuration(
+    tmp_path: Path,
+) -> None:
+    """What a fresh container does, and what killed a deploy at step 5 of 13.
+
+    `sshd -t` will not test a configuration at all while /run/sshd is missing,
+    and on a machine where ssh has never started it is missing — systemd makes
+    it when the service comes up. The check was therefore failing over something
+    it had written nothing about, and withdrawing a perfectly good file.
+    """
+    output, dropin = _sshd_probe(tmp_path, "needs-run-dir")
+    assert "DIED" not in output, output
+    assert "TRAP-FIRED" not in output
+    assert "OK: sshd will take registered printers" in output
+    assert "Match User shelfos-tunnel" in dropin.read_text()
+
+
+def test_a_configuration_sshd_really_rejects_is_withdrawn(tmp_path: Path) -> None:
+    """The case the check exists for: our file is the problem, so it goes, and
+    nothing is reloaded."""
+    output, dropin = _sshd_probe(tmp_path, "rejects-ours")
+    assert "DIED" in output
+    assert not dropin.exists()
+
+
+def test_an_already_broken_sshd_config_is_not_blamed_on_this_deploy(
+    tmp_path: Path,
+) -> None:
+    """It fails without our file too, so withdrawing ours fixes nothing. Put it
+    back, say the configuration could not be checked, and carry on rather than
+    ending a deploy over something that was already there."""
+    output, dropin = _sshd_probe(tmp_path, "broken-anyway")
+    assert "DIED" not in output
+    assert "WARNED" in output
+    assert "not verified" in output
+    assert "Match User shelfos-tunnel" in dropin.read_text()
+
+
+# --- which address the service binds ------------------------------------------
+
+
+def _rendered_unit(tmp_path: Path, *args: str) -> str:
+    """The unit a dry-run deploy would install, as it prints it."""
+    env, _ = _sudo_trap(tmp_path)
+    result = _run("deploy", "--dry-run", "-y", *args, env_extra=env)
+    assert result.returncode == 0, result.stderr
+    return result.stderr
+
+
+def test_the_service_binds_loopback_unless_it_is_told_otherwise(
+    tmp_path: Path,
+) -> None:
+    """The default is the safe one: a plain-HTTP port on a network interface
+    carries sign-ins in the clear, so it is asked for, never assumed."""
+    unit = _rendered_unit(tmp_path, "--no-tls")
+    assert "--host 127.0.0.1" in unit
+    assert "--host 0.0.0.0" not in unit
+
+
+def test_listen_puts_the_address_in_the_unit(tmp_path: Path) -> None:
+    """Reaching the service at the machine's own address, with no proxy device
+    or port forward in between — which is the point of the option."""
+    unit = _rendered_unit(tmp_path, "--no-tls", "--listen", "0.0.0.0")
+    assert "--host 0.0.0.0 \\" in unit
+    # The line keeps its continuation, or the unit stops parsing there and
+    # every argument after it is silently lost.
+    assert "--port 9000" in unit
+
+
+def test_a_non_loopback_bind_says_what_it_costs(tmp_path: Path) -> None:
+    """It is a reasonable thing to want and an unreasonable thing to do by
+    accident, so the summary says plainly what is being published."""
+    output = _rendered_unit(tmp_path, "--no-tls", "--listen", "0.0.0.0")
+    assert "plain HTTP" in output
+
+
+@pytest.mark.parametrize(
+    "address", ["localhost", "0.0.0.0.0", "shelf.example", "", "1.2.3.4:9000"]
+)
+def test_a_bind_address_that_is_not_an_address_is_refused(
+    tmp_path: Path, address: str
+) -> None:
+    """A name would be resolved by uvicorn at start-up, so a typo becomes a
+    service that will not start, for a reason two layers down in the journal."""
+    env, _ = _sudo_trap(tmp_path)
+    result = _run(
+        "deploy", "--dry-run", "-y", "--no-tls", "--listen", address, env_extra=env
+    )
+    assert result.returncode != 0
+    assert "--listen" in result.stderr
+
+
+def test_the_installed_address_is_read_back_from_the_unit(tmp_path: Path) -> None:
+    """`status` asks the service where it actually is: a health check aimed at
+    127.0.0.1 reports "no answer" for a perfectly healthy service bound
+    somewhere else."""
+    script = _SCRIPT.read_text()
+    body = script[
+        script.index("installed_listen() {") : script.index("installed_port() {")
+    ]
+    unit = tmp_path / "shelfos.service"
+    unit.write_text(
+        (_SCRIPT.parent / "deploy" / "shelfos.service")
+        .read_text()
+        .replace("--host 127.0.0.1", "--host 10.0.3.42")
+    )
+    probe = tmp_path / "listen.sh"
+    probe.write_text(f"SERVICE_PATH={unit}\n{body}\ninstalled_listen\n")
+    result = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    assert result.stdout.strip() == "10.0.3.42", result.stderr
+
+    probe.write_text(f"SERVICE_PATH=/nonexistent\n{body}\ninstalled_listen\n")
+    fallback = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    assert fallback.stdout.strip() == "127.0.0.1"
+
+
+def test_a_proxy_and_a_direct_port_at_once_is_pointed_out(tmp_path: Path) -> None:
+    """Both at once is almost certainly not what anybody meant.
+
+    The app is then reachable past Caddy, so the certificate, the headers it
+    adds and the trusted-proxy setting apply to one way in and not to the other
+    — and nothing on screen would have said so.
+    """
+    output = _rendered_unit(tmp_path, "--domain", "example.test", "--listen", "0.0.0.0")
+    assert "past it" in output
+
+
+def test_the_ordinary_deploy_is_unchanged(tmp_path: Path) -> None:
+    """Nothing above may alter the path almost everyone takes: Caddy in front,
+    the service on loopback behind it."""
+    output = _rendered_unit(tmp_path, "--domain", "example.test")
+    assert "--host 127.0.0.1" in output
+    assert "Caddy on example.test" in output
+    assert "past it" not in output
+    # The unit's own comments explain what binding 0.0.0.0 would mean, so match
+    # the summary's wording rather than the two words it shares with them.
+    assert "in plain HTTP, to anything" not in output
+
+
+def test_the_deploy_installs_the_font_the_renderer_looks_for_first() -> None:
+    """Two files that have to agree, tied together rather than remembered.
+
+    A label is a bitmap, and drawing text into one needs a TTF on the host — a
+    server has no desktop to have brought one. The deploy installs the family
+    ShelfOS tries first; if that list is ever reordered, this says so.
+    """
+    from app.services.label_printer import _FONT_CANDIDATES
+
+    first = _FONT_CANDIDATES[0][0]
+    family = first.split("/truetype/")[1].split("/")[0]  # e.g. "dejavu"
+    packages = next(
+        line
+        for line in _SCRIPT.read_text().splitlines()
+        if line.strip().startswith("for pkg in ")
+    )
+    assert family in packages, f"{first} is tried first, but {packages.strip()}"
+
+
+def test_a_server_that_admits_only_named_accounts_is_pointed_out(
+    tmp_path: Path,
+) -> None:
+    """AllowUsers cannot go in a Match block, so nothing this deploy writes can
+    add the tunnel account to it — and from the machine with the printer the
+    refusal looks exactly like a key nobody authorised."""
+    output, _ = _sshd_probe(tmp_path, "allow-list-without-us")
+    assert "only admits named accounts" in output
+    assert "adam maria" in output
+
+
+@pytest.mark.parametrize(
+    "mode", ["allow-list-with-us", "allow-list-with-us-first", "no-allow-list"]
+)
+def test_a_server_that_already_admits_it_says_nothing(
+    tmp_path: Path, mode: str
+) -> None:
+    output, _ = _sshd_probe(tmp_path, mode)
+    assert "only admits named accounts" not in output
+    assert "OK: sshd will take registered printers" in output
+
+
+def test_a_configuration_that_does_not_apply_to_us_is_pointed_out(
+    tmp_path: Path,
+) -> None:
+    """Asking sshd what it will DO, rather than trusting that a file we wrote is
+    a file that applies: a Match block of theirs further down wins on whatever
+    it repeats."""
+    output, _ = _sshd_probe(tmp_path, "overridden")
+    assert "does not apply this configuration" in output
+
+
+# --- deploying a second time over a working install ---------------------------
+
+
+def _installed_domain(tmp_path: Path, caddyfile: str | None, site: str | None) -> str:
+    """Run installed_domain against a Caddy config of our own."""
+    script = _SCRIPT.read_text()
+    body = script[
+        script.index("installed_domain() {") : script.index("installed_listen() {")
+    ]
+    main = tmp_path / "Caddyfile"
+    if caddyfile is not None:
+        main.write_text(caddyfile)
+    sites = tmp_path / "shelfos.caddy"
+    if site is not None:
+        sites.write_text(site)
+    probe = tmp_path / "domain.sh"
+    marker = script.split('readonly CADDY_MARKER="', 1)[1].split('"', 1)[0]
+    probe.write_text(
+        f"CADDYFILE={main}\nCADDY_MARKER='{marker}'\n"
+        # The second location the real one looks in, pointed at our tmp copy.
+        f"{body.replace('/etc/caddy/sites/shelfos.caddy', str(sites))}\n"
+        "installed_domain\n"
+    )
+    result = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+def test_a_second_deploy_keeps_the_domain_the_first_one_was_given(
+    tmp_path: Path,
+) -> None:
+    """Asked again without --domain, a deploy used to fall back to "no TLS" — on
+    a working HTTPS server that drops the proxy and loosens the session cookie,
+    which is a re-run quietly undoing the thing it is re-running."""
+    marker = _SCRIPT.read_text().split('readonly CADDY_MARKER="', 1)[1].split('"', 1)[0]
+    domain = _installed_domain(
+        tmp_path,
+        f"{marker}\nshelf.example.com {{\n  reverse_proxy 127.0.0.1:9000\n}}\n",
+        None,
+    )
+    assert domain == "shelf.example.com"
+
+
+def test_it_reads_our_own_site_file_and_not_somebody_elses(tmp_path: Path) -> None:
+    """Where our site lands when the Caddyfile already served somebody else.
+
+    And the trap in the same case: that Caddyfile names THEIR domain, so a
+    helper reading it first would point ShelfOS at a name that is not its.
+    """
+    domain = _installed_domain(
+        tmp_path,
+        "other.example {\n  respond 200\n}\n",
+        "shelf.example.com {\n  a\n}\n",
+    )
+    assert domain == "shelf.example.com"
+
+
+def test_somebody_elses_caddyfile_is_not_a_domain_to_keep(tmp_path: Path) -> None:
+    """No marker, no site file of ours: nothing here belongs to this install."""
+    assert (
+        _installed_domain(tmp_path, "other.example {\n  respond 200\n}\n", None) == ""
+    )
+
+
+def test_no_caddy_config_means_nothing_to_keep(tmp_path: Path) -> None:
+    assert _installed_domain(tmp_path, None, None) == ""
+
+
+# --- moving an installed checkout ---------------------------------------------
+
+
+def _git(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+        env={
+            **os.environ,
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        },
+    )
+    return result.stdout.strip()
+
+
+def _code_setup(tmp_path: Path, reinstall: str = "1") -> tuple[Path, Path, Path]:
+    """A source clone on a branch, an install stuck on main, and a probe to run."""
+    source = tmp_path / "source"
+    source.mkdir()
+    _git(source, "init", "--quiet", "-b", "main")
+    (source / "app.txt").write_text("from main\n")
+    _git(source, "add", "-A")
+    _git(source, "commit", "--quiet", "-m", "main")
+
+    install = tmp_path / "install"
+    subprocess.run(
+        [
+            "git",
+            "clone",
+            "--quiet",
+            "--local",
+            "--no-hardlinks",
+            str(source),
+            str(install),
+        ],
+        check=True,
+    )
+
+    _git(source, "checkout", "--quiet", "-b", "the-feature")
+    (source / "app.txt").write_text("from the branch\n")
+    _git(source, "commit", "--quiet", "-a", "-m", "feature")
+    sha = _git(source, "rev-parse", "--short", "HEAD")
+
+    script = _SCRIPT.read_text()
+    body = script[
+        script.index("deploy_reinstall_code() {") : script.index("deploy_step_venv() {")
+    ]
+    probe = tmp_path / "code.sh"
+    probe.write_text(
+        "set -Eeuo pipefail\n"
+        "trap 'echo TRAP-FIRED >&2; exit 9' ERR\n"
+        "step() { :; }\n"
+        "step_ok() { printf 'OK: %s\\n' \"$*\"; }\n"
+        "step_skipped() { printf 'SKIPPED: %s\\n' \"$*\"; }\n"
+        'die() { printf "DIED: %s\\n" "$2" >&2; exit 1; }\n'
+        'sudo_run() { "$@"; }\n'
+        f"INSTALL_DIR={install}\nREPO_ROOT={source}\n"
+        f"DEPLOY_REINSTALL={reinstall}\nDEPLOY_SOURCE_SHA={sha}\n"
+        f"{body}\ndeploy_step_code\n"
+    )
+    return install, source, probe
+
+
+def _run_probe(probe: Path) -> str:
+    result = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    return result.stdout + result.stderr
+
+
+def test_reinstall_moves_the_installed_code_to_what_is_being_deployed(
+    tmp_path: Path,
+) -> None:
+    """The failure this comes from: an install cloned from main stayed on main
+    through an update and a --reinstall, every step reported success, and the
+    only symptom was a page that never appeared."""
+    install, source, probe = _code_setup(tmp_path)
+    output = _run_probe(probe)
+    assert "TRAP-FIRED" not in output
+    assert (install / "app.txt").read_text() == "from the branch\n"
+    assert _git(install, "rev-parse", "--abbrev-ref", "HEAD") == "the-feature"
+    assert _git(install, "rev-parse", "HEAD") == _git(source, "rev-parse", "HEAD")
+
+    # And again: nothing left to do, said as much.
+    assert "SKIPPED: already at" in _run_probe(probe)
+
+
+def test_without_reinstall_the_installed_code_is_left_alone(tmp_path: Path) -> None:
+    """A plain deploy is not a licence to move somebody's running code — but it
+    says how, rather than only that it did nothing."""
+    install, _, probe = _code_setup(tmp_path, reinstall="0")
+    output = _run_probe(probe)
+    assert (install / "app.txt").read_text() == "from main\n"
+    assert "--reinstall" in output
+
+
+def test_hand_edited_files_stop_it(tmp_path: Path) -> None:
+    """Overwriting somebody's edit under /opt/shelfos loses work with no way
+    back, so it is a refusal rather than a decision this makes for them."""
+    install, _, probe = _code_setup(tmp_path)
+    (install / "app.txt").write_text("edited on the server\n")
+    output = _run_probe(probe)
+    assert "DIED" in output
+    assert (install / "app.txt").read_text() == "edited on the server\n"
+
+
+def _unit_probe(tmp_path: Path, restart: str, seed: bool = True) -> str:
+    """Run the unit step with systemd replaced, and see what it was told."""
+    script = _SCRIPT.read_text()
+    body = script[
+        script.index("deploy_step_unit() {") : script.index("deploy_step_printer() {")
+    ]
+    log = tmp_path / "systemctl.log"
+    log.unlink(missing_ok=True)
+    unit = tmp_path / "shelfos.service"
+    if seed:
+        # An installed unit that differs from the rendered one, which is what a
+        # deploy carrying a new version of it finds.
+        unit.write_text("[Service]\nExecStart=/bin/true\n")
+    probe = tmp_path / "unit.sh"
+    probe.write_text(
+        "set -Eeuo pipefail\n"
+        "trap 'echo TRAP-FIRED >&2; exit 9' ERR\n"
+        "step() { :; }\nstep_ok() { :; }\nstep_skipped() { :; }\nnote() { :; }\n"
+        'write_file() { cat > "$1"; }\n'
+        f'sudo_run() {{ if [ "$1" = systemctl ]; then printf "%s\\n" "$*" >> {log};'
+        ' else "$@"; fi; }\n'
+        f"SERVICE_PATH={unit}\nSERVICE_NAME=shelfos.service\n"
+        f"REPO_ROOT={_SCRIPT.parent}\nDEPLOY_PORT=9000\nDEPLOY_LISTEN=127.0.0.1\n"
+        f"DEPLOY_PRINTER_GROUP=plugdev\nDEPLOY_WANT_PRINTER=1\nDEPLOY_RESTART={restart}\n"
+        "ask_yes_no() { return 0; }\n"
+        f"{body}\ndeploy_step_unit\n"
+    )
+    subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    return log.read_text() if log.exists() else ""
+
+
+def test_a_deploy_that_changed_the_code_restarts_the_service(tmp_path: Path) -> None:
+    """`enable --now` starts a stopped service and does nothing to a running
+    one — so a re-deploy left the old process serving the old code, with the new
+    templates on disk: a new link in the navigation and a 404 behind it, because
+    routes are registered at import and templates are read per request."""
+    assert "restart shelfos.service" in _unit_probe(tmp_path, restart="1")
+
+
+def test_a_deploy_that_changed_nothing_leaves_it_running(tmp_path: Path) -> None:
+    """Restarting for nothing drops every connection in flight."""
+    _unit_probe(tmp_path, restart="1")  # installs the unit this deploy renders
+    calls = _unit_probe(tmp_path, restart="0", seed=False)  # and again, unchanged
+    assert "restart shelfos.service" not in calls
+    assert "enable --now shelfos.service" in calls
+
+
+def test_a_new_version_of_the_unit_restarts_it_by_itself(tmp_path: Path) -> None:
+    """Writing a unit and not restarting leaves the old command line running."""
+    assert "restart shelfos.service" in _unit_probe(tmp_path, restart="0")
+
+
+# --- what review found ---------------------------------------------------------
+
+
+def test_a_settings_file_it_cannot_read_is_not_an_empty_one(tmp_path: Path) -> None:
+    """/etc/shelfos/env is 640 root:shelfos.
+
+    Read as an ordinary user, the redirect used to fail with a bare "Permission
+    denied" on stderr and an empty answer — which every caller read as "unset"
+    and replaced with a default. For the tunnel settings that is not a degraded
+    answer but a wrong one: a key written to the wrong file, or authorised for
+    the wrong port, fails exactly like a key nobody authorised.
+    """
+    script = _SCRIPT.read_text()
+    rule = "# " + "-" * 75
+    helpers = script[
+        script.index("env_file_value() {") : script.index(f"{rule}\n# Shared helpers")
+    ]
+    secret = tmp_path / "env"
+    secret.write_text("SHELFOS_TUNNEL_KEYS=/srv/keys\n")
+    secret.chmod(0o000)
+    probe = tmp_path / "unreadable.sh"
+    probe.write_text(
+        f"{helpers}\nvalue=$(env_file_value {secret} SHELFOS_TUNNEL_KEYS)\n"
+        'printf "[%s]\\n" "$value"\n'
+    )
+    result = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    assert result.stdout.strip() == "[]"
+    assert result.stderr == "", result.stderr  # and it says nothing on the way
+
+
+def test_the_same_key_under_a_new_name_replaces_its_entry(
+    tmp_path: Path, good_key: str
+) -> None:
+    """A machine that was renamed sends the same key with a different comment.
+
+    Matching whole lines leaves the older entry authorised for ever — with its
+    older permitlisten, after a port change — and nothing in `list` to suggest
+    the two are one machine.
+    """
+    renamed = " ".join(good_key.split(" ")[:2]) + " shelfos-label@renamed"
+    result = _tunnel_probe(
+        tmp_path,
+        f"tunnel_key_add {shlex.quote(good_key)}\n"
+        f"tunnel_key_add {shlex.quote(renamed)}\n"
+        "tunnel_key_list",
+    )
+    assert result.returncode == 0, result.stderr
+    keys = (tmp_path / "tunnel-home" / "tunnel-keys").read_text()
+    assert keys.count("ssh-ed25519") == 1, keys
+    assert "shelfos-label@renamed" in keys
+    assert "shelfos-label@goofy" not in keys
+
+
+def test_writing_a_setting_marks_the_service_for_a_restart(tmp_path: Path) -> None:
+    """The path set_env_setting exists for is a --reinstall where nothing else
+    changed: the settings land in the file, and the process goes on with the
+    environment it read at start-up."""
+    script = _SCRIPT.read_text()
+    body = script[
+        script.index("set_env_setting() {") : script.index("deploy_tunnel_account() {")
+    ]
+    env_file = tmp_path / "env"
+    env_file.write_text("SHELFOS_SECRET_KEY=abc\n")
+    probe = tmp_path / "restart.sh"
+    probe.write_text(
+        "set -Eeuo pipefail\n"
+        f"ENV_FILE_SYSTEM={env_file}\nSERVICE_USER=$(id -un)\nDRY_RUN=0\n"
+        "DEPLOY_RESTART=0\n"
+        "info() { :; }\n"
+        'sudo_run() { "$@"; }\n'
+        'write_file() { cat > "$1"; }\n'
+        f"{body}\nset_env_setting SHELFOS_TUNNEL_USER shelfos-tunnel\n"
+        'printf "restart=%s\\n" "$DEPLOY_RESTART"\n'
+    )
+    result = subprocess.run(
+        ["bash", str(probe)], capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    assert "restart=1" in result.stdout, result.stderr

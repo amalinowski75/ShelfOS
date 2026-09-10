@@ -98,7 +98,12 @@ jobs:
       # shelfos.sh installs a service as root; static analysis of it is not
       # optional the way it might be for a two-line helper.
       - name: Parse
-        run: bash -n shelfos.sh
+        run: |
+          bash -n shelfos.sh
+          # The installer template. It is a real .sh file with "@TOKEN@" where
+          # the values go precisely so this works — a three-hundred-line script
+          # inside a Python string could be neither parsed nor read.
+          bash -n app/services/label_setup_installer.sh
 
       - name: Lint (shellcheck)
         # check-unassigned-uppercase is not on by default and is what catches a
@@ -107,7 +112,8 @@ jobs:
         # after replacing the database and before starting the service.
         run: |
           shellcheck --shell=bash --severity=style \
-            --enable=check-unassigned-uppercase shelfos.sh
+            --enable=check-unassigned-uppercase \
+            shelfos.sh app/services/label_setup_installer.sh
 
   # Aggregate gate: the branch ruleset requires a status check named `checks`, so
   # keep one that passes only when every suite passes. `if: always()` ensures it

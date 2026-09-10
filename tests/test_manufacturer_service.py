@@ -110,9 +110,7 @@ def test_a_cycle_cannot_be_recorded(session: Session) -> None:
     # Pointing the canonical name back at its own alias resolves to itself, which
     # is the "nothing to record" case rather than a loop for the lookup to walk.
     ms.record_alias(session, alias="TI", canonical="Texas Instruments")
-    assert (
-        ms.record_alias(session, alias="Texas Instruments", canonical="TI") is None
-    )
+    assert ms.record_alias(session, alias="Texas Instruments", canonical="TI") is None
     assert ms.canonical_name(session, "TI") == "Texas Instruments"
 
 
@@ -144,9 +142,7 @@ def test_the_same_part_under_an_alias_is_found_as_a_duplicate(
         is None
     )
     ms.record_alias(session, alias="MICROCHIP", canonical="Microchip Technology")
-    hit = cs.find_duplicate_component(
-        session, mpn="MCP2200", manufacturer="MICROCHIP"
-    )
+    hit = cs.find_duplicate_component(session, mpn="MCP2200", manufacturer="MICROCHIP")
     assert hit is not None
     assert hit.manufacturer == "Microchip Technology"
 
@@ -154,9 +150,7 @@ def test_the_same_part_under_an_alias_is_found_as_a_duplicate(
 def test_two_makers_sharing_an_mpn_are_still_two_parts(session: Session) -> None:
     # The reason nothing is inferred: an MPN is not unique across manufacturers.
     _part(session, mpn="5120", manufacturer="Keystone Electronics")
-    assert (
-        cs.find_duplicate_component(session, mpn="5120", manufacturer="ABB") is None
-    )
+    assert cs.find_duplicate_component(session, mpn="5120", manufacturer="ABB") is None
 
 
 # --- the candidates the user is asked about ----------------------------------

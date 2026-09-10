@@ -224,9 +224,9 @@ def test_failed_login_is_logged_with_name_and_address(
             "/api/auth/token", json={"username": "admin", "password": "wrong-password"}
         )
     messages = [r.getMessage() for r in caplog.records]
-    assert any(m.startswith("Failed login for 'admin' from ") for m in messages), (
-        messages
-    )
+    assert any(
+        m.startswith("Failed login for 'admin' from ") for m in messages
+    ), messages
     # The password never reaches the log.
     assert not any("wrong-password" in m for m in messages)
 

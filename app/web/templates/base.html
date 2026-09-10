@@ -34,6 +34,7 @@
           <a href="/locations"{% if path.startswith("/locations") %} aria-current="page"{% endif %}>Locations</a>
           <a href="/invoices"{% if path == "/invoices" or path.startswith("/invoices/") %} aria-current="page"{% endif %}>Invoices</a>
           <a href="/boms"{% if path.startswith("/boms") %} aria-current="page"{% endif %}>BOMs</a>
+          <a href="/label-printer"{% if path.startswith("/label-printer") %} aria-current="page"{% endif %}>Label printer</a>
           {% if current_user.role.value == "admin" %}
           <a href="/types"{% if path.startswith("/types") %} aria-current="page"{% endif %}>Types</a>
           <a href="/match-rules"{% if path.startswith("/match-rules") %} aria-current="page"{% endif %}>Match rules</a>

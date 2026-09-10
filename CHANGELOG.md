@@ -9,6 +9,157 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## Setting up the label printer from the browser
+
+*(Seven fixes from review, folded into the entry below: the port on the machine
+with the printer and the port on the server are now kept apart — choosing one on
+the form asked the server to bind it, which its sshd refuses, after the page had
+said the printer was registered; `--dry-run` no longer reaches for sudo to read a
+world-readable file; `tunnel-key` run as an ordinary user no longer reads the
+root-only settings file as "unset" and writes keys to the wrong place or for the
+wrong port; a settings change during a deploy restarts the service like every
+other change; the same key under a new comment replaces its entry rather than
+adding a second; the connection probe asks `configured_device()` like everything
+else; and the enrolment token's fingerprint is compared with `compare_digest`.)*
+
+Printing to a printer on someone else's desk worked, and standing it up meant
+reading the README, cloning this repository onto a laptop for one file, and
+writing two systemd units and a udev rule without a typo. Nobody has a clone:
+the deployment is a server and a browser.
+
+- **`/label-printer`**, open to anyone signed in — read-only accounts included,
+  because it concerns the machine in front of the person rather than what they
+  may change in ShelfOS. Answer three questions, download one script with the
+  answers already in it, read it, run it.
+- The script carries the bridge inside it as base64 and checks its sha256 after
+  decoding, so what lands on the laptop is this repository's file byte for byte
+  and a truncated download says so instead of half-installing. `--show-bridge`
+  prints it, `--dry-run` prints what it would do and never calls sudo.
+- It checks ssh **before** it changes anything, and separates the two failures
+  that look identical from the outside: an unaccepted host key and a key the
+  server does not know both leave the tunnel restarting for ever, saying
+  nothing. Each gets the command that fixes it.
+- It refuses to run as root. Under sudo it would set up root's user services and
+  root's linger — two services nobody would think to look for, while the user's
+  never start.
+- **Test connection** asks the printer what tape it holds, over the same path
+  printing uses, and names the failure rather than shrugging. The one worth
+  having is "the connection was accepted and then went quiet": the bridge is up
+  and the printer behind it is not — unplugged, in Editor Lite mode, or held by
+  CUPS. Everywhere else that collapses into "the printer is not saying what it
+  holds", which sends people to the wrong machine.
+- The page says nothing whatever about the server. What ShelfOS itself needs is
+  the administrator's, set elsewhere; the person with the printer has no way to
+  act on it and no reason to see it.
+- A deploy now creates **`shelfos-tunnel`**, an account for this and nothing
+  else, and the page fills its name in. Not the service account: that one has no
+  shell and a root-owned home, so sshd would refuse it, and giving it those would
+  turn a confined service account into a login account.
+- **A deploy that changed the code restarts the service.** `enable --now` starts
+  a stopped service and does nothing to a running one, so a re-deploy left the
+  old process serving the old code while the new templates sat on disk — which is
+  a service half-changed: a new link in the navigation, and a 404 behind it,
+  because routes are registered at import and templates are read per request. Now
+  anything that changes what a running service executes — the code, the
+  virtualenv, the unit — restarts it, and nothing else does.
+- **`deploy --reinstall` moves the installed code.** It used to skip that step
+  outright as "already a checkout", so an install cloned from `main` stayed on
+  `main` through an update and a re-deploy — every step reporting success, with
+  the only symptom a feature that never appeared. It now brings `/opt/shelfos` to
+  what the clone being deployed has checked out, branch included, and refuses
+  over hand-edited files there. A plain `update` says which branch it is on and
+  points at `--ref`, since an update that changes nothing looks the same as one
+  that had nothing to do.
+- A second `deploy --reinstall` **keeps the domain the first one was given**,
+  read back from the Caddy config it wrote. Asked again without `--domain` it
+  used to fall back to no TLS, which on a working HTTPS server drops the proxy
+  from the plan and loosens the session cookie — a re-run quietly undoing the
+  thing it is re-running. Only our own site counts: a Caddyfile serving somebody
+  else's site names their domain, not ours.
+- The deploy asks sshd what it will **actually do** for the tunnel account
+  (`sshd -T -C user=…`), rather than trusting that a file it wrote is a file that
+  applies. An `AllowUsers` list it cannot extend, or somebody's own `Match` block
+  further down, would otherwise refuse every printer in exactly the words an
+  unauthorised key produces — and the installer's message now names that
+  possibility too.
+- A deploy installs **fonts-dejavu-core**. A label is a bitmap and drawing text
+  into one needs a TTF on the host, which a server has no desktop to have brought
+  — so every preview and every print failed with "no label font found" until
+  somebody worked out that a font was the missing piece. No setting goes with it:
+  DejaVu is the first family the renderer looks for.
+- **A registered machine is a configured printer.** Test connection went green
+  and the Print buttons still were not there, because `SHELFOS_LABEL_DEVICE` was
+  unset — so the page's promise stopped one step short of an administrator
+  editing a settings file and restarting the service, with nothing left to
+  decide. A registration now answers that question by itself; the setting still
+  wins where it is set, and withdrawing the last key takes the buttons away
+  again.
+- The tunnel asks for `127.0.0.1:<port>` by name rather than for a bare port,
+  and the server permits both spellings. sshd matches `PermitListen` against what
+  the client *asked* for, and a bare port carries no address at all — so a rule
+  naming only the address it would resolve to could refuse the exact forward it
+  was written to allow, with the client reporting it in the same words it uses
+  for a port that is genuinely in use. The message now names both possibilities.
+- **Signing in works on a deployment served without TLS.** The session cookie is
+  marked `Secure` in production, and no browser sends one of those back over
+  plain HTTP — so the session was dropped, the sign-in form's token had nothing
+  to match, and every attempt said the form had expired, with nothing in the log
+  because nothing had failed. `SHELFOS_COOKIE_SECURE` decides it now, a deploy
+  with `--no-tls` sets it, and the app says so at startup.
+- **`deploy --listen ADDRESS`**, so a server without a proxy can be reached at
+  its own address instead of through a forwarded port. Still 127.0.0.1 by
+  default — a plain-HTTP port on a network interface carries sign-ins in the
+  clear, and the summary says so when one is asked for. `status` and `update`
+  read the address back out of the unit, so they stop reporting "no answer" for
+  a healthy service that simply is not on loopback.
+- The ssh target offered is no longer whatever the browser's address bar says.
+  A loopback address there means a proxy or a tunnel in between — a container's
+  proxy device, a published port, an `ssh -L` — and ssh from the machine with
+  the printer would come back to that machine. The page offers the address the
+  server sees itself at instead, and says why.
+- **Nothing to do on the server.** The script registers its own public key with
+  ShelfOS over the session the person is already signed in with — no account
+  here, no ssh, nothing typed. sshd reads that account's keys from a command
+  (`AuthorizedKeysCommand`) printing a file ShelfOS owns, so the service needs no
+  privileges to authorise a machine, and a `Match User` block caps what any key
+  in it may do: one remote forward of one loopback port, no shell, nothing
+  outbound. The deploy validates the block with `sshd -t` before reloading, and
+  withdraws it if it does not pass — a bad sshd config that gets reloaded is how
+  people lose the only way into their own server.
+- The registration token lives in the downloaded script, is good for a week, and
+  is **not a sign-in**: tokens carrying a scope are refused everywhere else in
+  the app, so a shell script in somebody's Downloads can never be presented as
+  the account that downloaded it.
+- **The key is made on the machine with the printer and stays there.** ShelfOS
+  hands out a script, never a credential — a page that handed out a private key
+  would make "can open this page" mean "has ssh access to the server", and a key
+  fetched by ten people is nobody's. `./shelfos.sh tunnel-key add "<public key>"`
+  remains for what the browser cannot cover — a server without the sshd block, or
+  a read-only account, which may read the page but not change what this server
+  accepts — with `list` and `remove` beside it.
+- `sshd -t` will not test a configuration at all while its run directory is
+  missing, and on a machine where ssh has never started it is — systemd makes it
+  when the service comes up. The check now makes it first, and when sshd still
+  refuses, asks again **without** the new file: only a rejection that goes away
+  with the file removed is the file's fault. A configuration that was already
+  broken is reported rather than blamed on the deploy.
+- An install made before any of this **learns the two new settings** even though
+  its `/etc/shelfos/env` is never replaced (it holds the signing secret and the
+  shop keys). Only what is missing or empty is filled in; an answer already
+  there is somebody's decision.
+- **A deploy no longer dies because udev would not re-apply a rule.** In a
+  container `/sys` is not writable even for root, so `udevadm trigger` reports
+  "Permission denied" for every device and exits non-zero — which ended the
+  deploy at step 10 of 12, with everything installed and nothing started. The
+  rule is written either way and takes effect at the next replug, so this is now
+  a warning that says so. The same for reloading sshd, which may not be running
+  yet on a machine being set up.
+- The ssh check is now the connection the unit actually makes, held open for a
+  moment. `ssh host true` tested a session, which a forwarding-only key refuses
+  on purpose: the check would have failed on a setup that works. The new one
+  tells apart an unaccepted host key, a key nobody has authorised, and a port
+  already taken on the server — and each gets the command that fixes it.
+
 ## A bridge of our own for the network printer
 
 The `socat` line the last entry recommended turns out to be the wrong tool, and

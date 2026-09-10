@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlmodel import Session
 
 from app import config
@@ -11,11 +11,18 @@ from app.api.schemas import (
     LabelJobRead,
     LabelPrintRequest,
     LabelPrintResult,
+    PrinterProbeRead,
     TapeRead,
     TapesRead,
 )
+from app.auth.deps import get_current_user
+from app.auth.tokens import create_enroll_token
+from app.models.enums import UserRole
+from app.models.user import User
 from app.services import label_printer as lp
 from app.services import label_service as lbl
+from app.services import label_setup as setup
+from app.services import tunnel_keys
 
 router = APIRouter(prefix="/api/labels", tags=["labels"])
 
@@ -128,4 +135,85 @@ def running_job() -> LabelJobRead:
         printing=progress is not None,
         done=progress[0] if progress else 0,
         total=progress[1] if progress else 0,
+    )
+
+
+@router.get("/setup/installer.sh")
+def download_installer(
+    request: Request,
+    ssh_user: str,
+    ssh_host: str,
+    ssh_port: int = setup.DEFAULT_SSH_PORT,
+    device: str = setup.DEFAULT_DEVICE,
+    bridge_port: int = setup.DEFAULT_BRIDGE_PORT,
+    group: str = setup.ALLOWED_GROUPS[0],
+    user: User = Depends(get_current_user),
+) -> Response:
+    """The setup script for the machine holding the printer, filled in (§7).
+
+    The download is also where the machine's registration token is minted, so
+    the script can hand its own public key back without anybody signing in to
+    this server. A GET taking the answers in the query string, because the form
+    that sends it is a plain ``<form method="get">``: a download built in
+    JavaScript would be the only Blob in the whole interface, and this needs no
+    session state.
+    Every value is validated in the service, and a bad one comes back as a 422
+    rather than being escaped into the script.
+    """
+    # The script registers its own key, so it leaves here carrying the address
+    # to send it to and a token that may do that one thing for a week. Neither
+    # is minted when it could not be used: a server without the key store has
+    # nowhere to put a key, and a read-only account may not change what this
+    # server accepts. The script then prints the one line to run here instead,
+    # rather than failing at something it was never going to be allowed to do.
+    may_register = tunnel_keys.configured() and user.role is not UserRole.READ_ONLY
+    script = setup.render_installer(
+        shelfos_url=str(request.base_url).rstrip("/") if may_register else "",
+        enroll_token=(
+            create_enroll_token(user, hours=config.TUNNEL_ENROLL_HOURS)
+            if may_register
+            else ""
+        ),
+        ssh_user=ssh_user,
+        ssh_host=ssh_host,
+        ssh_port=ssh_port,
+        device=device,
+        bridge_port=bridge_port,
+        group=group,
+    )
+    return Response(
+        content=script,
+        media_type="text/x-shellscript",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{setup.INSTALLER_FILENAME}"'
+            ),
+            # It names a server and an account. Not a secret, but there is no
+            # reason for a proxy or the browser to keep a copy.
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.get("/setup/probe", response_model=PrinterProbeRead)
+def probe_printer(device: str | None = None) -> PrinterProbeRead:
+    """Ask the printer how it is, and say what came of asking (§7).
+
+    200 in every reachable case, including "it did not answer". That is the
+    answer the button asked for, not a failure of the request — unlike the
+    print path, where a 503 is right because silence defeats what the caller
+    wanted. A GET, like ``/tapes``, which has always asked the printer this way;
+    that also keeps the button working for a read-only account, which is the
+    point, since it is about the machine in front of the person rather than
+    their permissions in ShelfOS.
+    """
+    target = setup.probe_target(device or lp.configured_device())
+    result = lp.probe_device(target)
+    return PrinterProbeRead(
+        answered=result.answered,
+        busy=result.busy,
+        detail=result.detail,
+        tape=result.tape,
+        width_mm=result.width_mm,
+        errors=list(result.errors),
     )

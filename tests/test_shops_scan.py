@@ -455,9 +455,7 @@ class _Recorder:
             raise ValidationError("boom")
         return self.product
 
-    def fetch_by_mpn(
-        self, mpn: str, *, manufacturer: str | None = None
-    ) -> ProductData:
+    def fetch_by_mpn(self, mpn: str, *, manufacturer: str | None = None) -> ProductData:
         self.mpn = mpn
         self.manufacturer = manufacturer
         if self.product is None:

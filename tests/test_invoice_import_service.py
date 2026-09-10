@@ -126,8 +126,12 @@ def test_enrichment_fills_parameters_and_mounting_on_the_staged_row(
 
     rtype = cs.create_type(session, "resistor")
     resistance = cs.add_parameter_definition(
-        session, rtype.id, name="resistance", label="Resistance",
-        data_type=cs.ParameterDataType.NUMBER, unit="Ω",
+        session,
+        rtype.id,
+        name="resistance",
+        label="Resistance",
+        data_type=cs.ParameterDataType.NUMBER,
+        unit="Ω",
     )
     mrs.seed_default_rules(session)  # gives SMD -> SMT
     _fake_provider(
@@ -157,8 +161,12 @@ def test_enrichment_fills_parameters_and_mounting_on_the_staged_row(
 
     # Finalize materialises a component carrying those values + mounting.
     iis.update_pending(
-        session, result.invoice_id, row.id, location_id=_make_location(session)
-    , user_id=1)
+        session,
+        result.invoice_id,
+        row.id,
+        location_id=_make_location(session),
+        user_id=1,
+    )
     invoice_service.finalize_invoice(session, result.invoice_id, user_id=1)
     component = cs.list_components(session)[0]
     assert component.mounting_type is MountingType.SMT
@@ -175,8 +183,12 @@ def test_changing_the_type_clears_parameters_but_keeps_mounting(
 
     rtype = cs.create_type(session, "resistor")
     resistance = cs.add_parameter_definition(
-        session, rtype.id, name="resistance", label="Resistance",
-        data_type=cs.ParameterDataType.NUMBER, unit="Ω",
+        session,
+        rtype.id,
+        name="resistance",
+        label="Resistance",
+        data_type=cs.ParameterDataType.NUMBER,
+        unit="Ω",
     )
     other = cs.create_type(session, "capacitor")
     mrs.seed_default_rules(session)
@@ -184,7 +196,9 @@ def test_changing_the_type_clears_parameters_but_keeps_mounting(
         monkeypatch,
         "mouser",
         ProductData(
-            mpn="RC0402", manufacturer="YAGEO", category="resistor",
+            mpn="RC0402",
+            manufacturer="YAGEO",
+            category="resistor",
             description="Thick Film Resistors - SMD 10 kOhms 0402",
             parameters=[("Resistance", "10 kOhms")],
         ),
@@ -218,8 +232,12 @@ def test_update_pending_ignores_a_null_mounting_type(
     _fake_provider(
         monkeypatch,
         "mouser",
-        ProductData(mpn="RC0402", manufacturer="YAGEO", category="resistor",
-                    description="SMD 0402"),
+        ProductData(
+            mpn="RC0402",
+            manufacturer="YAGEO",
+            category="resistor",
+            description="SMD 0402",
+        ),
     )
     _patch_parse(monkeypatch, _invoice(_line(mpn="RC0402"), shop_key="mouser"))
     result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
@@ -229,8 +247,8 @@ def test_update_pending_ignores_a_null_mounting_type(
     # An explicit null (the model has no cleared state) must leave the value intact,
     # not write None into the NOT-NULL column and break template rendering.
     updated = iis.update_pending(
-        session, result.invoice_id, row.id, mounting_type=None
-    , user_id=1)
+        session, result.invoice_id, row.id, mounting_type=None, user_id=1
+    )
     assert updated.mounting_type is MountingType.SMT
 
 
@@ -328,9 +346,7 @@ def test_a_hard_enrich_failure_disables_the_api_for_the_rest_of_the_import(
     monkeypatch.setitem(shops._BY_INDEX, "mouser", _Hard())
     _patch_parse(
         monkeypatch,
-        _invoice(
-            _line(mpn="A1"), _line(mpn="B2"), _line(mpn="C3"), shop_key="mouser"
-        ),
+        _invoice(_line(mpn="A1"), _line(mpn="B2"), _line(mpn="C3"), shop_key="mouser"),
     )
 
     iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
@@ -447,9 +463,7 @@ def test_finalize_materializes_a_ready_row(session: Session, monkeypatch) -> Non
     assert iis.list_pending(session, invoice_id) == []
 
 
-def test_finalize_blocked_by_a_needs_review_row(
-    session: Session, monkeypatch
-) -> None:
+def test_finalize_blocked_by_a_needs_review_row(session: Session, monkeypatch) -> None:
     # No type exists → the row needs review (no type_id).
     _patch_parse(
         monkeypatch,
@@ -468,9 +482,7 @@ def test_finalize_blocked_by_a_needs_review_row(
         invoice_service.finalize_invoice(session, result.invoice_id, user_id=1)
 
 
-def test_finalize_does_not_partially_materialize(
-    session: Session, monkeypatch
-) -> None:
+def test_finalize_does_not_partially_materialize(session: Session, monkeypatch) -> None:
     # One ready row (type + location) and one needs-review row. Finalize must reject
     # the whole thing WITHOUT creating the ready row's component (no half-done state).
     cs.create_type(session, "resistor")
@@ -486,8 +498,12 @@ def test_finalize_does_not_partially_materialize(
     pending = iis.list_pending(session, result.invoice_id)
     ready = next(p for p in pending if p.type_id is not None)
     iis.update_pending(
-        session, result.invoice_id, ready.id, location_id=_make_location(session)
-    , user_id=1)
+        session,
+        result.invoice_id,
+        ready.id,
+        location_id=_make_location(session),
+        user_id=1,
+    )
 
     with pytest.raises(ValidationError, match="need a type"):
         invoice_service.finalize_invoice(session, result.invoice_id, user_id=1)
@@ -516,8 +532,12 @@ def test_finalize_blocked_by_a_case1_line_without_location_creates_nothing(
     result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
     ready = next(p for p in iis.list_pending(session, result.invoice_id) if p.type_id)
     iis.update_pending(
-        session, result.invoice_id, ready.id, location_id=_make_location(session)
-    , user_id=1)
+        session,
+        result.invoice_id,
+        ready.id,
+        location_id=_make_location(session),
+        user_id=1,
+    )
 
     with pytest.raises(ValidationError, match="location"):
         invoice_service.finalize_invoice(session, result.invoice_id, user_id=1)
@@ -586,8 +606,12 @@ def test_finalize_applies_parameters_entered_during_review(
 
     rt = cs.create_type(session, "resistor")
     resistance = cs.add_parameter_definition(
-        session, rt.id, name="resistance", label="R",
-        data_type=ParameterDataType.NUMBER, unit="Ω",
+        session,
+        rt.id,
+        name="resistance",
+        label="R",
+        data_type=ParameterDataType.NUMBER,
+        unit="Ω",
     )
     _patch_parse(
         monkeypatch,
@@ -604,7 +628,8 @@ def test_finalize_applies_parameters_entered_during_review(
         row.id,
         location_id=_make_location(session),
         parameters=[{"parameter_definition_id": resistance.id, "value": "4k7"}],
-     user_id=1)
+        user_id=1,
+    )
 
     invoice_service.finalize_invoice(session, result.invoice_id, user_id=1)
 
@@ -623,8 +648,12 @@ def test_changing_the_type_clears_reviewed_parameters(
 
     rt = cs.create_type(session, "resistor")
     resistance = cs.add_parameter_definition(
-        session, rt.id, name="resistance", label="R",
-        data_type=ParameterDataType.NUMBER, unit="Ω",
+        session,
+        rt.id,
+        name="resistance",
+        label="R",
+        data_type=ParameterDataType.NUMBER,
+        unit="Ω",
     )
     other = cs.create_type(session, "capacitor")
     _patch_parse(
@@ -634,9 +663,12 @@ def test_changing_the_type_clears_reviewed_parameters(
     result = iis.import_invoice(session, data=b"x", filename="f.pdf", user_id=1)
     row = iis.list_pending(session, result.invoice_id)[0]
     iis.update_pending(
-        session, result.invoice_id, row.id,
+        session,
+        result.invoice_id,
+        row.id,
         parameters=[{"parameter_definition_id": resistance.id, "value": "1k"}],
-     user_id=1)
+        user_id=1,
+    )
     assert iis.get_pending(session, result.invoice_id, row.id).parameters
 
     iis.update_pending(session, result.invoice_id, row.id, type_id=other.id, user_id=1)
@@ -804,13 +836,21 @@ def test_materialize_rejects_a_row_that_lost_its_type_or_location(
     rt = cs.create_type(session, "resistor")
     location = _make_location(session)
     invoice = invoice_service.create_invoice(
-        session, supplier="TME", invoice_number="M", invoice_date=date(2026, 1, 1),
+        session,
+        supplier="TME",
+        invoice_number="M",
+        invoice_date=date(2026, 1, 1),
         currency="PLN",
     )
     session.add(
         InvoiceImportLine(
-            invoice_id=invoice.id, line_no=1, mpn="R1", manufacturer="Acme",
-            quantity=1, unit_price=Decimal("1"), shop_key="tme",
+            invoice_id=invoice.id,
+            line_no=1,
+            mpn="R1",
+            manufacturer="Acme",
+            quantity=1,
+            unit_price=Decimal("1"),
+            shop_key="tme",
             type_id=None if cleared == "type" else rt.id,
             location_id=None if cleared == "location" else location,
             reason="",
@@ -832,7 +872,10 @@ def test_update_and_dismiss_pending_refuse_a_finalized_invoice(
     comp = cs.create_component(session, diode.id, manufacturer="On", mpn="OK")
     location = _make_location(session)
     invoice = invoice_service.create_invoice(
-        session, supplier="X", invoice_number="F", invoice_date=date(2026, 1, 1),
+        session,
+        supplier="X",
+        invoice_number="F",
+        invoice_date=date(2026, 1, 1),
         currency="PLN",
     )
     line = invoice_service.add_line(
@@ -971,8 +1014,11 @@ def test_adopting_refuses_a_line_from_another_invoice(
         session, monkeypatch, mpn="X1", manufacturer="B"
     )
     other = invoice_service.create_invoice(
-        session, supplier="TME", invoice_number="OTHER-1",
-        invoice_date=date(2026, 1, 1), currency="PLN"
+        session,
+        supplier="TME",
+        invoice_number="OTHER-1",
+        invoice_date=date(2026, 1, 1),
+        currency="PLN",
     )
 
     with pytest.raises(NotFoundError):
@@ -1105,9 +1151,7 @@ def test_a_staged_row_can_correct_the_invoice_s_own_numbers(
         )
     }
     assert (
-        audit_service.import_line_field(
-            row.line_no, audit_service.FIELD_UNIT_PRICE
-        )
+        audit_service.import_line_field(row.line_no, audit_service.FIELD_UNIT_PRICE)
         in fields
     )
     assert (

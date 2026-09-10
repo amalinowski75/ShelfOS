@@ -296,20 +296,20 @@ def test_delete_attachments_for_removes_only_that_entity(
     thumb = ats.thumbnail_file(session, on_component.id)
     _attach(session, "invoice", invoice.id, kind=AttachmentKind.INVOICE_PDF)
 
-    ats.delete_attachments_for(
-        session, entity_type="component", entity_id=component.id
-    )
+    ats.delete_attachments_for(session, entity_type="component", entity_id=component.id)
     session.commit()
 
-    assert ats.list_attachments(
-        session, entity_type="component", entity_id=component.id
-    ) == []
+    assert (
+        ats.list_attachments(session, entity_type="component", entity_id=component.id)
+        == []
+    )
     assert not file_path.exists()
     assert not thumb.exists()
     # The invoice's attachment is untouched.
-    assert len(
-        ats.list_attachments(session, entity_type="invoice", entity_id=invoice.id)
-    ) == 1
+    assert (
+        len(ats.list_attachments(session, entity_type="invoice", entity_id=invoice.id))
+        == 1
+    )
 
 
 def test_hard_delete_component_removes_its_attachments(

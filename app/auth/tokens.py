@@ -23,6 +23,13 @@ _ALGORITHM = "HS256"
 # JWT claim, and session key, carrying the fingerprint below.
 CREDENTIAL_CLAIM = "cf"
 
+# A token that may do ONE thing rather than everything its owner may do. The
+# claim is what keeps the two apart: a full sign-in never carries it, and
+# ``get_optional_user`` refuses any token that does — so a narrow token handed
+# to a script can never be presented as its owner anywhere else.
+SCOPE_CLAIM = "scope"
+ENROLL_SCOPE = "label-enroll"
+
 
 def credential_fingerprint(user: User) -> str | None:
     """A stand-in for the user's *current* password, carried by a sign-in.
@@ -62,6 +69,38 @@ def create_access_token(user: User) -> str:
         "exp": now + timedelta(hours=TOKEN_EXPIRE_HOURS),
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=_ALGORITHM)
+
+
+def create_enroll_token(user: User, *, hours: int) -> str:
+    """A token good for registering a label printer's key, and nothing else.
+
+    It travels inside a downloaded shell script, so it is deliberately not a
+    sign-in: it names a scope, and the only endpoint that accepts it checks
+    that scope before it does anything. Short-lived, and bound to the password
+    it was issued against like every other sign-in here — changing the password
+    retires it with the rest.
+    """
+    now = datetime.now(UTC)
+    payload = {
+        "sub": str(user.id),
+        SCOPE_CLAIM: ENROLL_SCOPE,
+        CREDENTIAL_CLAIM: credential_fingerprint(user),
+        "iat": now,
+        "exp": now + timedelta(hours=hours),
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=_ALGORITHM)
+
+
+def decode_scoped_token(token: str, scope: str) -> dict[str, Any] | None:
+    """Claims of a valid token carrying exactly ``scope``, or ``None``.
+
+    Signature, expiry and scope in one place, so no caller can be tempted to
+    check two of the three.
+    """
+    claims = decode_token(token)
+    if claims is None or claims.get(SCOPE_CLAIM) != scope:
+        return None
+    return claims
 
 
 def decode_token(token: str) -> dict[str, Any] | None:

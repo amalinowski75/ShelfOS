@@ -62,6 +62,31 @@ def is_production() -> bool:
     return ENV == "production"
 
 
+def _flag(name: str, default: bool) -> bool:
+    """A yes/no setting, read the way people write them."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def cookie_secure() -> bool:
+    """Whether the session cookie is marked ``Secure``.
+
+    Production implies yes, and that is right whenever there is TLS in front. It
+    is not right when there is not: a Secure cookie is never sent back over plain
+    HTTP, so the browser silently drops the session, the sign-in form's token has
+    nothing to match, and the only symptom is "that sign-in form has expired" for
+    ever — with nothing in the log, because nothing failed.
+
+    A deployment served over plain HTTP on purpose (a test box, a private
+    bridge) sets ``SHELFOS_COOKIE_SECURE=0`` and gets a working sign-in and the
+    honest consequence: on plain HTTP the cookie travels in the clear, exactly
+    like the password that established it.
+    """
+    return _flag("SHELFOS_COOKIE_SECURE", is_production())
+
+
 def is_using_default_secret() -> bool:
     """True when the (insecure) default secret key is in effect."""
     return SECRET_KEY == _DEFAULT_SECRET
@@ -70,6 +95,7 @@ def is_using_default_secret() -> bool:
 def is_using_default_admin_password() -> bool:
     """True when the default admin password is in effect."""
     return ADMIN_PASSWORD == DEFAULT_ADMIN_PASSWORD
+
 
 # Server-side fetch of an attachment from a URL (spec §10): connect+read timeout
 # (seconds) and the maximum number of redirects followed (each re-validated).
@@ -179,6 +205,28 @@ LABEL_FONT_BOLD = os.environ.get("SHELFOS_LABEL_FONT_BOLD", "").strip()
 # writes fail either way.
 LABEL_DEVICE = os.environ.get("SHELFOS_LABEL_DEVICE", "").strip()
 
+# The account on THIS machine that a computer with a label printer logs in as to
+# carry it here over ssh (see "./shelfos.sh tunnel-key"). Read for one purpose:
+# filling it into the form on /label-printer, so nobody has to be told the name.
+# Empty (the default, and what a deploy that predates the account leaves) means
+# the field starts blank and is typed by hand.
+TUNNEL_USER = os.environ.get("SHELFOS_TUNNEL_USER", "").strip()
+
+# The file sshd is told to read the tunnel account's keys out of (through the
+# AuthorizedKeysCommand a deploy installs). ShelfOS owns it, which is what lets
+# a printer register itself without anybody logging in to this machine: the
+# service writes an ordinary file, and no part of ShelfOS needs privileges.
+# Empty (the default) means this server was not set up for it, and the page then
+# says how to authorise a key by hand instead of offering a button that cannot
+# work.
+TUNNEL_KEYS_FILE = os.environ.get("SHELFOS_TUNNEL_KEYS", "").strip()
+
+# How long the registration token inside a downloaded setup script is good for.
+# Long enough to download it today and run it at the weekend; short enough that
+# a forgotten copy in Downloads stops being a way in. It authorises one thing —
+# adding a key that may bind one loopback port — and never a sign-in.
+TUNNEL_ENROLL_HOURS = int(os.environ.get("SHELFOS_TUNNEL_ENROLL_HOURS", "168"))
+
 # Which Brother QL is on the other end. The 800 series has its own raster
 # header, so a wrong model here produces a printer that takes the job and does
 # nothing with it.
@@ -201,5 +249,11 @@ LABEL_STATUS_TIMEOUT = float(os.environ.get("SHELFOS_LABEL_STATUS_TIMEOUT", "2")
 
 
 def label_printing_configured() -> bool:
-    """True when a printer device is set, so the print buttons are worth showing."""
+    """True when this SETTING names a printer.
+
+    Not the same question as "can this ShelfOS print", which a registered tunnel
+    can also answer — see :func:`app.services.label_printer.printing_configured`,
+    which is what the pages ask. This one stays because the startup checks are
+    about the setting itself: what it names, and whether it can be opened.
+    """
     return bool(LABEL_DEVICE)
