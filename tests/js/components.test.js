@@ -400,6 +400,92 @@ describe("component_dialog.js — stage mode (invoice import review)", () => {
     ).toBe(false);
     expect(saved).toHaveLength(1);
   });
+
+  it("re-imports from the shop when the staged line's type is corrected", async () => {
+    // The type is the guess a reviewer most often fixes, and the parameters were
+    // filed under the old one. Nothing about the import is kept between dialogs, so
+    // the shop link the row carries is looked up again — the same call the Import
+    // button makes — and the engine re-runs for the chosen type.
+    const looked = [];
+    let proposalBody = null;
+    const impl = (url, opts) => {
+      if (url === "/api/shops/lookup") {
+        looked.push(JSON.parse(opts.body));
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            category: "resistor",
+            shop_category: "SMD resistors",
+            description: "10k 1% 0402 resistor",
+            package: "0402",
+            parameters: [{ name: "Resistance", value: "10 kOhms" }],
+            proposal: { type_id: 1, mounting_type: null, package: null, parameters: [] },
+          }),
+        });
+      }
+      if (url === "/api/matching/proposal") {
+        proposalBody = JSON.parse(opts.body);
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            type_id: 2,
+            mounting_type: null,
+            package: null,
+            parameters: [{ parameter_definition_id: 10, value: "8k" }],
+          }),
+        });
+      }
+      return fetchImpl(url, opts);
+    };
+    const { window, document } = loadPage(
+      componentPageFixture([
+        { id: 1, name: "resistor" },
+        { id: 2, name: "capacitor" },
+      ]),
+      SCRIPTS,
+      { fetchImpl: impl },
+    );
+
+    window.openComponentDialog(
+      () => {},
+      {
+        typeId: 1,
+        mpn: "R-1",
+        notes: "a res",
+        paramValues: [{ parameter_definition_id: 10, value: "4k7" }],
+        shopUrl: "https://www.tme.eu/en/details/R-1/",
+      },
+      { stage: { invoiceId: 7, importLineId: 21 } },
+    );
+    await tick();
+    expect(looked).toHaveLength(0); // opening the dialog asks the shop nothing
+
+    const select = document.getElementById("component-type");
+    select.value = "2";
+    fire(select, "change");
+    await tick();
+    await tick();
+    await tick();
+
+    // The row's shop link is what the lookup is keyed on, and the product it answers
+    // with is what the engine re-matches for the new type.
+    expect(looked).toEqual([{ code: "https://www.tme.eu/en/details/R-1/" }]);
+    expect(proposalBody.type_id).toBe(2);
+    expect(proposalBody.description).toBe("10k 1% 0402 resistor");
+    expect(proposalBody.parameters).toEqual([
+      { name: "Resistance", value: "10 kOhms" },
+    ]);
+    expect(
+      document.querySelector('#component-params [data-definition-id="10"]').value,
+    ).toBe("8k");
+
+    // A second correction reuses the product already in hand — one lookup per dialog.
+    select.value = "1";
+    fire(select, "change");
+    await tick();
+    await tick();
+    expect(looked).toHaveLength(1);
+  });
 });
 
 describe("component_dialog.js — shop import", () => {

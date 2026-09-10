@@ -54,7 +54,8 @@
       if (pendingShopUrl) window.open(pendingShopUrl, SHOP_WINDOW_NAME);
     });
   }
-  // The last shop-imported product, kept so switching type can re-run the engine.
+  // The shop product this dialog session is working from, kept so switching type can
+  // re-run the engine without asking the shop twice. Cleared with the dialog.
   let lastImport = null;
   // Bumped on every open so a slow shop-lookup can't prefill a reopened dialog.
   let openToken = 0;
@@ -233,13 +234,63 @@
   typeSelect.addEventListener("change", async (event) => {
     const typeId = event.target.value;
     await loadParams(typeId);
-    // After a shop import, picking a different type refills its parameters from the
-    // engine (the import filled the auto-inferred type; a correction should too).
-    if (lastImport && typeId) {
-      const proposal = await fetchProposal(typeId, lastImport);
-      if (proposal && typeSelect.value === typeId) applyProposal(proposal);
-    }
+    // The auto-inferred type is the guess most often wrong, and every parameter the
+    // engine filled was filed under it — so a correction has to refill them. That
+    // needs the shop's own product data: in hand right after an Import, and fetched
+    // here (the same lookup that button runs) for a form that arrived prefilled from
+    // an invoice line or a reopened dialog.
+    if (!typeId) return;
+    const product = await ensureShopProduct();
+    if (!product) return;
+    const proposal = await fetchProposal(typeId, product);
+    if (proposal && typeSelect.value === typeId) applyProposal(proposal);
   });
+
+  // The shop product behind this form, looked up again if we don't already hold it.
+  // Nothing is stored anywhere between dialogs: the shop link is all a staged invoice
+  // line carries, and re-asking the shop's API for the part is exactly what Import
+  // does, so the answer is as fresh as the one a re-import would give. Returns null
+  // when there is nothing to ask about (a BOM/blank prefill has no shop link) or the
+  // lookup fails — the type change then just leaves the new type's fields empty.
+  async function ensureShopProduct() {
+    if (lastImport) return lastImport;
+    if (!pendingShopUrl || importing) return null;
+    const token = openToken; // ignore a late answer for a dialog since reopened
+    importing = true;
+    if (importStatus) {
+      importStatus.hidden = false;
+      importStatus.className = "muted";
+      importStatus.textContent = "Looking the part up for the new type…";
+    }
+    try {
+      const resp = await fetch("/api/shops/lookup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body: JSON.stringify({ code: pendingShopUrl }),
+      });
+      if (token !== openToken) return null;
+      if (!resp.ok) {
+        if (importStatus) {
+          importStatus.className = "error";
+          importStatus.textContent = await errorMessage(resp);
+        }
+        return null;
+      }
+      const product = await resp.json();
+      if (token !== openToken) return null;
+      if (importStatus) importStatus.hidden = true;
+      lastImport = product;
+      return product;
+    } catch {
+      if (importStatus) {
+        importStatus.className = "error";
+        importStatus.textContent = "Could not reach the server.";
+      }
+      return null;
+    } finally {
+      importing = false;
+    }
+  }
 
   // Download a datasheet URL as a file attachment via the SSRF-guarded endpoint.
   // Returns true on success; a non-2xx or a network error is a handled false, never
