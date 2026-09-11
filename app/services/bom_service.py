@@ -730,7 +730,7 @@ def build_bom_report(
         # Whole boards this line's stock covers — measured per BOARD, so it stays
         # the honest "these parts are enough for N boards" answer even when the run
         # asked for more. "Buildable boards" is then the limiting line across the
-        # WHOLE BOM: a line with no matched stock (missing / no MPN) caps it at 0,
+        # WHOLE BOM: an unresolved line, or one with no stock, caps it at 0,
         # so the number reflects true buildability, not just the resolved lines.
         per_line = (
             matched_stock // line.quantity if resolved and line.quantity else 0

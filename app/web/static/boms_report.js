@@ -32,7 +32,8 @@ function bomStatusFormatter(cell) {
   // these make?". Only when that's a real number, though: at one board (the default
   // view) short means the stock doesn't even cover a single one, so the count is
   // always 0 — which says nothing the badge didn't, and worse, reads like a stock
-  // figure. Out/missing are zero by definition and no-MPN was never matched.
+  // figure. "Ok" covers the run, "out" is zero by definition, and an unresolved
+  // line has no stock figure to speak of.
   const boards = Number(cell.getRow().getData().boards_possible) || 0;
   if (cell.getValue() === "short" && boards > 0) {
     return `${badge} <span class="muted">enough for ${boards}</span>`;
