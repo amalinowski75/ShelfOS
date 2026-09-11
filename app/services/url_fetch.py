@@ -8,6 +8,10 @@ multicast and unspecified); redirects are followed manually so every hop is
 re-validated; the body is streamed with a hard size cap; and there are per-read
 and total-fetch timeouts.
 
+A 200 is not proof of a file: a WAF that dislikes the caller answers the very same
+URL with an HTML "access denied" page, so the body is sniffed and markup refused —
+the caller can then fall back to keeping the URL as a link.
+
 Residual risk: DNS rebinding (the host could resolve differently between our
 guard and httpx's own connection). Accepted for authenticated writers; a stricter
 build would pin the connection to the validated IP.
@@ -29,6 +33,11 @@ from app import config
 from app.services.errors import ValidationError
 
 _ALLOWED_SCHEMES = {"http", "https"}
+# A WAF that refuses the download answers 200 with an HTML "Access Denied" page
+# (Mouser's Akamai does this to datacenter IPs), which would otherwise be stored
+# as the datasheet. Sniff the body's opening bytes for markup to catch it.
+_HTML_SNIFF_BYTES = 512
+_HTML_OPENINGS = (b"<!doctype html", b"<html", b"<head")
 _DEFAULT_FILENAME = "download"
 _MAX_FILENAME_LEN = 255
 # Process-wide cap on concurrent fetches (sync route runs on the shared threadpool).
@@ -78,6 +87,16 @@ def _guard_url(url: str) -> str:
         raise _reject("only http and https URLs are allowed")
     _guard_host(parts.hostname)
     return url
+
+
+def _looks_like_html(data: bytes) -> bool:
+    """True when the body opens as an HTML document.
+
+    Sniffs the *bytes*, not the Content-Type header: servers mislabel real PDFs
+    often enough that trusting the header would reject good downloads.
+    """
+    head = data[:_HTML_SNIFF_BYTES].lstrip(b"\xef\xbb\xbf").lstrip().lower()
+    return head.startswith(_HTML_OPENINGS)
 
 
 def _filename_from(url: str, content_disposition: str | None) -> str:
@@ -169,6 +188,14 @@ def _fetch(
                     data = b"".join(chunks)
                     if not data:
                         raise _reject("the URL returned no data")
+                    if _looks_like_html(data):
+                        # Not a file: an error or anti-bot page dressed as a 200.
+                        # Storing it would give the component a "datasheet" whose
+                        # every page reads "Access Denied".
+                        raise _reject(
+                            "the site returned a web page instead of a file "
+                            "(it may be blocking automated downloads)"
+                        )
                     filename = _filename_from(
                         current, resp.headers.get("content-disposition")
                     )
