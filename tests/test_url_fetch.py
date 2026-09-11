@@ -224,3 +224,32 @@ def test_accepts_a_pdf_mislabelled_as_html(monkeypatch) -> None:  # type: ignore
     transport = _ok(content=b"%PDF-1.7\n...", **{"content-type": "text/html"})
     data, _name = url_fetch.fetch_url("https://example.com/x.pdf", transport=transport)
     assert data.startswith(b"%PDF")
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        # A challenge page that opens with a comment, a script or a redirecting
+        # meta tag rather than <html> — the shapes other WAFs answer with.
+        b"<!-- vendor notice -->\n<html><body>Checking your browser</body></html>",
+        b'<script>window.location="/challenge";</script><html><head></head>',
+        b'<meta http-equiv="refresh" content="0;url=/denied">',
+        b'<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head>',
+    ],
+)
+def test_rejects_an_interstitial_that_does_not_open_with_a_tag(
+    monkeypatch, page: bytes
+) -> None:  # type: ignore[no-untyped-def]
+    _resolve_to(monkeypatch, "93.184.216.34")
+    with pytest.raises(ValidationError):
+        url_fetch.fetch_url("https://example.com/x.pdf", transport=_ok(content=page))
+
+
+def test_accepts_an_svg_which_is_markup_but_not_a_page(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    # Opening with a tag is not enough to be refused: a drawing is a real file.
+    _resolve_to(monkeypatch, "93.184.216.34")
+    svg = b'<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg"></svg>'
+    data, _name = url_fetch.fetch_url(
+        "https://example.com/symbol.svg", transport=_ok(content=svg)
+    )
+    assert data == svg
