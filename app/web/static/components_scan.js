@@ -217,7 +217,9 @@
             window.location = `/components/${created.id}`;
           },
           null,
-          { importCode: code },
+          // navigates: the callback leaves for the new component's page, so the
+          // dialog must hand its afterword over rather than toast it here.
+          { importCode: code, navigates: true },
         );
         return null;
       };
