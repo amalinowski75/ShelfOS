@@ -1,7 +1,7 @@
 // BOM availability report (spec §21): fetch the live report feed and render the
 // lines as a sortable, per-column-filterable Tabulator table. `esc` comes from
 // shared.js. The feed (/api/boms/{id}/report) returns { bom, summary, lines[] };
-// each line: references, value, category, mpn, quantity, status, stock,
+// each line: references, value, category, mpn, quantity, status, stock, missing,
 // substitutes[] (component_id, mpn, package, value, stock, exact).
 //
 // The table renders every row up front (no height cap → no virtual DOM; see the
@@ -32,7 +32,8 @@ function bomStatusFormatter(cell) {
   // these make?". Only when that's a real number, though: at one board (the default
   // view) short means the stock doesn't even cover a single one, so the count is
   // always 0 — which says nothing the badge didn't, and worse, reads like a stock
-  // figure. Out/missing are zero by definition and no-MPN was never matched.
+  // figure. "Ok" covers the run, "out" is zero by definition, and an unresolved
+  // line has no stock figure to speak of.
   const boards = Number(cell.getRow().getData().boards_possible) || 0;
   if (cell.getValue() === "short" && boards > 0) {
     return `${badge} <span class="muted">enough for ${boards}</span>`;
@@ -50,6 +51,17 @@ function bomStockFormatter(cell) {
   const row = cell.getRow().getData();
   if (!row.resolved) return "—";
   return row.mpn || row.assigned ? String(cell.getValue()) : "—";
+}
+
+// What the run is short by: the same "—" convention as stock — an unresolved line
+// has no honest shortfall to print, because the figure it would come from is a sum
+// over every component sharing the MPN. A covered line shows a plain 0; only a real
+// shortfall gets emphasis, since that is the number someone has to order.
+function bomMissingFormatter(cell) {
+  const missing = cell.getValue();
+  if (missing === null || missing === undefined) return '<span class="muted">—</span>';
+  const n = Number(missing) || 0;
+  return n > 0 ? `<strong>${n}</strong>` : '<span class="muted">0</span>';
 }
 
 function bomMpnFormatter(cell) {
@@ -215,6 +227,16 @@ function bomReportColumns() {
       hozAlign: "right",
       sorter: "number",
       formatter: bomStockFormatter,
+    },
+    {
+      // Right after Stock, because it is the subtraction the reader would
+      // otherwise do in their head: what the whole run needs, less what's here.
+      title: "Missing",
+      field: "missing",
+      width: 100,
+      hozAlign: "right",
+      sorter: "number",
+      formatter: bomMissingFormatter,
     },
     {
       // Next to Status: together they read as "where this line stands" — what the

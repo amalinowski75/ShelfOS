@@ -667,6 +667,20 @@ describe("boms_report.js — building several boards", () => {
     ).not.toContain("enough for");
   });
 
+  it("says how many the run is short by, and shows a dash when it can't", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    expect(window.bomMissingFormatter(fakeCell(10))).toContain("<strong>10</strong>");
+    // Covered is a fact worth printing, unlike "we don't know".
+    expect(window.bomMissingFormatter(fakeCell(0))).toContain(">0<");
+    expect(window.bomMissingFormatter(fakeCell(null))).toContain("—");
+  });
+
+  it("puts the shortfall right after the stock figure", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const fields = window.bomReportColumns().map((c) => c.field);
+    expect(fields.indexOf("missing")).toBe(fields.indexOf("stock") + 1);
+  });
+
   it("offers both the per-board and the run total as columns", () => {
     const { window } = loadPage(bomReportFixture(), SCRIPTS);
     const fields = window.bomReportColumns().map((c) => c.field);
