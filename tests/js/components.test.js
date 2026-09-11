@@ -1085,13 +1085,15 @@ describe("component_dialog.js — shop import", () => {
   });
 
   it("shows no warning and adds no datasheet link when the datasheet downloads", async () => {
-    const { document, fetchMock } = loadPage(componentPageFixture(), SCRIPTS, {
+    const { document, window, fetchMock } = loadPage(componentPageFixture(), SCRIPTS, {
       fetchImpl: withLookup(PRODUCT),
     });
     await openAndImport(document);
     fire(document.getElementById("component-form"), "submit");
     await tick();
-    expect(document.querySelector(".toast")).toBeNull();
+    // Read where the message would now be: this page never grows a .toast node,
+    // so looking for one here would pass whatever the dialog decided to say.
+    expect(afterword(window)).toBeNull();
     // The datasheet was downloaded as a file, so no datasheet LINK is created…
     const dsLink = fetchMock.mock.calls.find(
       (c) => c[0] === "/api/links" && JSON.parse(c[1].body).kind === "datasheet",
