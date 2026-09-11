@@ -975,6 +975,14 @@ describe("component_dialog.js — shop import", () => {
     ).toBe("");
   });
 
+  // Creating from this page jumps to the new component, so the dialog hands its
+  // afterword to the page being opened instead of toasting it onto one that is
+  // about to be replaced. This is where it waits.
+  const afterword = (window) => {
+    const raw = window.sessionStorage.getItem("shelfos:pending-toast");
+    return raw ? JSON.parse(raw).message : null;
+  };
+
   it("saves the shop URL the component was imported from as a link", async () => {
     const { document, fetchMock } = loadPage(componentPageFixture(), SCRIPTS, {
       fetchImpl: withLookup(PRODUCT),
@@ -1002,7 +1010,7 @@ describe("component_dialog.js — shop import", () => {
       url === "/api/attachments/from-url"
         ? Promise.resolve({ ok: false, json: async () => ({ detail: "nope" }) })
         : withLookup(PRODUCT)(url, opts);
-    const { document, fetchMock } = loadPage(componentPageFixture(), SCRIPTS, {
+    const { document, window, fetchMock } = loadPage(componentPageFixture(), SCRIPTS, {
       fetchImpl: impl,
     });
     await openAndImport(document);
@@ -1015,8 +1023,7 @@ describe("component_dialog.js — shop import", () => {
     );
     expect(link).toBeTruthy();
     expect(JSON.parse(link[1].body).url).toBe("https://x/ds.pdf");
-    const toast = document.querySelector(".toast");
-    expect(toast.textContent).toMatch(/saved as a link/);
+    expect(afterword(window)).toMatch(/saved as a link/);
     // The component itself still exists.
     expect(document.getElementById("component-dialog").open).toBe(false);
   });
@@ -1029,12 +1036,13 @@ describe("component_dialog.js — shop import", () => {
       }
       return withLookup(PRODUCT)(url, opts);
     };
-    const { document } = loadPage(componentPageFixture(), SCRIPTS, { fetchImpl: impl });
+    const { document, window } = loadPage(componentPageFixture(), SCRIPTS, {
+      fetchImpl: impl,
+    });
     await openAndImport(document);
     fire(document.getElementById("component-form"), "submit");
     await tick();
-    const toast = document.querySelector(".toast");
-    expect(toast.textContent).toMatch(/couldn't save the shop link/);
+    expect(afterword(window)).toMatch(/couldn't save the shop link/);
   });
 
   it("joins both losses with 'and', not 'or'", async () => {
@@ -1046,13 +1054,13 @@ describe("component_dialog.js — shop import", () => {
       }
       return withLookup(PRODUCT)(url, opts);
     };
-    const { document } = loadPage(componentPageFixture(), SCRIPTS, { fetchImpl: impl });
+    const { document, window } = loadPage(componentPageFixture(), SCRIPTS, {
+      fetchImpl: impl,
+    });
     await openAndImport(document);
     fire(document.getElementById("component-form"), "submit");
     await tick();
-    expect(document.querySelector(".toast").textContent).toContain(
-      "the shop link and the datasheet",
-    );
+    expect(afterword(window)).toContain("the shop link and the datasheet");
   });
 
   it("warns when the datasheet can be neither downloaded nor linked", async () => {
@@ -1064,24 +1072,28 @@ describe("component_dialog.js — shop import", () => {
       }
       return withLookup(PRODUCT)(url, opts);
     };
-    const { document } = loadPage(componentPageFixture(), SCRIPTS, { fetchImpl: impl });
+    const { document, window } = loadPage(componentPageFixture(), SCRIPTS, {
+      fetchImpl: impl,
+    });
     await openAndImport(document);
     fire(document.getElementById("component-form"), "submit");
     await tick();
-    const toast = document.querySelector(".toast");
-    expect(toast).toBeTruthy();
-    expect(toast.textContent).toMatch(/couldn't save/);
-    expect(toast.textContent).toMatch(/datasheet/);
+    const said = afterword(window);
+    expect(said).toBeTruthy();
+    expect(said).toMatch(/couldn't save/);
+    expect(said).toMatch(/datasheet/);
   });
 
   it("shows no warning and adds no datasheet link when the datasheet downloads", async () => {
-    const { document, fetchMock } = loadPage(componentPageFixture(), SCRIPTS, {
+    const { document, window, fetchMock } = loadPage(componentPageFixture(), SCRIPTS, {
       fetchImpl: withLookup(PRODUCT),
     });
     await openAndImport(document);
     fire(document.getElementById("component-form"), "submit");
     await tick();
-    expect(document.querySelector(".toast")).toBeNull();
+    // Read where the message would now be: this page never grows a .toast node,
+    // so looking for one here would pass whatever the dialog decided to say.
+    expect(afterword(window)).toBeNull();
     // The datasheet was downloaded as a file, so no datasheet LINK is created…
     const dsLink = fetchMock.mock.calls.find(
       (c) => c[0] === "/api/links" && JSON.parse(c[1].body).kind === "datasheet",

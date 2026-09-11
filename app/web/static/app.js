@@ -396,8 +396,12 @@ table.on("columnResized", (column) =>
 const newComponentBtn = document.getElementById("new-component-btn");
 if (newComponentBtn && window.openComponentDialog) {
   newComponentBtn.addEventListener("click", () =>
-    openComponentDialog((created) => {
-      window.location = `/components/${created.id}`;
-    }),
+    openComponentDialog(
+      (created) => {
+        window.location = `/components/${created.id}`;
+      },
+      null,
+      { navigates: true }, // …so the dialog holds its afterword over the jump
+    ),
   );
 }

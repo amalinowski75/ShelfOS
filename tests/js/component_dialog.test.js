@@ -710,3 +710,97 @@ describe("component_dialog.js — you may already have this part", () => {
     expect(warning(page).hidden).toBe(true); // synchronously, before any lookup
   });
 });
+
+describe("component_dialog.js — the datasheet a shop won't hand over", () => {
+  // A shop that blocks server-side downloads (Mouser's WAF answers a datacenter IP
+  // with an "access denied" page, TME's document host with a Cloudflare challenge)
+  // must not cost the user the datasheet: it is kept as a link, and said so.
+  const DATASHEET = "https://www.mouser.com/datasheet/2/268/USB5734.pdf";
+
+  function importedPart({ download }) {
+    const calls = [];
+    const impl = (url, opts) => {
+      calls.push({ url, body: opts && opts.body ? JSON.parse(opts.body) : null });
+      if (url === "/api/shops/lookup")
+        return ok({
+          mpn: "USB5734",
+          source_url: "https://www.mouser.pl/ProductDetail/USB5734",
+          datasheet_url: DATASHEET,
+        });
+      if (url === "/api/attachments/from-url")
+        return download
+          ? ok({ id: 3 })
+          : Promise.resolve({
+              ok: false,
+              status: 422,
+              json: () => Promise.resolve({ detail: "that URL returned a web page" }),
+            });
+      if (url === "/api/components") return ok({ id: 7 });
+      return ok({});
+    };
+    return { calls, impl };
+  }
+
+  async function createAfterImport(page) {
+    open(page, () => {}, null, { importCode: "USB5734", navigates: true });
+    await tick();
+    page.document
+      .getElementById("component-form")
+      .dispatchEvent(
+        new page.window.Event("submit", { cancelable: true, bubbles: true }),
+      );
+    await tick();
+    await tick();
+  }
+
+  it("does not also link it when the file did download", async () => {
+    const { calls, impl } = importedPart({ download: true });
+    const page = loadPage(dialogFixture(), SCRIPTS, { fetchImpl: impl });
+
+    await createAfterImport(page);
+
+    const kinds = calls
+      .filter((c) => c.url === "/api/links")
+      .map((c) => c.body.kind);
+    expect(kinds).toEqual(["shop"]); // the shop page, and nothing about a datasheet
+  });
+
+  it("holds the news over the jump to the new component's page", async () => {
+    // The caller navigates, so a toast shown here would be wiped a moment later —
+    // and the user would be left with a component whose datasheet is a link nobody
+    // told them about. It is stored for the page being opened instead.
+    const { impl } = importedPart({ download: false });
+    const session = {};
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: impl,
+      sessionStorage: session,
+    });
+
+    await createAfterImport(page);
+
+    const pending = page.window.sessionStorage.getItem("shelfos:pending-toast");
+    expect(pending).toBeTruthy();
+    expect(JSON.parse(pending).message).toMatch(/saved as a link/);
+    expect(page.document.querySelector(".toast")).toBe(null); // not shown here
+  });
+
+  it("toasts on the spot for a caller that stays on the page", async () => {
+    // The invoice/BOM reuse creates a component mid-task and does not navigate.
+    const { impl } = importedPart({ download: false });
+    const page = loadPage(dialogFixture(), SCRIPTS, { fetchImpl: impl });
+
+    open(page, () => {}, null, { importCode: "USB5734" });
+    await tick();
+    page.document
+      .getElementById("component-form")
+      .dispatchEvent(
+        new page.window.Event("submit", { cancelable: true, bubbles: true }),
+      );
+    await tick();
+    await tick();
+
+    expect(page.document.querySelector(".toast").textContent).toMatch(
+      /saved as a link/,
+    );
+  });
+});

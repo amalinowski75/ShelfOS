@@ -22,6 +22,11 @@
   // Monotonic id so overlapping type-select changes can't render stale fields.
   let paramsRequestId = 0;
   let onCreated = null;
+  // Whether the caller's onCreated leaves this page (the standalone "New Component"
+  // button and the scan both jump to the new component). It decides how the
+  // create's afterword is delivered: a plain toast would be wiped off the screen by
+  // that jump, taking with it the one sentence saying the datasheet became a link.
+  let callerNavigates = false;
   // When set ({invoiceId, importLineId}) the dialog is in "stage" mode: its submit
   // PATCHes a draft invoice's import line instead of creating a component (the
   // component is created later, at invoice finalize). Everything else — type, fields,
@@ -504,14 +509,17 @@
       setShopUrl(null);
       pendingDatasheetUrl = null;
       dialog.close();
+      // Said after the jump when there is one: these are the second step's news,
+      // and the caller is about to replace the page this toast would appear on.
+      const say = callerNavigates ? showToastAfterReload : showToast;
       if (lost.length) {
         // "and", not "or": with both items lost, "or" would read as though one of
         // them was saved.
-        showToast(`Component created, but couldn't save ${lost.join(" and ")}.`);
+        say(`Component created, but couldn't save ${lost.join(" and ")}.`);
       } else if (datasheetLinked) {
-        showToast(
+        say(
           "Component created. Its datasheet couldn't be downloaded (the shop blocks " +
-            "automated downloads), so it was saved as a link instead.",
+            "automated downloads), so it was saved as a link instead — see Links.",
         );
       }
       // A caller's DOM update must not become an unhandled rejection: the
@@ -1009,7 +1017,8 @@
   // to stage mode (PATCH the import line instead of creating a component).
   // `opts.importCode` pre-fills the import field and looks it up straight away — the
   // components-page scan hands over a code that matched no existing component, so the
-  // part is imported without the user rescanning it.
+  // part is imported without the user rescanning it. `opts.navigates` says the
+  // callback goes to another page, so anything left to report is held over it.
   window.openComponentDialog = function (callback, prefill, opts) {
     const importCode = opts && opts.importCode;
     // A scan can arrive while the dialog from a PREVIOUS scan is still up (the
@@ -1022,6 +1031,7 @@
     // fires from a closed dialog.)
     const reopening = dialog.open;
     onCreated = callback || null;
+    callerNavigates = !!(opts && opts.navigates);
     // Off until something is prefilled, and repainted on the spot — clearing the
     // flag alone would leave the previous session's tint sitting on the form. That
     // is the reopen case (a bag scanned while the previous one is still up): the
