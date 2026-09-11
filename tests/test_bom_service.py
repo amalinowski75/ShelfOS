@@ -947,3 +947,25 @@ def test_assign_all_obvious_folds_an_alias_on_the_stored_side_too(
     assert bs.assign_all_obvious(session, bom.id, user_id=1) == 1
     report = bs.build_bom_report(session, bom.id)["lines"][0]
     assert report["assigned"]["component_id"] == stored
+
+
+def test_missing_is_what_the_run_needs_beyond_the_shelf(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """The shortfall the report prints beside the stock figure."""
+    resistor = _inventory(session)
+    resistor("RES-1K", 1000, 50)
+    data = b"Reference,Qty,Value,MPN\nR1,10,1k,RES-1K\n"
+    bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+
+    # Unresolved: no honest shortfall, because the stock figure behind it is a sum
+    # over every component sharing the MPN.
+    assert bs.build_bom_report(session, bom.id)["lines"][0]["missing"] is None
+
+    _resolve(session, bom.id)
+
+    # Covered by the shelf — nothing to order, and 0 is a fact, not a dash.
+    assert bs.build_bom_report(session, bom.id)["lines"][0]["missing"] == 0
+
+    # 6 boards need 60 of a part we hold 50 of: 10 short.
+    assert bs.build_bom_report(session, bom.id, boards=6)["lines"][0]["missing"] == 10

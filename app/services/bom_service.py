@@ -766,6 +766,11 @@ def build_bom_report(
                 "quantity": line.quantity,  # per board
                 "total_quantity": required,  # for the whole run
                 "boards_possible": per_line,  # what the stock on hand covers
+                # How many more the run needs than the shelf holds — the number
+                # you would put on an order. ``None``, not 0, for an unresolved
+                # line: its stock figure is a sum over every component sharing
+                # the MPN, so the shortfall computed from it would be a guess.
+                "missing": (max(0, required - matched_stock) if resolved else None),
                 "status": status,
                 # Split out from ``status`` because the two answer different
                 # questions: whether we know what this line is, and whether the

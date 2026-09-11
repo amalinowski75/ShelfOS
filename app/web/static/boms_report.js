@@ -1,7 +1,7 @@
 // BOM availability report (spec §21): fetch the live report feed and render the
 // lines as a sortable, per-column-filterable Tabulator table. `esc` comes from
 // shared.js. The feed (/api/boms/{id}/report) returns { bom, summary, lines[] };
-// each line: references, value, category, mpn, quantity, status, stock,
+// each line: references, value, category, mpn, quantity, status, stock, missing,
 // substitutes[] (component_id, mpn, package, value, stock, exact).
 //
 // The table renders every row up front (no height cap → no virtual DOM; see the
@@ -50,6 +50,17 @@ function bomStockFormatter(cell) {
   const row = cell.getRow().getData();
   if (!row.resolved) return "—";
   return row.mpn || row.assigned ? String(cell.getValue()) : "—";
+}
+
+// What the run is short by: the same "—" convention as stock — an unresolved line
+// has no honest shortfall to print, because the figure it would come from is a sum
+// over every component sharing the MPN. A covered line shows a plain 0; only a real
+// shortfall gets emphasis, since that is the number someone has to order.
+function bomMissingFormatter(cell) {
+  const missing = cell.getValue();
+  if (missing === null || missing === undefined) return '<span class="muted">—</span>';
+  const n = Number(missing) || 0;
+  return n > 0 ? `<strong>${n}</strong>` : '<span class="muted">0</span>';
 }
 
 function bomMpnFormatter(cell) {
@@ -215,6 +226,16 @@ function bomReportColumns() {
       hozAlign: "right",
       sorter: "number",
       formatter: bomStockFormatter,
+    },
+    {
+      // Right after Stock, because it is the subtraction the reader would
+      // otherwise do in their head: what the whole run needs, less what's here.
+      title: "Missing",
+      field: "missing",
+      width: 100,
+      hozAlign: "right",
+      sorter: "number",
+      formatter: bomMissingFormatter,
     },
     {
       // Next to Status: together they read as "where this line stands" — what the

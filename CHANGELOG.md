@@ -9,6 +9,18 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## How many you are short by, beside how many you have
+
+The BOM report showed what the run needs and what the shelf holds, and left the
+subtraction to the reader — sixty times, on the page you read just before
+ordering.
+
+- **#PR** — A *Missing* column, right after *Stock*: what the whole run needs
+  less what is on the shelf, so it tracks the Boards count. Zero prints as zero,
+  because a covered line is a fact; an unresolved line prints a dash, since the
+  stock figure it would come from is a sum over every component sharing the MPN
+  and a shortfall derived from that would be a guess.
+
 ## The slowest tests, and an honest clock, in the run summary
 
 `--durations=10` put the slowest tests in the log, which is the one place a
