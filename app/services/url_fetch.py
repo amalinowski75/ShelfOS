@@ -8,6 +8,11 @@ multicast and unspecified); redirects are followed manually so every hop is
 re-validated; the body is streamed with a hard size cap; and there are per-read
 and total-fetch timeouts.
 
+A 200 is not proof of a file: a WAF that dislikes the caller answers the very same
+URL with an HTML "access denied" page. So the body is sniffed and an HTML document
+refused whatever its status — a page belongs in the links table, not in an
+attachment, and the caller can fall back to keeping the URL as a link.
+
 Residual risk: DNS rebinding (the host could resolve differently between our
 guard and httpx's own connection). Accepted for authenticated writers; a stricter
 build would pin the connection to the validated IP.
@@ -29,6 +34,22 @@ from app import config
 from app.services.errors import ValidationError
 
 _ALLOWED_SCHEMES = {"http", "https"}
+# A WAF that refuses the download answers 200 with an HTML "Access Denied" page
+# (Mouser's Akamai does this to datacenter IPs), which would otherwise be stored
+# as the datasheet. Sniff the body's opening bytes for markup to catch it.
+# A whole window is searched rather than only the first bytes, because an
+# interstitial often opens with something before its first structural tag: a
+# licence comment, a `<script>` challenge, or a `<meta http-equiv="refresh">`.
+_HTML_SNIFF_BYTES = 1024
+_HTML_MARKERS = (
+    b"<!doctype html",
+    b"<html",
+    b"<head",
+    b"<body",
+    b"<title",
+    b"<noscript",
+    b"<meta http-equiv",
+)
 _DEFAULT_FILENAME = "download"
 _MAX_FILENAME_LEN = 255
 # Process-wide cap on concurrent fetches (sync route runs on the shared threadpool).
@@ -78,6 +99,20 @@ def _guard_url(url: str) -> str:
         raise _reject("only http and https URLs are allowed")
     _guard_host(parts.hostname)
     return url
+
+
+def _looks_like_html(data: bytes) -> bool:
+    """True when the body is an HTML document rather than a file.
+
+    Sniffs the *bytes*, not the Content-Type header: servers mislabel real PDFs
+    often enough that trusting the header would reject good downloads. The body
+    must open as markup AND carry a structural HTML tag within the sniff window,
+    so an XML document that merely starts with a tag (an SVG, say) still passes.
+    """
+    head = data[:_HTML_SNIFF_BYTES].lstrip(b"\xef\xbb\xbf").lstrip().lower()
+    if not head.startswith(b"<"):
+        return False
+    return any(marker in head for marker in _HTML_MARKERS)
 
 
 def _filename_from(url: str, content_disposition: str | None) -> str:
@@ -169,6 +204,16 @@ def _fetch(
                     data = b"".join(chunks)
                     if not data:
                         raise _reject("the URL returned no data")
+                    if _looks_like_html(data):
+                        # A web page is not an attachment: ShelfOS keeps pages as
+                        # links (that is what the links table is for), and a page
+                        # arriving here is usually a WAF's "access denied" dressed
+                        # as a 200 — which would be stored as the datasheet.
+                        raise _reject(
+                            "that URL returned a web page, not a file — keep it "
+                            "as a link instead (a shop may also be serving a "
+                            "block page to automated downloads)"
+                        )
                     filename = _filename_from(
                         current, resp.headers.get("content-disposition")
                     )

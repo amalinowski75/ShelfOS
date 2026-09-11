@@ -485,10 +485,11 @@
         if (pendingShopUrl && !(await addLink(created.id, "shop", pendingShopUrl))) {
           lost.push("the shop link");
         }
-        // Try to download the datasheet as a file (Mouser/Digi-Key allow it). If the
-        // shop blocks server-side fetches — TME's document host answers a Cloudflare
-        // challenge — keep it as a datasheet LINK instead. Only if BOTH fail is it
-        // lost, and even then the user is told.
+        // Try to download the datasheet as a file. If the shop blocks server-side
+        // fetches — TME's document host answers a Cloudflare challenge, and Mouser's
+        // Akamai serves an "Access Denied" page to datacenter IPs, so the same import
+        // can download on a laptop and fail on a hosted server — keep it as a
+        // datasheet LINK instead. Only if BOTH fail is it lost, and the user is told.
         if (pendingDatasheetUrl) {
           if (await attachDatasheet(created.id, pendingDatasheetUrl)) {
             // Downloaded as a file — nothing to report.
