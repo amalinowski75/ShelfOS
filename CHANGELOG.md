@@ -16,7 +16,7 @@ needs once — distributor API keys, the sshd block for a printer tunnel, what a
 QL-800 does out of the box — sitting in front of the two things a newcomer opens
 it for: what ShelfOS is, and how to run it.
 
-- **#PR** — The README keeps the introduction, the tech stack, `shelfos.sh` and
+- **#164** — The README keeps the introduction, the tech stack, `shelfos.sh` and
   the Definition of Done, deploying in a paragraph, demo data, and an index of
   everything else: 122 lines. The reference moved out whole, not rewritten, into
   `docs/authentication.md` (signing in, the bootstrap admin, password rules, the
