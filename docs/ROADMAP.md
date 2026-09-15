@@ -73,8 +73,13 @@ Priorities set by the user on 2026-07-08.
    role landed alongside it (PR #29).
 10. **Split CI into parallel jobs.** ✅ **Done** (PR #25). `pytest` and
     `npm test` (Vitest) now run as independent parallel `python` / `web` jobs; a
-    lightweight `checks` gate (`needs: [python, web]`) preserves the existing
-    required status check, so no ruleset change was needed.
+    lightweight `checks` gate preserves the existing required status check, so
+    no ruleset change was needed. Two more jobs joined them since — `shell`
+    (shellcheck) and `runtime` (the dependency set without the `dev` extra) —
+    and a `changes` job in front of all four decides from the pull request's own
+    file list which of them have anything to do (PR #165); the gate counts a
+    skipped suite as passed, which is why the filtering is there rather than in
+    `on: paths:`, where it would skip the required check itself.
 
 Known gap, not yet closed: `delete_location` refuses only on non-zero stock, so
 the temporary branch a BOM take gathered from is deletable the moment the take
