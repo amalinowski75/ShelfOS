@@ -9,6 +9,36 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## CI runs the suites a pull request can actually break
+
+Every pull request ran every suite: pytest, vitest, shellcheck and a runtime
+install, whatever it changed. Fixing a typo in the README cost ten minutes of
+pytest that could not have told anyone anything.
+
+- **#165** — A `changes` job now runs first and reads the pull request's own
+  list of changed files, from the API rather than a `git diff` — the checkout
+  action leaves a shallow merge commit, and the full-history fetch a diff needs
+  is most of the cost this is meant to save. Each suite then runs only if the
+  pull request touched something it tests: `.js` and `package-lock.json` for
+  vitest, `.py`, templates and fixtures for pytest, `.sh` for shellcheck.
+  Documentation, CSS and the changelog reach none of them, and a change to the
+  workflow itself reaches all four, which is the one pull request that wants to
+  watch them run.
+
+  The filtering is a job condition and not `on: paths:` deliberately: the branch
+  ruleset requires a check named `checks`, and a workflow skipped by `paths:`
+  never reports that check — every documentation pull request would sit blocked
+  forever on a status that was never coming. The gate therefore counts a
+  *skipped* suite as passed and only holds `failure` and `cancelled` against
+  one, so a run cancelled by the concurrency rule is not read as a run that had
+  nothing to do.
+
+  Shell files sit in the Python filter as well as the shell one, which is not
+  belt and braces: `test_shelfos_script.py` reads `shelfos.sh`, the systemd
+  units and `deploy/tunnel-keys.sh` line by line, and `test_label_setup.py` does
+  the same to the installer template. shellcheck is not the only thing an edit
+  there can break.
+
 ## A README you can read in one sitting
 
 The README had grown to 700 lines. Nine tenths of it was reference an operator

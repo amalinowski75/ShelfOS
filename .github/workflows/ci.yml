@@ -1,9 +1,12 @@
 name: CI
 
-# Run the same checks we run locally on every push to a pull request. The Python
-# and web suites run as independent parallel jobs to cut wall-clock; the `checks`
-# gate below aggregates them so the existing required status check keeps working
-# without a branch-protection change.
+# Run the same checks we run locally on every push to a pull request — but only
+# the ones the pull request can actually break. The `changes` job below reads the
+# list of changed files and each suite runs only if something it tests was
+# touched, so a documentation-only pull request finishes in seconds instead of
+# ten minutes. The suites that do run are independent parallel jobs, and the
+# `checks` gate at the bottom aggregates them so the existing required status
+# check keeps working without a branch-protection change.
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -21,9 +24,128 @@ permissions:
   contents: read
 
 jobs:
+  # Which suites this pull request actually needs. A documentation-only change
+  # has no business spending ten minutes in pytest, and a change to a single
+  # browser script has none spending it either. The decision is made once, here,
+  # and every suite below reads it.
+  #
+  # The file list comes from the pull request API rather than from `git diff`:
+  # the checkout action leaves a shallow merge commit behind, so diffing against
+  # the base branch needs a full-history fetch first, which is a good part of the
+  # cost this job exists to save. `gh` is preinstalled and the read is one call.
+  #
+  # The filtering lives here and NOT in the workflow's `on: paths:` for one
+  # reason: the branch ruleset requires a check named `checks`, and a workflow
+  # skipped by `paths:` never reports that check at all — which leaves every
+  # documentation pull request blocked forever on a status that will never
+  # arrive. A skipped *job* inside a workflow that did run is fine; the gate at
+  # the bottom knows the difference between skipped and failed.
+  changes:
+    name: What changed
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+      web: ${{ steps.filter.outputs.web }}
+      shell: ${{ steps.filter.outputs.shell }}
+      runtime: ${{ steps.filter.outputs.runtime }}
+    steps:
+      - name: Decide which suites to run
+        id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          files="$RUNNER_TEMP/changed.txt"
+          gh api --paginate "repos/$REPO/pulls/$PR/files" \
+            --jq '.[].filename' > "$files" || true
+
+          run_everything() {
+            for suite in python web shell runtime; do
+              echo "$suite=true" >> "$GITHUB_OUTPUT"
+            done
+            echo "$1 Running every suite." >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          # An empty list means the API told us nothing, not that the pull
+          # request changes nothing. Err towards running too much.
+          if [ ! -s "$files" ]; then
+            run_everything "Could not read the list of changed files."
+            exit 0
+          fi
+
+          # A change to CI itself is a change to every suite: the whole point of
+          # such a pull request is watching them all run under the new rules.
+          if grep -qE '^\.github/workflows/' "$files"; then
+            run_everything "The workflow itself changed."
+            exit 0
+          fi
+
+          # The Python suite is blind to tests/js — those files are vitest's and
+          # nothing under them is collected by pytest — so they are stripped
+          # before the Python question is asked. Everything else under tests/ is
+          # fair game, fixtures and sample invoices included.
+          #
+          # grep -q closes the pipe as soon as it matches, so each list is built
+          # into a file first: `grep -v … | grep -q …` can report failure for a
+          # match, having killed the left-hand side with SIGPIPE under the
+          # `pipefail` set above.
+          python_files="$RUNNER_TEMP/changed-python.txt"
+          grep -vE '^tests/js/' "$files" > "$python_files" || true
+
+          decide() {  # decide <suite> <file list> <pattern>
+            local suite="$1" list="$2" pattern="$3" verdict=false
+            if [ -s "$list" ] && grep -qE "$pattern" "$list"; then
+              verdict=true
+            fi
+            echo "$suite=$verdict" >> "$GITHUB_OUTPUT"
+            echo "| $suite | $verdict |" >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          {
+            echo "### Suites selected for this pull request"
+            echo
+            echo "| Suite | Running |"
+            echo "| --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Templates count as Python because the server-side tests assert on
+          # the rendered HTML: a renamed block breaks pytest, not vitest.
+          # pyproject.toml carries the ruff and mypy settings as well as the
+          # dependency sets, so it belongs to both Python jobs.
+          #
+          # Shell files and deploy/ are in this list as well as in the shell
+          # one, and that is not belt and braces: test_shelfos_script.py reads
+          # shelfos.sh, deploy/tunnel-keys.sh and the systemd units line by
+          # line, and test_label_setup.py does the same to the installer
+          # template. shellcheck is not the only thing an edit there can break.
+          decide python "$python_files" \
+            '^(app/.*\.(py|html)|tests/.*|scripts/.*\.py|pyproject\.toml|deploy/.*|.*\.sh)$'
+          decide web "$files" \
+            '^(app/web/static/.*\.js|tests/js/.*|package(-lock)?\.json|vitest\.config\.js)$'
+          decide shell "$files" \
+            '\.sh$'
+          decide runtime "$files" \
+            '^(app/.*\.py|pyproject\.toml)$'
+
+          {
+            echo
+            echo "<details><summary>Changed files</summary>"
+            echo
+            sed 's/^/- `/; s/$/`/' "$files"
+            echo
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   python:
     name: Python (ruff, mypy, pytest)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -101,6 +223,8 @@ jobs:
   web:
     name: Web (vitest)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -144,6 +268,8 @@ jobs:
   runtime:
     name: Runtime dependencies
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.runtime == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -174,6 +300,8 @@ jobs:
   shell:
     name: Shell (shellcheck)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.shell == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -199,24 +327,47 @@ jobs:
             shelfos.sh app/services/label_setup_installer.sh
 
   # Aggregate gate: the branch ruleset requires a status check named `checks`, so
-  # keep one that passes only when every suite passes. `if: always()` ensures it
-  # runs (and can fail) even when a needed job failed, rather than being skipped.
+  # keep one that passes only when every suite that ran passed. `if: always()`
+  # ensures it runs (and can fail) even when a needed job failed, rather than
+  # being skipped along with it.
   checks:
     name: checks
     runs-on: ubuntu-latest
-    needs: [python, web, shell, runtime]
+    needs: [changes, python, web, shell, runtime]
     if: always()
     steps:
       # A job added to `needs:` but not to this condition is a job the gate
       # ignores — green whatever it did. Both, every time.
-      - name: Require every suite to have succeeded
+      #
+      # `skipped` passes, and has to: it is how a suite says the pull request
+      # does not touch anything it tests. Only `failure` and `cancelled` are
+      # held against a suite — so a run cancelled by the concurrency rule above
+      # is not mistaken for a run that had nothing to do. `changes` itself is
+      # judged the other way round, on success alone: if it fell over, every
+      # suite skipped for want of an answer and none of those skips mean a
+      # thing.
+      - name: Require every suite that ran to have succeeded
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          PYTHON: ${{ needs.python.result }}
+          WEB: ${{ needs.web.result }}
+          SHELL: ${{ needs.shell.result }}
+          RUNTIME: ${{ needs.runtime.result }}
         run: |
-          if [ "${{ needs.python.result }}" != "success" ] \
-             || [ "${{ needs.web.result }}" != "success" ] \
-             || [ "${{ needs.shell.result }}" != "success" ] \
-             || [ "${{ needs.runtime.result }}" != "success" ]; then
-            echo "python=${{ needs.python.result }} web=${{ needs.web.result }} shell=${{ needs.shell.result }} runtime=${{ needs.runtime.result }}"
-            echo "One or more required suites did not pass."
+          echo "changes=$CHANGES python=$PYTHON web=$WEB shell=$SHELL runtime=$RUNTIME"
+          if [ "$CHANGES" != "success" ]; then
+            echo "Could not decide which suites to run."
             exit 1
           fi
-          echo "All required suites passed."
+          failed=
+          for suite in PYTHON WEB SHELL RUNTIME; do
+            case "${!suite}" in
+              success|skipped) ;;
+              *) failed="$failed $suite" ;;
+            esac
+          done
+          if [ -n "$failed" ]; then
+            echo "These suites did not pass:$failed"
+            exit 1
+          fi
+          echo "Every suite that ran passed."
