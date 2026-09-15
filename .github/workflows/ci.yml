@@ -61,8 +61,6 @@ jobs:
         run: |
           set -euo pipefail
           files="$RUNNER_TEMP/changed.txt"
-          gh api --paginate "repos/$REPO/pulls/$PR/files" \
-            --jq '.[].filename' > "$files" || true
 
           run_everything() {
             for suite in python web shell runtime; do
@@ -71,10 +69,26 @@ jobs:
             echo "$1 Running every suite." >> "$GITHUB_STEP_SUMMARY"
           }
 
+          # The exit status is what matters here, not the size of the file.
+          # --paginate writes each page as it arrives, so a rate-limit on page
+          # two leaves a perfectly non-empty list holding the first thirty
+          # filenames and nothing else — a partial answer that reads exactly
+          # like a complete one, and would skip whatever suite the missing
+          # pages called for. A rename is reported under its new name alone,
+          # with the old path in `previous_filename`; both belong in the list,
+          # or moving scripts/backup.py out of scripts/ matches no pattern at
+          # all while breaking the test that reads it.
+          if ! gh api --paginate "repos/$REPO/pulls/$PR/files" \
+                 --jq '.[] | .filename, (.previous_filename // empty)' \
+                 > "$files"; then
+            run_everything "Could not read the list of changed files."
+            exit 0
+          fi
+
           # An empty list means the API told us nothing, not that the pull
           # request changes nothing. Err towards running too much.
           if [ ! -s "$files" ]; then
-            run_everything "Could not read the list of changed files."
+            run_everything "The list of changed files came back empty."
             exit 0
           fi
 
@@ -125,8 +139,13 @@ jobs:
           # template. shellcheck is not the only thing an edit there can break.
           decide python "$python_files" \
             '^(app/.*\.(py|html)|tests/.*|scripts/.*\.py|pyproject\.toml|deploy/.*|.*\.sh)$'
+          # The whole of app/web/static, not just its .js: seven vitest files
+          # read app.css itself and assert on what it computes to, so a rule
+          # deleted from the stylesheet is a failing web suite. Naming the
+          # directory rather than a list of extensions also means whatever is
+          # added there next is covered the day it arrives.
           decide web "$files" \
-            '^(app/web/static/.*\.js|tests/js/.*|package(-lock)?\.json|vitest\.config\.js)$'
+            '^(app/web/static/.*|tests/js/.*|package(-lock)?\.json|vitest\.config\.js)$'
           decide shell "$files" \
             '\.sh$'
           decide runtime "$files" \

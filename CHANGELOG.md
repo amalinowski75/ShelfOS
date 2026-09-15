@@ -19,11 +19,21 @@ pytest that could not have told anyone anything.
   list of changed files, from the API rather than a `git diff` — the checkout
   action leaves a shallow merge commit, and the full-history fetch a diff needs
   is most of the cost this is meant to save. Each suite then runs only if the
-  pull request touched something it tests: `.js` and `package-lock.json` for
-  vitest, `.py`, templates and fixtures for pytest, `.sh` for shellcheck.
-  Documentation, CSS and the changelog reach none of them, and a change to the
-  workflow itself reaches all four, which is the one pull request that wants to
-  watch them run.
+  pull request touched something it tests: everything under
+  `app/web/static/` for vitest, `.py`, templates and fixtures for pytest,
+  `.sh` for shellcheck. Documentation and the changelog reach none of them, and
+  a change to the workflow itself reaches all four, which is the one pull
+  request that wants to watch them run.
+
+  The web filter takes that whole directory rather than its `.js`: seven vitest
+  files read `app.css` itself and assert on what it computes to, so a
+  stylesheet-only change is a web suite that has something to say. A rename is
+  matched on both its paths — the API reports only the new one, and
+  `previous_filename` is what tells the filters that `tools/backup.py` used to
+  be `scripts/backup.py` and still has a test reading it. And the file list is
+  trusted on `gh`'s exit status rather than on being non-empty, because
+  `--paginate` writes each page as it arrives: a rate-limit on page two leaves
+  a partial list that reads exactly like a complete one.
 
   The filtering is a job condition and not `on: paths:` deliberately: the branch
   ruleset requires a check named `checks`, and a workflow skipped by `paths:`
