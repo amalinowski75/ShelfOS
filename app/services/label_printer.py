@@ -758,7 +758,8 @@ def _open_network_device(device: str, budget: float) -> int:
     except ConnectionRefusedError:
         raise PrinterError(
             f"nothing is listening on {host}:{port} — the bridge on the machine "
-            "holding the printer is not running (see docs/label-printing.md)"
+            "holding the printer is not running (see the label-printing guide "
+            "in the ShelfOS repository, docs/label-printing.md)"
         ) from None
     except socket.gaierror:
         raise PrinterError(f"could not resolve {host} for the label printer") from None
@@ -827,7 +828,8 @@ def _write_all(fd: int, data: bytes, device: str, budget: float) -> None:
                 raise PrinterError(
                     "the connection to the label printer closed mid-job — the "
                     "bridge on the machine holding it stopped, or the tunnel "
-                    "dropped (see docs/label-printing.md)"
+                    "dropped (see the label-printing guide in the ShelfOS "
+                    "repository, docs/label-printing.md)"
                 ) from None
             if error.errno == errno.EBUSY:
                 raise PrinterError(

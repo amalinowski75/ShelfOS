@@ -194,8 +194,8 @@ def bridge_source() -> str:
     except OSError:
         raise PrinterError(
             "this ShelfOS build does not carry scripts/label_bridge.py, so the "
-            "installer cannot be assembled; set the printer up from "
-            "docs/label-printing.md"
+            "installer cannot be assembled; set the printer up by hand, from "
+            "docs/label-printing.md in the ShelfOS repository"
         ) from None
 
 
@@ -289,8 +289,8 @@ def _render(values: dict[str, str]) -> str:
     except OSError:
         raise PrinterError(
             "this ShelfOS build is missing the installer template, so the "
-            "installer cannot be assembled; set the printer up from "
-            "docs/label-printing.md"
+            "installer cannot be assembled; set the printer up by hand, from "
+            "docs/label-printing.md in the ShelfOS repository"
         ) from None
     for name, value in values.items():
         script = script.replace(f'"@{name}@"', shlex.quote(value))
