@@ -168,7 +168,7 @@ label font found". DejaVu is the first family ShelfOS looks for, so installing i
 is the whole of the fix — `SHELFOS_LABEL_FONT` is for a font of your own.
 
 A second account, for a label printer plugged into somebody else's machine (see
-`README.md`). It logs in over ssh and does one thing: bind the printer's port on
+[`../docs/label-printing.md`](../docs/label-printing.md)). It logs in over ssh and does one thing: bind the printer's port on
 this host. Not the service user — that one has no shell and a root-owned home, so
 sshd would refuse it, and giving it those would turn a confined service account
 into a login account:
@@ -188,7 +188,7 @@ a command instead:
 sudo install -D -m 0644 -o shelfos -g shelfos /dev/null /var/lib/shelfos/tunnel-keys
 sudo install -D -m 0755 -o root -g root /opt/shelfos/deploy/tunnel-keys.sh \
      /usr/local/lib/shelfos/tunnel-keys     # replace @TUNNEL_USER@ / @TUNNEL_KEYS@
-sudoedit /etc/ssh/sshd_config.d/60-shelfos-tunnel.conf   # the Match block, see README.md
+sudoedit /etc/ssh/sshd_config.d/60-shelfos-tunnel.conf   # the Match block, see docs/label-printing.md
 sudo sshd -t && sudo systemctl reload ssh                # never reload an untested config
 ```
 
@@ -272,7 +272,8 @@ restore says so while the service is still stopped and offers to set a new
 password there and then, which is the only moment the fix is one command away.
 
 **The label printer, if there is one.** The unit's printer block is written for
-the udev rule in the main README, which is not optional here: without it the
+the udev rule in [`../docs/label-printing.md`](../docs/label-printing.md), which
+is not optional here: without it the
 device is `/dev/usb/lpN` with an N that changes on replug, owned `root:lp 0660`.
 Install it, then keep three things agreeing with each other — the rule's `GROUP`,
 the unit's `SupplementaryGroups`, and `SHELFOS_LABEL_DEVICE`:
@@ -290,9 +291,9 @@ sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=usbmisc
 
 The unit allows the device by class (`char-usb`, major 180) rather than by path,
 so a replug that renumbers the node changes nothing. A wrong group here fails
-with `EACCES`, which reads exactly like the printer being unplugged; the main
-README's printer section covers the rest, including that CUPS must not own the
-same printer and that a QL-800 out of the box is in Editor Lite mode and
+with `EACCES`, which reads exactly like the printer being unplugged;
+[`../docs/label-printing.md`](../docs/label-printing.md) covers the rest,
+including that CUPS must not own the same printer and that a QL-800 out of the box is in Editor Lite mode and
 enumerates as a USB disk rather than a printer.
 
 **One worker.** The sign-in throttle counts failures in one process's memory and

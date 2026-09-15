@@ -273,7 +273,7 @@ def test_a_quote_in_the_username_cannot_change_the_log_line(
     anon_client: TestClient,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The shape the README's fail2ban filter anchors on holds for any name."""
+    """The shape the documented fail2ban filter anchors on holds for any name."""
     _seed_admin(session)
     with caplog.at_level(logging.WARNING, logger="shelfos"):
         anon_client.post(

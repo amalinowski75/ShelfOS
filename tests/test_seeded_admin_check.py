@@ -144,9 +144,9 @@ def test_an_inert_admin_password_variable_does_not_block_the_boot(
 ) -> None:
     """The mirror-image false positive of the bug this branch fixed.
 
-    An operator who reads the README, fixes the real account, and then drops the
-    variable it says is pointless must not be told to set it again — with the
-    account check standing right there, satisfied.
+    An operator who reads docs/authentication.md, fixes the real account, and
+    then drops the variable it says is pointless must not be told to set it
+    again — with the account check standing right there, satisfied.
     """
     us.create_user(
         session,

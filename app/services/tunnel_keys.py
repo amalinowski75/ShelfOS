@@ -85,9 +85,9 @@ def options_for(port: int) -> str:
     """The restrictions written onto a key's line.
 
     Belt and braces: the sshd ``Match`` block already caps every one of these,
-    and an install done by hand from the README may not have it. ``permitopen``
-    is not decoration — ``port-forwarding`` re-enables forwarding in *both*
-    directions, so without it the same key could open connections from this
+    and an install done by hand from docs/label-printing.md may not have it.
+    ``permitopen`` is not decoration — ``port-forwarding`` re-enables forwarding
+    in *both* directions, so without it the same key could open connections from this
     server to anything it can reach.
     """
     return (

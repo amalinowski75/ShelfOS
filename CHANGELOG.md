@@ -9,6 +9,26 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## A README you can read in one sitting
+
+The README had grown to 700 lines. Nine tenths of it was reference an operator
+needs once — distributor API keys, the sshd block for a printer tunnel, what a
+QL-800 does out of the box — sitting in front of the two things a newcomer opens
+it for: what ShelfOS is, and how to run it.
+
+- **#PR** — The README keeps the introduction, the tech stack, `shelfos.sh` and
+  the Definition of Done, deploying in a paragraph, demo data, and an index of
+  everything else: 122 lines. The reference moved out whole, not rewritten, into
+  `docs/authentication.md` (signing in, the bootstrap admin, password rules, the
+  throttle, roles), `docs/shop-integrations.md` (keys, scanning a label, two
+  spellings of one manufacturer), `docs/label-printing.md` (the print page, the
+  Brother QL, a printer on another machine) and `docs/deleting-and-audit.md`.
+  There is no `docs/deployment.md`: `deploy/README.md` was already that file, so
+  the README points at it rather than growing a thinner copy beside it.
+  The dozen comments and docstrings that said "see the README" now name the page
+  that holds what they meant, since a pointer at 700 lines was already vague and
+  a pointer at 122 would have been wrong.
+
 ## How many you are short by, beside how many you have
 
 The BOM report showed what the run needs and what the shelf holds, and left the
