@@ -96,7 +96,7 @@ def _check_admin_password_source(session: Session) -> None:
     else: ``ensure_admin`` seeds only when no login-capable admin exists, so on
     every later start the variable is inert. Refusing production over an inert
     setting would mean an operator who fixed the real account and then dropped
-    the pointless variable — which is what the README now tells them it is —
+    the pointless variable — which is what docs/authentication.md now calls it —
     could not boot until they set a decoy value no account uses. Where it will
     not be read, it is not worth an opinion; the account is judged either way
     by :func:`_check_seeded_admin_password`.

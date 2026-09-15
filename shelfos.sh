@@ -1609,7 +1609,7 @@ deploy_step_printer() {
     # Say now whether the rule matched. A missing symlink here is far easier to
     # understand than a failed print later.
     if [ "$DRY_RUN" = 0 ] && [ ! -e /dev/shelfos-label ]; then
-        warn "/dev/shelfos-label does not exist yet — plug the printer in, or check that it is out of Editor Lite mode (see README.md)"
+        warn "/dev/shelfos-label does not exist yet — plug the printer in, or check that it is out of Editor Lite mode (see docs/label-printing.md)"
     fi
 }
 

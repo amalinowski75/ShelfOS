@@ -2,9 +2,9 @@
 
 ShelfOS can print to a printer plugged into another machine: that machine runs
 ``scripts/label_bridge.py`` and an SSH tunnel, and the server prints to
-``tcp://127.0.0.1:<port>``. Standing that up by hand means reading the README,
-cloning the repository onto a laptop for one file, and writing two systemd units
-and a udev rule without a typo.
+``tcp://127.0.0.1:<port>``. Standing that up by hand means reading
+``docs/label-printing.md``, cloning the repository onto a laptop for one file,
+and writing two systemd units and a udev rule without a typo.
 
 Nobody has a clone. The deployment is a server and a browser, so this renders a
 single self-contained installer with the answers already filled in, including
@@ -194,7 +194,8 @@ def bridge_source() -> str:
     except OSError:
         raise PrinterError(
             "this ShelfOS build does not carry scripts/label_bridge.py, so the "
-            "installer cannot be assembled; set the printer up from the README"
+            "installer cannot be assembled; set the printer up by hand, from "
+            "docs/label-printing.md in the ShelfOS repository"
         ) from None
 
 
@@ -288,7 +289,8 @@ def _render(values: dict[str, str]) -> str:
     except OSError:
         raise PrinterError(
             "this ShelfOS build is missing the installer template, so the "
-            "installer cannot be assembled; set the printer up from the README"
+            "installer cannot be assembled; set the printer up by hand, from "
+            "docs/label-printing.md in the ShelfOS repository"
         ) from None
     for name, value in values.items():
         script = script.replace(f'"@{name}@"', shlex.quote(value))

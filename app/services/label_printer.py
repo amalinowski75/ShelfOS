@@ -664,8 +664,8 @@ def _decode_status(frame: bytes) -> PrinterStatus | None:
 
 # A printer reached over the network rather than plugged in here: the browser's
 # machine holds the QL and a bridge on it relays one TCP connection to the
-# device (see README). Everything past the open is the same — the transport is
-# a file descriptor either way, so the raster, the status read-back, the tape
+# device (see docs/label-printing.md). Everything past the open is the same —
+# the transport is a file descriptor either way, so the raster, the read-back, the tape
 # check and the per-label confirmation all work unchanged.
 _TCP_SCHEME = "tcp://"
 
@@ -758,8 +758,8 @@ def _open_network_device(device: str, budget: float) -> int:
     except ConnectionRefusedError:
         raise PrinterError(
             f"nothing is listening on {host}:{port} — the bridge on the machine "
-            "holding the printer is not running (see the label printer section "
-            "of README.md)"
+            "holding the printer is not running (see the label-printing guide "
+            "in the ShelfOS repository, docs/label-printing.md)"
         ) from None
     except socket.gaierror:
         raise PrinterError(f"could not resolve {host} for the label printer") from None
@@ -828,7 +828,8 @@ def _write_all(fd: int, data: bytes, device: str, budget: float) -> None:
                 raise PrinterError(
                     "the connection to the label printer closed mid-job — the "
                     "bridge on the machine holding it stopped, or the tunnel "
-                    "dropped (see the label printer section of README.md)"
+                    "dropped (see the label-printing guide in the ShelfOS "
+                    "repository, docs/label-printing.md)"
                 ) from None
             if error.errno == errno.EBUSY:
                 raise PrinterError(

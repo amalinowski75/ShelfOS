@@ -190,7 +190,8 @@ def client_address(request: Request) -> str | None:
     the same host is the proxy's address — unless uvicorn is told to trust the
     proxy's ``X-Forwarded-For`` (``--proxy-headers``, on by default for
     ``--forwarded-allow-ips`` 127.0.0.1), in which case it is the real client.
-    The README says so; without it every visitor would share one allowance.
+    ``docs/authentication.md`` says so; without it every visitor would share
+    one allowance.
 
     ``None`` when there is no client to name (some ASGI transports, e.g. a unix
     socket, do not populate it). Deliberately not a placeholder key: a shared
