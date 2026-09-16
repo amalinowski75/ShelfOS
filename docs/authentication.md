@@ -62,6 +62,19 @@ from the environment instead, so that rule is applied at startup: with
 `SHELFOS_ENV=production` a shorter `SHELFOS_ADMIN_PASSWORD` (or the default) refuses
 to start; otherwise it is a warning.
 
+## What a password hash costs
+
+Passwords are stored as bcrypt hashes at cost factor 12 — bcrypt's own default,
+and about a fifth of a second of work per hash on a current machine. That is the
+price of one guess to anybody who steals the table, and it is invisible to
+somebody signing in, who pays it once.
+
+`user_service.BCRYPT_ROUNDS` holds the number, and there is deliberately no
+setting for it: the only thing a smaller one changes in a deployment is how
+cheap an offline attack on real passwords is. The test suite turns it down to
+bcrypt's minimum for its own run, where the passwords are constants it wrote
+itself and the slowness was most of the suite's wall clock.
+
 ## The sign-in throttle
 
 Sign-ins are throttled per client address: after 10 failed attempts within

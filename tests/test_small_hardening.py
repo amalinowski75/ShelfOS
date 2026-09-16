@@ -135,13 +135,18 @@ def test_signing_in_replaces_the_pre_login_session(
 
 
 def test_a_missing_account_costs_a_bcrypt_round_too(
-    session: Session, anon_client: TestClient
+    production_bcrypt_cost: None, session: Session, anon_client: TestClient
 ) -> None:
     """Otherwise the response time answers "does this username exist?".
 
     Timed rather than asserted on a call count because the cost is the point;
     the bound is loose enough not to be flaky, and the unfixed code is not
     close to it — an unknown username used to return before hashing anything.
+
+    The one test in the suite that runs at the shipped bcrypt cost factor, and
+    the reason the rest can afford not to: what it measures *is* that cost, and
+    at the minimum factor the round it is looking for would be smaller than the
+    noise of the request around it.
     """
     from app.auth.throttle import LoginThrottle
 

@@ -14,6 +14,12 @@ here, before the first import of anything under ``app``, and every test then see
 the documented defaults exactly as CI does. A test that wants a setting sets it
 itself, with ``monkeypatch``.
 
+Speed is a fixture too. Every password the suite hashes is a constant it wrote
+itself, so ``cheap_password_hashing`` turns bcrypt's cost factor down to its
+minimum for the run — the same code, the same stored format, the same
+verification, just without the deliberate slowness that only matters to somebody
+attacking a stolen database. It was the majority of the suite's wall clock.
+
 ``DATABASE_URL`` goes with them although it carries no prefix: a deploy env file
 sets it beside the others, ``app.db`` builds its module-level engine from it when
 it is imported — three lines below — and that engine is the one the API depends
@@ -41,9 +47,14 @@ import pytest  # noqa: E402
 from app import config  # noqa: E402
 from app.api.deps import get_session  # noqa: E402
 from app.main import create_app  # noqa: E402
+from app.services import user_service  # noqa: E402
 from sqlalchemy.engine import Engine  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 from sqlmodel import Session, SQLModel, create_engine  # noqa: E402
+
+# Read before anything lowers it, so a test that wants the real thing back
+# has a number to restore rather than a second copy of the constant.
+_PRODUCTION_BCRYPT_ROUNDS = user_service.BCRYPT_ROUNDS
 
 
 @pytest.fixture(autouse=True)
@@ -65,6 +76,52 @@ def no_real_printer(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr(config, "LABEL_DEVICE", "")
     monkeypatch.setattr(config, "TUNNEL_KEYS_FILE", "")
+
+
+@pytest.fixture(autouse=True)
+def cheap_password_hashing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hash the suite's throwaway passwords at a cost factor that buys nothing.
+
+    bcrypt's shipped cost factor is deliberately expensive — about a fifth of a
+    second a hash — because a stolen database should be. None of that applies
+    here: every password the suite hashes is a constant written three lines
+    above the assertion that reads it back. The suite was spending roughly three
+    of its five minutes inside bcrypt, a majority of the whole run, to slow down
+    an attacker guessing "admin-password".
+
+    Turning the factor down changes only how many times the key derivation
+    loops. Every path a test exercises is the real one: the same hashing
+    function, the same stored format, the same verification, the same failure
+    when the password is wrong. A verification costs what the hash it checks
+    cost to make, so this covers ``checkpw`` too, without touching it.
+
+    Four is bcrypt's own minimum. The one test that measures how long signing in
+    takes asks for :func:`production_bcrypt_cost` instead.
+    """
+    monkeypatch.setattr(user_service, "BCRYPT_ROUNDS", 4)
+
+
+@pytest.fixture
+def production_bcrypt_cost(
+    cheap_password_hashing: None, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
+    """Put the shipped cost factor back, for a test about how long a hash takes.
+
+    Depends on the fixture it undoes so pytest orders it afterwards.
+
+    The cached absent-account hash is dropped on the way in and on the way out:
+    it is computed once per process and keeps whichever factor was in force at
+    the time, so a cheap one left in place would make a missing username answer
+    far faster than a real one — which is the very leak the test that wants this
+    fixture exists to catch — and an expensive one left behind would charge
+    every later test a fifth of a second.
+    """
+    user_service._absent_password_hash.cache_clear()
+    monkeypatch.setattr(user_service, "BCRYPT_ROUNDS", _PRODUCTION_BCRYPT_ROUNDS)
+    try:
+        yield
+    finally:
+        user_service._absent_password_hash.cache_clear()
 
 
 @pytest.fixture

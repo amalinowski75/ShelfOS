@@ -36,12 +36,26 @@ MIN_PASSWORD_LENGTH = 8
 # What the audit log calls a user account (spec §19).
 _AUDIT_ENTITY = "user"
 
+# How much work one password hash costs, as a power of two. Twelve is bcrypt's
+# own default and the number a stolen ShelfOS database should be worth
+# attacking at: roughly a fifth of a second per guess on a current machine,
+# which nobody signing in will notice and an attacker with the table cannot
+# afford a billion times over.
+#
+# It is named rather than left to ``gensalt()`` so it can be turned down where
+# the cost buys nothing. The test suite does exactly that — it hashes over a
+# thousand passwords, none of them secret, and at the shipped factor spent
+# three of its five minutes doing it. Nothing else may lower it: there is
+# deliberately no setting for this, because the only effect of a smaller number
+# in a deployment is a cheaper offline attack on real passwords.
+BCRYPT_ROUNDS = 12
+
 
 def hash_password(password: str) -> str:
     """Return a bcrypt hash for a plaintext password."""
     if len(password.encode()) > _MAX_PASSWORD_BYTES:
         raise ValidationError(f"password must be at most {_MAX_PASSWORD_BYTES} bytes")
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt(BCRYPT_ROUNDS)).decode()
 
 
 def check_password_policy(password: str) -> None:

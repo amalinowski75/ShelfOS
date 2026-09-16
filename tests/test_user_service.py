@@ -17,6 +17,38 @@ def test_password_hash_roundtrip() -> None:
     assert not us.verify_password("wrong", hashed)
 
 
+def test_a_hash_is_made_at_the_cost_factor_that_is_configured() -> None:
+    """The factor is not decoration: it is what a hash actually cost.
+
+    Read out of the hash itself, because bcrypt writes it there, so this catches
+    a ``gensalt()`` that quietly stopped being passed the number.
+    """
+    assert us.hash_password("s3cret").startswith(f"$2b${us.BCRYPT_ROUNDS:02d}$")
+
+
+def test_what_ships_is_the_cost_factor_a_stolen_database_deserves() -> None:
+    """The suite runs at bcrypt's minimum; what is installed must not.
+
+    Read from the source file rather than from the imported module, which the
+    suite has by now turned down on purpose — the question here is what a
+    deployment gets, and only the file can answer it.
+    """
+    import ast
+    import pathlib
+
+    source = pathlib.Path(us.__file__).read_text()
+    (assignment,) = [
+        node
+        for node in ast.parse(source).body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "BCRYPT_ROUNDS"
+            for target in node.targets
+        )
+    ]
+    assert ast.literal_eval(assignment.value) >= 12
+
+
 def test_create_user_and_authenticate(session: Session) -> None:
     us.create_user(
         session, username="alice", password="pw-password", role=UserRole.USER

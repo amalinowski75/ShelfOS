@@ -57,8 +57,13 @@ uvicorn app.main:app --reload --port 9000
 Before opening a pull request (the Definition of Done):
 
 ```bash
-ruff check . && black --check . && mypy app && pytest --cov
+ruff check . && black --check . && mypy app && pytest -n auto --cov
 ```
+
+`-n auto` spreads the suite over the machine's cores, which is how CI runs it.
+Nothing in the suite is shared between tests — each builds its own in-memory
+database — so the only thing a serial run buys is a longer wait. Drop the flag
+when a failure is easier to read one test at a time.
 
 The web UI scripts have their own suite ([Vitest](https://vitest.dev) + jsdom).
 It needs Node 18+; install once with `npm ci`, then:
