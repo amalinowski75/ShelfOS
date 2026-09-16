@@ -2103,9 +2103,11 @@ For a deployed service that means running as the service user against
 
 Nothing is ever deleted unless --keep N is given: it sweeps the directory the
 archive was written to once the backup has succeeded, leaving the N newest and
-deleting the rest. That is how the nightly timer keeps the three newest; a
-backup taken by hand, or by `update`, keeps every one until a later sweep moves
-past it.
+deleting the rest. Only archives named shelfos-backup-*.tar.gz are ever swept —
+an -o naming one something else is never deleted, and create says so rather than
+reporting a retention it is not applying. That is how the nightly timer keeps the
+three newest; a backup taken by hand, or by `update`, keeps every one until a
+later sweep moves past it.
 
 The archive holds the database and the attachments, and nothing else. Two files
 are worth keeping beside it, and matter when a machine is rebuilt: /etc/shelfos/env

@@ -542,3 +542,113 @@ def test_cli_create_with_keep_sweeps_only_after_a_successful_backup(
     assert result.returncode == 1
     assert "database not found" in result.stderr
     assert newer.exists() and output.exists()
+
+
+def test_prune_ignores_a_placeholder_another_run_is_still_writing(
+    tmp_path: Path,
+) -> None:
+    """`create_backup` claims its name with O_EXCL and fills it in at the end,
+    so a backup in progress is a 0-byte file with the newest mtime in the
+    directory. Counting it would keep a placeholder in place of an archive —
+    and delete a real one to make room for it."""
+    directory = tmp_path / "backups"
+    oldest, older, newest = _aged_archives(
+        directory,
+        [
+            "shelfos-backup-20260101-000000.tar.gz",
+            "shelfos-backup-20260102-000000.tar.gz",
+            "shelfos-backup-20260103-000000.tar.gz",
+        ],
+    )
+    in_flight = directory / "shelfos-backup-20260104-031500.tar.gz"
+    in_flight.touch()  # another run, mid-tar
+
+    removed = backup.prune_backups(directory, 3)
+
+    assert removed == []
+    assert in_flight.exists()  # not ours to delete either
+    assert oldest.exists() and older.exists() and newest.exists()
+
+
+def test_cli_refuses_a_keep_that_would_leave_nothing_before_backing_up(
+    source: dict[str, Path], tmp_path: Path
+) -> None:
+    """An operator raising or lowering the number in the installed unit can type
+    0. Refusing it after the archive is written would mean a good backup every
+    night that systemd reports as failed — and that stops `update`."""
+    directory = tmp_path / "backups"
+    (existing,) = _aged_archives(directory, ["shelfos-backup-20260101-000000.tar.gz"])
+    env = {
+        **os.environ,
+        "DATABASE_URL": f"sqlite:///{source['db']}",
+        "SHELFOS_ATTACHMENTS_DIR": str(source["attachments"]),
+    }
+    for value in ("0", "-1", "three"):
+        output = directory / f"shelfos-backup-2026020{value.lstrip('-')[0]}.tar.gz"
+        argv = [sys.executable, str(_SCRIPT), "create", "-o", str(output)]
+        result = subprocess.run(
+            [*argv, "--keep", value],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        assert result.returncode == 2, result.stdout  # a usage error, not a failure
+        assert "--keep" in result.stderr
+        assert not output.exists(), "took a backup before refusing the number"
+    assert existing.exists()
+
+
+def test_cli_says_when_the_archive_it_wrote_is_not_one_the_sweep_can_ever_see(
+    source: dict[str, Path], tmp_path: Path
+) -> None:
+    """`-o /mnt/nas/whatever.tar.gz --keep 7` sweeps nothing, because nothing
+    there is named the way `create` names archives. Printing "keeping the 7
+    newest" at that point reports a retention that is not happening, and the
+    disk fills anyway."""
+    directory = tmp_path / "nas"
+    directory.mkdir()
+    output = directory / "shelfos.tar.gz"
+    env = {
+        **os.environ,
+        "DATABASE_URL": f"sqlite:///{source['db']}",
+        "SHELFOS_ATTACHMENTS_DIR": str(source["attachments"]),
+    }
+    result = subprocess.run(
+        [sys.executable, str(_SCRIPT), "create", "-o", str(output), "--keep", "7"],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert output.is_file()
+    assert "keeping the 7 newest" not in result.stdout
+    assert "0 archive(s) named shelfos-backup-*.tar.gz" in result.stdout
+    assert "will never be swept" in result.stderr
+
+
+def test_cli_counts_what_is_left_rather_than_what_was_asked_for(
+    source: dict[str, Path], tmp_path: Path
+) -> None:
+    """Two archives and `--keep 5` is two archives kept, not five."""
+    directory = tmp_path / "backups"
+    _aged_archives(directory, ["shelfos-backup-20260101-000000.tar.gz"])
+    output = directory / "shelfos-backup-20260102-000000.tar.gz"
+    env = {
+        **os.environ,
+        "DATABASE_URL": f"sqlite:///{source['db']}",
+        "SHELFOS_ATTACHMENTS_DIR": str(source["attachments"]),
+    }
+    result = subprocess.run(
+        [sys.executable, str(_SCRIPT), "create", "-o", str(output), "--keep", "5"],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "2 archive(s) named shelfos-backup-*.tar.gz" in result.stdout
+    assert result.stderr == ""

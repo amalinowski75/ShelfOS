@@ -340,10 +340,16 @@ after the new archive is written: a night the backup fails is a night nothing is
 deleted. It counts archives rather than dating them, which is what makes a
 machine that spent a month switched off safe — an age-based sweep would have
 deleted everything it had before taking anything new, while three newest stay
-three newest until a fourth exists. It only ever considers files named the way
-`create` names them, so a copy you put in that directory yourself stays. A
-backup taken by hand is not swept at all unless you pass `--keep` yourself, but
-it does count: three nightly runs later it is the fourth newest, and gone.
+three newest until a fourth exists. It only ever considers finished files named the way
+`create` names them: a copy you put in that directory yourself stays, and so
+does the placeholder a backup that is still running has claimed its name with.
+An `-o` naming an archive something else is therefore never swept — `create`
+says so on the spot rather than reporting a retention it is not applying — and a
+`--keep` that would leave nothing is refused before a backup is taken, so a
+mistyped number is a usage error rather than a good backup that exits non-zero
+every night. A backup taken by hand is not swept at all unless you pass
+`--keep` yourself, but it does count: three nightly runs later it is the fourth
+newest, and gone.
 
 Four things about that schedule are worth knowing before the night you need it:
 

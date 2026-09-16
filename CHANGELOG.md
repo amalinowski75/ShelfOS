@@ -27,11 +27,17 @@ pull request, which carries the reasoning and the verification.
   spent a month switched off safe: an age sweep would have deleted every archive
   it had, while three newest stay three newest until a fourth one exists.
 
-  `--keep` only ever deletes files named the way `create` names them, never the
-  archive the run just wrote (a clock that jumped backwards would otherwise make
-  it the oldest thing in the directory), and refuses `--keep 0`. An archive it
-  cannot remove is a line in the journal, not a failed run: the backup beside it
-  has already succeeded. Backups taken by hand and the one `update` takes first
+  `--keep` only ever deletes finished files named the way `create` names them —
+  never the archive the run just wrote (a clock that jumped backwards would
+  otherwise make it the oldest thing in the directory), and never the 0-byte
+  placeholder a concurrent run has claimed its name with, which would otherwise
+  be counted as one of the newest and cost a real archive its place. A number
+  that would leave nothing is refused before the backup is taken, so it reads as
+  a usage error instead of a good archive written every night by a unit systemd
+  reports as failed. An archive it cannot remove is a line in the journal, not a
+  failed run: the backup beside it has already succeeded. And an `-o` naming the
+  archive something the sweep will never match is said out loud, rather than
+  reported as a retention that is working. Backups taken by hand and the one `update` takes first
   still sweep nothing — they have no `--keep` — but they do count, so three
   nights later they are the fourth newest and gone.
 
