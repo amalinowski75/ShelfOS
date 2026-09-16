@@ -5,6 +5,37 @@
 
 const typeFilter = document.getElementById("type-filter");
 
+// ---- the photo column's switch ---------------------------------------------
+// A picture per row is a look-up aid ("which of these is the one in my hand"),
+// not the everyday view, so it starts off. Remembered in sessionStorage rather
+// than localStorage: a reload — which every stock write on the detail page ends
+// in — keeps the column, while a fresh visit starts from the plain table again.
+const SHOW_PHOTOS_KEY = "shelfos-show-photos";
+const photoToggle = document.getElementById("show-photos");
+
+function showPhotos() {
+  return Boolean(photoToggle?.checked);
+}
+
+if (photoToggle) {
+  try {
+    photoToggle.checked = sessionStorage.getItem(SHOW_PHOTOS_KEY) === "1";
+  } catch {
+    // Storage blocked (private mode) — the toggle just starts off, as it would.
+  }
+  photoToggle.addEventListener("change", () => {
+    try {
+      sessionStorage.setItem(SHOW_PHOTOS_KEY, showPhotos() ? "1" : "0");
+    } catch {
+      // Same: the column still turns on, it just won't survive the next reload.
+    }
+    // A refetch, not a column toggle: the ids behind the pictures are only in
+    // the feed when they were asked for, so the answer to "show me photos" is a
+    // different payload rather than a hidden column.
+    loadTable();
+  });
+}
+
 const table = new Tabulator("#components-table", {
   ...TABLE_DEFAULTS,
   // fitDataFill: columns take their natural widths (horizontal scrollbar when they
@@ -228,6 +259,123 @@ function actionColumn() {
   };
 }
 
+// The last of the data columns — after everything a row is read for, before the
+// Add/Take/Details buttons, which are not data and stay where the hand expects
+// them at the edge of the row. Only while the toggle is on. The picture is the
+// component's FIRST photo attachment — one row, one image; hovering it opens a
+// bigger one, and the detail page has the whole gallery.
+function photoColumn() {
+  return {
+    title: "Photo",
+    field: "photo_id",
+    headerSort: false, // sorting rows by attachment id means nothing
+    // Wide enough for the word "Photo" in the header — a title the column clips
+    // is a column with no name — and for a landscape thumbnail under it.
+    width: 84,
+    hozAlign: "center",
+    formatter: (cell) => {
+      // Number(), not the raw value: this lands unquoted in an attribute, and a
+      // number is the one shape that cannot carry anything out of it. 0 is not a
+      // valid id either, so the falsy check covers both "no photo" and "not one".
+      const id = Number(cell.getValue());
+      if (!id) return "";
+      // The cached server-side thumbnail, not the full photo: a page of rows
+      // would otherwise pull a phone camera's worth of megabytes.
+      //
+      // alt is empty on purpose — the row already names the part in five columns,
+      // and a screen reader reading "photo of RC0805" after them is noise, not
+      // information it could act on.
+      return `<img class="cell-photo" src="/api/attachments/${id}/thumbnail" alt="" loading="lazy" />`;
+    },
+  };
+}
+
+// ---- the hover preview -----------------------------------------------------
+// 28px is enough to notice a part, not enough to read one, so hovering the cell
+// floats a bigger copy beside it. Appended to the BODY rather than grown inside
+// the cell: the table's scroll box clips everything it holds, so a cell-sized
+// preview would be cut off on exactly the rows at the top and bottom edges.
+//
+// The image is the same thumbnail URL the cell already loaded — the browser
+// serves it from cache, so the preview costs no request — and the server caps a
+// thumbnail at config.THUMBNAIL_PX (240), which is what this box is sized for.
+const PHOTO_PREVIEW_MARGIN = 8; // never nearer the viewport edge than this
+let photoPreview = null;
+
+function hidePhotoPreview() {
+  photoPreview?.remove();
+  photoPreview = null;
+}
+
+function showPhotoPreview(img) {
+  hidePhotoPreview();
+  photoPreview = document.createElement("div");
+  photoPreview.className = "photo-preview";
+  const big = document.createElement("img");
+  big.src = img.src; // a property assignment, not markup — nothing to escape
+  big.alt = "";
+  // Place it again once the picture has a size. The box is sized BY its image,
+  // and an <img> has no width until the browser has the bytes decoded — even a
+  // cached one, whose layout still lands after this tick. Measured before that,
+  // the box is its 8px of padding: the "does it fit to the right" test is then
+  // made against nothing, so the preview never flips sides, and centring an 8px
+  // box on the row leaves the real 240px one growing down off the screen.
+  const mine = photoPreview;
+  big.addEventListener("load", () => {
+    if (photoPreview === mine) placePhotoPreview(img); // unless it is gone
+  });
+  // A picture that cannot be fetched (a row whose file has gone missing) would
+  // otherwise leave an empty 8px box floating next to the cell.
+  big.addEventListener("error", () => {
+    if (photoPreview === mine) hidePhotoPreview();
+  });
+  photoPreview.appendChild(big);
+  document.body.appendChild(photoPreview);
+  placePhotoPreview(img);
+}
+
+// Beside the thumbnail, flipped to its other side when that side has no room,
+// and never off the screen. Measured after the box is in the document, so the
+// numbers are the ones the browser actually laid out.
+function placePhotoPreview(img) {
+  const cell = img.getBoundingClientRect();
+  const box = photoPreview.getBoundingClientRect();
+  const clamp = (value, limit) =>
+    Math.max(PHOTO_PREVIEW_MARGIN, Math.min(value, limit - PHOTO_PREVIEW_MARGIN));
+
+  let left = cell.right + 12;
+  if (left + box.width > window.innerWidth - PHOTO_PREVIEW_MARGIN) {
+    left = cell.left - box.width - 12; // no room to the right — go left instead
+  }
+  photoPreview.style.left = `${Math.round(clamp(left, window.innerWidth - box.width))}px`;
+  // Centred on the row it belongs to, so it is obvious which row is being shown.
+  const top = cell.top + cell.height / 2 - box.height / 2;
+  photoPreview.style.top = `${Math.round(clamp(top, window.innerHeight - box.height))}px`;
+}
+
+// Delegated on the table element, because Tabulator rebuilds every cell on each
+// loadTable and a listener bound to an <img> would be thrown away with it.
+// mouseover/mouseout rather than mouseenter/mouseleave: only the former pair
+// bubbles, and the preview itself is pointer-events: none, so moving onto it
+// cannot steal the mouseout that takes it down again.
+const tableElement = document.getElementById("components-table");
+if (tableElement) {
+  tableElement.addEventListener("mouseover", (event) => {
+    const img = event.target.closest?.("img.cell-photo");
+    if (img) showPhotoPreview(img);
+  });
+  tableElement.addEventListener("mouseout", (event) => {
+    if (event.target.closest?.("img.cell-photo")) hidePhotoPreview();
+  });
+}
+// Scrolling moves the row out from under a preview that is fixed to the viewport,
+// and the wheel raises no mouseout. On the WINDOW and capturing, which is what
+// catches both scrollers that matter: Tabulator's own holder inside the table
+// (`scroll` does not bubble, so a listener anywhere above it must capture) and
+// the page itself, which scrolls whenever frameTable runs out of room to give
+// the table.
+window.addEventListener("scroll", hidePhotoPreview, true);
+
 // ---- header stats ----------------------------------------------------------
 // A summary of what the table is SHOWING, not of the whole database — which is
 // why it is computed here from the rows rather than fetched from the server: the
@@ -306,13 +454,31 @@ function renderStats(rows) {
   put("stat-top-mpn", stats.topMpn);
 }
 
-function currentTypeQuery() {
-  const value = typeFilter.value;
-  return value ? `?type_id=${value}` : "";
+// `photos` is passed in rather than read here, so the caller can ask the toggle
+// ONCE and have the request and the columns agree about the answer (see
+// loadTable). It defaults to the live state for anyone calling this on its own.
+function currentQuery(photos = showPhotos()) {
+  const params = new URLSearchParams();
+  if (typeFilter.value) params.set("type_id", typeFilter.value);
+  // Only when the column is on: the same feed fills the invoice line and BOM
+  // pickers, and the photo lookup is a query the server can skip otherwise.
+  if (photos) params.set("photos", "1");
+  const query = params.toString();
+  return query ? `?${query}` : "";
 }
 
 async function loadTable() {
   columnWidths = readColumnWidths(); // another tab may have resized since
+  // Whatever the rows were under is about to be replaced, and Chrome does not
+  // reliably raise mouseout for a node that is removed while hovered — so a
+  // preview left standing here would hang over the new table with no event
+  // coming to take it down.
+  hidePhotoPreview();
+  // Asked ONCE, and used for both the request and the columns below. Read twice,
+  // two overlapping loads can cross: flip the toggle off and straight back on,
+  // and the response WITHOUT photo ids can land last, at which point a second
+  // reading says "on" and the column goes up over rows that carry no picture.
+  const photos = showPhotos();
   // An HTTP failure body parses as JSON perfectly well and simply has no
   // `columns` key, so the map below throws on a 404 or a 500 as surely as on a
   // 200 of the wrong shape — one mechanism, caught here rather than guarded
@@ -323,7 +489,7 @@ async function loadTable() {
   let rows = [];
   try {
     const payload = await fetch(
-      `/web/api/components${currentTypeQuery()}`,
+      `/web/api/components${currentQuery(photos)}`,
     ).then((r) => r.json());
     columns = payload.columns.map(columnDef);
     rows = payload.data;
@@ -343,8 +509,28 @@ async function loadTable() {
     ? "No components"
     : "Could not load components — refresh to try again";
   if (columns) {
+    if (photos) columns.push(photoColumn());
     columns.push(actionColumn());
+    // What someone has typed into the column headers, carried across the rebuild
+    // by hand. setColumns keeps the FILTERS but renders their inputs blank
+    // (verified in Tabulator 6.3): the table comes back still narrowed to a
+    // handful of rows with every filter box above it empty and nothing on screen
+    // saying why the rest are missing. Which is exactly the move this column is
+    // for — filter down to a few parts, then turn the pictures on to see which
+    // one you are holding — and it was already the case on a type change and
+    // after every Add/Take.
+    const typed = table.getHeaderFilters();
     table.setColumns(columns);
+    // Clear first: a filter whose column is gone (a per-type parameter, after
+    // switching type) would otherwise go on narrowing the table from nowhere,
+    // with no input left to show or clear it.
+    table.clearHeaderFilter();
+    const fields = new Set(columns.map((column) => column.field));
+    for (const filter of typed) {
+      if (fields.has(filter.field)) {
+        table.setHeaderFilterValue(filter.field, filter.value);
+      }
+    }
   }
   await table.setData(rows);
   // The rows that SURVIVED, not the ones that arrived: a header filter outlives

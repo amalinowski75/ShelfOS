@@ -346,11 +346,16 @@ def index(
 @router.get("/web/api/components")
 def components_feed(
     type_id: int | None = None,
+    photos: bool = False,
     session: Session = Depends(get_session),
     user: User = Depends(require_web_user),
 ) -> dict[str, Any]:
-    """JSON feed for the Tabulator component table."""
-    return build_component_table(session, type_id)
+    """JSON feed for the Tabulator component table.
+
+    ``photos=1`` adds each component's first photo attachment id, which the
+    components page asks for only while its Photos toggle is on.
+    """
+    return build_component_table(session, type_id, with_photos=photos)
 
 
 @router.get("/web/api/components/{component_id}/location-usage")

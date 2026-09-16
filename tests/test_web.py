@@ -346,6 +346,125 @@ def test_components_feed_trims_a_long_description(client: TestClient) -> None:
     assert shipped.endswith("…")
 
 
+def _attach(
+    client: TestClient,
+    component_id: int,
+    *,
+    filename: str = "front.png",
+    kind: str = "photo",
+) -> int:
+    """Attach a tiny file to a component and return the attachment id."""
+    return client.post(
+        "/api/attachments",
+        files={"file": (filename, b"\x89PNG fake bytes", "image/png")},
+        data={
+            "entity_type": "component",
+            "entity_id": component_id,
+            "kind": kind,
+        },
+    ).json()["id"]
+
+
+def test_components_feed_sends_no_photo_id_unless_asked(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:
+    """The picture is opt-in: the same feed fills the invoice line and BOM
+    pickers, which show none, and the lookup is a query the server can skip."""
+    monkeypatch.setattr(config, "ATTACHMENTS_DIR", tmp_path)
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    part = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    _attach(client, part["id"])
+
+    assert "photo_id" not in client.get("/web/api/components").json()["data"][0]
+
+
+def test_components_feed_sends_the_first_photo_when_asked(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:
+    """The FIRST photo, in the order the component's own attachment list uses —
+    and a datasheet uploaded before it is not a photo."""
+    monkeypatch.setattr(config, "ATTACHMENTS_DIR", tmp_path)
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    part = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    _attach(client, part["id"], filename="d.pdf", kind="datasheet")
+    first = _attach(client, part["id"], filename="front.png")
+    _attach(client, part["id"], filename="back.png")
+
+    row = client.get("/web/api/components", params={"photos": 1}).json()["data"][0]
+    assert row["photo_id"] == first
+
+
+def test_components_feed_skips_a_photo_that_is_not_an_image(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:
+    """`photo` is the kind the upload form has selected before anyone touches it,
+    so a datasheet attached without changing it is filed as one. Its thumbnail
+    falls back to the original PDF, which an <img> renders as a broken icon."""
+    monkeypatch.setattr(config, "ATTACHMENTS_DIR", tmp_path)
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    part = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    client.post(
+        "/api/attachments",
+        files={"file": ("datasheet.pdf", b"%PDF-1.4 body", "application/pdf")},
+        data={"entity_type": "component", "entity_id": part["id"], "kind": "photo"},
+    )
+
+    row = client.get("/web/api/components", params={"photos": 1}).json()["data"][0]
+    assert row["photo_id"] is None
+
+    # A real image filed the same way is still the one that shows.
+    photo = _attach(client, part["id"], filename="front.png")
+    row = client.get("/web/api/components", params={"photos": 1}).json()["data"][0]
+    assert row["photo_id"] == photo
+
+
+def test_components_feed_sends_a_null_photo_for_a_component_without_one(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:
+    """Present-but-null, not absent: the client formats the cell either way."""
+    monkeypatch.setattr(config, "ATTACHMENTS_DIR", tmp_path)
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    with_photo = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "HAS-PIC"}
+    ).json()
+    client.post("/api/components", json={"type_id": ctype["id"], "mpn": "NO-PIC"})
+    photo_id = _attach(client, with_photo["id"])
+
+    rows = client.get("/web/api/components", params={"photos": 1}).json()["data"]
+    by_mpn = {row["mpn"]: row["photo_id"] for row in rows}
+    assert by_mpn == {"HAS-PIC": photo_id, "NO-PIC": None}
+
+
+def test_components_feed_keeps_photos_with_a_photo_of_another_component(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:
+    """One query for the whole page has to keep the rows apart."""
+    monkeypatch.setattr(config, "ATTACHMENTS_DIR", tmp_path)
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    first = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "A"}
+    ).json()
+    second = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "B"}
+    ).json()
+    first_photo = _attach(client, first["id"])
+    second_photo = _attach(client, second["id"])
+
+    rows = client.get("/web/api/components", params={"photos": 1}).json()["data"]
+    by_mpn = {row["mpn"]: row["photo_id"] for row in rows}
+    assert by_mpn == {"A": first_photo, "B": second_photo}
+
+
+def test_components_page_offers_the_photo_toggle(client: TestClient) -> None:
+    html = client.get("/").text
+    assert 'id="show-photos"' in html
+    # Off in the markup: the remembered state is restored by app.js, and a page
+    # that shipped it checked would flash a column a fresh visit never asked for.
+    assert 'id="show-photos" />' in html
+    # First of the header's controls, ahead of the type filter.
+    assert html.index('id="show-photos"') < html.index('id="type-filter"')
+
+
 def test_component_detail_shows_the_full_description(client: TestClient) -> None:
     """The table trims; the detail page is where the whole text lives."""
     ctype = client.post("/api/types", json={"name": "resistor"}).json()

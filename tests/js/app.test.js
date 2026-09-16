@@ -198,11 +198,17 @@ describe("app.js — table formatting", () => {
     ]);
   });
 
-  it("builds the type-filter query string", () => {
+  it("builds the feed query from the type filter and the photo toggle", () => {
     const { window, document } = loadPage(typePageFixture(), SCRIPTS);
-    expect(window.currentTypeQuery()).toBe("");
+    expect(window.currentQuery()).toBe("");
     document.getElementById("type-filter").value = "1";
-    expect(window.currentTypeQuery()).toBe("?type_id=1");
+    expect(window.currentQuery()).toBe("?type_id=1");
+    // `photos` only when the column is on: the same feed fills the invoice line
+    // and BOM pickers, and the photo lookup is a query the server can skip.
+    document.getElementById("show-photos").checked = true;
+    expect(window.currentQuery()).toBe("?type_id=1&photos=1");
+    document.getElementById("type-filter").value = "";
+    expect(window.currentQuery()).toBe("?photos=1");
   });
 
   it("loadTable fetches, maps columns (+ actions) and sets the data", async () => {
@@ -366,6 +372,366 @@ describe("app.css — `hidden` means hidden", () => {
     expect(displayOf('<button class="btn btn-primary" id="x">a</button>')).not.toBe(
       "none",
     );
+  });
+});
+
+describe("app.js — rebuilding the table", () => {
+  const feed = (columns) => (url) =>
+    Promise.resolve({
+      ok: true,
+      json: async () =>
+        url.startsWith("/web/api/components") ? { columns, data: [{ id: 1 }] } : {},
+    });
+
+  it("carries what someone typed in the column headers across the rebuild", async () => {
+    // setColumns keeps the FILTERS and renders their inputs blank (Tabulator
+    // 6.3, verified in a browser), so the table comes back narrowed to a few
+    // rows with every filter box above it empty. Every loadTable does this: the
+    // photo toggle, a type change, and each Add/Take from a row button.
+    const { window } = loadPage(typePageFixture(), SCRIPTS, {
+      fetchImpl: feed([{ title: "MPN", field: "mpn" }]),
+    });
+    window.Tabulator.filters = [{ field: "mpn", type: "like", value: "0805" }];
+
+    await window.loadTable();
+
+    expect(window.Tabulator.headerFilterSet).toEqual([{ field: "mpn", value: "0805" }]);
+    expect(window.Tabulator.headerFilterValues.mpn).toBe("0805");
+  });
+
+  it("drops a filter whose column is gone rather than filtering from nowhere", async () => {
+    // Switching away from a type takes its parameter columns with it. A filter
+    // left behind on one would go on narrowing the table with no input left to
+    // show it or clear it.
+    const { window } = loadPage(typePageFixture(), SCRIPTS, {
+      fetchImpl: feed([{ title: "MPN", field: "mpn" }]),
+    });
+    window.Tabulator.filters = [{ field: "param_7", type: "like", value: "4k7" }];
+
+    await window.loadTable();
+
+    expect(window.Tabulator.headerFilterSet).toEqual([]);
+    expect(window.Tabulator.filters).toEqual([]);
+  });
+});
+
+describe("app.js — the photo column", () => {
+  const cell = (value) => ({ getValue: () => value });
+
+  it("renders the thumbnail of the row's photo, and nothing without one", () => {
+    const { window } = loadPage(typePageFixture(), SCRIPTS);
+    const { formatter } = window.photoColumn();
+
+    expect(formatter(cell(7))).toBe(
+      '<img class="cell-photo" src="/api/attachments/7/thumbnail" alt="" loading="lazy" />',
+    );
+    // The cached thumbnail, never the full photo: a page of rows would otherwise
+    // pull a phone camera's worth of megabytes.
+    expect(formatter(cell(7))).not.toContain("/download");
+    // No photo — an empty cell, not a broken image.
+    expect(formatter(cell(null))).toBe("");
+    expect(formatter(cell(undefined))).toBe("");
+  });
+
+  it("cannot be talked into putting anything but a number in that attribute", () => {
+    // The id lands unquoted in a src, and the feed is only as trustworthy as the
+    // database behind it. Number() is what makes the value unable to carry
+    // anything out of the attribute.
+    const { window } = loadPage(typePageFixture(), SCRIPTS);
+    const { formatter } = window.photoColumn();
+    expect(formatter(cell('1" onerror="alert(1)'))).toBe("");
+    expect(formatter(cell("../../etc/passwd"))).toBe("");
+    expect(formatter(cell("7"))).toContain("/api/attachments/7/thumbnail");
+  });
+
+  it("is not sortable and does not take a header filter", () => {
+    // Sorting rows by attachment id means nothing, and there is no text to type.
+    const { window } = loadPage(typePageFixture(), SCRIPTS);
+    const column = window.photoColumn();
+    expect(column.headerSort).toBe(false);
+    expect(column.headerFilter).toBeUndefined();
+  });
+
+  it("is the last data column, before the row buttons, and only while on", async () => {
+    // Last of the things a row is READ for; the Add/Take/Details buttons are not
+    // data and keep the edge of the row, where the hand already expects them.
+    const feed = (url) =>
+      Promise.resolve({
+        ok: true,
+        json: async () =>
+          url.startsWith("/web/api/components")
+            ? { columns: [{ title: "MPN", field: "mpn" }], data: [{ id: 1 }] }
+            : {},
+      });
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS, {
+      fetchImpl: feed,
+    });
+
+    await window.loadTable();
+    expect(window.Tabulator.columns.map((c) => c.field)).toEqual(["mpn", "actions"]);
+
+    document.getElementById("show-photos").checked = true;
+    await window.loadTable();
+    expect(window.Tabulator.columns.map((c) => c.field)).toEqual([
+      "mpn",
+      "photo_id",
+      "actions",
+    ]);
+  });
+
+  it("refetches when switched on, and remembers it for the next page load", async () => {
+    const { window, document, fetchMock } = loadPage(typePageFixture(), SCRIPTS);
+    const toggle = document.getElementById("show-photos");
+    expect(toggle.checked).toBe(false); // off by default
+
+    toggle.checked = true;
+    toggle.dispatchEvent(new window.Event("change", { bubbles: true }));
+    await tick();
+
+    // A refetch, not a column toggle: the ids behind the pictures are only in
+    // the feed when they were asked for.
+    const urls = fetchMock.mock.calls.map(([url]) => url);
+    expect(urls).toContain("/web/api/components?photos=1");
+    expect(window.sessionStorage.getItem("shelfos-show-photos")).toBe("1");
+  });
+
+  it("restores the toggle from the session, and forgets it in a new one", async () => {
+    // A reload — which every stock write on the detail page ends in — keeps the
+    // column; a fresh visit starts from the plain table again (sessionStorage,
+    // not localStorage).
+    const feed = (url) =>
+      Promise.resolve({
+        ok: true,
+        json: async () =>
+          url.startsWith("/web/api/components")
+            ? { columns: [{ title: "MPN", field: "mpn" }], data: [{ id: 1 }] }
+            : {},
+      });
+    const restored = loadPage(typePageFixture(), SCRIPTS, {
+      fetchImpl: feed,
+      sessionStorage: { "shelfos-show-photos": "1" },
+    });
+    expect(restored.document.getElementById("show-photos").checked).toBe(true);
+    await restored.window.loadTable();
+    expect(restored.window.Tabulator.columns.map((c) => c.field)).toContain("photo_id");
+
+    // Switched off, the stored answer is "0" rather than nothing — otherwise the
+    // next reload could not tell "turned it off" from "never touched it".
+    const off = loadPage(typePageFixture(), SCRIPTS, {
+      sessionStorage: { "shelfos-show-photos": "0" },
+    });
+    expect(off.document.getElementById("show-photos").checked).toBe(false);
+
+    const fresh = loadPage(typePageFixture(), SCRIPTS);
+    expect(fresh.document.getElementById("show-photos").checked).toBe(false);
+  });
+
+  // A cell photo as Tabulator would have rendered it, in the table element the
+  // delegated listeners are bound to (the stub builds no rows of its own).
+  function hoverable(document) {
+    const img = document.createElement("img");
+    img.className = "cell-photo";
+    img.src = "/api/attachments/7/thumbnail";
+    document.getElementById("components-table").appendChild(img);
+    return img;
+  }
+
+  const hover = (window, img, type) =>
+    img.dispatchEvent(new window.MouseEvent(type, { bubbles: true }));
+
+  it("floats a bigger copy while the pointer is on a photo, and drops it after", () => {
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS);
+    const img = hoverable(document);
+
+    hover(window, img, "mouseover");
+    const preview = document.querySelector(".photo-preview img");
+    expect(preview).not.toBeNull();
+    // The same URL the cell already loaded, so the preview costs no request.
+    expect(preview.src).toContain("/api/attachments/7/thumbnail");
+    // On the BODY, not in the cell: the table's scroll box clips what it holds,
+    // which would cut the preview off on the top and bottom rows.
+    const box = preview.closest(".photo-preview");
+    expect(box.parentElement).toBe(document.body);
+    // Placed, not left at the document's top-left: the coordinates are written
+    // inline after measuring, and jsdom's zero-sized rects still exercise the
+    // clamp that keeps the box off the viewport edge.
+    expect(box.style.left).toBe("12px"); // beside the cell
+    expect(box.style.top).toBe("8px"); // clamped to the margin
+
+    hover(window, img, "mouseout");
+    expect(document.querySelector(".photo-preview")).toBeNull();
+  });
+
+  it("never leaves two previews behind, whatever order the events arrive in", () => {
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS);
+    const first = hoverable(document);
+    const second = hoverable(document);
+
+    hover(window, first, "mouseover");
+    hover(window, second, "mouseover"); // straight from one photo to the next
+    expect(document.querySelectorAll(".photo-preview").length).toBe(1);
+
+    hover(window, second, "mouseout");
+    expect(document.querySelectorAll(".photo-preview").length).toBe(0);
+  });
+
+  it("takes the preview down when the table scrolls out from under it", () => {
+    // The box is fixed to the viewport and the wheel raises no mouseout, so
+    // without this it would hang over an unrelated row.
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS);
+    hover(window, hoverable(document), "mouseover");
+    expect(document.querySelector(".photo-preview")).not.toBeNull();
+
+    // Fired on a child, as Tabulator's own scrolling holder would: `scroll` does
+    // not bubble, which is why the listener is a capturing one.
+    const holder = document.createElement("div");
+    document.getElementById("components-table").appendChild(holder);
+    holder.dispatchEvent(new window.Event("scroll"));
+    expect(document.querySelector(".photo-preview")).toBeNull();
+  });
+
+  it("ignores a hover that is not on a photo", () => {
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS);
+    const cell = document.createElement("span");
+    cell.className = "cell-mpn";
+    document.getElementById("components-table").appendChild(cell);
+
+    hover(window, cell, "mouseover");
+    expect(document.querySelector(".photo-preview")).toBeNull();
+  });
+
+  it("places the preview again once the picture has a size", () => {
+    // An <img> has no width until the browser has decoded it, so the box is
+    // measured at 8px of padding: the "does it fit to the right" test is made
+    // against nothing and the preview never flips sides.
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS);
+    const img = hoverable(document);
+    const rect = (over) => () => ({
+      x: 0, y: 0, width: 0, height: 0, top: 0, right: 0, bottom: 0, left: 0, ...over,
+    });
+    // A cell near the right edge of jsdom's 1024px viewport.
+    img.getBoundingClientRect = rect({ x: 960, left: 960, right: 996, width: 36,
+      y: 300, top: 300, bottom: 328, height: 28 });
+
+    hover(window, img, "mouseover");
+    const box = document.querySelector(".photo-preview");
+    // Measured empty, it "fits" to the right of the cell — 28px from the edge.
+    expect(box.style.left).toBe("1008px");
+
+    // Now the picture arrives, and the box is its real size.
+    box.getBoundingClientRect = rect({ width: 248, height: 248 });
+    box.querySelector("img").dispatchEvent(new window.Event("load"));
+    // 248px does NOT fit in the 28px left over on the right, so it goes left of
+    // the cell instead of off the screen.
+    expect(box.style.left).toBe("700px");
+    // …and is centred on the row rather than growing down from it.
+    expect(box.style.top).toBe("190px");
+  });
+
+  it("does not re-place a preview the pointer has already left", () => {
+    // The load can land after the mouseout that removed the box.
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS);
+    const img = hoverable(document);
+    hover(window, img, "mouseover");
+    const orphan = document.querySelector(".photo-preview");
+    hover(window, img, "mouseout");
+
+    orphan.getBoundingClientRect = () => {
+      throw new Error("a removed preview must not be measured again");
+    };
+    orphan.querySelector("img").dispatchEvent(new window.Event("load"));
+    expect(document.querySelector(".photo-preview")).toBeNull();
+  });
+
+  it("shows no empty box for a picture that cannot be fetched", () => {
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS);
+    const img = hoverable(document);
+    hover(window, img, "mouseover");
+
+    document
+      .querySelector(".photo-preview img")
+      .dispatchEvent(new window.Event("error"));
+    expect(document.querySelector(".photo-preview")).toBeNull();
+  });
+
+  it("takes the preview down when the page itself scrolls", () => {
+    // frameTable floors the table's height, so on a short viewport the PAGE
+    // scrolls — and that scroll never reaches a listener on the table.
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS);
+    hover(window, hoverable(document), "mouseover");
+    document.dispatchEvent(new window.Event("scroll"));
+    expect(document.querySelector(".photo-preview")).toBeNull();
+  });
+
+  it("takes the preview down when the rows it belonged to are replaced", async () => {
+    // Chrome does not reliably raise mouseout for a node removed while hovered,
+    // so a stock write or a type-filter change would leave the box hanging.
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS);
+    hover(window, hoverable(document), "mouseover");
+    expect(document.querySelector(".photo-preview")).not.toBeNull();
+
+    await window.loadTable();
+    expect(document.querySelector(".photo-preview")).toBeNull();
+  });
+
+  it("pairs the columns with the request that was made, not the latest tick", async () => {
+    // Two overlapping loads used to cross: the toggle was read once for the URL
+    // and again after the await for the columns, so a response fetched WITHOUT
+    // photo ids could have the photo column put over it.
+    let land;
+    const fetchImpl = () =>
+      new Promise((resolve) => {
+        land = () =>
+          resolve({
+            ok: true,
+            json: async () => ({
+              columns: [{ title: "MPN", field: "mpn" }],
+              data: [{ id: 1 }],
+            }),
+          });
+      });
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS, { fetchImpl });
+    const toggle = document.getElementById("show-photos");
+
+    toggle.checked = false;
+    const pending = window.loadTable(); // asked for rows with no pictures
+    toggle.checked = true; // ticked while that request is still in the air
+    land();
+    await pending;
+
+    expect(window.Tabulator.columns.map((c) => c.field)).toEqual(["mpn", "actions"]);
+  });
+
+  it("holds the preview inside the viewport, under the real app.css", () => {
+    const css = readFileSync(
+      new URL("../../app/web/static/app.css", import.meta.url),
+      "utf8",
+    );
+    const dom = new JSDOM(
+      `<style>${css}</style><div class="photo-preview" id="p"><img id="i" /></div>`,
+    );
+    const style = (id) =>
+      dom.window.getComputedStyle(dom.window.document.getElementById(id));
+    expect(style("p").position).toBe("fixed");
+    // Transparent to the pointer, or moving onto the preview would eat the
+    // mouseout that takes it away and leave it stuck on screen.
+    expect(style("p").pointerEvents).toBe("none");
+    // Sized for what the server stores: a thumbnail is capped at THUMBNAIL_PX
+    // (240), so a larger box would only upscale it.
+    expect(style("i").maxWidth).toBe("240px");
+  });
+
+  it("keeps a photo inside the row height, under the real app.css", () => {
+    // The tallest thing in a cell decides how tall the row wants to be, and a row
+    // taller than TABLE_DEFAULTS.rowHeight clips its own content.
+    const css = readFileSync(
+      new URL("../../app/web/static/app.css", import.meta.url),
+      "utf8",
+    );
+    const dom = new JSDOM(`<style>${css}</style><img class="cell-photo" id="p" />`);
+    const style = dom.window.getComputedStyle(dom.window.document.getElementById("p"));
+    expect(style.height).toBe("28px");
+    expect(style.objectFit).toBe("contain"); // don't stretch a wide part square
   });
 });
 

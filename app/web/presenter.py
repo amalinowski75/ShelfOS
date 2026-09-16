@@ -26,6 +26,7 @@ from app.models.component import (
 from app.models.enums import ParameterDataType
 from app.models.invoice import Invoice
 from app.models.location import Location
+from app.services import attachment_service as att
 from app.services import audit_service
 from app.services import component_service as cs
 from app.services import invoice_service as inv
@@ -142,12 +143,18 @@ def build_invoice_table(session: Session, limit: int) -> dict[str, Any]:
 
 
 def build_component_table(
-    session: Session, type_id: int | None = None
+    session: Session, type_id: int | None = None, *, with_photos: bool = False
 ) -> dict[str, Any]:
     """Return ``{"columns": [...], "data": [...]}`` for the component table.
 
     In the generic view only common columns are returned; when a single type is
     selected, its table-flagged parameters are appended as extra columns (§11).
+
+    ``with_photos`` adds a ``photo_id`` to every row — the component's first photo
+    attachment, or ``None``. Off by default, and asked for only by the components
+    page's photo toggle: the same feed also fills the invoice line and BOM pickers,
+    which show no picture, and an extra query per fetch for a column nobody is
+    looking at is a cost with no reader.
     """
     columns: list[dict[str, object]] = list(_BASE_COLUMNS)
     table_params: list[ParameterDefinition] = []
@@ -177,6 +184,15 @@ def build_component_table(
     values_by_component = _load_parameter_values(
         session, [cast(int, c.id) for c in components] if table_params else []
     )
+    photo_ids = (
+        att.first_photo_ids(
+            session,
+            entity_type="component",
+            entity_ids=[cast(int, c.id) for c in components],
+        )
+        if with_photos
+        else {}
+    )
 
     rows: list[dict[str, Any]] = []
     for component in components:
@@ -191,6 +207,10 @@ def build_component_table(
             "mounting_type": component.mounting_type.value,
             "quantity": totals.get(component_id, 0),
         }
+        if with_photos:
+            # The id alone: the client builds the thumbnail URL from it, and the
+            # table has nothing to say about a photo it cannot show.
+            row["photo_id"] = photo_ids.get(component_id)
         if table_params:
             values = values_by_component.get(component_id, {})
             for definition in table_params:
