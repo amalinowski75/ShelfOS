@@ -31,6 +31,25 @@ pull request, which carries the reasoning and the verification.
   The download is awaited before the dialog hands control back, because the caller
   goes straight to the new component's page and a request still in flight would
   miss the gallery that page loads — the photo would appear only after a reload.
+  It runs alongside the datasheet's rather than after it, and the dialog says it
+  is saving the files while they are in flight: each download is bounded by the
+  server's 30-second whole-fetch timeout, and a shop that stalls instead of
+  refusing would otherwise leave a form that no longer responds and explains
+  nothing.
+
+  element14 turned out to send a ready-made `mainImageURL` beside the filename its
+  documentation describes, so that is what the import takes; the documented
+  assembly (store host plus a locale segment) stayed as the fallback. Checking that
+  against a live answer also closed a gap in the tests: the fixture built from real
+  API bytes had its `image` branch cut, back when nothing read it.
+
+- **#171** — fixes, in passing, a hole the photo would have widened. A bag scanned
+  while the dialog is still up reopens it without resetting the datasheet and photo
+  URLs captured outside the form, and the new lookup only clears them once it
+  answers. So a second scan whose lookup FAILED — no key for that shop, the API
+  down, an unsupported code — left the previous part's datasheet (and now photo) to
+  be attached to whatever was then filled in by hand. They are dropped as the new
+  code goes in, before anything is looked up.
 
 ## An invoice line that crossed a thousand złotych
 

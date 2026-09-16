@@ -71,6 +71,11 @@ is kept as a link instead, and the dialog says so — losing it would matter. A 
 that can't be downloaded is simply absent: no link, no notice. The component page
 opens with an empty gallery, which is the cue to add one by hand.
 
+Both downloads run at once, and the dialog stays up saying it is saving the files
+until they are in — that way the component page opens with them already attached.
+A shop that stalls rather than refusing can make that wait noticeable; it ends at
+the server's download timeout.
+
 Expect that of Mouser, whose images sit behind the same Akamai that already refuses
 our datasheet downloads from a hosted server — the same import usually gets both
 when ShelfOS runs on your own machine. TME, Digi-Key and element14 serve their
