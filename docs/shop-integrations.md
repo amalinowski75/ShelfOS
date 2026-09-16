@@ -59,6 +59,23 @@ A Farnell product URL ends in the order code (`…/dp/3367839`), which is elemen
 own unique key, so pasting a link never has to guess between two makers sharing a
 part number.
 
+## The two files an import brings home
+
+Beside the fields, an import downloads the part's **datasheet** and its **photo**
+onto the new component, so the detail page the create opens on already shows both.
+Neither is fetched from your browser: the server downloads them, which means the
+shop has to be willing to serve a datacenter address.
+
+The two differ in what happens when it isn't. A datasheet that can't be downloaded
+is kept as a link instead, and the dialog says so — losing it would matter. A photo
+that can't be downloaded is simply absent: no link, no notice. The component page
+opens with an empty gallery, which is the cue to add one by hand.
+
+Expect that of Mouser, whose images sit behind the same Akamai that already refuses
+our datasheet downloads from a hosted server — the same import usually gets both
+when ShelfOS runs on your own machine. TME, Digi-Key and element14 serve their
+images from plain CDNs.
+
 ## When the same maker arrives spelled two ways
 
 A component is identified by its manufacturer part number **and** its manufacturer,
