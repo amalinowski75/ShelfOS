@@ -938,3 +938,114 @@ describe("component_dialog.js — the shop's product photo", () => {
     expect(photoCalls(calls)).toHaveLength(1); // still just the imported one
   });
 });
+
+describe("component_dialog.js — what the import leaves behind", () => {
+  // The two files a shop import captures live outside the form, so the reset that
+  // a reopen does cannot clear them — and the new lookup only clears them once it
+  // answers. A lookup that fails before that is the case this covers.
+  const PHOTO = "https://mediacdn.digikey.com/photos/USB5734.jpg";
+  const DATASHEET = "https://www.digikey.pl/datasheet/USB5734.pdf";
+
+  function scanner() {
+    const calls = [];
+    let lookupFails = false;
+    const impl = (url, opts) => {
+      calls.push({ url, body: opts && opts.body ? JSON.parse(opts.body) : null });
+      if (url === "/api/shops/lookup") {
+        if (lookupFails)
+          return Promise.resolve({
+            ok: false,
+            status: 422,
+            json: () => Promise.resolve({ detail: "unsupported shop" }),
+          });
+        return ok({
+          mpn: "USB5734",
+          source_url: "https://www.digikey.pl/ProductDetail/USB5734",
+          datasheet_url: DATASHEET,
+          image_url: PHOTO,
+        });
+      }
+      if (url === "/api/attachments/from-url") return ok({ id: 3 });
+      if (url === "/api/components") return ok({ id: 7 });
+      return ok({});
+    };
+    return { calls, impl, fail: () => (lookupFails = true) };
+  }
+
+  async function submit(page) {
+    page.document
+      .getElementById("component-form")
+      .dispatchEvent(
+        new page.window.Event("submit", { cancelable: true, bubbles: true }),
+      );
+    await tick();
+    await tick();
+  }
+
+  it("does not attach the previous bag's files when the next lookup fails", async () => {
+    // Scan bag A (import lands, files captured) → bag B is scanned while the dialog
+    // is still up → B's lookup 422s → the user fills the form in by hand and
+    // creates. Component B must not come out wearing A's photo and datasheet.
+    const { calls, impl, fail } = scanner();
+    const page = loadPage(dialogFixture(), SCRIPTS, { fetchImpl: impl });
+    syncOpen(page);
+
+    open(page, () => {}, null, { importCode: "USB5734" });
+    await tick();
+    fail();
+    open(page, () => {}, null, { importCode: "NOT-A-SHOP" }); // the reopen path
+    await tick();
+    await submit(page);
+
+    const attached = calls
+      .filter((c) => c.url === "/api/attachments/from-url")
+      .map((c) => c.body.kind);
+    expect(attached).toEqual([]);
+    const linked = calls.filter((c) => c.url === "/api/links").map((c) => c.body.kind);
+    expect(linked).toEqual([]); // not even A's shop link
+  });
+
+  it("downloads the datasheet and the photo at the same time", async () => {
+    // Each download is bounded by the server's 30s whole-fetch timeout, and a shop
+    // that stalls rather than refusing would hold the dialog for both budgets if
+    // these ran one after the other.
+    let inFlight = 0;
+    let peak = 0;
+    const release = [];
+    const impl = (url, opts) => {
+      if (url === "/api/shops/lookup")
+        return ok({
+          mpn: "USB5734",
+          datasheet_url: DATASHEET,
+          image_url: PHOTO,
+        });
+      if (url === "/api/attachments/from-url") {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        return new Promise((resolve) =>
+          release.push(() => {
+            inFlight -= 1;
+            resolve({ ok: true, json: () => Promise.resolve({ id: 3 }) });
+          }),
+        );
+      }
+      if (url === "/api/components") return ok({ id: 7 });
+      return ok({});
+    };
+    const page = loadPage(dialogFixture(), SCRIPTS, { fetchImpl: impl });
+
+    open(page, () => {}, null, { importCode: "USB5734", navigates: true });
+    await tick();
+    const submitted = submit(page);
+    await tick();
+
+    expect(peak).toBe(2);
+    // …and the wait is explained rather than looking like a dead form.
+    const status = page.document.getElementById("shop-import-status");
+    expect(status.hidden).toBe(false);
+    expect(status.textContent).toMatch(/saving its files/i);
+
+    release.forEach((r) => r());
+    await submitted;
+  });
+});

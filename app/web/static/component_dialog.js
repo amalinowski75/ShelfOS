@@ -496,27 +496,48 @@
         if (pendingShopUrl && !(await addLink(created.id, "shop", pendingShopUrl))) {
           lost.push("the shop link");
         }
-        // Try to download the datasheet as a file. If the shop blocks server-side
-        // fetches — TME's document host answers a Cloudflare challenge, and Mouser's
-        // Akamai serves an "Access Denied" page to datacenter IPs, so the same import
-        // can download on a laptop and fail on a hosted server — keep it as a
-        // datasheet LINK instead. Only if BOTH fail is it lost, and the user is told.
+        // The datasheet and the photo download TOGETHER, not one after the other:
+        // the server bounds each fetch by a whole-fetch timeout (30 s), and a shop
+        // whose file host tarpits us rather than refusing — Akamai's habit — would
+        // otherwise hold this for both budgets end to end. They land in different
+        // attachments, so neither depends on the other's outcome.
+        const saving = [];
+        // If the shop blocks server-side fetches — TME's document host answers a
+        // Cloudflare challenge, and Mouser's Akamai serves an "Access Denied" page
+        // to datacenter IPs, so the same import can download on a laptop and fail on
+        // a hosted server — keep the datasheet as a LINK instead. Only if BOTH fail
+        // is it lost, and the user is told.
         if (pendingDatasheetUrl) {
-          if (await attachFromUrl(created.id, pendingDatasheetUrl, "datasheet")) {
-            // Downloaded as a file — nothing to report.
-          } else if (await addLink(created.id, "datasheet", pendingDatasheetUrl)) {
-            datasheetLinked = true;
-          } else {
-            lost.push("the datasheet");
-          }
+          const url = pendingDatasheetUrl;
+          saving.push(
+            (async () => {
+              if (await attachFromUrl(created.id, url, "datasheet")) return;
+              if (await addLink(created.id, "datasheet", url)) {
+                datasheetLinked = true;
+              } else {
+                lost.push("the datasheet");
+              }
+            })(),
+          );
         }
-        // The photo, awaited before the dialog closes: the caller may navigate to
-        // the component's page next, and an attachment still in flight would miss
-        // the gallery that page loads. Nothing is reported either way — a picture
-        // is a nicety, and its absence on the page that opens says it plainly
-        // enough without a toast for something nobody asked for by name.
+        // The photo reports nothing either way — a picture is a nicety, and its
+        // absence on the page that opens says it plainly enough without a toast for
+        // something nobody asked for by name.
         if (pendingImageUrl) {
-          await attachFromUrl(created.id, pendingImageUrl, "photo");
+          saving.push(attachFromUrl(created.id, pendingImageUrl, "photo"));
+        }
+        if (saving.length) {
+          // Both are awaited before the dialog closes: the caller may navigate to
+          // the component's page next, and an attachment still in flight would miss
+          // the gallery and the attachments panel that page loads. That wait is
+          // worth a line of text — without one, a stalling shop leaves a form that
+          // no longer responds and says nothing about why.
+          if (importStatus) {
+            importStatus.hidden = false;
+            importStatus.className = "muted";
+            importStatus.textContent = "Component created — saving its files…";
+          }
+          await Promise.all(saving);
         }
       }
       // Used; clear so a later manual (non-import) create can't reuse a stale URL.
@@ -1086,6 +1107,14 @@
         loadParams(""); // clear the previous type's parameter fields too
       }
       setShopUrl(null);
+      // …and so do the files the previous bag's lookup captured. On a reopen the
+      // fields are cleared above, but these live outside the form, and the new
+      // lookup only clears them once it ANSWERS: a lookup that fails first (no key
+      // for this shop, the API down, an unsupported code) would leave bag A's
+      // datasheet and photo to be attached to whatever the user then fills in by
+      // hand. Dropped up front, so only this code's own answer can set them.
+      pendingDatasheetUrl = null;
+      pendingImageUrl = null;
       importUrl.value = importCode;
       triggerImport();
     }
