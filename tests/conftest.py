@@ -102,9 +102,7 @@ def cheap_password_hashing(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def production_bcrypt_cost(
-    cheap_password_hashing: None, monkeypatch: pytest.MonkeyPatch
-) -> Iterator[None]:
+def production_bcrypt_cost(cheap_password_hashing: None) -> Iterator[None]:
     """Put the shipped cost factor back, for a test about how long a hash takes.
 
     Depends on the fixture it undoes so pytest orders it afterwards.
@@ -114,13 +112,26 @@ def production_bcrypt_cost(
     the time, so a cheap one left in place would make a missing username answer
     far faster than a real one — which is the very leak the test that wants this
     fixture exists to catch — and an expensive one left behind would charge
-    every later test a fifth of a second.
+    every later test in the worker a fifth of a second.
+
+    The factor is put back by hand rather than left to ``monkeypatch``, and put
+    back *before* the cache is dropped, because the order of the two is the
+    whole point. Fixtures are torn down in reverse order of setup, so where this
+    one sits in a test's argument list decides which other teardowns run while
+    the expensive factor is still in force — and a teardown that reaches
+    ``authenticate()`` with an unknown username refills the cache. Undoing the
+    factor first means that even if something refills it afterwards, it refills
+    it cheaply. Relying on ``monkeypatch`` would leave that window open, and
+    leave it open in a way that depends on where a future test happens to write
+    this fixture's name.
     """
+    lowered = user_service.BCRYPT_ROUNDS
     user_service._absent_password_hash.cache_clear()
-    monkeypatch.setattr(user_service, "BCRYPT_ROUNDS", _PRODUCTION_BCRYPT_ROUNDS)
+    user_service.BCRYPT_ROUNDS = _PRODUCTION_BCRYPT_ROUNDS
     try:
         yield
     finally:
+        user_service.BCRYPT_ROUNDS = lowered
         user_service._absent_password_hash.cache_clear()
 
 

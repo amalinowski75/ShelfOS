@@ -39,7 +39,12 @@ stolen password database expensive to attack — for the password
   minimum factor that round would be smaller than the noise of the request
   around it. The fixture drops the cached absent-account hash on the way in and
   out, since that hash is computed once per process and would otherwise keep
-  whichever factor happened to be in force when it was first asked for.
+  whichever factor happened to be in force when it was first asked for — and it
+  puts the cheap factor back *before* dropping it on the way out, so that a
+  teardown which happens to run in between and asks about an unknown username
+  refills the cache cheaply. Fixtures tear down in reverse order of setup, so
+  without that the window would depend on where a test writes this fixture's
+  name in its argument list.
 
 - The Definition of Done in the README now runs `pytest -n auto`, as CI has
   done since the suite was parallelised. Nothing in it is shared between tests,

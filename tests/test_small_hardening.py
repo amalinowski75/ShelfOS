@@ -168,7 +168,17 @@ def test_a_missing_account_costs_a_bcrypt_round_too(
         )
         return time.perf_counter() - start
 
-    elapsed("admin")  # warm the cached absent-account hash and any import cost
+    # Warm both paths before measuring. The unknown name goes first and is the
+    # one that matters: the absent-account hash is computed once per process,
+    # the fixture above has just dropped it, and the call that finds it missing
+    # pays for creating it on top of verifying against it — at the shipped cost
+    # factor, so it reads as roughly twice a round. Warming with "admin"
+    # alone, as this did, never touches that hash at all: an account that
+    # exists takes the other branch of authenticate(). It was harmless only
+    # because min() of three throws the inflated sample away, which is not a
+    # property worth resting a timing assertion on.
+    elapsed("nobody-with-this-name")
+    elapsed("admin")
     known = min(elapsed("admin") for _ in range(3))
     unknown = min(elapsed("nobody-with-this-name") for _ in range(3))
     assert unknown > known / 2, (known, unknown)
