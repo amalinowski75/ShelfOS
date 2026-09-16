@@ -318,6 +318,12 @@ Show only common columns:
 - quantity
 - location
 
+A **Photos** checkbox next to the type filter adds one more column, the rightmost:
+a thumbnail of the component's first `photo` attachment (blank when it has none).
+Off by default and remembered for the browser session only, so a reload keeps it
+and a fresh visit starts from the plain table. The full gallery stays on the
+component's detail page.
+
 ## Type-Specific View
 
 When a single type is selected:

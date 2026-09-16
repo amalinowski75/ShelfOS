@@ -910,6 +910,7 @@ export function typePageFixture(types = [{ id: 1, name: "resistor" }]) {
         <span id="stat-top-qty">0</span><span id="stat-top-mpn"></span>
       </div>
       <select id="type-filter" class="control"><option value="">All types</option>${options}</select>
+      <label class="check" for="show-photos"><input type="checkbox" id="show-photos" /> Photos</label>
       <button id="new-component-btn"></button>
     </div>
     <div id="components-table"></div>

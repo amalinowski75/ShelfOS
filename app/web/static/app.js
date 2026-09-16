@@ -5,6 +5,37 @@
 
 const typeFilter = document.getElementById("type-filter");
 
+// ---- the photo column's switch ---------------------------------------------
+// A picture per row is a look-up aid ("which of these is the one in my hand"),
+// not the everyday view, so it starts off. Remembered in sessionStorage rather
+// than localStorage: a reload — which every stock write on the detail page ends
+// in — keeps the column, while a fresh visit starts from the plain table again.
+const SHOW_PHOTOS_KEY = "shelfos-show-photos";
+const photoToggle = document.getElementById("show-photos");
+
+function showPhotos() {
+  return Boolean(photoToggle?.checked);
+}
+
+if (photoToggle) {
+  try {
+    photoToggle.checked = sessionStorage.getItem(SHOW_PHOTOS_KEY) === "1";
+  } catch {
+    // Storage blocked (private mode) — the toggle just starts off, as it would.
+  }
+  photoToggle.addEventListener("change", () => {
+    try {
+      sessionStorage.setItem(SHOW_PHOTOS_KEY, showPhotos() ? "1" : "0");
+    } catch {
+      // Same: the column still turns on, it just won't survive the next reload.
+    }
+    // A refetch, not a column toggle: the ids behind the pictures are only in
+    // the feed when they were asked for, so the answer to "show me photos" is a
+    // different payload rather than a hidden column.
+    loadTable();
+  });
+}
+
 const table = new Tabulator("#components-table", {
   ...TABLE_DEFAULTS,
   // fitDataFill: columns take their natural widths (horizontal scrollbar when they
@@ -228,6 +259,34 @@ function actionColumn() {
   };
 }
 
+// The rightmost column, past the row actions, and only while the toggle is on:
+// it is an aid to recognising a part, not one of the fields a row is read for,
+// so it sits out of the way of everything that is. The picture is the component's
+// FIRST photo attachment — one row, one image; the detail page has the gallery.
+function photoColumn() {
+  return {
+    title: "Photo",
+    field: "photo_id",
+    headerSort: false, // sorting rows by attachment id means nothing
+    width: 64,
+    hozAlign: "center",
+    formatter: (cell) => {
+      // Number(), not the raw value: this lands unquoted in an attribute, and a
+      // number is the one shape that cannot carry anything out of it. 0 is not a
+      // valid id either, so the falsy check covers both "no photo" and "not one".
+      const id = Number(cell.getValue());
+      if (!id) return "";
+      // The cached server-side thumbnail, not the full photo: a page of rows
+      // would otherwise pull a phone camera's worth of megabytes.
+      //
+      // alt is empty on purpose — the row already names the part in five columns,
+      // and a screen reader reading "photo of RC0805" after them is noise, not
+      // information it could act on.
+      return `<img class="cell-photo" src="/api/attachments/${id}/thumbnail" alt="" loading="lazy" />`;
+    },
+  };
+}
+
 // ---- header stats ----------------------------------------------------------
 // A summary of what the table is SHOWING, not of the whole database — which is
 // why it is computed here from the rows rather than fetched from the server: the
@@ -306,9 +365,14 @@ function renderStats(rows) {
   put("stat-top-mpn", stats.topMpn);
 }
 
-function currentTypeQuery() {
-  const value = typeFilter.value;
-  return value ? `?type_id=${value}` : "";
+function currentQuery() {
+  const params = new URLSearchParams();
+  if (typeFilter.value) params.set("type_id", typeFilter.value);
+  // Only when the column is on: the same feed fills the invoice line and BOM
+  // pickers, and the photo lookup is a query the server can skip otherwise.
+  if (showPhotos()) params.set("photos", "1");
+  const query = params.toString();
+  return query ? `?${query}` : "";
 }
 
 async function loadTable() {
@@ -323,7 +387,7 @@ async function loadTable() {
   let rows = [];
   try {
     const payload = await fetch(
-      `/web/api/components${currentTypeQuery()}`,
+      `/web/api/components${currentQuery()}`,
     ).then((r) => r.json());
     columns = payload.columns.map(columnDef);
     rows = payload.data;
@@ -344,6 +408,7 @@ async function loadTable() {
     : "Could not load components — refresh to try again";
   if (columns) {
     columns.push(actionColumn());
+    if (showPhotos()) columns.push(photoColumn());
     table.setColumns(columns);
   }
   await table.setData(rows);

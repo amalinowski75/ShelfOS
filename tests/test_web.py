@@ -431,6 +431,14 @@ def test_components_feed_keeps_photos_with_a_photo_of_another_component(
     assert by_mpn == {"A": first_photo, "B": second_photo}
 
 
+def test_components_page_offers_the_photo_toggle(client: TestClient) -> None:
+    html = client.get("/").text
+    assert 'id="show-photos"' in html
+    # Off in the markup: the remembered state is restored by app.js, and a page
+    # that shipped it checked would flash a column a fresh visit never asked for.
+    assert 'id="show-photos" />' in html
+
+
 def test_component_detail_shows_the_full_description(client: TestClient) -> None:
     """The table trims; the detail page is where the whole text lives."""
     ctype = client.post("/api/types", json={"name": "resistor"}).json()

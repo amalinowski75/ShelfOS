@@ -849,6 +849,17 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 .cell-desc {
   display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* The optional photo column. 28px — the same height as a row's buttons — because
+   the tallest thing in a cell decides how tall the row wants to be, and a row
+   taller than TABLE_DEFAULTS.rowHeight clips itself. Small on purpose, then:
+   enough to recognise a part by colour and shape, with the row click one step
+   from the detail page's full gallery. `contain` keeps a wide part from being
+   stretched into a square. */
+.cell-photo {
+  display: block; margin: 0 auto;
+  height: 28px; width: auto; max-width: 100%;
+  object-fit: contain; border-radius: 3px;
+}
 
 /* row actions: quiet until the row is hovered (spec §15) */
 .row-actions { display: inline-flex; gap: 4px; opacity: 0; transition: opacity .12s; }

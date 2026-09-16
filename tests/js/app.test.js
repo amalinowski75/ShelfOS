@@ -198,11 +198,17 @@ describe("app.js — table formatting", () => {
     ]);
   });
 
-  it("builds the type-filter query string", () => {
+  it("builds the feed query from the type filter and the photo toggle", () => {
     const { window, document } = loadPage(typePageFixture(), SCRIPTS);
-    expect(window.currentTypeQuery()).toBe("");
+    expect(window.currentQuery()).toBe("");
     document.getElementById("type-filter").value = "1";
-    expect(window.currentTypeQuery()).toBe("?type_id=1");
+    expect(window.currentQuery()).toBe("?type_id=1");
+    // `photos` only when the column is on: the same feed fills the invoice line
+    // and BOM pickers, and the photo lookup is a query the server can skip.
+    document.getElementById("show-photos").checked = true;
+    expect(window.currentQuery()).toBe("?type_id=1&photos=1");
+    document.getElementById("type-filter").value = "";
+    expect(window.currentQuery()).toBe("?photos=1");
   });
 
   it("loadTable fetches, maps columns (+ actions) and sets the data", async () => {
@@ -366,6 +372,129 @@ describe("app.css — `hidden` means hidden", () => {
     expect(displayOf('<button class="btn btn-primary" id="x">a</button>')).not.toBe(
       "none",
     );
+  });
+});
+
+describe("app.js — the photo column", () => {
+  const cell = (value) => ({ getValue: () => value });
+
+  it("renders the thumbnail of the row's photo, and nothing without one", () => {
+    const { window } = loadPage(typePageFixture(), SCRIPTS);
+    const { formatter } = window.photoColumn();
+
+    expect(formatter(cell(7))).toBe(
+      '<img class="cell-photo" src="/api/attachments/7/thumbnail" alt="" loading="lazy" />',
+    );
+    // The cached thumbnail, never the full photo: a page of rows would otherwise
+    // pull a phone camera's worth of megabytes.
+    expect(formatter(cell(7))).not.toContain("/download");
+    // No photo — an empty cell, not a broken image.
+    expect(formatter(cell(null))).toBe("");
+    expect(formatter(cell(undefined))).toBe("");
+  });
+
+  it("cannot be talked into putting anything but a number in that attribute", () => {
+    // The id lands unquoted in a src, and the feed is only as trustworthy as the
+    // database behind it. Number() is what makes the value unable to carry
+    // anything out of the attribute.
+    const { window } = loadPage(typePageFixture(), SCRIPTS);
+    const { formatter } = window.photoColumn();
+    expect(formatter(cell('1" onerror="alert(1)'))).toBe("");
+    expect(formatter(cell("../../etc/passwd"))).toBe("");
+    expect(formatter(cell("7"))).toContain("/api/attachments/7/thumbnail");
+  });
+
+  it("is not sortable and does not take a header filter", () => {
+    // Sorting rows by attachment id means nothing, and there is no text to type.
+    const { window } = loadPage(typePageFixture(), SCRIPTS);
+    const column = window.photoColumn();
+    expect(column.headerSort).toBe(false);
+    expect(column.headerFilter).toBeUndefined();
+  });
+
+  it("sits past the row actions, and only while the toggle is on", async () => {
+    const feed = (url) =>
+      Promise.resolve({
+        ok: true,
+        json: async () =>
+          url.startsWith("/web/api/components")
+            ? { columns: [{ title: "MPN", field: "mpn" }], data: [{ id: 1 }] }
+            : {},
+      });
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS, {
+      fetchImpl: feed,
+    });
+
+    await window.loadTable();
+    expect(window.Tabulator.columns.map((c) => c.field)).toEqual(["mpn", "actions"]);
+
+    document.getElementById("show-photos").checked = true;
+    await window.loadTable();
+    expect(window.Tabulator.columns.map((c) => c.field)).toEqual([
+      "mpn",
+      "actions",
+      "photo_id",
+    ]);
+  });
+
+  it("refetches when switched on, and remembers it for the next page load", async () => {
+    const { window, document, fetchMock } = loadPage(typePageFixture(), SCRIPTS);
+    const toggle = document.getElementById("show-photos");
+    expect(toggle.checked).toBe(false); // off by default
+
+    toggle.checked = true;
+    toggle.dispatchEvent(new window.Event("change", { bubbles: true }));
+    await tick();
+
+    // A refetch, not a column toggle: the ids behind the pictures are only in
+    // the feed when they were asked for.
+    const urls = fetchMock.mock.calls.map(([url]) => url);
+    expect(urls).toContain("/web/api/components?photos=1");
+    expect(window.sessionStorage.getItem("shelfos-show-photos")).toBe("1");
+  });
+
+  it("restores the toggle from the session, and forgets it in a new one", async () => {
+    // A reload — which every stock write on the detail page ends in — keeps the
+    // column; a fresh visit starts from the plain table again (sessionStorage,
+    // not localStorage).
+    const feed = (url) =>
+      Promise.resolve({
+        ok: true,
+        json: async () =>
+          url.startsWith("/web/api/components")
+            ? { columns: [{ title: "MPN", field: "mpn" }], data: [{ id: 1 }] }
+            : {},
+      });
+    const restored = loadPage(typePageFixture(), SCRIPTS, {
+      fetchImpl: feed,
+      sessionStorage: { "shelfos-show-photos": "1" },
+    });
+    expect(restored.document.getElementById("show-photos").checked).toBe(true);
+    await restored.window.loadTable();
+    expect(restored.window.Tabulator.columns.map((c) => c.field)).toContain("photo_id");
+
+    // Switched off, the stored answer is "0" rather than nothing — otherwise the
+    // next reload could not tell "turned it off" from "never touched it".
+    const off = loadPage(typePageFixture(), SCRIPTS, {
+      sessionStorage: { "shelfos-show-photos": "0" },
+    });
+    expect(off.document.getElementById("show-photos").checked).toBe(false);
+
+    const fresh = loadPage(typePageFixture(), SCRIPTS);
+    expect(fresh.document.getElementById("show-photos").checked).toBe(false);
+  });
+
+  it("keeps a photo inside the row height, under the real app.css", () => {
+    // The tallest thing in a cell decides how tall the row wants to be, and a row
+    // taller than TABLE_DEFAULTS.rowHeight clips its own content.
+    const css = readFileSync(
+      new URL("../../app/web/static/app.css", import.meta.url),
+      "utf8",
+    );
+    const dom = new JSDOM(`<style>${css}</style><img class="cell-photo" id="p" />`);
+    const style = dom.window.getComputedStyle(dom.window.document.getElementById("p"));
+    expect(style.height).toBe("28px");
+    expect(style.objectFit).toBe("contain"); // don't stretch a wide part square
   });
 });
 
