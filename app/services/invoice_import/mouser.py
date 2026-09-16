@@ -5,9 +5,9 @@ by a ``Numer katalogowy u producenta: <MPN>`` line and a description line
 ("<Manufacturer> <title> / <Polish category>"). The manufacturer is the leading
 words of that description with no delimiter to the title, so it is NOT parsed here —
 the orchestrator enriches Mouser lines from the shop API (fetch_by_mpn) by MPN, which
-returns the canonical manufacturer. Numbers are comma-decimal; thousands are
-grouped by a comma on a USD invoice ("2,500") and by a space on a PLN one
-("1 533,95").
+returns the canonical manufacturer. Numbers are comma-decimal; an amount groups
+its thousands with a space ("1 533,95"), a quantity with a comma ("2,500"), on
+the same invoice.
 """
 
 from __future__ import annotations
@@ -27,25 +27,28 @@ from app.services.invoice_import.base import (
 _HEADER = re.compile(r"(\d{6,})\s+(\d{1,2}-[A-Za-z]{3}-\d{2,4})\s+\d+\s+of\s+\d+")
 _CURRENCY = re.compile(r"Price\((\w{3})\)")
 
-# A number as these invoices print it. The decimal separator is always a comma;
-# thousands are grouped with a comma on a USD invoice ("2,500") and with a SINGLE
-# SPACE on a PLN one ("1 533,95"), which is Polish convention and comes straight
-# out of the PDF that way. ``to_int``/``to_decimal`` strip either.
-#
-# The space form is spelled out as exactly one space followed by exactly three
-# digits, and the columns around it are separated by two or more — the table is
-# laid out in fixed columns (``extract_text`` keeps them), so the gap between two
-# cells is never a single space. That is what stops "100 100" in the Ordered and
-# Shipped cells from being read as one quantity of 100100.
-_NUM = r"\d[\d,]*(?: \d{3})*(?:[.,]\d+)?"
+# The two money cells. Decimal separator is a comma; thousands are grouped with a
+# space — Polish convention, and what the PDF prints ("1 533,95") — or with a
+# non-breaking one, which is what that character sometimes extracts as
+# (``to_decimal`` strips either). The grouped form is accepted only with its
+# decimal part, which is how Mouser prints an amount: cents are always there.
+# A bare "1 533" would have the same shape as two cells that happen to sit one
+# space apart, and the cells are NOT a fixed distance apart — the gap is the
+# column's slack minus the value's width, so a value that fills its column leaves
+# a single space.
+_MONEY = r"\d{1,3}(?:[ \xa0]\d{3})+[.,]\d+|[\d.,]+"
+# The three quantity cells. Mouser groups these with a COMMA even on an invoice
+# whose amounts group with spaces ("2,500" = 2500 on a PLN invoice), so no space
+# form is needed here — and none is allowed: Ordered, Shipped and Pending sit
+# close together, a seven-character quantity leaves a single space to its
+# neighbour, and "100 100" read as one number would book a hundred thousand parts
+# into stock.
+_QTY = r"[\d,]+"
 # An item row: "1  771-NX3P1108UKZ  100  100  0  0,853  85,30". The Mouser catalogue
 # number is "<digits>-<mpn>"; the three quantities are Ordered / Shipped / Pending.
-# The line number is the one cell that can sit a single space from its neighbour
-# ("10 757-DF2S30FSL3M" — a two-digit number fills its column), and a catalogue
-# number carries no spaces, so the strict gap starts after it.
 _ITEM = re.compile(
-    rf"^\s*(\d+)\s+(\d{{2,4}}-\S+)"
-    rf"\s{{2,}}({_NUM})\s{{2,}}({_NUM})\s{{2,}}({_NUM})\s{{2,}}({_NUM})\s{{2,}}({_NUM})\s*$"
+    rf"^\s*(\d+)\s+(\d{{2,4}}-\S+)\s+({_QTY})\s+({_QTY})\s+({_QTY})"
+    rf"\s+({_MONEY})\s+({_MONEY})\s*$"
 )
 # A line that clearly starts an item row ("<line> <digits>-<sku> …") — used to fail
 # loudly on one the strict pattern couldn't read, instead of relying on a marker

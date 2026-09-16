@@ -18,15 +18,19 @@ pull request, which carries the reasoning and the verification.
   space and the row stopped looking like an item row. Nothing was wrong with the
   invoice, and every other line on it parsed.
 
-  A number in that table is now digits with either separator — a comma on a USD
-  invoice (`2,500`), a single space on a PLN one — in the quantity columns as
-  well as the money ones, since the same convention applies to a reel of 2 500.
-  The cost of allowing that space is that `100 100` in the Ordered and Shipped
-  cells could be read as one quantity of 100100, which would book a hundred
-  thousand parts into stock: so the thousands form is spelled out as exactly one
-  space and exactly three digits, and the cells around it must be two or more
-  apart. The table is laid out in fixed columns, so that is always true — and a
-  row that says otherwise is still refused by name rather than guessed at.
+  The two money cells now take that grouping, with a plain or a non-breaking
+  space, and only with the cents that follow it. The three quantity cells
+  deliberately do not: Mouser groups those with a comma even on the invoice whose
+  amounts group with spaces (`2,500` = 2500 on a PLN invoice), so a space between
+  two quantities is a column gap and nothing else — and `100 100` read as one
+  number would book a hundred thousand parts into stock.
+
+  The first attempt at this also demanded two spaces between cells, on the theory
+  that the table's fixed columns never put two of them closer. They do: the gap
+  is the column's slack minus the value's width, so a seven-character quantity
+  (`100,000`) leaves exactly one space and that row — which imported fine before
+  — would have started failing. Keeping the tolerance where it was and widening
+  only the money cells avoids trading one loud failure for another.
 
 ## Three backups, not thirty days of them
 
