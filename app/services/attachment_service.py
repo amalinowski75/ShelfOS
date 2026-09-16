@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import contextlib
 import re
+from collections.abc import Sequence
 from pathlib import Path
+from typing import cast
 from uuid import uuid4
 
 from PIL import Image, ImageOps
@@ -130,6 +132,37 @@ def list_attachments(
         .order_by(col(Attachment.id))
     )
     return list(session.exec(statement).all())
+
+
+def first_photo_ids(
+    session: Session, *, entity_type: str, entity_ids: Sequence[int]
+) -> dict[int, int]:
+    """``{entity_id: attachment_id}`` for each entity's FIRST photo.
+
+    One query for a whole page of entities rather than a list call per row: the
+    component table asks for this for every row it shows, and only to build an
+    ``<img>`` src. Only ``kind == photo`` counts, and "first" is the same order
+    :func:`list_attachments` uses (oldest first, by id) — so the picture in the
+    table is the one at the head of the entity's own attachment list.
+
+    Entities are not checked for existence, unlike :func:`list_attachments`: the
+    caller already has the rows, and an id with no photo is simply absent.
+    """
+    ids = list(entity_ids)
+    if not ids:
+        return {}
+    first: dict[int, int] = {}
+    for attachment_id, owner_id in session.exec(
+        select(Attachment.id, Attachment.entity_id)
+        .where(Attachment.entity_type == entity_type)
+        .where(Attachment.kind == AttachmentKind.PHOTO)
+        .where(col(Attachment.entity_id).in_(ids))
+        .order_by(col(Attachment.id))
+    ).all():
+        # setdefault, over an id-ordered query: the first row seen for an entity
+        # is its oldest photo, and later ones are ignored.
+        first.setdefault(owner_id, cast(int, attachment_id))
+    return first
 
 
 def get_attachment(session: Session, attachment_id: int) -> Attachment:
