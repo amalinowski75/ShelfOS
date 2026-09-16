@@ -1982,3 +1982,190 @@ def test_the_backup_names_what_it_does_not_hold(tmp_path: Path) -> None:
     afterwards = script[script.index('note "The archive holds') :][:600]
     assert "$ENV_FILE_SYSTEM" in afterwards
     assert "$TUNNEL_KEYS" in afterwards
+
+
+# --- update: moving the checkout forward -------------------------------------
+
+
+def _origin_and_install(tmp_path: Path) -> tuple[Path, Path]:
+    """An origin carrying main plus a merged branch that sorts before it, and an
+    install one commit behind main with no upstream configured — which is what
+    `deploy --reinstall` and `update --ref` both leave behind.
+
+    The branch that sorts first is the whole point: it is an ancestor of main,
+    so anything that merges it instead of main succeeds and moves nothing.
+    """
+    origin = tmp_path / "origin.git"
+    origin.mkdir()
+    _git(origin, "init", "--quiet", "--bare", "-b", "main")
+
+    work = tmp_path / "work"
+    work.mkdir()
+    _git(work, "init", "--quiet", "-b", "main")
+    (work / "app.txt").write_text("one\n")
+    _git(work, "add", "-A")
+    _git(work, "commit", "--quiet", "-m", "one")
+    _git(work, "remote", "add", "origin", str(origin))
+    _git(work, "push", "--quiet", "origin", "main")
+    # Merged long ago, still on origin, and first in the alphabet.
+    _git(work, "push", "--quiet", "origin", "main:aaa-merged-pr")
+    (work / "app.txt").write_text("two\n")
+    _git(work, "commit", "--quiet", "-a", "-m", "two")
+    _git(work, "push", "--quiet", "origin", "main")
+
+    install = tmp_path / "install"
+    _git(tmp_path, "clone", "--quiet", str(origin), str(install))
+    _git(install, "reset", "--quiet", "--hard", "HEAD~1")
+    # The upstream a clone configures is exactly what deploy --reinstall's
+    # `checkout -B` and update --ref's detached checkout do not leave behind.
+    _git(install, "config", "--unset", "branch.main.merge")
+    _git(install, "config", "--unset", "branch.main.remote")
+    return origin, install
+
+
+def _move_checkout(tmp_path: Path, install: Path, ref: str = "") -> str:
+    script = _SCRIPT.read_text()
+    body = script[script.index("update_move_checkout() {") :]
+    body = body[: body.index("\n}\n") + 3]
+    probe = tmp_path / "move.sh"
+    probe.write_text(
+        "set -Eeuo pipefail\n"
+        f"INSTALL_DIR={install}\nDRY_RUN=0\nC_RED=''\nC_OFF=''\n"
+        "die() { local status=$1; shift; "
+        'printf "DIED: %s\\n" "$*" >&2; exit "$status"; }\n'
+        "info() { printf '%s\\n' \"$*\"; }\n"
+        'sudo_run() { "$@"; }\n'
+        f"{body}\nupdate_move_checkout {shlex.quote(ref)}\n"
+    )
+    return _run_probe(probe)
+
+
+def test_an_update_fast_forwards_the_branch_it_is_on(tmp_path: Path) -> None:
+    """The failure that made this real: `merge --ff-only FETCH_HEAD` merged
+    whichever branch origin happened to write first — a merged PR branch, and so
+    already an ancestor — said "Already up to date", exited 0, and restarted a
+    service whose code had not moved. Every update after that reported success
+    and changed nothing, and only `--ref origin/main` worked."""
+    origin, install = _origin_and_install(tmp_path)
+    output = _move_checkout(tmp_path, install)
+    assert "DIED" not in output, output
+    assert _git(install, "rev-parse", "HEAD") == _git(origin, "rev-parse", "main"), (
+        "the update reported success without moving the checkout"
+    )
+    assert (install / "app.txt").read_text() == "two\n"
+
+
+def test_a_ref_that_names_a_branch_leaves_the_install_on_it(tmp_path: Path) -> None:
+    """`--ref origin/main` detached HEAD, and a detached install has no branch
+    for the next plain update to fast-forward — which is how using --ref once
+    turned into needing it forever."""
+    origin, install = _origin_and_install(tmp_path)
+    output = _move_checkout(tmp_path, install, "origin/main")
+    assert "DIED" not in output, output
+    assert _git(install, "symbolic-ref", "--short", "HEAD") == "main"
+    assert _git(install, "rev-parse", "HEAD") == _git(origin, "rev-parse", "main")
+
+
+def test_a_detached_install_says_so_instead_of_doing_nothing(tmp_path: Path) -> None:
+    """There is nothing to fast-forward, and what everybody hit was that this
+    was silent. It names the way out."""
+    _, install = _origin_and_install(tmp_path)
+    _git(install, "checkout", "--quiet", "--detach", "HEAD")
+    output = _move_checkout(tmp_path, install)
+    assert "DIED" in output
+    assert "detached" in output
+    assert "--ref" in output
+
+
+def test_a_branch_origin_no_longer_has_is_named(tmp_path: Path) -> None:
+    """Deploying a PR branch and deleting it on origin after the merge leaves an
+    install following something that is not there any more. Without `--prune` on
+    the fetch it looks like it is: a wildcard fetch never removes a
+    remote-tracking ref, so `origin/<branch>` still answers, still points at the
+    merged commit, and the fast-forward onto it is the silent no-op again."""
+    origin, install = _origin_and_install(tmp_path)
+    _git(install, "checkout", "--quiet", "-b", "a-pr-branch")
+    _git(install, "push", "--quiet", "origin", "a-pr-branch")
+    _git(origin, "branch", "--quiet", "-D", "a-pr-branch")
+    assert _git(install, "rev-parse", "--verify", "refs/remotes/origin/a-pr-branch")
+
+    output = _move_checkout(tmp_path, install)
+    assert "DIED" in output
+    assert "a-pr-branch" in output
+    assert "--ref" in output
+
+
+def test_a_tracking_ref_for_a_branch_origin_never_had_is_not_followed(
+    tmp_path: Path,
+) -> None:
+    """`deploy` clones from the deploying user's own clone and only then points
+    the remote at GitHub, and a clone of a non-bare repository copies its local
+    branches into `refs/remotes/origin/*`. So a fresh install carries tracking
+    refs for branches GitHub has never seen. `--ref` taking one of those checks
+    out somebody's months-old local commit and reports success."""
+    _, install = _origin_and_install(tmp_path)
+    stale = _git(install, "rev-parse", "HEAD")
+    _git(install, "update-ref", "refs/remotes/origin/never-pushed", stale)
+
+    output = _move_checkout(tmp_path, install, "never-pushed")
+    assert "DIED" in output
+    assert "never-pushed" in output
+    # And it is gone, rather than waiting to be followed by the next --ref.
+    assert (
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(install),
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                "refs/remotes/origin/never-pushed",
+            ],
+            capture_output=True,
+        ).returncode
+        != 0
+    )
+
+
+def test_a_commit_made_on_the_box_is_not_thrown_away(tmp_path: Path) -> None:
+    """`--ref main` moves the install onto origin's main, and `checkout -B`
+    would do that by force — discarding a fix committed on the machine with
+    nothing said and nothing to restore from. The dirty-tree check in
+    `cmd_update` does not see it: it is committed, so the tree is clean."""
+    _, install = _origin_and_install(tmp_path)
+    (install / "app.txt").write_text("fixed on the box\n")
+    _git(install, "commit", "--quiet", "-a", "-m", "hot fix")
+    local = _git(install, "rev-parse", "HEAD")
+
+    output = _move_checkout(tmp_path, install, "origin/main")
+    assert "DIED" in output
+    assert _git(install, "rev-parse", "HEAD") == local
+    assert (install / "app.txt").read_text() == "fixed on the box\n"
+
+
+def test_the_dry_run_preview_of_a_ref_does_not_pretend_to_have_read_it(
+    tmp_path: Path,
+) -> None:
+    """A dry run never reaches the install — `sudo_run` prints instead of
+    running, which is the promise `--dry-run` makes — so every check of what
+    origin has answers yes. The preview for a tag would otherwise show a
+    `checkout -b v1.2.3 origin/v1.2.3` that the real run never issues."""
+    _, install = _origin_and_install(tmp_path)
+    script = _SCRIPT.read_text()
+    body = script[script.index("update_move_checkout() {") :]
+    body = body[: body.index("\n}\n") + 3]
+    probe = tmp_path / "dry.sh"
+    probe.write_text(
+        "set -Eeuo pipefail\n"
+        f"INSTALL_DIR={install}\nDRY_RUN=1\nC_RED=''\nC_OFF=''\nC_DIM=''\n"
+        "die() { local status=$1; shift; "
+        'printf "DIED: %s\\n" "$*" >&2; exit "$status"; }\n'
+        "info() { printf '%s\\n' \"$*\"; }\n"
+        "sudo_run() { printf '+ sudo %s\\n' \"$*\"; }\n"
+        f"{body}\nupdate_move_checkout v1.2.3\n"
+    )
+    output = _run_probe(probe)
+    assert "DIED" not in output, output
+    assert "assumes v1.2.3 is a" in output
+    assert "detached" in output

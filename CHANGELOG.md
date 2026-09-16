@@ -9,6 +9,56 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## An update that reported success and moved nothing
+
+`sudo ./shelfos.sh update` had stopped working. It took a backup, said it was
+already up to date or printed a range, reinstalled dependencies, restarted the
+service — and left the installed code exactly where it was. Only
+`update --ref origin/main` ever changed anything.
+
+- **#167** — the update fetched origin and merged `FETCH_HEAD`. A clone fetches
+  every branch origin has through its wildcard refspec, and git marks exactly
+  one entry in `FETCH_HEAD` as the one to merge: the configured upstream of the
+  branch that is checked out. An install with no upstream configured has nothing
+  marked, so `FETCH_HEAD` resolved to whichever branch git wrote first —
+  alphabetically, which on this repo meant a branch merged long ago. Being
+  merged makes it an ancestor of what is installed, so `merge --ff-only`
+  answered "Already up to date" and returned 0, and everything after it ran
+  against unchanged code.
+
+  Two ordinary things leave an install without that upstream: `deploy
+  --reinstall` creates the branch with `checkout -B`, and `update --ref` checked
+  out a detached HEAD. The first `--ref origin/main` was therefore also the last
+  plain `update` that could work.
+
+  The merge now names `origin/<branch>`, with the branch read from `symbolic-ref
+  HEAD`, so there is nothing left to guess. The two cases where that branch does
+  not exist — a detached install, and a branch origin no longer has because it
+  was deleted after its merge — stop with the branch named and `--ref` pointed
+  at, rather than doing nothing quietly. And `--ref` given a branch origin has
+  now lands on a local branch of that name instead of detaching, so a plain
+  `update` keeps following it afterwards; a tag or a bare commit still detaches,
+  because there is nothing to stay on.
+
+  The fetch prunes, which the guards above need and a plain fetch does not do:
+  a wildcard fetch adds and updates remote-tracking refs and removes none, so a
+  branch deleted on origin after its merge still answers as `origin/<branch>`,
+  still points at the merged commit, and the fast-forward onto it is the same
+  silent no-op. It matters twice over for `--ref`, because a deploy clones from
+  the deploying user's own clone before pointing the remote at GitHub, and a
+  clone of a non-bare repository copies that clone's local branches into
+  `refs/remotes/origin/*` — so a fresh install carries tracking refs for
+  branches GitHub has never seen.
+
+  `--ref` fast-forwards the branch rather than forcing it with `checkout -B`: an
+  install carrying a fix committed on the machine would otherwise lose it here,
+  silently, and the check that refuses to update over hand-edited files does not
+  see a commit — the tree is clean. Now that stops the update and prints the
+  `git log` that lists what is at risk.
+
+  An install already detached from an earlier `--ref` will be told so by its
+  next update: `sudo ./shelfos.sh update --ref main` puts it back on a branch.
+
 ## The test suite stops hashing throwaway passwords the hard way
 
 A full `pytest` run took five and a half minutes, and three of them were spent
