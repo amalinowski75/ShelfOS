@@ -412,7 +412,9 @@ describe("app.js — the photo column", () => {
     expect(column.headerFilter).toBeUndefined();
   });
 
-  it("sits past the row actions, and only while the toggle is on", async () => {
+  it("is the last data column, before the row buttons, and only while on", async () => {
+    // Last of the things a row is READ for; the Add/Take/Details buttons are not
+    // data and keep the edge of the row, where the hand already expects them.
     const feed = (url) =>
       Promise.resolve({
         ok: true,
@@ -432,8 +434,8 @@ describe("app.js — the photo column", () => {
     await window.loadTable();
     expect(window.Tabulator.columns.map((c) => c.field)).toEqual([
       "mpn",
-      "actions",
       "photo_id",
+      "actions",
     ]);
   });
 
@@ -482,6 +484,99 @@ describe("app.js — the photo column", () => {
 
     const fresh = loadPage(typePageFixture(), SCRIPTS);
     expect(fresh.document.getElementById("show-photos").checked).toBe(false);
+  });
+
+  // A cell photo as Tabulator would have rendered it, in the table element the
+  // delegated listeners are bound to (the stub builds no rows of its own).
+  function hoverable(document) {
+    const img = document.createElement("img");
+    img.className = "cell-photo";
+    img.src = "/api/attachments/7/thumbnail";
+    document.getElementById("components-table").appendChild(img);
+    return img;
+  }
+
+  const hover = (window, img, type) =>
+    img.dispatchEvent(new window.MouseEvent(type, { bubbles: true }));
+
+  it("floats a bigger copy while the pointer is on a photo, and drops it after", () => {
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS);
+    const img = hoverable(document);
+
+    hover(window, img, "mouseover");
+    const preview = document.querySelector(".photo-preview img");
+    expect(preview).not.toBeNull();
+    // The same URL the cell already loaded, so the preview costs no request.
+    expect(preview.src).toContain("/api/attachments/7/thumbnail");
+    // On the BODY, not in the cell: the table's scroll box clips what it holds,
+    // which would cut the preview off on the top and bottom rows.
+    const box = preview.closest(".photo-preview");
+    expect(box.parentElement).toBe(document.body);
+    // Placed, not left at the document's top-left: the coordinates are written
+    // inline after measuring, and jsdom's zero-sized rects still exercise the
+    // clamp that keeps the box off the viewport edge.
+    expect(box.style.left).toBe("12px"); // beside the cell
+    expect(box.style.top).toBe("8px"); // clamped to the margin
+
+    hover(window, img, "mouseout");
+    expect(document.querySelector(".photo-preview")).toBeNull();
+  });
+
+  it("never leaves two previews behind, whatever order the events arrive in", () => {
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS);
+    const first = hoverable(document);
+    const second = hoverable(document);
+
+    hover(window, first, "mouseover");
+    hover(window, second, "mouseover"); // straight from one photo to the next
+    expect(document.querySelectorAll(".photo-preview").length).toBe(1);
+
+    hover(window, second, "mouseout");
+    expect(document.querySelectorAll(".photo-preview").length).toBe(0);
+  });
+
+  it("takes the preview down when the table scrolls out from under it", () => {
+    // The box is fixed to the viewport and the wheel raises no mouseout, so
+    // without this it would hang over an unrelated row.
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS);
+    hover(window, hoverable(document), "mouseover");
+    expect(document.querySelector(".photo-preview")).not.toBeNull();
+
+    // Fired on a child, as Tabulator's own scrolling holder would: `scroll` does
+    // not bubble, which is why the listener is a capturing one.
+    const holder = document.createElement("div");
+    document.getElementById("components-table").appendChild(holder);
+    holder.dispatchEvent(new window.Event("scroll"));
+    expect(document.querySelector(".photo-preview")).toBeNull();
+  });
+
+  it("ignores a hover that is not on a photo", () => {
+    const { window, document } = loadPage(typePageFixture(), SCRIPTS);
+    const cell = document.createElement("span");
+    cell.className = "cell-mpn";
+    document.getElementById("components-table").appendChild(cell);
+
+    hover(window, cell, "mouseover");
+    expect(document.querySelector(".photo-preview")).toBeNull();
+  });
+
+  it("holds the preview inside the viewport, under the real app.css", () => {
+    const css = readFileSync(
+      new URL("../../app/web/static/app.css", import.meta.url),
+      "utf8",
+    );
+    const dom = new JSDOM(
+      `<style>${css}</style><div class="photo-preview" id="p"><img id="i" /></div>`,
+    );
+    const style = (id) =>
+      dom.window.getComputedStyle(dom.window.document.getElementById(id));
+    expect(style("p").position).toBe("fixed");
+    // Transparent to the pointer, or moving onto the preview would eat the
+    // mouseout that takes it away and leave it stuck on screen.
+    expect(style("p").pointerEvents).toBe("none");
+    // Sized for what the server stores: a thumbnail is capped at THUMBNAIL_PX
+    // (240), so a larger box would only upscale it.
+    expect(style("i").maxWidth).toBe("240px");
   });
 
   it("keeps a photo inside the row height, under the real app.css", () => {

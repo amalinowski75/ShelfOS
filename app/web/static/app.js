@@ -259,16 +259,19 @@ function actionColumn() {
   };
 }
 
-// The rightmost column, past the row actions, and only while the toggle is on:
-// it is an aid to recognising a part, not one of the fields a row is read for,
-// so it sits out of the way of everything that is. The picture is the component's
-// FIRST photo attachment — one row, one image; the detail page has the gallery.
+// The last of the data columns — after everything a row is read for, before the
+// Add/Take/Details buttons, which are not data and stay where the hand expects
+// them at the edge of the row. Only while the toggle is on. The picture is the
+// component's FIRST photo attachment — one row, one image; hovering it opens a
+// bigger one, and the detail page has the whole gallery.
 function photoColumn() {
   return {
     title: "Photo",
     field: "photo_id",
     headerSort: false, // sorting rows by attachment id means nothing
-    width: 64,
+    // Wide enough for the word "Photo" in the header — a title the column clips
+    // is a column with no name — and for a landscape thumbnail under it.
+    width: 84,
     hozAlign: "center",
     formatter: (cell) => {
       // Number(), not the raw value: this lands unquoted in an attribute, and a
@@ -285,6 +288,75 @@ function photoColumn() {
       return `<img class="cell-photo" src="/api/attachments/${id}/thumbnail" alt="" loading="lazy" />`;
     },
   };
+}
+
+// ---- the hover preview -----------------------------------------------------
+// 28px is enough to notice a part, not enough to read one, so hovering the cell
+// floats a bigger copy beside it. Appended to the BODY rather than grown inside
+// the cell: the table's scroll box clips everything it holds, so a cell-sized
+// preview would be cut off on exactly the rows at the top and bottom edges.
+//
+// The image is the same thumbnail URL the cell already loaded — the browser
+// serves it from cache, so the preview costs no request — and the server caps a
+// thumbnail at config.THUMBNAIL_PX (240), which is what this box is sized for.
+const PHOTO_PREVIEW_MARGIN = 8; // never nearer the viewport edge than this
+let photoPreview = null;
+
+function hidePhotoPreview() {
+  photoPreview?.remove();
+  photoPreview = null;
+}
+
+function showPhotoPreview(img) {
+  hidePhotoPreview();
+  photoPreview = document.createElement("div");
+  photoPreview.className = "photo-preview";
+  const big = document.createElement("img");
+  big.src = img.src; // a property assignment, not markup — nothing to escape
+  big.alt = "";
+  photoPreview.appendChild(big);
+  document.body.appendChild(photoPreview);
+  placePhotoPreview(img);
+}
+
+// Beside the thumbnail, flipped to its other side when that side has no room,
+// and never off the screen. Measured after the box is in the document, so the
+// numbers are the ones the browser actually laid out.
+function placePhotoPreview(img) {
+  const cell = img.getBoundingClientRect();
+  const box = photoPreview.getBoundingClientRect();
+  const clamp = (value, limit) =>
+    Math.max(PHOTO_PREVIEW_MARGIN, Math.min(value, limit - PHOTO_PREVIEW_MARGIN));
+
+  let left = cell.right + 12;
+  if (left + box.width > window.innerWidth - PHOTO_PREVIEW_MARGIN) {
+    left = cell.left - box.width - 12; // no room to the right — go left instead
+  }
+  photoPreview.style.left = `${Math.round(clamp(left, window.innerWidth - box.width))}px`;
+  // Centred on the row it belongs to, so it is obvious which row is being shown.
+  const top = cell.top + cell.height / 2 - box.height / 2;
+  photoPreview.style.top = `${Math.round(clamp(top, window.innerHeight - box.height))}px`;
+}
+
+// Delegated on the table element, because Tabulator rebuilds every cell on each
+// loadTable and a listener bound to an <img> would be thrown away with it.
+// mouseover/mouseout rather than mouseenter/mouseleave: only the former pair
+// bubbles, and the preview itself is pointer-events: none, so moving onto it
+// cannot steal the mouseout that takes it down again.
+const tableElement = document.getElementById("components-table");
+if (tableElement) {
+  tableElement.addEventListener("mouseover", (event) => {
+    const img = event.target.closest?.("img.cell-photo");
+    if (img) showPhotoPreview(img);
+  });
+  tableElement.addEventListener("mouseout", (event) => {
+    if (event.target.closest?.("img.cell-photo")) hidePhotoPreview();
+  });
+  // Scrolling moves the row out from under a preview that is fixed to the
+  // viewport, and the wheel does not raise mouseout. Capture, because the
+  // scrolling element is Tabulator's own holder inside this div and `scroll`
+  // does not bubble.
+  tableElement.addEventListener("scroll", hidePhotoPreview, true);
 }
 
 // ---- header stats ----------------------------------------------------------
@@ -407,8 +479,8 @@ async function loadTable() {
     ? "No components"
     : "Could not load components — refresh to try again";
   if (columns) {
-    columns.push(actionColumn());
     if (showPhotos()) columns.push(photoColumn());
+    columns.push(actionColumn());
     table.setColumns(columns);
   }
   await table.setData(rows);

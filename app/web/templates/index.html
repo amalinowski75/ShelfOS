@@ -68,6 +68,12 @@
   </div>
 
   <div class="head-actions">
+    {# Off by default and remembered only for this tab's session (sessionStorage):
+       the picture column is a look-up aid for a part you can't place, not a view
+       most people want every time they open the page. #}
+    <label class="check" for="show-photos">
+      <input type="checkbox" id="show-photos" /> Photos
+    </label>
     <div class="field">
       <label for="type-filter">Type</label>
       <select id="type-filter" class="control">
@@ -77,12 +83,6 @@
         {% endfor %}
       </select>
     </div>
-    {# Off by default and remembered only for this tab's session (sessionStorage):
-       the picture column is a look-up aid for a part you can't place, not a view
-       most people want every time they open the page. #}
-    <label class="check" for="show-photos">
-      <input type="checkbox" id="show-photos" /> Photos
-    </label>
     {% if can_write %}
     <button type="button" class="btn btn-primary" id="new-component-btn">New Component</button>
     {% endif %}

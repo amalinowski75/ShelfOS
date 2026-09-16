@@ -859,6 +859,26 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
   display: block; margin: 0 auto;
   height: 28px; width: auto; max-width: 100%;
   object-fit: contain; border-radius: 3px;
+  cursor: zoom-in; /* there is more of this picture, one hover away */
+}
+/* The hovered copy (app.js floats it beside the cell, on the BODY — the table's
+   scroll box would clip it). Sized for what the server actually stores: a
+   thumbnail is capped at config.THUMBNAIL_PX, so asking for more than 240 would
+   only upscale it. Above the sticky nav and the table header, below the toast
+   tray, and transparent to the pointer so it can never eat the mouseout that
+   takes it away. */
+.photo-preview {
+  position: fixed; z-index: 40; pointer-events: none;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .38);
+}
+.photo-preview img {
+  display: block;
+  max-width: 240px; max-height: 240px;
+  border-radius: var(--radius-sm);
 }
 
 /* row actions: quiet until the row is hovered (spec §15) */

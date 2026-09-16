@@ -437,6 +437,8 @@ def test_components_page_offers_the_photo_toggle(client: TestClient) -> None:
     # Off in the markup: the remembered state is restored by app.js, and a page
     # that shipped it checked would flash a column a fresh visit never asked for.
     assert 'id="show-photos" />' in html
+    # First of the header's controls, ahead of the type filter.
+    assert html.index('id="show-photos"') < html.index('id="type-filter"')
 
 
 def test_component_detail_shows_the_full_description(client: TestClient) -> None:
