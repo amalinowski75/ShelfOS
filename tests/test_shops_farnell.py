@@ -54,7 +54,13 @@ def _product(sku: str, *, canonical: str, package_name: str) -> dict[str, Any]:
                 "url": "http://www.farnell.com/datasheets/2912887.pdf",
             }
         ],
-        "image": {"baseName": "/2912887-40.jpg", "vrntPath": "farnell/"},
+        "image": {
+            "baseName": "/GE6DFN-40.jpg",
+            "vrntPath": "farnell/",
+            "mainImageURL": (
+                "https://uk.farnell.com/productimages/standard/en_GB/GE6DFN-40.jpg"
+            ),
+        },
         "attributes": [
             {"attributeLabel": "tariffCode", "attributeValue": "85429000"},
             {"attributeLabel": "rohsCompliant", "attributeValue": "YES"},
@@ -115,7 +121,7 @@ def _with_image(image: object) -> dict[str, Any]:
 
 
 # The live JSON answer to the id: lookup above, verbatim except that the branches
-# this provider never reads (prices, stock, image) are cut. It is here as TEXT and
+# this provider never reads (prices, stock) are cut. It is here as TEXT and
 # not as a dict because the shape under test cannot be written as a Python dict:
 # `categories` repeats the key "path" four times. That is an XML document run
 # through a converter with no notion of arrays, and a plain json.loads keeps only
@@ -129,6 +135,10 @@ _REAL_BY_ID = """
  "categories":{"name":"LDO Voltage Regulators","path":"Semiconductors - ICs",
    "path":"Power Management ICs - PMIC","path":"Voltage Regulators",
    "path":"LDO Voltage Regulators"},
+ "image":{"baseName":"/GE6DFN-40.jpg","vrntPath":"farnell/",
+   "mainImageURL":"https://uk.farnell.com/productimages/standard/en_GB/GE6DFN-40.jpg",
+   "thumbNailImageURL":
+     "https://uk.farnell.com/productimages/thumbnail/en_GB/GE6DFN-40.jpg"},
  "datasheets":[{"type":"T","description":"Technical Data Sheet (2.62MB) EN",
    "url":"http://www.farnell.com/datasheets/2912887.pdf"}],
  "vendorName":"ONSEMI","brandName":"ONSEMI",
@@ -362,33 +372,50 @@ def test_normalises_a_product_into_component_fields() -> None:
 # ---- the product photo -----------------------------------------------------
 
 
-def test_builds_the_photo_url_from_the_filename_and_our_store() -> None:
-    """element14 sends a filename, not a URL: the host and the locale are ours.
+def test_takes_the_photo_url_element14_already_built(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A live answer carries ``mainImageURL``, so nothing has to be assembled.
 
-    The leading slash on ``baseName`` is theirs (it is how their own docs show the
-    field) and must not double up into "//" — which reads as a host, not a path.
+    It wins even against a differently-configured store: it is element14's own
+    answer for the store the request named, and second-guessing it would be
+    inventing a URL where we were handed one.
     """
-    product = FarnellProvider().fetch(_URL, transport=_transport(_FARNELL_OK))
-    assert product.image_url == (
-        "https://uk.farnell.com/productimages/standard/en_GB/2912887-40.jpg"
-    )
-
-
-def test_the_photo_comes_from_the_configured_store(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """Every country store serves the en_GB path, so only the host follows config."""
     monkeypatch.setattr(config, "FARNELL_STORE", "pl.farnell.com")
     product = FarnellProvider().fetch(_URL, transport=_transport(_FARNELL_OK))
     assert product.image_url == (
-        "https://pl.farnell.com/productimages/standard/en_GB/2912887-40.jpg"
+        "https://uk.farnell.com/productimages/standard/en_GB/GE6DFN-40.jpg"
+    )
+
+
+# The assembled form below is the documented one — a filename plus a variant path —
+# and the fallback for an answer that carries no ready-made URL.
+
+
+def test_builds_the_photo_url_from_the_filename_and_our_store() -> None:
+    """The leading slash on ``baseName`` is theirs (their docs show it that way)
+    and must not double up into "//", which reads as a host, not a path."""
+    body = _with_image({"baseName": "/GE6DFN-40.jpg", "vrntPath": "farnell/"})
+    product = FarnellProvider().fetch(_URL, transport=_transport(body))
+    assert product.image_url == (
+        "https://uk.farnell.com/productimages/standard/en_GB/GE6DFN-40.jpg"
+    )
+
+
+def test_the_assembled_photo_comes_from_the_configured_store(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Every country store serves the en_GB path, so only the host follows config."""
+    monkeypatch.setattr(config, "FARNELL_STORE", "pl.farnell.com")
+    body = _with_image({"baseName": "/GE6DFN-40.jpg", "vrntPath": "farnell/"})
+    product = FarnellProvider().fetch(_URL, transport=_transport(body))
+    assert product.image_url == (
+        "https://pl.farnell.com/productimages/standard/en_GB/GE6DFN-40.jpg"
     )
 
 
 def test_a_newark_photo_takes_the_us_locale() -> None:
     """Newark's own catalogue ("nio/") files its images under en_US, not en_GB."""
-    body = _with_image({"baseName": "2912887-40.jpg", "vrntPath": "nio/"})
+    body = _with_image({"baseName": "GE6DFN-40.jpg", "vrntPath": "nio/"})
     product = FarnellProvider().fetch(_URL, transport=_transport(body))
     assert product.image_url == (
-        "https://uk.farnell.com/productimages/standard/en_US/2912887-40.jpg"
+        "https://uk.farnell.com/productimages/standard/en_US/GE6DFN-40.jpg"
     )
 
 
@@ -413,6 +440,7 @@ def test_a_filename_cannot_walk_out_of_the_image_directory() -> None:
         {"vrntPath": "farnell/"},  # no filename
         {"baseName": "", "vrntPath": "farnell/"},
         "GE12F1601.jpg",  # a bare string where an object belongs
+        [{"mainImageURL": "https://uk.farnell.com/x.jpg"}],  # a repeated key, merged
     ],
 )
 def test_a_product_without_a_usable_image_carries_none(image: object) -> None:
@@ -446,6 +474,11 @@ def test_the_real_response_end_to_end_including_its_repeated_keys() -> None:
     assert product.description == "LDO, FIXED, 3.3V, 0.15A, -40 TO 125DEG C"
     assert product.package == "WDFN-EP"
     assert product.datasheet_url == "http://www.farnell.com/datasheets/2912887.pdf"
+    # And the photo, off the same live bytes: the ready-made URL, not the thumbnail
+    # beside it and not something assembled from the filename.
+    assert product.image_url == (
+        "https://uk.farnell.com/productimages/standard/en_GB/GE6DFN-40.jpg"
+    )
     assert ("Output Current Max", "150 mA") in product.parameters
     assert ("Operating Temperature Max", "125 °C") in product.parameters
     assert ("IC Mounting", "Surface Mount") in product.parameters

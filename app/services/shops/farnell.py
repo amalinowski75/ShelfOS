@@ -243,16 +243,18 @@ def _datasheet_url(product: dict[str, Any]) -> str | None:
     return None
 
 
-# element14 gives the product photo as a bare filename plus a "variant path" naming
-# the brand, not as a URL: the host is whichever of their stores you ask (ours is
-# config's), and the path carries a locale segment their docs derive from that
-# variant — "nio/" is Newark's US catalogue, everything else is Farnell's.
+# Their documentation describes the photo as a filename plus a "variant path"
+# naming the brand, to be assembled against a store host and a locale segment
+# ("nio/" is Newark's US catalogue, everything else is Farnell's). A live answer
+# carries a ready-made `mainImageURL` as well, already pointing at the store the
+# request named — so the assembly below is only the fallback for an answer that
+# has the filename and not the URL.
 #
-# The locale is fixed per brand rather than derived from the store, because every
-# country store serves the en_GB path: pl.farnell.com and uk.farnell.com answer
-# /productimages/standard/en_GB/<file> with the same bytes. Deriving "pl_PL" from
-# "pl.farnell.com" would be a guess about their URL scheme that buys nothing, and
-# the store is an operator setting, never user input.
+# In that fallback the locale is fixed per brand rather than derived from the
+# store, because every country store serves the en_GB path: pl.farnell.com and
+# uk.farnell.com answer /productimages/standard/en_GB/<file> with the same bytes.
+# Deriving "pl_PL" from "pl.farnell.com" would be a guess about their URL scheme
+# that buys nothing, and the store is an operator setting, never user input.
 _IMAGE_LOCALES = {"nio/": "en_US"}
 _DEFAULT_IMAGE_LOCALE = "en_GB"
 
@@ -260,14 +262,22 @@ _DEFAULT_IMAGE_LOCALE = "en_GB"
 def _image_url(product: dict[str, Any]) -> str | None:
     """The product photo's full URL, or None when the answer carries no image.
 
-    The filename is shop-controlled, so it is escaped whole — it names a file and
-    nothing deeper, and a stray "/" or ".." in it must not be able to walk the
-    path. The host can't be steered at all: it is ours either way, so the worst a
-    hostile value achieves is a 404 and no photo.
+    ``mainImageURL`` wins when it is there: it is element14's own answer to the
+    question this function otherwise guesses at, and it is no more trusted than
+    the datasheet URL beside it — both are shop-controlled and both are only ever
+    handed to the SSRF-guarded ``POST /api/attachments/from-url``.
+
+    Assembled from the filename otherwise. That filename is escaped whole — it
+    names a file and nothing deeper, and a stray "/" or ".." in it must not be
+    able to walk the path. The host can't be steered at all there: it is ours
+    either way, so the worst a hostile value achieves is a 404 and no photo.
     """
     image = product.get("image")
     if not isinstance(image, dict):
         return None
+    ready_made = _text(image.get("mainImageURL"))
+    if ready_made:
+        return ready_made
     base_name = _text(image.get("baseName")).lstrip("/")
     if not base_name:
         return None
