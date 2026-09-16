@@ -1742,12 +1742,65 @@ Usage: sudo ./shelfos.sh update [options]
 Move an installed ShelfOS forward: back it up, pull, reinstall dependencies if
 they changed, restart, and check it answers.
 
-  --ref REF      check out REF instead of fast-forwarding the current branch
+  --ref REF      move onto REF instead of fast-forwarding the current branch;
+                 a branch origin has (main, origin/main) is checked out as a
+                 branch, so a later plain update keeps working from it
   --no-backup    skip the backup taken first (it is the only undo there is)
   --no-restart   update the files but leave the running service alone
   --dry-run      print what would happen; never calls sudo
   -y, --yes      do not ask about the unit or the Caddyfile
 EOF
+}
+
+# Move the checkout at $INSTALL_DIR onto what origin has, either by
+# fast-forwarding the branch it is on or by checking out REF.
+#
+# Deliberately not `merge --ff-only FETCH_HEAD`, which is what this was, and
+# which made an update that changed nothing report success. A clone fetches with
+# a wildcard refspec, so `git fetch origin` writes every branch origin has into
+# FETCH_HEAD and marks only the current branch's configured upstream as the one
+# to merge. A checkout with no upstream configured has nothing marked — and that
+# is every checkout `deploy --reinstall` makes, and every detached one `--ref`
+# used to leave behind — so FETCH_HEAD resolves to whichever branch git wrote
+# first, alphabetically. When that branch is already an ancestor, which a merged
+# PR branch always is, the merge says "Already up to date", exits 0, and the
+# update goes on to restart a service whose code never moved. Naming
+# origin/<branch> outright is the whole fix: there is no branch left to guess.
+update_move_checkout() {
+    local ref=$1 branch target
+    sudo_run git -C "$INSTALL_DIR" fetch --quiet origin
+
+    if [ -n "$ref" ]; then
+        # A ref naming a branch on origin lands on a local branch of that name
+        # rather than on a detached HEAD. Detaching is how one `--ref` turned
+        # into needing `--ref` forever: the next plain update found no branch,
+        # and before this it did not say so, it just did nothing.
+        target=${ref#origin/}
+        if sudo_run git -C "$INSTALL_DIR" rev-parse --verify --quiet "refs/remotes/origin/$target" > /dev/null; then
+            sudo_run git -C "$INSTALL_DIR" checkout --quiet -B "$target" "origin/$target" \
+                || die 1 "cannot check out $target in $INSTALL_DIR; look at it by hand"
+        else
+            # A tag or a commit: nothing to stay on, so this is detached and the
+            # next plain update will say so rather than silently doing nothing.
+            sudo_run git -C "$INSTALL_DIR" checkout --quiet "$ref" \
+                || die 1 "$ref is not a branch, tag or commit origin knows about"
+        fi
+        return 0
+    fi
+
+    branch=$(sudo_run git -C "$INSTALL_DIR" symbolic-ref --quiet --short HEAD || true)
+    if [ -z "$branch" ]; then
+        # A dry run reaches here with nothing to read, because sudo_run prints
+        # rather than runs. Preview the shape of the commands, do not claim the
+        # install is detached.
+        [ "$DRY_RUN" = 1 ] || die 1 "$INSTALL_DIR is not on a branch (detached at $(sudo_run git -C "$INSTALL_DIR" rev-parse --short HEAD)), so there is no branch to fast-forward; './shelfos.sh update --ref main' puts it back on one"
+        branch="<the installed branch>"
+    fi
+    if ! sudo_run git -C "$INSTALL_DIR" rev-parse --verify --quiet "refs/remotes/origin/$branch" > /dev/null; then
+        die 1 "origin has no branch named $branch any more (deleted after a merge?); './shelfos.sh update --ref main' moves this install onto one that exists"
+    fi
+    sudo_run git -C "$INSTALL_DIR" merge --ff-only --quiet "origin/$branch" \
+        || die 1 "cannot fast-forward $INSTALL_DIR to origin/$branch; look at it by hand"
 }
 
 cmd_update() {
@@ -1781,13 +1834,7 @@ cmd_update() {
 
     local before after
     before=$(sudo_run git -C "$INSTALL_DIR" rev-parse --short HEAD)
-    sudo_run git -C "$INSTALL_DIR" fetch --quiet origin
-    if [ -n "$ref" ]; then
-        sudo_run git -C "$INSTALL_DIR" checkout --quiet "$ref"
-    else
-        sudo_run git -C "$INSTALL_DIR" merge --ff-only --quiet FETCH_HEAD \
-            || die 1 "cannot fast-forward $INSTALL_DIR; look at it by hand"
-    fi
+    update_move_checkout "$ref"
     after=$(sudo_run git -C "$INSTALL_DIR" rev-parse --short HEAD)
 
     if [ "$before" = "$after" ]; then
