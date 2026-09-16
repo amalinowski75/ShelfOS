@@ -9,6 +9,47 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## The test suite stops hashing throwaway passwords the hard way
+
+A full `pytest` run took five and a half minutes, and three of them were spent
+inside bcrypt. Nothing was slow: the suite signs in about five hundred times,
+and every one of those sign-ins paid the cost factor that exists to make a
+stolen password database expensive to attack — for the password
+`admin-password`, written three lines above the assertion that reads it back.
+
+- **#166** — `user_service.BCRYPT_ROUNDS` now names the cost factor that was
+  previously left to `gensalt()`, still 12, and the suite monkeypatches it to
+  bcrypt's minimum of 4. The run is 5m20s → 2m08s on the machine it was measured
+  on. Nothing about the tests becomes less real: the same hashing function, the
+  same stored format, the same verification, the same rejection when the
+  password is wrong — only the number of times the key derivation loops.
+  Verification costs whatever the hash it checks cost to make, so this halves
+  again for free on the `checkpw` side.
+
+  There is no environment variable for the factor, because the only effect a
+  smaller one has on a deployment is a cheaper offline attack. Two tests guard
+  that: one reads the factor back out of a hash it just made, so a `gensalt()`
+  that quietly stopped being passed the number fails; the other parses the
+  constant out of the source file rather than the imported module — which the
+  suite has by then turned down on purpose — and refuses anything under 12.
+
+  One test keeps the shipped factor, through a `production_bcrypt_cost`
+  fixture: the one that measures whether a missing username answers faster than
+  a real one. What it measures *is* the cost of a bcrypt round, and at the
+  minimum factor that round would be smaller than the noise of the request
+  around it. The fixture drops the cached absent-account hash on the way in and
+  out, since that hash is computed once per process and would otherwise keep
+  whichever factor happened to be in force when it was first asked for — and it
+  puts the cheap factor back *before* dropping it on the way out, so that a
+  teardown which happens to run in between and asks about an unknown username
+  refills the cache cheaply. Fixtures tear down in reverse order of setup, so
+  without that the window would depend on where a test writes this fixture's
+  name in its argument list.
+
+- The Definition of Done in the README now runs `pytest -n auto`, as CI has
+  done since the suite was parallelised. Nothing in it is shared between tests,
+  so a serial run only buys a longer wait.
+
 ## CI runs the suites a pull request can actually break
 
 Every pull request ran every suite: pytest, vitest, shellcheck and a runtime

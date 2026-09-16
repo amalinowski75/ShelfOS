@@ -135,13 +135,18 @@ def test_signing_in_replaces_the_pre_login_session(
 
 
 def test_a_missing_account_costs_a_bcrypt_round_too(
-    session: Session, anon_client: TestClient
+    production_bcrypt_cost: None, session: Session, anon_client: TestClient
 ) -> None:
     """Otherwise the response time answers "does this username exist?".
 
     Timed rather than asserted on a call count because the cost is the point;
     the bound is loose enough not to be flaky, and the unfixed code is not
     close to it — an unknown username used to return before hashing anything.
+
+    The one test in the suite that runs at the shipped bcrypt cost factor, and
+    the reason the rest can afford not to: what it measures *is* that cost, and
+    at the minimum factor the round it is looking for would be smaller than the
+    noise of the request around it.
     """
     from app.auth.throttle import LoginThrottle
 
@@ -163,7 +168,17 @@ def test_a_missing_account_costs_a_bcrypt_round_too(
         )
         return time.perf_counter() - start
 
-    elapsed("admin")  # warm the cached absent-account hash and any import cost
+    # Warm both paths before measuring. The unknown name goes first and is the
+    # one that matters: the absent-account hash is computed once per process,
+    # the fixture above has just dropped it, and the call that finds it missing
+    # pays for creating it on top of verifying against it — at the shipped cost
+    # factor, so it reads as roughly twice a round. Warming with "admin"
+    # alone, as this did, never touches that hash at all: an account that
+    # exists takes the other branch of authenticate(). It was harmless only
+    # because min() of three throws the inflated sample away, which is not a
+    # property worth resting a timing assertion on.
+    elapsed("nobody-with-this-name")
+    elapsed("admin")
     known = min(elapsed("admin") for _ in range(3))
     unknown = min(elapsed("nobody-with-this-name") for _ in range(3))
     assert unknown > known / 2, (known, unknown)
