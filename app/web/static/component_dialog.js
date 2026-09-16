@@ -37,6 +37,12 @@
   // A datasheet URL from a shop import, attached to the component after it's created
   // (downloaded as a file if the shop allows it, else kept as a link).
   let pendingDatasheetUrl = null;
+  // The shop's product photo, downloaded into the component's attachments right
+  // after it is created, so the detail page the create jumps to already shows the
+  // part. Unlike the datasheet it has no link fallback: a shop that won't serve us
+  // the image leaves the component without a photo, which the detail page states by
+  // showing none — and that is exactly the cue to add one by hand.
+  let pendingImageUrl = null;
   // The shop URL the component was imported from: saved as a `shop` link on create,
   // and the target of the "Open in shop" button. Set it only through setShopUrl so
   // the button's enabled state always tracks it.
@@ -333,10 +339,10 @@
     }
   }
 
-  // Download a datasheet URL as a file attachment via the SSRF-guarded endpoint.
+  // Download a shop URL as a file attachment via the SSRF-guarded endpoint.
   // Returns true on success; a non-2xx or a network error is a handled false, never
   // an exception (the component already exists).
-  async function attachDatasheet(componentId, url) {
+  async function attachFromUrl(componentId, url, kind) {
     try {
       const resp = await fetch("/api/attachments/from-url", {
         method: "POST",
@@ -345,7 +351,7 @@
           entity_type: "component",
           entity_id: componentId,
           url,
-          kind: "datasheet",
+          kind,
         }),
       });
       return resp.ok;
@@ -496,7 +502,7 @@
         // can download on a laptop and fail on a hosted server — keep it as a
         // datasheet LINK instead. Only if BOTH fail is it lost, and the user is told.
         if (pendingDatasheetUrl) {
-          if (await attachDatasheet(created.id, pendingDatasheetUrl)) {
+          if (await attachFromUrl(created.id, pendingDatasheetUrl, "datasheet")) {
             // Downloaded as a file — nothing to report.
           } else if (await addLink(created.id, "datasheet", pendingDatasheetUrl)) {
             datasheetLinked = true;
@@ -504,10 +510,19 @@
             lost.push("the datasheet");
           }
         }
+        // The photo, awaited before the dialog closes: the caller may navigate to
+        // the component's page next, and an attachment still in flight would miss
+        // the gallery that page loads. Nothing is reported either way — a picture
+        // is a nicety, and its absence on the page that opens says it plainly
+        // enough without a toast for something nobody asked for by name.
+        if (pendingImageUrl) {
+          await attachFromUrl(created.id, pendingImageUrl, "photo");
+        }
       }
       // Used; clear so a later manual (non-import) create can't reuse a stale URL.
       setShopUrl(null);
       pendingDatasheetUrl = null;
+      pendingImageUrl = null;
       dialog.close();
       // Said after the jump when there is one: these are the second step's news,
       // and the caller is about to replace the page this toast would appear on.
@@ -757,6 +772,7 @@
 
   async function applyPrefillFields(prefill) {
     pendingDatasheetUrl = null;
+    pendingImageUrl = null;
     // An invoice line's prefill carries a prebuilt shop URL; a BOM/blank one has
     // none. A later shop lookup (runImport) overrides this with its source_url.
     setShopUrl(prefill && prefill.shopUrl);
@@ -792,6 +808,7 @@
     set("package", prefill.package);
     set("notes", prefill.notes);
     if (prefill.datasheetUrl) pendingDatasheetUrl = prefill.datasheetUrl;
+    if (prefill.imageUrl) pendingImageUrl = prefill.imageUrl;
 
     const proposal = prefill.proposal || null;
     // Package and mounting are type-independent, so apply them up front — before the
@@ -971,6 +988,7 @@
           notes: product.description,
           package: product.package,
           datasheetUrl: product.datasheet_url,
+          imageUrl: product.image_url,
           proposal: product.proposal,
         });
         // applyPrefill cleared these; restore the shop link from the URL the SERVER
