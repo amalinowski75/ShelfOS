@@ -141,9 +141,18 @@ def first_photo_ids(
 
     One query for a whole page of entities rather than a list call per row: the
     component table asks for this for every row it shows, and only to build an
-    ``<img>`` src. Only ``kind == photo`` counts, and "first" is the same order
-    :func:`list_attachments` uses (oldest first, by id) — so the picture in the
-    table is the one at the head of the entity's own attachment list.
+    ``<img>`` src. "First" is the same order :func:`list_attachments` uses (oldest
+    first, by id), so the picture in the table is the one at the head of the
+    entity's own attachment list.
+
+    A photo has to be BOTH: filed as ``kind == photo`` and named like an image.
+    The kind on its own does not mean the file is one — ``photo`` is the first
+    member of :class:`AttachmentKind`, so it is what the upload form has selected
+    before anyone touches it, and a datasheet attached without changing it is
+    filed as a photo. Its thumbnail falls back to the original PDF, which an
+    ``<img>`` cannot render — a broken icon in the table, and (for an image too
+    large to downscale) the full original bytes in every row. The same extension
+    test is what ``image_gallery.js`` shows on the detail page.
 
     Entities are not checked for existence, unlike :func:`list_attachments`: the
     caller already has the rows, and an id with no photo is simply absent.
@@ -152,13 +161,17 @@ def first_photo_ids(
     if not ids:
         return {}
     first: dict[int, int] = {}
-    for attachment_id, owner_id in session.exec(
-        select(Attachment.id, Attachment.entity_id)
+    for attachment_id, owner_id, filename in session.exec(
+        select(Attachment.id, Attachment.entity_id, Attachment.filename)
         .where(Attachment.entity_type == entity_type)
         .where(Attachment.kind == AttachmentKind.PHOTO)
         .where(col(Attachment.entity_id).in_(ids))
         .order_by(col(Attachment.id))
     ).all():
+        # The extension test in Python rather than SQL: it is the same regex the
+        # rest of this module uses, and a page of entities is a handful of rows.
+        if not _IMAGE_EXTENSION.search(filename or ""):
+            continue
         # setdefault, over an id-ordered query: the first row seen for an entity
         # is its oldest photo, and later ones are ignored.
         first.setdefault(owner_id, cast(int, attachment_id))

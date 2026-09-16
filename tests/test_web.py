@@ -394,6 +394,30 @@ def test_components_feed_sends_the_first_photo_when_asked(
     assert row["photo_id"] == first
 
 
+def test_components_feed_skips_a_photo_that_is_not_an_image(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:
+    """`photo` is the kind the upload form has selected before anyone touches it,
+    so a datasheet attached without changing it is filed as one. Its thumbnail
+    falls back to the original PDF, which an <img> renders as a broken icon."""
+    monkeypatch.setattr(config, "ATTACHMENTS_DIR", tmp_path)
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    part = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    client.post(
+        "/api/attachments",
+        files={"file": ("datasheet.pdf", b"%PDF-1.4 body", "application/pdf")},
+        data={"entity_type": "component", "entity_id": part["id"], "kind": "photo"},
+    )
+
+    row = client.get("/web/api/components", params={"photos": 1}).json()["data"][0]
+    assert row["photo_id"] is None
+
+    # A real image filed the same way is still the one that shows.
+    photo = _attach(client, part["id"], filename="front.png")
+    row = client.get("/web/api/components", params={"photos": 1}).json()["data"][0]
+    assert row["photo_id"] == photo
+
+
 def test_components_feed_sends_a_null_photo_for_a_component_without_one(
     client: TestClient, tmp_path, monkeypatch
 ) -> None:

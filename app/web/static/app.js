@@ -314,6 +314,21 @@ function showPhotoPreview(img) {
   const big = document.createElement("img");
   big.src = img.src; // a property assignment, not markup — nothing to escape
   big.alt = "";
+  // Place it again once the picture has a size. The box is sized BY its image,
+  // and an <img> has no width until the browser has the bytes decoded — even a
+  // cached one, whose layout still lands after this tick. Measured before that,
+  // the box is its 8px of padding: the "does it fit to the right" test is then
+  // made against nothing, so the preview never flips sides, and centring an 8px
+  // box on the row leaves the real 240px one growing down off the screen.
+  const mine = photoPreview;
+  big.addEventListener("load", () => {
+    if (photoPreview === mine) placePhotoPreview(img); // unless it is gone
+  });
+  // A picture that cannot be fetched (a row whose file has gone missing) would
+  // otherwise leave an empty 8px box floating next to the cell.
+  big.addEventListener("error", () => {
+    if (photoPreview === mine) hidePhotoPreview();
+  });
   photoPreview.appendChild(big);
   document.body.appendChild(photoPreview);
   placePhotoPreview(img);
@@ -352,12 +367,14 @@ if (tableElement) {
   tableElement.addEventListener("mouseout", (event) => {
     if (event.target.closest?.("img.cell-photo")) hidePhotoPreview();
   });
-  // Scrolling moves the row out from under a preview that is fixed to the
-  // viewport, and the wheel does not raise mouseout. Capture, because the
-  // scrolling element is Tabulator's own holder inside this div and `scroll`
-  // does not bubble.
-  tableElement.addEventListener("scroll", hidePhotoPreview, true);
 }
+// Scrolling moves the row out from under a preview that is fixed to the viewport,
+// and the wheel raises no mouseout. On the WINDOW and capturing, which is what
+// catches both scrollers that matter: Tabulator's own holder inside the table
+// (`scroll` does not bubble, so a listener anywhere above it must capture) and
+// the page itself, which scrolls whenever frameTable runs out of room to give
+// the table.
+window.addEventListener("scroll", hidePhotoPreview, true);
 
 // ---- header stats ----------------------------------------------------------
 // A summary of what the table is SHOWING, not of the whole database — which is
@@ -437,18 +454,31 @@ function renderStats(rows) {
   put("stat-top-mpn", stats.topMpn);
 }
 
-function currentQuery() {
+// `photos` is passed in rather than read here, so the caller can ask the toggle
+// ONCE and have the request and the columns agree about the answer (see
+// loadTable). It defaults to the live state for anyone calling this on its own.
+function currentQuery(photos = showPhotos()) {
   const params = new URLSearchParams();
   if (typeFilter.value) params.set("type_id", typeFilter.value);
   // Only when the column is on: the same feed fills the invoice line and BOM
   // pickers, and the photo lookup is a query the server can skip otherwise.
-  if (showPhotos()) params.set("photos", "1");
+  if (photos) params.set("photos", "1");
   const query = params.toString();
   return query ? `?${query}` : "";
 }
 
 async function loadTable() {
   columnWidths = readColumnWidths(); // another tab may have resized since
+  // Whatever the rows were under is about to be replaced, and Chrome does not
+  // reliably raise mouseout for a node that is removed while hovered — so a
+  // preview left standing here would hang over the new table with no event
+  // coming to take it down.
+  hidePhotoPreview();
+  // Asked ONCE, and used for both the request and the columns below. Read twice,
+  // two overlapping loads can cross: flip the toggle off and straight back on,
+  // and the response WITHOUT photo ids can land last, at which point a second
+  // reading says "on" and the column goes up over rows that carry no picture.
+  const photos = showPhotos();
   // An HTTP failure body parses as JSON perfectly well and simply has no
   // `columns` key, so the map below throws on a 404 or a 500 as surely as on a
   // 200 of the wrong shape — one mechanism, caught here rather than guarded
@@ -459,7 +489,7 @@ async function loadTable() {
   let rows = [];
   try {
     const payload = await fetch(
-      `/web/api/components${currentQuery()}`,
+      `/web/api/components${currentQuery(photos)}`,
     ).then((r) => r.json());
     columns = payload.columns.map(columnDef);
     rows = payload.data;
@@ -479,9 +509,28 @@ async function loadTable() {
     ? "No components"
     : "Could not load components — refresh to try again";
   if (columns) {
-    if (showPhotos()) columns.push(photoColumn());
+    if (photos) columns.push(photoColumn());
     columns.push(actionColumn());
+    // What someone has typed into the column headers, carried across the rebuild
+    // by hand. setColumns keeps the FILTERS but renders their inputs blank
+    // (verified in Tabulator 6.3): the table comes back still narrowed to a
+    // handful of rows with every filter box above it empty and nothing on screen
+    // saying why the rest are missing. Which is exactly the move this column is
+    // for — filter down to a few parts, then turn the pictures on to see which
+    // one you are holding — and it was already the case on a type change and
+    // after every Add/Take.
+    const typed = table.getHeaderFilters();
     table.setColumns(columns);
+    // Clear first: a filter whose column is gone (a per-type parameter, after
+    // switching type) would otherwise go on narrowing the table from nowhere,
+    // with no input left to show or clear it.
+    table.clearHeaderFilter();
+    const fields = new Set(columns.map((column) => column.field));
+    for (const filter of typed) {
+      if (fields.has(filter.field)) {
+        table.setHeaderFilterValue(filter.field, filter.value);
+      }
+    }
   }
   await table.setData(rows);
   // The rows that SURVIVED, not the ones that arrived: a header filter outlives
