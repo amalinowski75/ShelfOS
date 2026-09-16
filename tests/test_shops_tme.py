@@ -26,6 +26,13 @@ _PRODUCT = {
                 "manufacturer": {"id": 1, "name": "Walsin Technology Corporation"},
                 "description": "Resistor: thick film; SMD; 0402; 1.2kΩ; 63mW; ±1%",
                 "category": {"id": 2, "name": "Resistors SMD 0402"},
+                "assets": {
+                    "primary_photo": {
+                        "prime": "//cdn.tme.eu/v7/_cdn_/0/610938_1.jpg?width=640",
+                        "thumbnail": "//cdn.tme.eu/v7/_cdn_/0/610938_1.jpg?width=100",
+                        "high_resolution": None,
+                    }
+                },
             }
         ]
     },
@@ -146,6 +153,28 @@ def test_fetch_normalises_a_product() -> None:
     assert dict(product.parameters)["Mounting"] == "SMD, THT"
     # "Manufacturer" duplicates a first-class field and is not offered as a parameter.
     assert "Manufacturer" not in dict(product.parameters)
+
+
+def test_fetch_takes_the_primary_photo_and_makes_it_absolute() -> None:
+    """The middle rendition, off the core product — no extra round-trip.
+
+    TME hands photo URLs out protocol-relative, exactly as it does documents, and
+    url_fetch refuses a URL with no scheme.
+    """
+    product = TmeProvider().fetch(_URL, transport=_transport())
+    assert product.image_url == "https://cdn.tme.eu/v7/_cdn_/0/610938_1.jpg?width=640"
+
+
+def test_a_product_with_no_photo_carries_none() -> None:
+    """``primary_photo`` is documented as nullable, and `assets` may be absent."""
+    bare = {
+        "status": "OK",
+        "data": {
+            "elements": [{"symbol": "MR04X1201FTL", "assets": {"primary_photo": None}}]
+        },
+    }
+    product = TmeProvider().fetch(_URL, transport=_transport(product=bare))
+    assert product.image_url is None
 
 
 def test_fetch_prefers_the_documentation_file_and_makes_it_absolute() -> None:

@@ -54,6 +54,7 @@ def _product(sku: str, *, canonical: str, package_name: str) -> dict[str, Any]:
                 "url": "http://www.farnell.com/datasheets/2912887.pdf",
             }
         ],
+        "image": {"baseName": "/2912887-40.jpg", "vrntPath": "farnell/"},
         "attributes": [
             {"attributeLabel": "tariffCode", "attributeValue": "85429000"},
             {"attributeLabel": "rohsCompliant", "attributeValue": "YES"},
@@ -99,6 +100,18 @@ _FARNELL_BY_ID = {
         "products": [_product("3367839", canonical="Y", package_name="Cut Tape")],
     }
 }
+
+
+def _with_image(image: object) -> dict[str, Any]:
+    """The by-id answer with its ``image`` branch replaced (or dropped for None)."""
+    product = _product("3367839", canonical="Y", package_name="Cut Tape")
+    if image is None:
+        del product["image"]
+    else:
+        product["image"] = image
+    return {
+        "premierFarnellPartNumberReturn": {"numberOfResults": 1, "products": [product]}
+    }
 
 
 # The live JSON answer to the id: lookup above, verbatim except that the branches
@@ -344,6 +357,67 @@ def test_normalises_a_product_into_component_fields() -> None:
     # "Semiconductors - ICs" where "LDO Voltage Regulators" names no ShelfOS type.
     assert "Semiconductors - ICs" in product.shop_category
     assert "LDO Voltage Regulators" in product.shop_category
+
+
+# ---- the product photo -----------------------------------------------------
+
+
+def test_builds_the_photo_url_from_the_filename_and_our_store() -> None:
+    """element14 sends a filename, not a URL: the host and the locale are ours.
+
+    The leading slash on ``baseName`` is theirs (it is how their own docs show the
+    field) and must not double up into "//" — which reads as a host, not a path.
+    """
+    product = FarnellProvider().fetch(_URL, transport=_transport(_FARNELL_OK))
+    assert product.image_url == (
+        "https://uk.farnell.com/productimages/standard/en_GB/2912887-40.jpg"
+    )
+
+
+def test_the_photo_comes_from_the_configured_store(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Every country store serves the en_GB path, so only the host follows config."""
+    monkeypatch.setattr(config, "FARNELL_STORE", "pl.farnell.com")
+    product = FarnellProvider().fetch(_URL, transport=_transport(_FARNELL_OK))
+    assert product.image_url == (
+        "https://pl.farnell.com/productimages/standard/en_GB/2912887-40.jpg"
+    )
+
+
+def test_a_newark_photo_takes_the_us_locale() -> None:
+    """Newark's own catalogue ("nio/") files its images under en_US, not en_GB."""
+    body = _with_image({"baseName": "2912887-40.jpg", "vrntPath": "nio/"})
+    product = FarnellProvider().fetch(_URL, transport=_transport(body))
+    assert product.image_url == (
+        "https://uk.farnell.com/productimages/standard/en_US/2912887-40.jpg"
+    )
+
+
+def test_a_filename_cannot_walk_out_of_the_image_directory() -> None:
+    """The filename is shop-controlled and names a file, nothing deeper.
+
+    The host is ours whatever it says, so the stake is not SSRF — but a path that
+    escaped would point the download at some other part of their store, and the
+    component would get a picture of nothing it asked for.
+    """
+    body = _with_image({"baseName": "../../etc/x.jpg", "vrntPath": "farnell/"})
+    product = FarnellProvider().fetch(_URL, transport=_transport(body))
+    assert product.image_url == (
+        "https://uk.farnell.com/productimages/standard/en_GB/..%2F..%2Fetc%2Fx.jpg"
+    )
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        None,
+        {"vrntPath": "farnell/"},  # no filename
+        {"baseName": "", "vrntPath": "farnell/"},
+        "GE12F1601.jpg",  # a bare string where an object belongs
+    ],
+)
+def test_a_product_without_a_usable_image_carries_none(image: object) -> None:
+    product = FarnellProvider().fetch(_URL, transport=_transport(_with_image(image)))
+    assert product.image_url is None
 
 
 def test_the_real_response_end_to_end_including_its_repeated_keys() -> None:

@@ -151,6 +151,7 @@ def _product_data(product: dict[str, object]) -> ProductData:
     source_url = product.get("ProductUrl")
     mpn = product.get("ManufacturerProductNumber")
     datasheet_url = product.get("DatasheetUrl")
+    image_url = product.get("PhotoUrl")
     return ProductData(
         # The product page from the response, not from the input: a scan looks a
         # part up by number and has no URL of its own, and this is what gets kept
@@ -162,6 +163,7 @@ def _product_data(product: dict[str, object]) -> ProductData:
         datasheet_url=(
             datasheet_url if isinstance(datasheet_url, str) and datasheet_url else None
         ),
+        image_url=image_url if isinstance(image_url, str) and image_url else None,
         category=infer_category(category, description),
         shop_category=category,
         parameters=parameters,

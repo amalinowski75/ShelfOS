@@ -674,6 +674,9 @@ class ShopProductRead(BaseModel):
     description: str | None = None
     package: str | None = None
     datasheet_url: str | None = None
+    # The shop's product photo, downloaded into the component's attachments after
+    # it is created — so the detail page it opens on already shows the part.
+    image_url: str | None = None
     parameters: list[ShopParameter] = Field(default_factory=list)
     # The product page the import resolved to, saved as the component's shop link.
     # Echoed back because a scan's URL is buried in the code the client sent.

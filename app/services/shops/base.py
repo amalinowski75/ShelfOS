@@ -42,6 +42,12 @@ class ProductData:
     # into the same best-effort inference it runs over the description.
     shop_category: str | None = None
     datasheet_url: str | None = None
+    # A product photo at the shop, downloaded into the new component's attachments
+    # once it exists. Best-effort in the same sense the datasheet is: whether a
+    # given shop's image host answers our server is a property of that host, not
+    # of the part — Mouser serves its images from the same Akamai that refuses our
+    # datasheet downloads, while the other three use plain CDNs.
+    image_url: str | None = None
     parameters: list[tuple[str, str]] = field(default_factory=list)  # (label, value)
     # The product page this came from, when there was one. Set by the registry, not
     # by a provider: with a scan the URL is whatever the code carried (a TME QR wraps

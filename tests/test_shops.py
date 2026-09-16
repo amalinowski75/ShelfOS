@@ -27,6 +27,7 @@ _MOUSER_OK = {
                 "Manufacturer": "Vishay / Dale",
                 "Description": "Thick Film Resistors - SMD 1/16watt 10Kohms 1%",
                 "DataSheetUrl": "https://www.vishay.com/docs/20035/dcrcwe3.pdf",
+                "ImagePath": "https://www.mouser.com/images/vishay/lrg/CRCW.jpg",
                 "Category": "Chip Resistor - Surface Mount",
                 "ProductAttributes": [
                     {"AttributeName": "Resistance", "AttributeValue": "10 kOhms"},
@@ -95,6 +96,31 @@ def test_fetch_normalises_a_mouser_product(monkeypatch) -> None:  # type: ignore
     assert params["Resistance"] == "10 kOhms"
     assert params["Tolerance"] == "±1%"
     assert params["Power"] == "62.5 mW"
+
+
+def test_fetch_takes_the_product_photo(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The dialog downloads this onto the component once it is created.
+
+    Whether Mouser's WAF then serves the file to a datacenter IP is its business,
+    not this provider's — the import carries the URL either way.
+    """
+    monkeypatch.setattr(config, "MOUSER_API_KEY", "key")
+    product = MouserProvider().fetch(
+        "https://www.mouser.com/ProductDetail/Vishay/CRCW040210K0FKED",
+        transport=_transport(_MOUSER_OK),
+    )
+    assert product.image_url == "https://www.mouser.com/images/vishay/lrg/CRCW.jpg"
+
+
+def test_a_product_without_a_photo_carries_none(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(config, "MOUSER_API_KEY", "key")
+    body = json.loads(json.dumps(_MOUSER_OK))
+    del body["SearchResults"]["Parts"][0]["ImagePath"]
+    product = MouserProvider().fetch(
+        "https://www.mouser.com/ProductDetail/Vishay/CRCW040210K0FKED",
+        transport=_transport(body),
+    )
+    assert product.image_url is None
 
 
 def test_fetch_without_a_key_is_rejected(monkeypatch) -> None:  # type: ignore[no-untyped-def]

@@ -243,6 +243,41 @@ def _datasheet_url(product: dict[str, Any]) -> str | None:
     return None
 
 
+# element14 gives the product photo as a bare filename plus a "variant path" naming
+# the brand, not as a URL: the host is whichever of their stores you ask (ours is
+# config's), and the path carries a locale segment their docs derive from that
+# variant — "nio/" is Newark's US catalogue, everything else is Farnell's.
+#
+# The locale is fixed per brand rather than derived from the store, because every
+# country store serves the en_GB path: pl.farnell.com and uk.farnell.com answer
+# /productimages/standard/en_GB/<file> with the same bytes. Deriving "pl_PL" from
+# "pl.farnell.com" would be a guess about their URL scheme that buys nothing, and
+# the store is an operator setting, never user input.
+_IMAGE_LOCALES = {"nio/": "en_US"}
+_DEFAULT_IMAGE_LOCALE = "en_GB"
+
+
+def _image_url(product: dict[str, Any]) -> str | None:
+    """The product photo's full URL, or None when the answer carries no image.
+
+    The filename is shop-controlled, so it is escaped whole — it names a file and
+    nothing deeper, and a stray "/" or ".." in it must not be able to walk the
+    path. The host can't be steered at all: it is ours either way, so the worst a
+    hostile value achieves is a 404 and no photo.
+    """
+    image = product.get("image")
+    if not isinstance(image, dict):
+        return None
+    base_name = _text(image.get("baseName")).lstrip("/")
+    if not base_name:
+        return None
+    locale = _IMAGE_LOCALES.get(_text(image.get("vrntPath")), _DEFAULT_IMAGE_LOCALE)
+    return (
+        f"https://{config.FARNELL_STORE}/productimages/standard/"
+        f"{locale}/{quote(base_name, safe='')}"
+    )
+
+
 class FarnellProvider:
     name = "Farnell"
 
@@ -489,6 +524,7 @@ def _product_data(product: dict[str, Any]) -> ProductData:
         description=description,
         package=_package(attributes),
         datasheet_url=_datasheet_url(product),
+        image_url=_image_url(product),
         category=infer_category(shop_category, description),
         shop_category=shop_category,
         parameters=_parameters(attributes),
