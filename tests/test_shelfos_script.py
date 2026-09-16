@@ -1448,22 +1448,19 @@ def test_the_backup_unit_runs_the_script_where_the_deploy_puts_it() -> None:
     assert 'readonly BACKUP_DIR="$DATA_DIR/backups"' in script
     assert 'readonly DATA_DIR="/var/lib/shelfos"' in script
     assert "ExecStart=/opt/shelfos/shelfos.sh backup create" in unit
-    # The retention sweep must name the directory `backup create` writes to, or
-    # it quietly keeps everything forever while reporting success.
-    sweep = next(
-        line for line in unit.splitlines() if line.startswith("ExecStartPost=")
-    )
-    assert "/var/lib/shelfos/backups" in sweep
-    assert "-delete" in sweep
+    # The sweep goes through `backup create` itself, so it can only ever run
+    # after the archive it is making room for is written — and it acts on the
+    # directory that command chose, which is why no path is repeated here.
+    assert "ExecStartPost=" not in unit
 
 
 def test_the_retention_the_summary_promises_is_the_one_the_unit_applies() -> None:
-    """A deploy says how long archives are kept before anybody agrees to it, and
+    """A deploy says how many archives are kept before anybody agrees to it, and
     the number lives in a different file from the sweep that enforces it."""
     unit = (_SCRIPT.parent / "deploy" / "shelfos-backup.service").read_text()
-    days = re.search(r"-mtime \+(\d+)", unit)
-    assert days, "the backup unit no longer sweeps by age"
-    assert f"kept {days.group(1)} days" in _SCRIPT.read_text()
+    keep = re.search(r"^ExecStart=.*\bbackup create --keep (\d+)$", unit, re.MULTILINE)
+    assert keep, "the backup unit no longer sweeps by count"
+    assert f"keeping the {keep.group(1)} newest" in _SCRIPT.read_text()
 
 
 def test_a_unit_that_arrived_with_the_update_is_not_reported_as_a_conflict() -> None:

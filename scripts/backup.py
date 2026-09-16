@@ -20,10 +20,19 @@ proceed while any exist (``--force`` overrides).
 Configuration (secret key, API keys, admin password) lives in environment
 variables, not on disk, so it is intentionally not part of the archive.
 
+``create --keep N`` sweeps the directory it just wrote into afterwards, leaving
+the ``N`` newest archives and deleting the rest; without it nothing is ever
+deleted. Only files named the way ``create`` names them without an ``-o``
+(``shelfos-backup-*.tar.gz``) are ever deleted, so an archive given some other
+name is never swept — and ``create`` says so rather than reporting a retention
+it is not applying. The sweep runs only after the new archive is safely in
+place, so a run that fails cannot be the run that frees the disk.
+
 Usage::
 
     python scripts/backup.py create    # writes backups/shelfos-backup-<stamp>.tar.gz
     python scripts/backup.py create -o /mnt/nas/shelfos.tar.gz
+    python scripts/backup.py create --keep 3    # and delete all but the 3 newest
     python scripts/backup.py restore backups/shelfos-backup-<stamp>.tar.gz
     python scripts/backup.py restore backup.tar.gz --yes
 
@@ -59,6 +68,12 @@ _DATABASE_NAME = "database.sqlite"
 _ATTACHMENTS_PREFIX = "attachments"
 
 _THUMBS_DIR = ".thumbs"
+
+# What `create` names an archive when no -o says otherwise, as a glob. The
+# retention sweep only ever considers files matching it, so an operator's own
+# copy in the same directory — `pre-upgrade.tar.gz`, say — is never a candidate
+# for deletion, however old it is.
+_ARCHIVE_GLOB = "shelfos-backup-*.tar.gz"
 
 
 class BackupError(Exception):
@@ -188,6 +203,72 @@ def create_backup(db_path: Path, attachments_dir: Path, output: Path) -> dict[st
         output.unlink(missing_ok=True)  # never leave a bogus placeholder behind
         raise
     return manifest
+
+
+def _archives(directory: Path) -> list[Path]:
+    """Finished archives in ``directory``, newest first.
+
+    Newest by modification time, with the name as the tiebreaker so that two
+    archives written in the same second still have a defined order.
+
+    Empty files are not archives yet. ``create_backup`` claims its output name
+    with O_EXCL before it starts writing and swaps the real content in at the
+    end, so for as long as a tar over the attachments tree takes there is a
+    0-byte file in the directory that matches the glob and whose mtime is now.
+    Counting that as one of the newest would mean a second run — a catch-up, or
+    somebody taking one by hand at 03:16 — keeping a placeholder in place of a
+    real archive, and deleting a real one to make room for it.
+    """
+    if not directory.is_dir():
+        return []
+
+    def stamp(path: Path) -> tuple[float, str] | None:
+        try:
+            info = path.stat()
+        except OSError:  # vanished under us between the glob and here
+            return None
+        return (info.st_mtime, path.name) if info.st_size > 0 else None
+
+    dated = [
+        (key, path)
+        for path in directory.glob(_ARCHIVE_GLOB)
+        if path.is_file() and (key := stamp(path)) is not None
+    ]
+    return [path for _, path in sorted(dated, key=lambda pair: pair[0], reverse=True)]
+
+
+def prune_backups(
+    directory: Path, keep: int, *, protect: Path | None = None
+) -> list[Path]:
+    """Delete all but the ``keep`` newest archives in ``directory``.
+
+    Only files named the way ``create`` names them are considered, and
+    ``protect`` (the archive this run just wrote) is never deleted whatever the
+    clock says about it — a host whose time jumped backwards would otherwise
+    throw away the only backup it is certain about.
+
+    A file that cannot be removed is reported and stepped over rather than
+    raising: the backup it is being kept beside has already succeeded, and
+    failing here would turn a full directory into a failed nightly run.
+
+    Returns the paths removed.
+    """
+    if keep < 1:
+        raise BackupError(f"refusing to keep fewer than one backup (got {keep})")
+
+    protected = protect.resolve() if protect is not None else None
+    ordered = _archives(directory)
+    removed: list[Path] = []
+    for path in ordered[keep:]:
+        if protected is not None and path.resolve() == protected:
+            continue
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as error:
+            print(f"Warning: could not remove {path}: {error}", file=sys.stderr)
+            continue
+        removed.append(path)
+    return removed
 
 
 def read_manifest(archive_path: Path) -> dict[str, Any]:
@@ -373,6 +454,26 @@ def _describe(manifest: dict[str, Any]) -> str:
     )
 
 
+def _keep_count(value: str) -> int:
+    """argparse type for ``--keep``: a whole number of archives, at least one.
+
+    Checked here rather than in the sweep so that a bad number is a usage error
+    *before* a backup is taken. Refusing it afterwards would mean a unit edited
+    to ``--keep 0`` writes a perfectly good archive every night and still exits
+    non-zero — a healthy backup that `systemctl status` reports as failed, and
+    that stops `update` in its tracks.
+    """
+    try:
+        count = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a whole number: {value!r}") from None
+    if count < 1:
+        raise argparse.ArgumentTypeError(
+            f"refusing to keep fewer than one backup (got {count})"
+        )
+    return count
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -384,6 +485,17 @@ def main() -> None:
         type=Path,
         default=None,
         help="archive path (default: backups/shelfos-backup-<timestamp>.tar.gz)",
+    )
+    create.add_argument(
+        "--keep",
+        type=_keep_count,
+        default=None,
+        metavar="N",
+        help=(
+            "after the backup succeeds, delete all but the N newest archives "
+            f"named {_ARCHIVE_GLOB} in the directory it was written to; nothing "
+            "else there is touched (default: keep every archive)"
+        ),
     )
 
     restore = commands.add_parser(
@@ -414,6 +526,26 @@ def main() -> None:
         manifest = create_backup(db_path, attachments_dir, output)
         print(f"Backup written to {output}")
         print(f"  {_describe(manifest)}")
+        if args.keep is not None:
+            # Only now, with the new archive in place: sweeping first would mean
+            # a run that then failed had deleted the backups it was replacing.
+            removed = prune_backups(output.parent, args.keep, protect=output)
+            for path in removed:
+                print(f"  removed {path.name}")
+            # What is actually there afterwards, not the number that was asked
+            # for. An -o naming the archive something else — the directory is
+            # then full of files the sweep will never consider — otherwise
+            # prints "keeping the 7 newest" every night while nothing is ever
+            # deleted and the disk fills.
+            kept = _archives(output.parent)
+            print(f"  {len(kept)} archive(s) named {_ARCHIVE_GLOB} in {output.parent}")
+            if output not in kept:
+                print(
+                    f"Warning: --keep manages archives named {_ARCHIVE_GLOB}, and "
+                    f"{output.name} is not one — it will never be swept, and "
+                    "neither will anything else written under that name",
+                    file=sys.stderr,
+                )
         return
 
     manifest = read_manifest(args.archive)

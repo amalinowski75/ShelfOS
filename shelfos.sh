@@ -871,7 +871,7 @@ deploy_summary() {
         info "  proxy           ${C_YELLOW}none — $DEPLOY_LISTEN:$DEPLOY_PORT, in plain HTTP, to anything that can reach it${C_OFF}"
     fi
     if [ "$DEPLOY_WANT_BACKUP" = 1 ]; then
-        info "  backups         nightly into $BACKUP_DIR, kept 30 days"
+        info "  backups         nightly into $BACKUP_DIR, keeping the 3 newest"
     else
         info "  backups         ${C_YELLOW}not scheduled — nothing will take one for you,${C_OFF}"
         info "  ${C_YELLOW}                and a schedule already here is stopped${C_OFF}"
@@ -2094,12 +2094,20 @@ cmd_status() {
 
 usage_backup() {
     cat <<'EOF'
-Usage: ./shelfos.sh backup [create] [-o PATH]
+Usage: ./shelfos.sh backup [create] [-o PATH] [--keep N]
        ./shelfos.sh backup restore ARCHIVE [--yes] [--force]
 
 Wrap scripts/backup.py with the paths and the user of whichever install is here.
 For a deployed service that means running as the service user against
 /var/lib/shelfos; for a clone, against this directory.
+
+Nothing is ever deleted unless --keep N is given: it sweeps the directory the
+archive was written to once the backup has succeeded, leaving the N newest and
+deleting the rest. Only archives named shelfos-backup-*.tar.gz are ever swept —
+an -o naming one something else is never deleted, and create says so rather than
+reporting a retention it is not applying. That is how the nightly timer keeps the
+three newest; a backup taken by hand, or by `update`, keeps every one until a
+later sweep moves past it.
 
 The archive holds the database and the attachments, and nothing else. Two files
 are worth keeping beside it, and matter when a machine is rebuilt: /etc/shelfos/env

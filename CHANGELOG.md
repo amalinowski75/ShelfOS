@@ -9,6 +9,38 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## Three backups, not thirty days of them
+
+- **#168** — the nightly backup now keeps the three newest archives and deletes
+  the rest, in place of the thirty-day sweep it shipped with. A backup here is
+  the database plus the whole attachments tree, so the directory grows with the
+  photos and datasheets people add, and thirty of those on the same disk as the
+  database is a disk that fills up — which takes the app down, not just the
+  backups.
+
+  The sweep moved out of the unit's `ExecStartPost=` and into `backup create
+  --keep N` itself, which is what the unit now runs. Two things follow from
+  that. It happens inside the backup, after the new archive is written, so a
+  night the backup fails is a night nothing is deleted — the old `find` had to
+  lean on systemd skipping `ExecStartPost` after a failed `ExecStart` to get the
+  same promise. And counting instead of dating is what makes a machine that
+  spent a month switched off safe: an age sweep would have deleted every archive
+  it had, while three newest stay three newest until a fourth one exists.
+
+  `--keep` only ever deletes finished files named the way `create` names them —
+  never the archive the run just wrote (a clock that jumped backwards would
+  otherwise make it the oldest thing in the directory), and never the 0-byte
+  placeholder a concurrent run has claimed its name with, which would otherwise
+  be counted as one of the newest and cost a real archive its place. A number
+  that would leave nothing is refused before the backup is taken, so it reads as
+  a usage error instead of a good archive written every night by a unit systemd
+  reports as failed. An archive it cannot remove is a line in the journal, not a
+  failed run: the backup beside it has already succeeded. And an `-o` naming the
+  archive something the sweep will never match is said out loud, rather than
+  reported as a retention that is working. Backups taken by hand and the one `update` takes first
+  still sweep nothing — they have no `--keep` — but they do count, so three
+  nights later they are the fourth newest and gone.
+
 ## An update that reported success and moved nothing
 
 `sudo ./shelfos.sh update` had stopped working. It took a backup, said it was

@@ -23,7 +23,7 @@ This directory holds what it installs, each file commented in full:
 | `shelfos.service` | The unit: one uvicorn worker on the loopback, sandboxed |
 | `shelfos.env.example` | Settings and secrets, for `/etc/shelfos/env` |
 | `Caddyfile` | TLS, the certificate, and the headers the app cannot always set |
-| `shelfos-backup.service` | One backup, taken as root, with the app still running |
+| `shelfos-backup.service` | One backup, taken as root, with the app still running; keeps the 3 newest |
 | `shelfos-backup.timer` | When that happens: 03:15 local, catching up a missed night |
 
 ## Why a proxy at all
@@ -331,12 +331,32 @@ overwriting a file that serves somebody else's site takes that site off the air.
 and the right user; it takes the database and attachments together and verifies
 checksums on restore. `./shelfos.sh update` takes one before it changes anything,
 and `shelfos-backup.timer` takes one every night at 03:15 into
-`/var/lib/shelfos/backups`, keeping thirty days. The archives are `root:root`
-0700 and every one of them carries every password hash in the database, so
-`sudo` is needed to so much as list them.
+`/var/lib/shelfos/backups`, keeping the three newest archives there and deleting
+the rest. The archives are `root:root` 0700 and every one of them carries every
+password hash in the database, so `sudo` is needed to so much as list them.
 
-Three things about that schedule are worth knowing before the night you need it:
+The sweep is `backup create --keep 3`, so it runs inside the backup and only
+after the new archive is written: a night the backup fails is a night nothing is
+deleted. It counts archives rather than dating them, which is what makes a
+machine that spent a month switched off safe — an age-based sweep would have
+deleted everything it had before taking anything new, while three newest stay
+three newest until a fourth exists. It only ever considers finished files named the way
+`create` names them: a copy you put in that directory yourself stays, and so
+does the placeholder a backup that is still running has claimed its name with.
+An `-o` naming an archive something else is therefore never swept — `create`
+says so on the spot rather than reporting a retention it is not applying — and a
+`--keep` that would leave nothing is refused before a backup is taken, so a
+mistyped number is a usage error rather than a good backup that exits non-zero
+every night. A backup taken by hand is not swept at all unless you pass
+`--keep` yourself, but it does count: three nightly runs later it is the fourth
+newest, and gone.
 
+Four things about that schedule are worth knowing before the night you need it:
+
+- **Three archives is three days.** Enough to undo a bad restore or a bad
+  update; not enough to notice in September that something went wrong in July.
+  If that matters here, raise the number in the unit, or push the newest archive
+  off the machine as below — the two answers are to different questions.
 - **It is not an off-host copy.** An archive on the same disk as the database
   survives a bad restore and a deleted row; it does not survive the disk, or the
   machine. Add an `ExecStartPost=` to `shelfos-backup.service` that pushes the
@@ -358,8 +378,9 @@ Three things about that schedule are worth knowing before the night you need it:
   never had a schedule is reported and not counted against it: that one is a
   choice somebody made.
 
-To move the hour or the retention, edit the installed
-`/etc/systemd/system/shelfos-backup.timer` (or `.service`) and
+To move the hour or the number of archives kept, edit the installed
+`/etc/systemd/system/shelfos-backup.timer` (or `.service`, where the `--keep`
+on the `ExecStart=` line is the number) and
 `systemctl daemon-reload`. A later `deploy --reinstall` finds the difference,
 shows it, and asks before replacing it — answering no keeps yours, and the
 plain `update` path never touches either file. `deploy --no-backup-timer`
@@ -391,6 +412,8 @@ throwaway Ubuntu 24.04 container or VM, in order:
 6. `sudo systemctl start shelfos-backup.service` — an archive appears in
    `/var/lib/shelfos/backups` while the app keeps answering, and
    `./shelfos.sh status` names it under `backups` along with the next firing.
+   Run it a fourth time and the directory still holds three archives: the oldest
+   went, and `journalctl -u shelfos-backup` says which.
 7. `sudo ./shelfos.sh update` with nothing new upstream — must say so and stop.
 8. Reboot; the service comes back on its own, and so does the timer.
 9. With a Brother QL attached: `/dev/shelfos-label` exists and a test label prints.
