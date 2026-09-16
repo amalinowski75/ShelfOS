@@ -105,7 +105,9 @@ that branch, so a plain `update` keeps following it. A plain `update`
 fast-forwards whatever branch the install is on to origin's copy of it, and says
 so rather than doing nothing when there is no such branch: when the install is
 on a detached HEAD, or on a branch that was deleted after its merge, it names
-`--ref` as the way out.
+`--ref` as the way out. Neither form throws work away — a commit made on the
+machine itself stops the update, with the command that lists it, rather than
+being overwritten.
 
 A re-deploy keeps the domain it finds in the Caddy config it wrote, so
 `sudo ./shelfos.sh deploy --reinstall` on an HTTPS server stays an HTTPS

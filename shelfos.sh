@@ -1768,7 +1768,17 @@ EOF
 # origin/<branch> outright is the whole fix: there is no branch left to guess.
 update_move_checkout() {
     local ref=$1 branch target
-    sudo_run git -C "$INSTALL_DIR" fetch --quiet origin
+    # --prune, because the guards below ask what origin has and a fetch without
+    # it never answers that. A wildcard fetch adds and updates remote-tracking
+    # refs and removes none, so a branch deleted on origin after its merge keeps
+    # refs/remotes/origin/<branch> pointing at the old commit for ever — and
+    # then the branch-is-gone check passes, the merge finds an ancestor, says
+    # "Already up to date" and moves nothing, which is the silent no-op this
+    # whole function exists to stop. Worse for --ref: deploy clones from the
+    # deploying user's own clone, which copies that clone's local branches into
+    # refs/remotes/origin/*, so an install starts life carrying tracking refs
+    # for branches GitHub has never heard of.
+    sudo_run git -C "$INSTALL_DIR" fetch --quiet --prune origin
 
     if [ -n "$ref" ]; then
         # A ref naming a branch on origin lands on a local branch of that name
@@ -1776,9 +1786,24 @@ update_move_checkout() {
         # into needing `--ref` forever: the next plain update found no branch,
         # and before this it did not say so, it just did nothing.
         target=${ref#origin/}
+        if [ "$DRY_RUN" = 1 ]; then
+            info "A dry run never reaches $INSTALL_DIR, so what follows assumes $ref is a"
+            info "  branch origin has; a tag or a commit is checked out detached instead."
+        fi
         if sudo_run git -C "$INSTALL_DIR" rev-parse --verify --quiet "refs/remotes/origin/$target" > /dev/null; then
-            sudo_run git -C "$INSTALL_DIR" checkout --quiet -B "$target" "origin/$target" \
-                || die 1 "cannot check out $target in $INSTALL_DIR; look at it by hand"
+            if sudo_run git -C "$INSTALL_DIR" rev-parse --verify --quiet "refs/heads/$target" > /dev/null; then
+                sudo_run git -C "$INSTALL_DIR" checkout --quiet "$target" \
+                    || die 1 "cannot check out $target in $INSTALL_DIR; look at it by hand"
+            else
+                sudo_run git -C "$INSTALL_DIR" checkout --quiet -b "$target" "origin/$target" \
+                    || die 1 "cannot create $target in $INSTALL_DIR; look at it by hand"
+            fi
+            # Deliberately a fast-forward and not `checkout -B`, which would
+            # force the branch onto origin's commit: an install carrying a fix
+            # committed on the box would lose it here, silently, and the dirty
+            # check in cmd_update only sees work that was never committed.
+            sudo_run git -C "$INSTALL_DIR" merge --ff-only --quiet "origin/$target" \
+                || die 1 "$target in $INSTALL_DIR has commits origin/$target does not; nothing was moved. 'sudo git -C $INSTALL_DIR log origin/$target..$target' shows them"
         else
             # A tag or a commit: nothing to stay on, so this is detached and the
             # next plain update will say so rather than silently doing nothing.

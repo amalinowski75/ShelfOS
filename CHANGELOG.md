@@ -40,6 +40,22 @@ service — and left the installed code exactly where it was. Only
   `update` keeps following it afterwards; a tag or a bare commit still detaches,
   because there is nothing to stay on.
 
+  The fetch prunes, which the guards above need and a plain fetch does not do:
+  a wildcard fetch adds and updates remote-tracking refs and removes none, so a
+  branch deleted on origin after its merge still answers as `origin/<branch>`,
+  still points at the merged commit, and the fast-forward onto it is the same
+  silent no-op. It matters twice over for `--ref`, because a deploy clones from
+  the deploying user's own clone before pointing the remote at GitHub, and a
+  clone of a non-bare repository copies that clone's local branches into
+  `refs/remotes/origin/*` — so a fresh install carries tracking refs for
+  branches GitHub has never seen.
+
+  `--ref` fast-forwards the branch rather than forcing it with `checkout -B`: an
+  install carrying a fix committed on the machine would otherwise lose it here,
+  silently, and the check that refuses to update over hand-edited files does not
+  see a commit — the tree is clean. Now that stops the update and prints the
+  `git log` that lists what is at risk.
+
   An install already detached from an earlier `--ref` will be told so by its
   next update: `sudo ./shelfos.sh update --ref main` puts it back on a branch.
 
