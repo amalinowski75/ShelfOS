@@ -660,6 +660,56 @@ def test_mouser_bulk_invoice_comma_quantities_and_unlabelled_marker() -> None:
     assert last.description.startswith("Semtech")  # not the cell's "20" left half
 
 
+def test_mouser_reads_space_grouped_thousands_in_the_extended_price() -> None:
+    # A real PLN invoice (redacted) whose fifth line totals "1 533,95" — Polish
+    # convention groups thousands with a space, and the old row pattern stopped at
+    # the first one, so the whole import failed on a line it could read everything
+    # else about.
+    invoice = MouserInvoiceParser().parse(_text("mouser_pln.txt"))
+    assert invoice.invoice_number == "92477646"
+    assert invoice.invoice_date == date(2026, 9, 14)
+    assert invoice.currency == "PLN"
+    assert len(invoice.lines) == 6
+    line = _by_mpn(invoice, "MAX4996LETG+T")
+    assert line.supplier_part_number == "700-MAX4996LETGT"
+    assert line.quantity == 55
+    assert line.unit_price == Decimal("27.890000")
+    # The invoice's own total, which only adds up if every line was read.
+    assert sum(line.quantity * line.unit_price for line in invoice.lines) == Decimal(
+        "2037.780000"
+    )
+
+
+def test_mouser_reads_a_space_grouped_quantity() -> None:
+    # The same convention in the quantity columns: 2 500 shipped, not 2.
+    from app.services.invoice_import.base import to_int
+    from app.services.invoice_import.mouser import _ITEM
+
+    row = "   6  810-C1005X7R1V104MBB   2 500   2 500   0   0,063   157,50"
+    match = _ITEM.match(row)
+    assert match is not None
+    assert to_int(match.group(4)) == 2500
+
+
+def test_mouser_does_not_glue_two_quantity_columns_into_one_number() -> None:
+    # The cost of reading "1 533,95" as one number: a single space could just as
+    # well be the gap between the Ordered and Shipped cells, and "100 100" read as
+    # 100100 would be a hundred thousand parts booked into stock. The table is laid
+    # out in fixed columns, so two cells are never a single space apart — a row that
+    # claims otherwise is refused, loudly, rather than guessed at.
+    from app.services.invoice_import.mouser import _ITEM
+
+    assert _ITEM.match("   1  771-NX3P1108UKZ 100 100 0 0,853 85,30") is None
+    first_row = next(
+        row for row in _text("mouser_pln.txt").splitlines() if "538-47571-0001 " in row
+    )
+    text = _text("mouser_pln.txt").replace(
+        first_row, "       1  538-47571-0001 38 38 0 3,07 116,66", 1
+    )
+    with pytest.raises(ValidationError, match="could not read this Mouser line"):
+        MouserInvoiceParser().parse(text)
+
+
 def test_digikey_raises_when_an_item_row_is_unparseable() -> None:
     broken = _text("digikey.txt").replace("6.12900", "6.12X00", 1)
     with pytest.raises(ValidationError, match="wasn't fully understood"):

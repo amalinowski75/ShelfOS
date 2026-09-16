@@ -9,6 +9,25 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## An invoice line that crossed a thousand złotych
+
+- **#169** — a Mouser invoice whose line total reached `1 533,95` failed to
+  import, with `could not read this Mouser line: '5 700-MAX4996LETGT 55 55 0
+  27,89 1 533,95'`. Polish convention groups thousands with a space, and the row
+  pattern read a number as digits, commas and dots only, so it stopped at the
+  space and the row stopped looking like an item row. Nothing was wrong with the
+  invoice, and every other line on it parsed.
+
+  A number in that table is now digits with either separator — a comma on a USD
+  invoice (`2,500`), a single space on a PLN one — in the quantity columns as
+  well as the money ones, since the same convention applies to a reel of 2 500.
+  The cost of allowing that space is that `100 100` in the Ordered and Shipped
+  cells could be read as one quantity of 100100, which would book a hundred
+  thousand parts into stock: so the thousands form is spelled out as exactly one
+  space and exactly three digits, and the cells around it must be two or more
+  apart. The table is laid out in fixed columns, so that is always true — and a
+  row that says otherwise is still refused by name rather than guessed at.
+
 ## Three backups, not thirty days of them
 
 - **#168** — the nightly backup now keeps the three newest archives and deletes

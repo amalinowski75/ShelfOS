@@ -5,7 +5,9 @@ by a ``Numer katalogowy u producenta: <MPN>`` line and a description line
 ("<Manufacturer> <title> / <Polish category>"). The manufacturer is the leading
 words of that description with no delimiter to the title, so it is NOT parsed here —
 the orchestrator enriches Mouser lines from the shop API (fetch_by_mpn) by MPN, which
-returns the canonical manufacturer. Numbers are comma-decimal.
+returns the canonical manufacturer. Numbers are comma-decimal; thousands are
+grouped by a comma on a USD invoice ("2,500") and by a space on a PLN one
+("1 533,95").
 """
 
 from __future__ import annotations
@@ -25,11 +27,25 @@ from app.services.invoice_import.base import (
 _HEADER = re.compile(r"(\d{6,})\s+(\d{1,2}-[A-Za-z]{3}-\d{2,4})\s+\d+\s+of\s+\d+")
 _CURRENCY = re.compile(r"Price\((\w{3})\)")
 
+# A number as these invoices print it. The decimal separator is always a comma;
+# thousands are grouped with a comma on a USD invoice ("2,500") and with a SINGLE
+# SPACE on a PLN one ("1 533,95"), which is Polish convention and comes straight
+# out of the PDF that way. ``to_int``/``to_decimal`` strip either.
+#
+# The space form is spelled out as exactly one space followed by exactly three
+# digits, and the columns around it are separated by two or more — the table is
+# laid out in fixed columns (``extract_text`` keeps them), so the gap between two
+# cells is never a single space. That is what stops "100 100" in the Ordered and
+# Shipped cells from being read as one quantity of 100100.
+_NUM = r"\d[\d,]*(?: \d{3})*(?:[.,]\d+)?"
 # An item row: "1  771-NX3P1108UKZ  100  100  0  0,853  85,30". The Mouser catalogue
-# number is "<digits>-<mpn>"; the three quantities are Ordered / Shipped / Pending and
-# can carry a comma thousands separator ("2,500" = 2500), stripped by ``to_int``.
+# number is "<digits>-<mpn>"; the three quantities are Ordered / Shipped / Pending.
+# The line number is the one cell that can sit a single space from its neighbour
+# ("10 757-DF2S30FSL3M" — a two-digit number fills its column), and a catalogue
+# number carries no spaces, so the strict gap starts after it.
 _ITEM = re.compile(
-    r"^\s*(\d+)\s+(\d{2,4}-\S+)\s+([\d,]+)\s+([\d,]+)\s+([\d,]+)\s+([\d.,]+)\s+([\d.,]+)\s*$"
+    rf"^\s*(\d+)\s+(\d{{2,4}}-\S+)"
+    rf"\s{{2,}}({_NUM})\s{{2,}}({_NUM})\s{{2,}}({_NUM})\s{{2,}}({_NUM})\s{{2,}}({_NUM})\s*$"
 )
 # A line that clearly starts an item row ("<line> <digits>-<sku> …") — used to fail
 # loudly on one the strict pattern couldn't read, instead of relying on a marker
