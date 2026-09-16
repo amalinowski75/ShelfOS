@@ -5,7 +5,9 @@ by a ``Numer katalogowy u producenta: <MPN>`` line and a description line
 ("<Manufacturer> <title> / <Polish category>"). The manufacturer is the leading
 words of that description with no delimiter to the title, so it is NOT parsed here —
 the orchestrator enriches Mouser lines from the shop API (fetch_by_mpn) by MPN, which
-returns the canonical manufacturer. Numbers are comma-decimal.
+returns the canonical manufacturer. Numbers are comma-decimal; an amount groups
+its thousands with a space ("1 533,95"), a quantity with a comma ("2,500"), on
+the same invoice.
 """
 
 from __future__ import annotations
@@ -25,11 +27,28 @@ from app.services.invoice_import.base import (
 _HEADER = re.compile(r"(\d{6,})\s+(\d{1,2}-[A-Za-z]{3}-\d{2,4})\s+\d+\s+of\s+\d+")
 _CURRENCY = re.compile(r"Price\((\w{3})\)")
 
+# The two money cells. Decimal separator is a comma; thousands are grouped with a
+# space — Polish convention, and what the PDF prints ("1 533,95") — or with a
+# non-breaking one, which is what that character sometimes extracts as
+# (``to_decimal`` strips either). The grouped form is accepted only with its
+# decimal part, which is how Mouser prints an amount: cents are always there.
+# A bare "1 533" would have the same shape as two cells that happen to sit one
+# space apart, and the cells are NOT a fixed distance apart — the gap is the
+# column's slack minus the value's width, so a value that fills its column leaves
+# a single space.
+_MONEY = r"\d{1,3}(?:[ \xa0]\d{3})+[.,]\d+|[\d.,]+"
+# The three quantity cells. Mouser groups these with a COMMA even on an invoice
+# whose amounts group with spaces ("2,500" = 2500 on a PLN invoice), so no space
+# form is needed here — and none is allowed: Ordered, Shipped and Pending sit
+# close together, a seven-character quantity leaves a single space to its
+# neighbour, and "100 100" read as one number would book a hundred thousand parts
+# into stock.
+_QTY = r"[\d,]+"
 # An item row: "1  771-NX3P1108UKZ  100  100  0  0,853  85,30". The Mouser catalogue
-# number is "<digits>-<mpn>"; the three quantities are Ordered / Shipped / Pending and
-# can carry a comma thousands separator ("2,500" = 2500), stripped by ``to_int``.
+# number is "<digits>-<mpn>"; the three quantities are Ordered / Shipped / Pending.
 _ITEM = re.compile(
-    r"^\s*(\d+)\s+(\d{2,4}-\S+)\s+([\d,]+)\s+([\d,]+)\s+([\d,]+)\s+([\d.,]+)\s+([\d.,]+)\s*$"
+    rf"^\s*(\d+)\s+(\d{{2,4}}-\S+)\s+({_QTY})\s+({_QTY})\s+({_QTY})"
+    rf"\s+({_MONEY})\s+({_MONEY})\s*$"
 )
 # A line that clearly starts an item row ("<line> <digits>-<sku> …") — used to fail
 # loudly on one the strict pattern couldn't read, instead of relying on a marker

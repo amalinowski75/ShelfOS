@@ -660,6 +660,72 @@ def test_mouser_bulk_invoice_comma_quantities_and_unlabelled_marker() -> None:
     assert last.description.startswith("Semtech")  # not the cell's "20" left half
 
 
+def test_mouser_reads_space_grouped_thousands_in_the_extended_price() -> None:
+    # A real PLN invoice (redacted) whose fifth line totals "1 533,95" — Polish
+    # convention groups thousands with a space, and the old row pattern stopped at
+    # the first one, so the whole import failed on a line it could read everything
+    # else about.
+    invoice = MouserInvoiceParser().parse(_text("mouser_pln.txt"))
+    assert invoice.invoice_number == "92477646"
+    assert invoice.invoice_date == date(2026, 9, 14)
+    assert invoice.currency == "PLN"
+    assert len(invoice.lines) == 6
+    line = _by_mpn(invoice, "MAX4996LETG+T")
+    assert line.supplier_part_number == "700-MAX4996LETGT"
+    assert line.quantity == 55
+    assert line.unit_price == Decimal("27.890000")
+    # The invoice's own total, which only adds up if every line was read.
+    assert sum(line.quantity * line.unit_price for line in invoice.lines) == Decimal(
+        "2037.780000"
+    )
+
+
+def test_mouser_reads_a_non_breaking_thousands_space() -> None:
+    # The grouping character in these PDFs is sometimes a non-breaking space —
+    # base.to_decimal strips both, and the row pattern has to accept both or the
+    # import dies with the very error this fixture exists for.
+    from app.services.invoice_import.base import to_decimal
+    from app.services.invoice_import.mouser import _ITEM
+
+    row = "    5  700-MAX4996LETGT      55     55      0      27,89   1\xa0533,95"
+    match = _ITEM.match(row)
+    assert match is not None
+    assert to_decimal(match.group(7)) == Decimal("1533.95")
+
+
+def test_mouser_still_reads_a_quantity_that_fills_its_column() -> None:
+    # The cells are not a fixed distance apart: the gap is the column's slack
+    # minus the value's width, so a seven-character quantity leaves a single
+    # space to its neighbour. Requiring a wider gap would refuse this row — which
+    # imported fine before — so the thousands space is allowed only in the money
+    # cells, where it must be followed by a decimal part.
+    from app.services.invoice_import.base import to_int
+    from app.services.invoice_import.mouser import _ITEM
+
+    row = (
+        "       1  810-C1005X7R1V104MBB          100,000 100,000     0"
+        "      0,063  6300,00"
+    )
+    match = _ITEM.match(row)
+    assert match is not None
+    assert to_int(match.group(3)) == 100000  # ordered
+    assert to_int(match.group(4)) == 100000  # shipped
+
+
+def test_mouser_never_reads_a_space_inside_a_quantity() -> None:
+    # What the money cells' tolerance must not spread to. Mouser groups
+    # quantities with a comma even on a PLN invoice, so a space between two of
+    # them is a column gap and nothing else: "100 100" is a hundred ordered and a
+    # hundred shipped, never a hundred thousand booked into stock.
+    from app.services.invoice_import.mouser import _ITEM
+
+    match = _ITEM.match("   1  771-NX3P1108UKZ 100 100 0 0,853 85,30")
+    assert match is not None
+    assert match.group(3) == "100"
+    assert match.group(4) == "100"
+    assert match.group(5) == "0"
+
+
 def test_digikey_raises_when_an_item_row_is_unparseable() -> None:
     broken = _text("digikey.txt").replace("6.12900", "6.12X00", 1)
     with pytest.raises(ValidationError, match="wasn't fully understood"):

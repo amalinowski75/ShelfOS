@@ -9,6 +9,29 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## An invoice line that crossed a thousand złotych
+
+- **#169** — a Mouser invoice whose line total reached `1 533,95` failed to
+  import, with `could not read this Mouser line: '5 700-MAX4996LETGT 55 55 0
+  27,89 1 533,95'`. Polish convention groups thousands with a space, and the row
+  pattern read a number as digits, commas and dots only, so it stopped at the
+  space and the row stopped looking like an item row. Nothing was wrong with the
+  invoice, and every other line on it parsed.
+
+  The two money cells now take that grouping, with a plain or a non-breaking
+  space, and only with the cents that follow it. The three quantity cells
+  deliberately do not: Mouser groups those with a comma even on the invoice whose
+  amounts group with spaces (`2,500` = 2500 on a PLN invoice), so a space between
+  two quantities is a column gap and nothing else — and `100 100` read as one
+  number would book a hundred thousand parts into stock.
+
+  The first attempt at this also demanded two spaces between cells, on the theory
+  that the table's fixed columns never put two of them closer. They do: the gap
+  is the column's slack minus the value's width, so a seven-character quantity
+  (`100,000`) leaves exactly one space and that row — which imported fine before
+  — would have started failing. Keeping the tolerance where it was and widening
+  only the money cells avoids trading one loud failure for another.
+
 ## Three backups, not thirty days of them
 
 - **#168** — the nightly backup now keeps the three newest archives and deletes

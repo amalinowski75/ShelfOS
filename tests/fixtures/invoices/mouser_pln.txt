@@ -1,0 +1,129 @@
+                                                                                    
+                                                  Faktura dot. Karty kredytowej     
+                                                  Invoice - Credit Card Receipt     
+                                                                                    
+                                                    Nr faktury Data faktury Nr strony
+                                                    Invoice No. Invoice Date Page No.
+     1000 North Main Street, Mansfield, TX 76063, USA                               
+     Przedstawiciel ds. obsługi klienta: Internet Customer Service 92477646 14-SEP-26 1 of 2
+     Obsługa klienta: +48 71 749 74 00                                              
+     Finanse: +49 (0)89 520 462 115                  Numer zamówienia Nr śledzenia zam.
+     VAT# FR 27512466913                             Purchase Order No. Master Tracker No.
+                           INCOTERMS: DDP              00000000      000000000000   
+            Osoba kontaktowa     Wysyłka za pośrednictwem Numer klienta Warunki Data zamówienia
+             Contact Name            Ship Via      Customer Number Terms Order Date 
+            SAMPLE BUYER         FEDEX INT'L PRIORITY 0000000  VI 0000  11-SEP-26   
+             SAMPLE BUYER SAMPLE CO               SAMPLE BUYER                      
+       Odbiorca ATTN: SAMPLE BUYER         Adres dostawy UL. SAMPLE 1               
+       Bill To UL. SAMPLE 1                 Ship To 00-000 SAMPLE CITY              
+             00-000 SAMPLE CITY                   POLAND                            
+             POLAND                               VAT# PL 0000000000                
+                                        Zamówiona      Oczekująca                   
+       Nr Nr katalogowy Mouser Mouser Part Number Wysłana ilość        Wartość towaru
+                                          ilość          ilość Cena jednostkowa     
+      pozycji Nr katalogowy u producenta Customer/MFG Part No. Quantity  Extended   
+                                         Quantity       Quantity Unit Price(PLN)    
+     Line No. Opis               Description    Shipped                 Price(PLN)  
+                                         Ordered        Pending                     
+       1  538-47571-0001                     38     38      0       3,07   116,66   
+          Numer katalogowy u producenta: 47571-0001                                 
+          Molex ASSY FOR TFR HEADER / Złącza kart pamięci                           
+          TARIC:8536693000 ECCN:EAR99 COO:CN ACO:-- COD:--                          
+       2  895-FT200XD-R                      30     30      0       7,77   233,10   
+          Numer katalogowy u producenta: FT200XD-R                                  
+          FTDI USB to I2C IC DFN-10 / Układy scalone interfejsu USB                 
+          TARIC:8542399000 ECCN:EAR99 COO:TW ACO:-- COD:--                          
+       3  701-SPX3819M5-L-33TR               40     40      0       1,16    46,40   
+          Numer katalogowy u producenta: SPX3819M5-L-3-3/TR                         
+          MaxLinear 500mA low-noise LDO / Regulatory napięcia LDO                   
+          TARIC:8542319000 ECCN:EAR99 COO:CN ACO:-- COD:--                          
+       4  511-M24C02-DRMN8TP/K               55     55      0      0,718    39,49   
+          Numer katalogowy u producenta: M24C02-DRMN8TP/K                           
+          STMicroelectronics 2-Kbit serial I2C bu / EEPROM                          
+          US HTS:8542320051 ECCN:EAR99 COO:CN ACO:-- COD:--                         
+       5  700-MAX4996LETGT                   55     55      0      27,89   1 533,95 
+          Numer katalogowy u producenta: MAX4996LETG+T                              
+          Analog Devices / Maxim Integrated Triple DPDT, Low-Cap / Układy scalone Analog Switch
+          TARIC:8542399000 ECCN:EAR99 COO:TH ACO:-- COD:--                          
+       6  520-240-8-36CKM-TR3                70     70      0      0,974    68,18   
+          Numer katalogowy u producenta: ECS-240-8-36CKM-TR3                        
+          ECS 24MHz,CL 8,TOL 10 pp / Kryształy                                      
+          TARIC:8541600000 ECCN:EAR99 COO:TW ACO:-- COD:--                          
+         Wartość towarów  Obsługa        Fracht         VAT           Taryfa        
+          Merchandise    Handling        Freight        VAT            Tariff       
+                                                          Dalej Continued           
+                Informacje dotyczące wysyłki           Shipping Information         
+     Data wysyłki: Sep 14, 2026                                                     
+     Te elementy podlegają nadzorowi rządu Stanów Zjednoczonych i są dopuszczone wyłącznie do eksportu do kraju docelowego użytku przez docelowego odbiorcę lub
+     określonych tutaj użytkowników końcowych. Zabrania się ich odsprzedaży, przekazywania lub usuwania do krajów lub osób innych niż upoważnieni docelowi odbiorcy
+     lub użytkownicy końcowi — ani w pierwotnej postaci, ani po dołączeniu do innych elementów — bez uprzedniego uzyskania pozwolenia rządu Stanów Zjednoczonych
+     lub innego stosownego upoważnienia na mocy prawa i uregulowań Stanów Zjednoczonych.
+     Odwrotne obciążenie podatku VAT — dostawa wewnątrzwspólnotowa.                 
+     Ship Date: Sep 14, 2026                                                        
+     These items are controlled by the U.S. Government and authorized for export only to the country of ultimate destination for use by the ultimate
+     consignee or end-user(s) herein identified. They may not be resold, transferred, or otherwise disposed of, to any other country or to any person
+               Numer śledzenia i rozliczona waga   Tracking Number(s) and Billed Weights
+     000000000000 0.47 lb                                                           
+                 French Fiscal Representative: Fiscal Solutions S.A.R.L, 23 Rue du Clos d'Orléans, Fontenay-sous-Bois, 94 120, FR
+             Niniejsze zamówienie podlega wszystkim warunkom i zasadom sprzedaży przedstawionym na stronie:http://pl.mouser.com/saleterms/
+                      This order is subject to all terms and conditions displayed at:http://pl.mouser.com/saleterms/
+                                                                                    
+                                                  Faktura dot. Karty kredytowej     
+                                                  Invoice - Credit Card Receipt     
+                                                                                    
+                                                    Nr faktury Data faktury Nr strony
+                                                    Invoice No. Invoice Date Page No.
+     1000 North Main Street, Mansfield, TX 76063, USA                               
+     Przedstawiciel ds. obsługi klienta: Internet Customer Service 92477646 14-SEP-26 2 of 2
+     Obsługa klienta: +48 71 749 74 00                                              
+     Finanse: +49 (0)89 520 462 115                  Numer zamówienia Nr śledzenia zam.
+     VAT# FR 27512466913                             Purchase Order No. Master Tracker No.
+                           INCOTERMS: DDP              00000000      000000000000   
+            Osoba kontaktowa     Wysyłka za pośrednictwem Numer klienta Warunki Data zamówienia
+             Contact Name            Ship Via      Customer Number Terms Order Date 
+            SAMPLE BUYER         FEDEX INT'L PRIORITY 0000000  VI 0000  11-SEP-26   
+             SAMPLE BUYER SAMPLE CO               SAMPLE BUYER                      
+       Odbiorca ATTN: SAMPLE BUYER         Adres dostawy UL. SAMPLE 1               
+       Bill To UL. SAMPLE 1                 Ship To 00-000 SAMPLE CITY              
+             00-000 SAMPLE CITY                   POLAND                            
+             POLAND                               VAT# PL 0000000000                
+                                        Zamówiona      Oczekująca                   
+       Nr Nr katalogowy Mouser Mouser Part Number Wysłana ilość        Wartość towaru
+                                          ilość          ilość Cena jednostkowa     
+      pozycji Nr katalogowy u producenta Customer/MFG Part No. Quantity  Extended   
+                                         Quantity       Quantity Unit Price(PLN)    
+     Line No. Opis               Description    Shipped                 Price(PLN)  
+                                         Ordered        Pending                     
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+         Wartość towarów  Obsługa        Fracht         VAT           Taryfa        
+          Merchandise    Handling        Freight        VAT            Tariff       
+                2 037,78        0,00           0,00           0,00           0,00   
+                                             Płatność kartą kredytową Paid by credit card PLN 2 037,78
+                                                                                    
+                Informacje dotyczące wysyłki           Shipping Information         
+     other than the authorized ultimate consignee or end-user(s), either in their original form or after being incorporated into other items, without
+     first obtaining approval from the U.S. government or as otherwise authorized by U.S. law and regulations. VAT reverse charge - intra community
+     -delivery.                                                                     
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+               Numer śledzenia i rozliczona waga   Tracking Number(s) and Billed Weights
+                                                                                    
+                                                                                    
+                                                                                    
+                 French Fiscal Representative: Fiscal Solutions S.A.R.L, 23 Rue du Clos d'Orléans, Fontenay-sous-Bois, 94 120, FR
+             Niniejsze zamówienie podlega wszystkim warunkom i zasadom sprzedaży przedstawionym na stronie:http://pl.mouser.com/saleterms/
+                      This order is subject to all terms and conditions displayed at:http://pl.mouser.com/saleterms/
