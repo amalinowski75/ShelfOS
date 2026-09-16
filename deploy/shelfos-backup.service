@@ -7,7 +7,7 @@
 # `shelfos.sh deploy` installs and enables both; this is what it installs.
 # Nothing here carries a setting of this machine's — the paths are the ones
 # baked into shelfos.sh — so the two choices worth editing are the hour, in the
-# timer, and how long archives are kept, below.
+# timer, and how many archives are kept, below.
 
 [Unit]
 Description=ShelfOS nightly backup
@@ -32,15 +32,20 @@ Type=oneshot
 # the archive after the moment it started. That naming is what makes this safe
 # to run twice: backup.py refuses to overwrite an existing archive, so a
 # repeated run cannot quietly replace last night's with a failed one.
-ExecStart=/opt/shelfos/shelfos.sh backup create
-
-# Keep 30 days. Archives are never overwritten, so without this the directory
-# grows until the disk it shares with the database is full — which takes the
-# app down, not just the backups. Only ever after a successful ExecStart:
-# systemd skips ExecStartPost when the command above failed, so a machine that
-# has been off for longer than the retention cannot come back, fail to back up,
-# and delete the last good archive it had.
-ExecStartPost=/usr/bin/find /var/lib/shelfos/backups -maxdepth 1 -name 'shelfos-backup-*.tar.gz' -mtime +30 -delete
+#
+# --keep 3 sweeps the directory afterwards and leaves the three newest archives
+# there. Archives are never overwritten, so without a sweep the directory grows
+# until the disk it shares with the database is full — which takes the app down,
+# not just the backups. Counting rather than dating is what makes a machine that
+# has been switched off for a month safe: an age-based sweep would have deleted
+# every archive it had, backup or no backup, while three newest stay three
+# newest until a fourth one exists. backup.py sweeps only after the new archive
+# is written, so the run that frees the space is always a run that succeeded.
+#
+# The number is the one thing here worth editing. Three nightly archives are
+# three days; the previous week is not in them, and neither is an archive taken
+# before an update once three nights have passed over it.
+ExecStart=/opt/shelfos/shelfos.sh backup create --keep 3
 
 # A backup is gzip over the whole attachments tree, and it runs while people may
 # be using the app. Neither number changes what it does, only what it costs
