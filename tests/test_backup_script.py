@@ -345,3 +345,200 @@ def test_the_archive_is_not_named_after_the_temporary_file(
     # And it is still a readable archive after all that.
     with gzip_module.open(output) as stream:
         assert stream.read(2)
+
+
+def _aged_archives(directory: Path, names_oldest_first: list[str]) -> list[Path]:
+    """Archives a second apart, in the order given, oldest first."""
+    directory.mkdir(parents=True, exist_ok=True)
+    made: list[Path] = []
+    for index, name in enumerate(names_oldest_first):
+        path = directory / name
+        path.write_bytes(b"archive")
+        os.utime(path, (1_700_000_000 + index, 1_700_000_000 + index))
+        made.append(path)
+    return made
+
+
+def test_prune_keeps_the_newest_and_deletes_the_rest(tmp_path: Path) -> None:
+    directory = tmp_path / "backups"
+    old, older_still, newer, newest = _aged_archives(
+        directory,
+        [
+            "shelfos-backup-20260901-031500.tar.gz",
+            "shelfos-backup-20260902-031500.tar.gz",
+            "shelfos-backup-20260903-031500.tar.gz",
+            "shelfos-backup-20260904-031500.tar.gz",
+        ],
+    )
+    removed = backup.prune_backups(directory, 3)
+    assert removed == [old]
+    assert not old.exists()
+    assert [path.name for path in sorted(directory.iterdir())] == [
+        older_still.name,
+        newer.name,
+        newest.name,
+    ]
+    # A second sweep with nothing to do is not an error and deletes nothing.
+    assert backup.prune_backups(directory, 3) == []
+    assert len(list(directory.iterdir())) == 3
+
+
+def test_prune_goes_by_age_not_by_name(tmp_path: Path) -> None:
+    """The timestamp in the name is when a run started, and an -o can put any
+    name at all in the directory. What is kept is what was written last."""
+    directory = tmp_path / "backups"
+    _aged_archives(
+        directory,
+        [
+            "shelfos-backup-zzzz.tar.gz",  # oldest, but last alphabetically
+            "shelfos-backup-20260101-000000.tar.gz",
+        ],
+    )
+    removed = backup.prune_backups(directory, 1)
+    assert [path.name for path in removed] == ["shelfos-backup-zzzz.tar.gz"]
+    assert [path.name for path in directory.iterdir()] == [
+        "shelfos-backup-20260101-000000.tar.gz"
+    ]
+
+
+def test_prune_only_touches_files_named_the_way_create_names_them(
+    tmp_path: Path,
+) -> None:
+    """The archives share a directory with whatever an operator put there — a
+    copy kept before an upgrade, a note. None of it is the sweep's business."""
+    directory = tmp_path / "backups"
+    _aged_archives(
+        directory,
+        [
+            "keep-me-before-the-upgrade.tar.gz",
+            "shelfos-backup-20260101.tar.gz.sha256",
+            "notes.txt",
+            "shelfos-backup-20260101-000000.tar.gz",
+            "shelfos-backup-20260102-000000.tar.gz",
+        ],
+    )
+    (directory / "subdir").mkdir()
+    (directory / "subdir" / "shelfos-backup-20250101-000000.tar.gz").write_bytes(b"x")
+
+    removed = backup.prune_backups(directory, 1)
+
+    assert [path.name for path in removed] == ["shelfos-backup-20260101-000000.tar.gz"]
+    assert {path.name for path in directory.iterdir()} == {
+        "keep-me-before-the-upgrade.tar.gz",
+        "shelfos-backup-20260101.tar.gz.sha256",
+        "notes.txt",
+        "shelfos-backup-20260102-000000.tar.gz",
+        "subdir",
+    }
+    assert (directory / "subdir" / "shelfos-backup-20250101-000000.tar.gz").exists()
+
+
+def test_prune_never_deletes_the_archive_just_written(tmp_path: Path) -> None:
+    """A host whose clock jumped backwards writes an archive that looks older
+    than the ones it is replacing. Deleting that one is deleting the only backup
+    this run is certain about."""
+    directory = tmp_path / "backups"
+    _aged_archives(
+        directory,
+        [
+            "shelfos-backup-20260101-000000.tar.gz",
+            "shelfos-backup-20260102-000000.tar.gz",
+        ],
+    )
+    fresh = directory / "shelfos-backup-19990101-000000.tar.gz"
+    fresh.write_bytes(b"just written")
+    os.utime(fresh, (1, 1))  # older than everything else, by the clock
+
+    removed = backup.prune_backups(directory, 1, protect=fresh)
+
+    assert [path.name for path in removed] == ["shelfos-backup-20260101-000000.tar.gz"]
+    assert fresh.exists()
+
+
+def test_prune_refuses_to_keep_nothing_and_survives_a_missing_directory(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "backups"
+    _aged_archives(directory, ["shelfos-backup-20260101-000000.tar.gz"])
+    for keep in (0, -1):
+        with pytest.raises(backup.BackupError, match="fewer than one"):
+            backup.prune_backups(directory, keep)
+    assert len(list(directory.iterdir())) == 1
+    assert backup.prune_backups(tmp_path / "never-backed-up", 3) == []
+
+
+def test_prune_reports_an_archive_it_cannot_remove_and_keeps_going(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The backup beside it has already succeeded; a directory nobody may write
+    to is worth a line in the journal, not a failed nightly run."""
+    directory = tmp_path / "backups"
+    stuck, also_old, newest = _aged_archives(
+        directory,
+        [
+            "shelfos-backup-20260101-000000.tar.gz",
+            "shelfos-backup-20260102-000000.tar.gz",
+            "shelfos-backup-20260103-000000.tar.gz",
+        ],
+    )
+    real_unlink = Path.unlink
+
+    def refuse_one(self: Path, *args: object, **kwargs: object) -> None:
+        if self.name == stuck.name:
+            raise PermissionError(13, "Permission denied")
+        real_unlink(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Path, "unlink", refuse_one)
+        removed = backup.prune_backups(directory, 1)
+
+    assert removed == [also_old]
+    assert stuck.exists() and newest.exists()
+    assert "could not remove" in capsys.readouterr().err
+
+
+def test_cli_create_with_keep_sweeps_only_after_a_successful_backup(
+    source: dict[str, Path], tmp_path: Path
+) -> None:
+    """End to end, the way the nightly unit runs it: the archive lands, the
+    older ones go, and a run that cannot back up deletes nothing."""
+    directory = tmp_path / "backups"
+    old, newer = _aged_archives(
+        directory,
+        [
+            "shelfos-backup-20260101-000000.tar.gz",
+            "shelfos-backup-20260102-000000.tar.gz",
+        ],
+    )
+    output = directory / "shelfos-backup-20260103-000000.tar.gz"
+    env = {
+        **os.environ,
+        "DATABASE_URL": f"sqlite:///{source['db']}",
+        "SHELFOS_ATTACHMENTS_DIR": str(source["attachments"]),
+    }
+    argv = [sys.executable, str(_SCRIPT), "create", "-o", str(output), "--keep", "2"]
+    result = subprocess.run(argv, capture_output=True, text=True, env=env, check=False)
+
+    assert result.returncode == 0, result.stderr
+    assert output.is_file()
+    assert not old.exists()
+    assert newer.exists()
+    assert "removed shelfos-backup-20260101-000000.tar.gz" in result.stdout
+
+    # A failed backup sweeps nothing: the archives it would replace are all the
+    # machine has.
+    env["DATABASE_URL"] = f"sqlite:///{tmp_path / 'not-a-database.db'}"
+    argv = [
+        sys.executable,
+        str(_SCRIPT),
+        "create",
+        "-o",
+        str(directory / "shelfos-backup-20260104-000000.tar.gz"),
+        "--keep",
+        "1",
+    ]
+    result = subprocess.run(argv, capture_output=True, text=True, env=env, check=False)
+
+    assert result.returncode == 1
+    assert "database not found" in result.stderr
+    assert newer.exists() and output.exists()
