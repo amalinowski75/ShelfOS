@@ -52,8 +52,16 @@ _MOVEMENT_CHUNK = 400
 
 @dataclass
 class PlannedSource:
-    """One location a line's parts will come from, or could come from."""
+    """One location a line's parts will come from, or could come from.
 
+    Carries its own component: a line can be built from several entries of one
+    part (D15), so "where from" is only half the answer — the dialog has to say
+    WHICH of them a bin holds, and the question about an ambiguous shelf is asked
+    per entry rather than per line.
+    """
+
+    component_id: int
+    mpn: str | None
     location_id: int
     path: str
     available: int
@@ -74,12 +82,6 @@ class PlannedLine:
     needs_choice: bool = False
     shortfall: int = 0
     blocked: str | None = None
-    # How many OTHER catalogue entries are the same part as the assigned one
-    # (D15) — stock this take does not reach for, although the BOM report counts
-    # it. Reported so the dialog can say so instead of quietly disagreeing with
-    # the page the user just read. Temporary: it goes when the take itself draws
-    # from the variants.
-    equivalents: int = 0
 
 
 @dataclass
@@ -106,11 +108,6 @@ class TakePlan:
     @property
     def total_shortfall(self) -> int:
         return sum(ln.shortfall for ln in self.lines)
-
-    @property
-    def references_with_equivalents(self) -> list[str]:
-        """Lines whose part has other entries this take will not draw from."""
-        return [ln.references for ln in self.lines if ln.equivalents]
 
 
 def components_by_id(session: Session, ids: set[int]) -> dict[int, Component]:
@@ -169,14 +166,17 @@ def plan_take(
     boards: int,
     source_location_id: int,
     overrides: dict[int, int] | None = None,
-    choices: dict[int, int] | None = None,
+    choices: dict[tuple[int, int | None], int] | None = None,
 ) -> TakePlan:
     """Work out what this take would do. Reads only; writes nothing.
 
     ``overrides`` maps a BOM line id to the quantity the user typed instead of
     ``line.quantity * boards`` — parts get lost during assembly, so the number is
-    editable. ``choices`` maps a line id to the location the user picked when
-    several outside the gathering branch hold the part.
+    editable. ``choices`` maps a (line id, component id) pair to the location the user
+    picked when several outside the gathering branch hold THAT entry of the part —
+    a line built from two entries can be asked twice. A ``None`` component is an
+    answer from a page that did not name one: it is matched to whichever entry
+    actually holds that bin (see below).
     """
     boards = max(1, boards)
     overrides = overrides or {}
@@ -191,30 +191,25 @@ def plan_take(
     components = components_by_id(
         session, {a.component_id for a in assignments.values()}
     )
-    slots = _slots_by_component(
-        session,
-        {c.id for c in components.values() if c.deleted_at is None and c.id},
-    )
-    # What the BOM report counts and this take does not: the other live entries of
-    # the same part (D15). Two queries for the plan, and only so the dialog can
-    # say so out loud. Goes when the take learns to draw from them.
+    # Every catalogue entry each assigned part is the same thing as (D15), and the
+    # entries themselves — two queries for the whole plan rather than two per line.
     same_part = es.equivalent_ids_for(session, set(components))
     variants = components_by_id(
         session, {member for members in same_part.values() for member in members}
     )
-    ignored_variants = {
-        component_id: sum(
-            1
-            for member in members
-            if member != component_id
-            and (other := variants.get(member)) is not None
-            and other.deleted_at is None
-        )
-        for component_id, members in same_part.items()
-    }
+    # Bins for every entry a line could be built from, not just the assigned one.
+    slots = _slots_by_component(
+        session,
+        {
+            c.id
+            for c in (*components.values(), *variants.values())
+            if c.deleted_at is None and c.id
+        },
+    )
     # What each slot has LEFT as the plan walks the lines. Two designator groups
     # can be assigned to the same component (the assignment is unique per
-    # references, not per component), and without this each of them would plan
+    # references, not per component), and two lines can now reach the same shelf
+    # through DIFFERENT entries of one part. Without this each of them would plan
     # against the bin's full quantity — the preview would promise a run it is
     # short for, and the second removal would raise mid-take and roll the whole
     # thing back with a stock error the plan had just ruled out.
@@ -229,6 +224,70 @@ def plan_take(
         if location_id not in paths:
             paths[location_id] = ls.format_path(session, location_id)
         return paths[location_id]
+
+    def left_of(part_id: int, *, inside: bool) -> int:
+        """What is still unspoken-for in this part's bins on one side of the tree.
+
+        Read when the pass that uses it is about to run, never once for the line.
+        That re-read is what keeps a 3-piece remnant ahead of a 50-piece bag when
+        the same entry also had 500 gathered: ranked before the gathering pass, the
+        reel is the fullest entry there is and would be reached last, leaving its
+        remnant on the shelf for ever.
+
+        The side matters to the FIRST pass, where a gathered bin must not be ranked
+        by what its entry also holds out on a shelf. By the time the second runs,
+        the gathering branch is empty — it only stops early when the line is
+        already satisfied — so there the two readings agree.
+        """
+        return sum(
+            unclaimed[(part_id, slot.location_id)]
+            for slot in slots.get(part_id, [])
+            if (slot.location_id in inside_ids) is inside
+        )
+
+    def emptiest_first(parts: list[Component], *, inside: bool) -> list[Component]:
+        """The entries in the order to draw from them, emptiest leading.
+
+        The id breaks a tie so the order cannot drift between runs.
+        """
+        return sorted(
+            parts,
+            key=lambda part: (
+                left_of(cast(int, part.id), inside=inside),
+                cast(int, part.id),
+            ),
+        )
+
+    def bins_of(part: Component, *, inside: bool) -> list[PlannedSource]:
+        """This part's bins on one side of the gathering branch, emptiest last.
+
+        Built fresh for each pass, so `available` is what is left after the pass
+        before it rather than what the shelf started the line with.
+        """
+        part_id = cast(int, part.id)
+        found = [
+            PlannedSource(
+                component_id=part_id,
+                mpn=part.mpn,
+                location_id=slot.location_id,
+                path=path_of(slot.location_id),
+                available=unclaimed[(part_id, slot.location_id)],
+                quantity=0,
+                inside=slot.location_id in inside_ids,
+            )
+            for slot in slots.get(part_id, [])
+            if unclaimed[(part_id, slot.location_id)] > 0
+        ]
+        return sorted(
+            [source for source in found if source.inside is inside],
+            key=_by_biggest_bin,
+        )
+
+    def claim(source: PlannedSource, amount: int) -> int:
+        """Take ``amount`` from this slot and keep the running total honest."""
+        source.quantity += amount
+        unclaimed[(source.component_id, source.location_id)] -= amount
+        return amount
 
     planned: list[PlannedLine] = []
     for line in lines:
@@ -256,58 +315,81 @@ def plan_take(
             continue
 
         entry.component_id = component.id
-        component_id = cast(int, component.id)
-        entry.equivalents = ignored_variants.get(component_id, 0)
+        assigned_id = cast(int, component.id)
 
-        def claim(source: PlannedSource, amount: int, part: int = component_id) -> int:
-            """Take ``amount`` from this slot and keep the running total honest."""
-            source.quantity += amount
-            unclaimed[(part, source.location_id)] -= amount
-            return amount
-
-        candidates = [
-            PlannedSource(
-                location_id=slot.location_id,
-                path=path_of(slot.location_id),
-                # What is left after earlier lines, not what the shelf started
-                # with. A slot another line has already emptied is not a candidate.
-                available=unclaimed[(component_id, slot.location_id)],
-                quantity=0,
-                inside=slot.location_id in inside_ids,
-            )
-            for slot in slots.get(component_id, [])
-            if unclaimed[(component_id, slot.location_id)] > 0
-        ]
-        inside = sorted([c for c in candidates if c.inside], key=_by_biggest_bin)
-        outside = sorted([c for c in candidates if not c.inside], key=_by_biggest_bin)
+        # What this line may be built from: the part someone assigned, and every
+        # live entry the catalogue calls the same part (D15). The assignment still
+        # names one component — that is the decision — and this is only where the
+        # parts may come from.
+        #
+        # Each pass orders these for itself, emptiest entry first: a part-used bag
+        # and a loose remnant go before a sealed reel, which is what a person
+        # reaching onto the shelf does — it closes out the awkward leftovers
+        # instead of leaving a dozen bins with nine parts in them.
+        #
+        # No filter for a retired entry here, and none is needed: `slots` is built
+        # from the live entries alone, and a part cannot be taken out of use while
+        # its stock is on the shelf — so a retired one has no bin to offer either
+        # way. A check here would imply a case that cannot arise.
+        parts = [
+            variant
+            for member_id in same_part.get(assigned_id, [assigned_id])
+            if (variant := variants.get(member_id)) is not None
+        ] or [component]
 
         remaining = entry.requested
-        # The gathering branch is EXHAUSTED before anything else is considered, so
-        # a partly-gathered line tops up from the shelf instead of reading as
-        # absent. Spreading across the sub-containers needs no question: they are
-        # all "the parts I put out for this board".
-        for candidate in inside:
+        # The gathering branch is EXHAUSTED before anything else is considered, and
+        # across every entry of the part: what was put out for this board was put
+        # out for it whatever index it carries. Spreading across the sub-containers
+        # needs no question — they are all "the parts I gathered".
+        for part in emptiest_first(parts, inside=True):
+            for candidate in bins_of(part, inside=True):
+                if remaining <= 0:
+                    break
+                entry.sources.append(candidate)
+                remaining -= claim(candidate, min(remaining, candidate.available))
             if remaining <= 0:
                 break
-            entry.sources.append(candidate)
-            remaining -= claim(candidate, min(remaining, candidate.available))
 
-        if remaining > 0 and outside:
+        # Then the ordinary shelves, one entry of the part at a time — ordered
+        # again, and on what is left OUT HERE, because the pass above has just
+        # changed both.
+        for part in emptiest_first(parts, inside=False):
+            if remaining <= 0:
+                break
+            outside = bins_of(part, inside=False)
+            if not outside:
+                continue
+            part_id = cast(int, part.id)
             # Offered whenever there is a real choice to make, answered or not:
             # the answer has to be revisable, and a picker that vanishes the
             # moment it is used cannot be corrected without starting over.
             if len(outside) > 1:
-                entry.candidates = outside
-            chosen_id = choices.get(line_id)
+                entry.candidates.extend(outside)
+            chosen_id = choices.get((line_id, part_id))
+            named_the_entry = chosen_id is not None
+            if chosen_id is None:
+                # An answer from a page old enough not to name an entry. Such a
+                # page rendered every candidate into ONE picker, so the location it
+                # sends can belong to a variant rather than to the assigned part —
+                # reading it as the assigned part's would refuse a choice the page
+                # itself offered. Match it to the entry that actually holds the bin.
+                unnamed = choices.get((line_id, None))
+                if unnamed is not None and _has_slot(slots, part_id, unnamed):
+                    chosen_id = unnamed
             if chosen_id is not None:
                 picked = next(
                     (c for c in outside if c.location_id == chosen_id), None
                 )
-                if picked is None and not _has_slot(
-                    slots, component_id, chosen_id
+                if (
+                    named_the_entry
+                    and picked is None
+                    and not _has_slot(slots, part_id, chosen_id)
                 ):
-                    # The location never held this part at all — a client sending
-                    # something the plan never offered, not a person's answer.
+                    # The location never held this entry at all — a client sending
+                    # something the plan never offered, not a person's answer. Only
+                    # for an answer that NAMED the entry: an unnamed one is matched
+                    # above or left alone, never turned into a refusal.
                     raise ValidationError(
                         f"'{line.references}' does not have stock at the location "
                         "chosen for it"
@@ -327,7 +409,11 @@ def plan_take(
                 entry.sources.append(only)
                 remaining -= claim(only, min(remaining, only.available))
             else:
+                # Stop the line here rather than planning the next entry of the
+                # part around an unanswered question: the run is blocked until it
+                # is answered, and once it is, this bin may well cover the rest.
                 entry.needs_choice = True
+                break
 
         # Not an error, and not a refusal: take what is there and record the rest.
         # "I am short 40 of these" is exactly what the snapshot is for.
@@ -342,6 +428,46 @@ def plan_take(
         source_path=path_of(cast(int, source.id)),
         lines=planned,
     )
+
+
+def _snapshot_rows(
+    line: PlannedLine,
+) -> list[tuple[int, int, list[PlannedSource]]]:
+    """Split one planned line into the snapshot rows it becomes.
+
+    One row per ENTRY of the part the line actually drew from, all sharing the
+    designator group — the table allows that, and it is the honest record: "R1,R2
+    took 40 of the bulk bag and 60 off the reel" is two movements from two
+    components, and one row could only name one of them.
+
+    ``requested`` is split in the order the parts were drawn, each row asking for
+    exactly what it gave, so the rows still sum to what the line wanted. What the
+    shelves could not give is added to the row of the part the line is ASSIGNED
+    to — the one someone chose — and gets a row of its own when that part gave
+    nothing. A line that found nothing anywhere is a single row of 0 taken, which
+    is what it was before a line could be built from more than one entry.
+    """
+    drawn: dict[int, list[PlannedSource]] = {}
+    for source in line.sources:
+        drawn.setdefault(source.component_id, []).append(source)
+
+    outstanding = line.requested
+    rows: list[tuple[int, int, list[PlannedSource]]] = []
+    for part_id, sources in drawn.items():
+        taken = sum(source.quantity for source in sources)
+        asked = min(outstanding, taken)
+        outstanding -= asked
+        rows.append((part_id, asked, sources))
+
+    if outstanding or not rows:
+        assigned_id = cast(int, line.component_id)
+        for index, (part_id, asked, sources) in enumerate(rows):
+            if part_id == assigned_id:
+                rows[index] = (part_id, asked + outstanding, sources)
+                break
+        else:
+            rows.append((assigned_id, outstanding, []))
+    return rows
 
 
 def snapshot_name(bom_name: str, when: datetime) -> str:
@@ -360,7 +486,7 @@ def execute_take(
     boards: int,
     source_location_id: int,
     overrides: dict[int, int] | None = None,
-    choices: dict[int, int] | None = None,
+    choices: dict[tuple[int, int | None], int] | None = None,
     user_id: int,
 ) -> BomTake:
     """Run the take: remove the stock and write the snapshot, all or nothing.
@@ -401,35 +527,36 @@ def execute_take(
         session.add(take)
         session.flush()  # its id, for the children below
         for line in plan.lines:
-            take_line = BomTakeLine(
-                take_id=cast(int, take.id),
-                references=line.references,
-                component_id=cast(int, line.component_id),
-                requested_quantity=line.requested,
-                taken_quantity=sum(s.quantity for s in line.sources),
-            )
-            session.add(take_line)
-            session.flush()
-            for source in line.sources:
-                movement = ss.remove_stock(
-                    session,
-                    component_id=cast(int, line.component_id),
-                    location_id=source.location_id,
-                    quantity=source.quantity,
-                    user_id=user_id,
-                    reason=StockReason.USAGE,
-                    note=take.name,
-                    commit=False,
+            for part_id, requested, sources in _snapshot_rows(line):
+                take_line = BomTakeLine(
+                    take_id=cast(int, take.id),
+                    references=line.references,
+                    component_id=part_id,
+                    requested_quantity=requested,
+                    taken_quantity=sum(s.quantity for s in sources),
                 )
-                session.add(
-                    BomTakeAllocation(
-                        take_id=cast(int, take.id),
-                        take_line_id=cast(int, take_line.id),
+                session.add(take_line)
+                session.flush()
+                for source in sources:
+                    movement = ss.remove_stock(
+                        session,
+                        component_id=part_id,
                         location_id=source.location_id,
                         quantity=source.quantity,
-                        movement_id=cast(int, movement.id),
+                        user_id=user_id,
+                        reason=StockReason.USAGE,
+                        note=take.name,
+                        commit=False,
                     )
-                )
+                    session.add(
+                        BomTakeAllocation(
+                            take_id=cast(int, take.id),
+                            take_line_id=cast(int, take_line.id),
+                            location_id=source.location_id,
+                            quantity=source.quantity,
+                            movement_id=cast(int, movement.id),
+                        )
+                    )
         session.commit()
     except Exception:
         # Half a BOM taken and reported as success is worse than asking the user

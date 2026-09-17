@@ -1073,11 +1073,6 @@ dialog.lightbox::backdrop { background: rgba(0, 0, 0, .82); }
    against an unbreakable designator group and against a wall of them went with
    the list they were protecting. */
 .take-blockers { margin-bottom: 12px; }
-/* Says what this take will NOT reach for, without looking like a refusal: the
-   blockers card above disables Confirm, this one never does. Temporary — it goes
-   when the take draws from equivalent parts too. */
-.take-note { margin-bottom: 12px; }
-.take-note p { margin: 0; font-size: 13px; }
 
 /* The reversal banner and the past-takes list on a snapshot / a BOM report. */
 .take-reversed {

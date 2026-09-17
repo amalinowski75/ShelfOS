@@ -18,15 +18,24 @@ from app.services import bom_take_service as svc
 router = APIRouter(tags=["bom takes"])
 
 
-def _answers(payload: BomTakeRequest) -> tuple[dict[int, int], dict[int, int]]:
-    """Split the per-line answers into the two maps the service takes."""
+def _answers(
+    payload: BomTakeRequest,
+) -> tuple[dict[int, int], dict[tuple[int, int | None], int]]:
+    """Split the per-line answers into the two maps the service takes.
+
+    A location is chosen for one ENTRY of a part, not for the line: a line built
+    from a reel and a bulk bag can be asked where to find each. An item that names
+    no entry is passed through as such — the service matches it to whichever entry
+    holds that bin, which is the only thing that can be said about an answer from a
+    page that rendered one picker for the whole line.
+    """
     overrides = {
         line.line_id: line.quantity
         for line in payload.lines
         if line.quantity is not None
     }
-    choices = {
-        line.line_id: line.source_location_id
+    choices: dict[tuple[int, int | None], int] = {
+        (line.line_id, line.component_id): line.source_location_id
         for line in payload.lines
         if line.source_location_id is not None
     }
@@ -36,6 +45,10 @@ def _answers(payload: BomTakeRequest) -> tuple[dict[int, int], dict[int, int]]:
 def _plan_json(plan: svc.TakePlan) -> dict[str, object]:
     def source(entry: svc.PlannedSource) -> dict[str, object]:
         return {
+            # Which entry of the part this bin holds: a line can draw on several,
+            # and the dialog names them and asks about each separately.
+            "component_id": entry.component_id,
+            "mpn": entry.mpn,
             "location_id": entry.location_id,
             "path": entry.path,
             "available": entry.available,
@@ -52,10 +65,6 @@ def _plan_json(plan: svc.TakePlan) -> dict[str, object]:
         "can_run": plan.can_run,
         "blocked_references": plan.blocked_references,
         "unanswered_references": plan.unanswered_references,
-        # Lines whose part has other entries the BOM report counts and this take
-        # does not (D15). Informational, never a refusal — it says what the two
-        # pages disagree about, and it goes when the take draws from them too.
-        "references_with_equivalents": plan.references_with_equivalents,
         "total_shortfall": plan.total_shortfall,
         "lines": [
             {
@@ -68,7 +77,6 @@ def _plan_json(plan: svc.TakePlan) -> dict[str, object]:
                 "shortfall": line.shortfall,
                 "needs_choice": line.needs_choice,
                 "blocked": line.blocked,
-                "equivalents": line.equivalents,
                 "sources": [source(s) for s in line.sources],
                 "candidates": [source(c) for c in line.candidates],
             }

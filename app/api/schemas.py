@@ -735,7 +735,13 @@ class BomTakeLineInput(BaseModel):
 
     line_id: int
     quantity: int | None = None  # None = whatever the board count works out to
-    source_location_id: int | None = None  # only when the line needed a choice
+    source_location_id: int | None = None  # only when a part needed a choice
+    # WHICH entry of the part the chosen location holds. A line can be built from
+    # several entries of one part (D15), so it can be asked more than once — the
+    # client then sends one item per answer, all naming the same line. Omitted for
+    # a plain quantity override, and omitted by an older client, which is read as
+    # the assigned component: that was the only entry it could have meant.
+    component_id: int | None = None
 
 
 class BomTakeRequest(BaseModel):

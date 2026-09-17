@@ -582,7 +582,6 @@ export function bomTakeFixture() {
         </div>
       </div>
       <div id="take-blockers" hidden><p id="take-blockers-text"></p></div>
-      <div id="take-equivalents" hidden><p id="take-equivalents-text"></p></div>
       <table id="take-table"><tbody id="take-rows"></tbody></table>
       <p class="error-row" id="take-error-row" role="alert" hidden>
         <span id="take-error"></span>
