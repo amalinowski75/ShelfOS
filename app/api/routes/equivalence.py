@@ -23,6 +23,7 @@ from app.api.schemas import (
 )
 from app.auth.deps import current_user_id
 from app.models.component import Component
+from app.services import component_service as cs
 from app.services import equivalence_service as svc
 from app.services import stock_service as ss
 from app.services._common import require_entity
@@ -35,20 +36,24 @@ def _read(session: Session, component_id: int) -> EquivalenceRead:
     """The group as the component page reads it, ungrouped parts included."""
     require_entity(session, Component, component_id, "component")
     group = svc.group_for(session, component_id)
-    members = [
-        require_entity(session, Component, member_id, "component")
-        for member_id in svc.equivalent_ids(session, component_id)
-    ]
+    member_ids = svc.equivalent_ids(session, component_id)
+    # Three queries for the whole panel, whatever its size: the memberships, the
+    # components, the stock. One `session.get` and one `total_quantity` per member
+    # is the shape that quietly turns a five-variant group into a dozen round
+    # trips — and the candidate list below has twenty-five rows.
+    components = cs.components_by_id(session, set(member_ids))
+    stock = ss.total_quantities_for(session, set(member_ids))
     rows = [
         EquivalenceMemberRead(
-            component_id=cast(int, member.id),
-            mpn=member.mpn,
-            manufacturer=member.manufacturer,
-            package=member.package,
-            stock=ss.total_quantity(session, cast(int, member.id)),
-            deleted=member.deleted_at is not None,
+            component_id=member_id,
+            mpn=components[member_id].mpn,
+            manufacturer=components[member_id].manufacturer,
+            package=components[member_id].package,
+            stock=stock.get(member_id, 0),
+            deleted=components[member_id].deleted_at is not None,
         )
-        for member in members
+        for member_id in member_ids
+        if member_id in components
     ]
     return EquivalenceRead(
         group_id=group.id if group else None,
@@ -81,16 +86,23 @@ def search_equivalent_candidates(
 ) -> list[EquivalenceCandidateRead]:
     """Parts that could be the same as this one, by substring of MPN or maker."""
     require_entity(session, Component, component_id, "component")
+    candidates = svc.search_candidates(session, component_id, q)
+    # Three queries for the whole list, not two per row. This runs on every pause
+    # in typing, so a per-row stock aggregate and a per-row membership lookup would
+    # put fifty round trips behind every burst of keystrokes.
+    ids = {cast(int, candidate.id) for candidate in candidates}
+    stock = ss.total_quantities_for(session, ids)
+    grouped = svc.memberships_for(session, ids)
     return [
         EquivalenceCandidateRead(
             component_id=cast(int, candidate.id),
             mpn=candidate.mpn,
             manufacturer=candidate.manufacturer,
             package=candidate.package,
-            stock=ss.total_quantity(session, cast(int, candidate.id)),
-            grouped=svc.membership(session, cast(int, candidate.id)) is not None,
+            stock=stock.get(cast(int, candidate.id), 0),
+            grouped=cast(int, candidate.id) in grouped,
         )
-        for candidate in svc.search_candidates(session, component_id, q)
+        for candidate in candidates
     ]
 
 
@@ -149,5 +161,7 @@ def remove_equivalent(
     a group somewhere else in the catalogue.
     """
     if other_id not in svc.equivalent_ids(session, component_id):
-        raise ValidationError("that component is not in this group of equivalent parts")
+        raise ValidationError(
+            "that component is not in this group of equivalent parts"
+        )
     svc.unlink_component(session, other_id)

@@ -1064,6 +1064,25 @@ def list_components(session: Session, *, type_id: int | None = None) -> list[Com
     return list(session.exec(statement.order_by(col(Component.id))).all())
 
 
+def components_by_id(
+    session: Session, component_ids: set[int]
+) -> dict[int, Component]:
+    """Fetch several components at once, soft-deleted ones included.
+
+    Deliberately NOT filtered on ``deleted_at``: the callers are the ones that have
+    to SHOW a part taken out of use — a BOM line's assignment, a group of
+    equivalent parts — and each decides for itself what a retired one means.
+    """
+    if not component_ids:
+        return {}
+    return {
+        cast(int, component.id): component
+        for component in session.exec(
+            select(Component).where(col(Component.id).in_(component_ids))
+        ).all()
+    }
+
+
 def find_components_by_mpn(session: Session, mpn: str) -> list[Component]:
     """Return non-deleted components matching an MPN (BOM import, §21).
 

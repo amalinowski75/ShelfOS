@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
 
 
 def _part(client: TestClient, mpn: str, *, manufacturer: str | None = None) -> int:
@@ -226,6 +228,70 @@ def test_an_unknown_component_is_a_404(client: TestClient) -> None:
         ).status_code
         == 404
     )
+
+
+def _count_selects(engine: Engine, tables: set[str]) -> tuple[dict[str, int], object]:
+    """Count SELECTs per table while the returned listener is attached."""
+    counts = dict.fromkeys(tables, 0)
+
+    def listen(conn, cursor, statement, parameters, context, executemany):  # type: ignore[no-untyped-def]
+        normalized = statement.lstrip().lower()
+        if not normalized.startswith("select"):
+            return
+        for table in tables:
+            if table in normalized:
+                counts[table] += 1
+
+    event.listen(engine, "before_cursor_execute", listen)
+    return counts, listen
+
+
+def test_the_candidate_search_does_not_query_per_row(
+    client: TestClient, engine: Engine
+) -> None:
+    """It runs on every pause in typing, so per-row lookups multiply fast."""
+    part = _part(client, "AO3400A")
+    for suffix in ("-TR", "/TRAY", "/BULK", "-T&R", "-TU"):
+        variant = _part(client, f"AO3400A{suffix}")
+        _stock(client, variant, 10)
+
+    counts, listener = _count_selects(
+        engine, {"component_locations", "component_equivalence_members"}
+    )
+    try:
+        rows = client.get(
+            f"/api/components/{part}/equivalents/candidates", params={"q": "AO3400"}
+        ).json()
+    finally:
+        event.remove(engine, "before_cursor_execute", listener)
+
+    assert len(rows) == 5
+    # One grouped aggregate for the stock and one lookup for the memberships,
+    # however many rows come back — not two more queries per candidate.
+    assert counts["component_locations"] == 1
+    assert counts["component_equivalence_members"] == 2  # the exclusions, then these
+
+
+def test_reading_a_group_does_not_query_per_member(
+    client: TestClient, engine: Engine
+) -> None:
+    ids = [_part(client, f"AO3400A-{n}") for n in range(4)]
+    for other in ids[1:]:
+        client.post(
+            f"/api/components/{ids[0]}/equivalents", json={"component_id": other}
+        )
+    _stock(client, ids[0], 40)
+
+    counts, listener = _count_selects(engine, {"component_locations", "components"})
+    try:
+        body = client.get(f"/api/components/{ids[0]}/equivalents").json()
+    finally:
+        event.remove(engine, "before_cursor_execute", listener)
+
+    assert len(body["members"]) == 4
+    assert counts["component_locations"] == 1  # one grouped sum for the whole panel
+    # The page's own component, then every member in one go — not one `get` each.
+    assert counts["components"] == 2
 
 
 def test_read_only_can_look_but_not_group(

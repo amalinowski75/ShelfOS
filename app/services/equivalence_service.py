@@ -61,6 +61,25 @@ def membership(
     ).first()
 
 
+def memberships_for(
+    session: Session, component_ids: set[int]
+) -> dict[int, ComponentEquivalenceMember]:
+    """Each of these components' membership, in one query rather than per row.
+
+    For a list of candidates, where "is this one already spoken for?" has to be
+    answered for every row at once. An ungrouped component is absent from the
+    result, exactly as :func:`membership` returns ``None`` for one.
+    """
+    if not component_ids:
+        return {}
+    rows = session.exec(
+        select(ComponentEquivalenceMember).where(
+            col(ComponentEquivalenceMember.component_id).in_(component_ids)
+        )
+    ).all()
+    return {member.component_id: member for member in rows}
+
+
 def group_for(
     session: Session, component_id: int
 ) -> ComponentEquivalenceGroup | None:
@@ -88,6 +107,11 @@ def equivalent_ids(session: Session, component_id: int) -> list[int]:
     Always returns at least the component itself, so a caller summing stock over
     "the parts this line can use" needs no special case for an ungrouped part —
     which is the overwhelmingly common one.
+
+    Includes members taken out of use, unflagged. They hold no stock — a part
+    cannot be retired while its stock is on the shelf — so a sum over this list is
+    right as it stands, but a caller that offers these ids as somewhere to TAKE
+    parts from has to check ``deleted_at`` itself.
     """
     member = membership(session, component_id)
     if member is None:
