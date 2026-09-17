@@ -933,6 +933,25 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
    row's right edge; later buttons reset to 0 (the flex `gap` spaces them) — else a
    second auto margin would split the space and strand Edit in the middle. */
 .link-item .btn { margin-left: auto; }
+
+/* ---------- equivalent parts panel (one physical part, several MPNs) ---------- */
+/* The note explaining why the entries are one part, under the card heading. */
+.eq-note { margin: -6px 0 12px; font-size: 13px; }
+/* The panel's own table is short by nature (a handful of variants), so it never
+   needs the 70vh scroll .table-wrap gives a data table. */
+.equivalents-widget .eq-table-wrap { max-height: none; }
+.equivalents-widget tfoot td { border-top: 1px solid var(--border); }
+/* Wider than the 440px default: the search results carry five columns, and an MPN
+   is exactly the kind of string that must not wrap. Capped and column-flexed so a
+   long result list scrolls inside the dialog rather than off the screen. */
+.eq-dialog { width: min(680px, calc(100vw - 32px)); max-height: calc(100vh - 48px); }
+.eq-dialog > article {
+  display: flex; flex-direction: column; max-height: calc(100vh - 48px);
+}
+.eq-dialog article > header { flex: none; }
+.eq-dialog .dialog-body { overflow-y: auto; }
+.eq-dialog .eq-results-wrap { max-height: 46vh; }
+.eq-dialog .eq-results-empty { margin: 0; }
 .link-item .btn ~ .btn { margin-left: 0; }
 
 /* ---------- component image gallery + lightbox (§10) ---------- */

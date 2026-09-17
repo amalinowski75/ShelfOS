@@ -632,6 +632,34 @@ def test_component_detail_page(client: TestClient) -> None:
     assert "image_gallery.js" in html
 
 
+def test_component_detail_carries_the_equivalent_parts_panel(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    """The panel is on the page for everyone; only a writer can change a group."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "AO3400A"}
+    ).json()
+
+    html = client.get(f"/components/{component['id']}").text
+    assert "equivalents-widget" in html
+    assert "equivalents.js" in html
+    # The search opens prefilled with this part's own number, which is what finds
+    # its variants ("AO3400A" → "AO3400A-TR").
+    assert 'data-mpn="AO3400A"' in html
+    assert "eq-add" in html  # a writer gets the button and its dialog
+    assert "eq-dialog" in html
+
+    client.post(
+        "/api/admin/users",
+        json={"username": "viewer", "password": "password123", "role": "read-only"},
+    )
+    web_login(anon_client, "viewer", "password123")
+    read_only = anon_client.get(f"/components/{component['id']}").text
+    assert "equivalents-widget" in read_only  # the group is still visible…
+    assert "eq-dialog" not in read_only  # …but there is no way to change it
+
+
 def test_component_detail_movements_name_who_moved_the_stock(
     client: TestClient, anon_client: TestClient
 ) -> None:

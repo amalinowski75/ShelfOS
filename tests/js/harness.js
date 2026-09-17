@@ -446,6 +446,41 @@ export function linksWidgetFixture({ withForm = true } = {}) {
     </div>`;
 }
 
+// The "Equivalent parts" panel on a component page: the group table plus the
+// search dialog a writer adds a variant from (mirrors component_detail.html).
+export function equivalentsWidgetFixture({ withDialog = true, mpn = "AO3400A" } = {}) {
+  const addBtn = withDialog
+    ? `<button type="button" class="btn eq-add"></button>`
+    : "";
+  const dialog = withDialog
+    ? `<dialog class="eq-dialog">
+         <header><strong>Add an equivalent part</strong></header>
+         <div class="dialog-body">
+           <input class="control eq-search" type="search" />
+           <div class="field eq-notes-field"><input class="control eq-notes" /></div>
+           <p class="error eq-error" hidden></p>
+           <div class="table-wrap eq-results-wrap" hidden>
+             <table class="data"><tbody class="eq-results"></tbody></table>
+           </div>
+           <p class="empty eq-results-empty"></p>
+         </div>
+       </dialog>`
+    : "";
+  return `
+    <div class="card equivalents-widget" data-component-id="7" data-mpn="${mpn}">
+      <div class="widget-head"><h2>Equivalent parts</h2>${addBtn}</div>
+      <p class="muted eq-note" hidden></p>
+      <div class="table-wrap eq-table-wrap" hidden>
+        <table class="data">
+          <tbody class="eq-rows"></tbody>
+          <tfoot class="eq-foot"></tfoot>
+        </table>
+      </div>
+      <p class="empty eq-empty" hidden>Nothing else in the catalogue is marked as this same part.</p>
+      ${dialog}
+    </div>`;
+}
+
 // The component-detail image gallery: the header thumbnail strip + the lightbox
 // dialog (mirrors component_detail.html).
 export function componentImagesFixture() {

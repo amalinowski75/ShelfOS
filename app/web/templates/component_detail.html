@@ -138,6 +138,74 @@
     {% endif %}
   </div>
 
+  {# The other catalogue entries that are this same physical part — tape, tray and
+     bulk of one component carry different MPNs, and a BOM line pointed at any of
+     them should see the total. Rows load from /api/components/<id>/equivalents. #}
+  <div class="card card-pad equivalents-widget"
+       data-component-id="{{ component.id }}"
+       data-mpn="{{ component.mpn or '' }}">
+    <div class="widget-head">
+      <h2>Equivalent parts</h2>
+      {% if can_write %}
+      <button type="button" class="btn btn-secondary btn-sm eq-add">+ Add</button>
+      {% endif %}
+    </div>
+    <p class="muted eq-note" hidden></p>
+    <div class="table-wrap eq-table-wrap" hidden>
+      <table class="data">
+        <thead>
+          <tr>
+            <th>MPN</th><th>Manufacturer</th><th>Package</th>
+            <th style="text-align:right">Stock</th><th></th>
+          </tr>
+        </thead>
+        <tbody class="eq-rows"></tbody>
+        <tfoot class="eq-foot"></tfoot>
+      </table>
+    </div>
+    <p class="empty eq-empty" hidden>
+      Nothing else in the catalogue is marked as this same part.
+    </p>
+    {% if can_write %}
+    <dialog class="eq-dialog">
+      <article>
+        <header>
+          <strong>Add an equivalent part</strong>
+          <button type="button" class="close" aria-label="Close" data-close></button>
+        </header>
+        <div class="dialog-body">
+        <div class="field">
+          <label for="eq-search">Search by MPN or manufacturer</label>
+          <input id="eq-search" class="control eq-search" type="search"
+                 placeholder="e.g. AO3400A" autocomplete="off" />
+        </div>
+        <div class="field eq-notes-field">
+          <label for="eq-notes">Why they are one part</label>
+          <input id="eq-notes" class="control eq-notes" maxlength="2000"
+                 placeholder="optional — e.g. tape and bulk of the same die" />
+        </div>
+        <p class="error eq-error" hidden></p>
+        <div class="table-wrap eq-results-wrap" hidden>
+          <table class="data">
+            <thead>
+              <tr>
+                <th>MPN</th><th>Manufacturer</th><th>Package</th>
+                <th style="text-align:right">Stock</th><th></th>
+              </tr>
+            </thead>
+            <tbody class="eq-results"></tbody>
+          </table>
+        </div>
+        <p class="empty eq-results-empty">Type part of an MPN to search.</p>
+        <footer>
+          <button type="button" class="btn btn-ghost" data-close>Close</button>
+        </footer>
+        </div>
+      </article>
+    </dialog>
+    {% endif %}
+  </div>
+
   <div class="card card-pad">
     <h2>Purchase history</h2>
     {% if history %}
@@ -255,6 +323,7 @@
 {% block scripts %}
 <script src="/static/attachments.js?v={{ static_version() }}"></script>
 <script src="/static/links.js?v={{ static_version() }}"></script>
+<script src="/static/equivalents.js?v={{ static_version() }}"></script>
 <script src="/static/image_gallery.js?v={{ static_version() }}"></script>
 {% if is_admin %}
 {% if not is_deleted %}
