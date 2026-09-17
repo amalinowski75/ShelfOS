@@ -162,6 +162,49 @@ database is missing — otherwise an index added to a model would reach new
 installations only, working on the developer's fresh database and not on the one
 that has the rows.
 
+## D15. One part, several catalogue entries  [2026-09-17]
+
+The same physical part reaches the shelves under more than one part number. Tape,
+tray and loose bulk of one transistor carry different MPNs — the packaging suffix
+is part of what you order — and a maker sometimes renumbers a part for reasons
+that have nothing to do with the silicon inside it. ShelfOS keeps them as separate
+components, and that stays: each one is a thing that can be ordered, received,
+priced and counted. (An MPN that is not unique ACROSS manufacturers is a
+different problem with a different answer — the maker is the tiebreaker there.)
+
+What was missing is the other half: "how many of these do I have?" is answered by
+the total across every entry that is the same part, and a BOM line pointed at one
+of them alone reads as short while the drawer beside it is full.
+
+So an **equivalence group** records that fact once, globally, rather than per BOM.
+Two new tables (`component_equivalence_groups`, `component_equivalence_members`)
+and **no column on `components`**: with no migrations, `create_all` adds a missing
+table to a running installation on the next restart but never a missing column, so
+a group reaches production while a `group_id` on the component would reach only a
+database rebuilt from scratch.
+
+Three rules make the group mean something:
+
+- **A component belongs to at most one group**, enforced by a unique key on
+  `component_id`. "Is the same part as" is transitive; there is deliberately no
+  way to say A matches B, B matches C, and A does not match C.
+- **A group of fewer than two members is deleted.** It says nothing, and left
+  standing it would adopt the next part added to its remaining member — a group
+  nobody created, with someone else's note already attached.
+- **Joining two existing groups is refused**, with the other group named. Merging
+  says every member of one equals every member of the other, which is a much
+  larger claim than adding one variant, and not one to make on a user's behalf.
+
+A part taken out of use keeps its membership: the delete is reversible, and
+dropping the row would lose a decision the restore could not bring back. It
+contributes no stock either way — a component cannot be deleted while its parts
+are on the shelf.
+
+Chosen over the alternative of letting a BOM line name several components, which
+was the shape first asked for. That version is less code, but the equivalence is
+then local to one BOM and has to be re-entered on the next one; the fact is about
+the parts, so it belongs to the parts.
+
 ## D14. HTMX is not used  [2026-09-06]
 
 D8 planned `app/web/` as "Jinja2 / HTMX". The Jinja2 half happened; the HTMX half

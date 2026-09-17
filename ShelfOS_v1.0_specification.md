@@ -98,6 +98,15 @@ Common fields:
 - mounting_type
 - notes
 
+### Equivalent parts
+
+The same physical part can appear as several components — tape, tray and bulk of
+one transistor carry different MPNs, and a maker sometimes renumbers a part. They
+stay separate entries, because each is a thing that can be ordered and received,
+and an **equivalence group** records that they are one part. A group is entered
+once, on the component page, and every BOM reads it: a line pointed at any member
+sees the stock of the whole group. See D15.
+
 ## Mounting Type
 
 Supported values:
