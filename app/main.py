@@ -27,6 +27,7 @@ from app.api.routes import (
     bom_takes,
     boms,
     components,
+    equivalence,
     invoices,
     label_enroll,
     labels,
@@ -65,6 +66,7 @@ _PROTECTED_ROUTERS = (
     manufacturers,
     links,
     labels,
+    equivalence,
 )
 
 

@@ -49,6 +49,61 @@ def test_total_quantities_by_component(session: Session) -> None:
     assert totals == {c1.id: 50, c2.id: 5}
 
 
+def test_total_quantities_for_only_the_components_asked_about(
+    session: Session,
+) -> None:
+    user = ensure_demo_user(session)
+    ctype = cs.create_type(session, "resistor")
+    wanted = cs.create_component(session, ctype.id, mpn="WANTED")
+    ignored = cs.create_component(session, ctype.id, mpn="IGNORED")
+    empty = cs.create_component(session, ctype.id, mpn="EMPTY")
+    loc_a = ls.create_location(session, type=LocationType.DRAWER, name="A")
+    loc_b = ls.create_location(session, type=LocationType.DRAWER, name="B")
+    ss.add_stock(
+        session,
+        component_id=wanted.id,
+        location_id=loc_a.id,
+        quantity=30,
+        user_id=user.id,
+    )
+    ss.add_stock(
+        session,
+        component_id=wanted.id,
+        location_id=loc_b.id,
+        quantity=20,
+        user_id=user.id,
+    )
+    ss.add_stock(
+        session,
+        component_id=ignored.id,
+        location_id=loc_a.id,
+        quantity=99,
+        user_id=user.id,
+    )
+
+    totals = ss.total_quantities_for(session, {wanted.id, empty.id})
+
+    # Summed across locations, and only for what was asked: a component with no
+    # stock anywhere is absent rather than present as zero.
+    assert totals == {wanted.id: 50}
+    assert ss.total_quantities_for(session, set()) == {}
+
+
+def test_components_by_id_includes_a_retired_one(session: Session) -> None:
+    ctype = cs.create_type(session, "resistor")
+    live = cs.create_component(session, ctype.id, mpn="LIVE")
+    gone = cs.create_component(session, ctype.id, mpn="GONE")
+    cs.soft_delete_component(session, gone.id, reason="discontinued", user_id=1)
+
+    found = cs.components_by_id(session, {live.id, gone.id})
+
+    # Deliberately unfiltered: the callers are the ones that have to SHOW a part
+    # taken out of use, marked, rather than let its row vanish.
+    assert set(found) == {live.id, gone.id}
+    assert found[gone.id].deleted_at is not None
+    assert cs.components_by_id(session, set()) == {}
+
+
 def test_list_component_locations_only_positive(session: Session) -> None:
     user = ensure_demo_user(session)
     ctype = cs.create_type(session, "resistor")

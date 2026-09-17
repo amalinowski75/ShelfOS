@@ -63,6 +63,28 @@ root (see D3).
 
 Invariant: exactly one value column filled, matching `data_type`.
 
+## component_equivalence_groups
+One physical part that the catalogue holds under several part numbers — tape,
+tray and bulk of the same transistor, or a maker's own renumbering. A BOM line
+pointed at any member reads the group's total stock.
+
+| field      | type   | notes                                           |
+|------------|--------|-------------------------------------------------|
+| id         | int PK |                                                 |
+| notes      | str?   | why these entries are one part                  |
+| created_by | int FK | → users.id                                      |
+| created_at | dt     |                                                 |
+
+## component_equivalence_members
+| field        | type   | notes                                         |
+|--------------|--------|-----------------------------------------------|
+| id           | int PK |                                               |
+| group_id     | int FK | → component_equivalence_groups.id             |
+| component_id | int FK | → components.id, **unique**                   |
+
+Invariant: a component belongs to at most one group ("is the same part as" is
+transitive), and a group with fewer than two members is deleted.
+
 ## locations
 | field     | type   | notes                             |
 |-----------|--------|-----------------------------------|
@@ -152,3 +174,5 @@ See D9 (generic change table).
 - component → locations (stock) → quantity.
 - component → stock_movements (history).
 - component → parameters (effective definitions from the type hierarchy).
+- component ↔ component: equivalence group = the same physical part under
+  another part number (stock sums across the group for a BOM).

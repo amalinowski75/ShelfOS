@@ -81,6 +81,20 @@ Priorities set by the user on 2026-07-08.
     skipped suite as passed, which is why the filtering is there rather than in
     `on: paths:`, where it would skip the required check itself.
 
+11. **One part under several indexes (equivalence groups).** ⏳ **In progress.**
+    Tape, tray and bulk of the same component carry different MPNs, so a BOM line
+    pointed at one of them reads as short while the drawer beside it is full. A
+    group says once, globally, that those entries are one part (D15). Landing in
+    three steps: the tables, service, API and the component page's panel; then the
+    BOM report summing the group; then the take drawing from the variants,
+    smallest stock first, so loose bags go before a full reel.
+
+    Deferred by the user on 2026-09-17, to be picked up after those three: showing
+    the group total on the **components list** as well. It is the table looked at
+    most often, and what a "stock" column there should say once a part can be
+    several entries is its own question — the BOM was the one that needed
+    answering first.
+
 Known gap, not yet closed: `delete_location` refuses only on non-zero stock, so
 the temporary branch a BOM take gathered from is deletable the moment the take
 empties it. Nothing breaks (SQLite does not enforce the key here, and the pages

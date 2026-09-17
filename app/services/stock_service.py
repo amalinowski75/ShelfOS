@@ -206,6 +206,29 @@ def quantity_from_movements(
     return int(total)
 
 
+def total_quantities_for(
+    session: Session, component_ids: set[int]
+) -> dict[int, int]:
+    """``{component_id: total}`` for JUST these components, in one query.
+
+    The whole-catalogue map above is the right tool for a page that lists every
+    component; for a handful of them it reads the entire stock table to answer a
+    question about five rows. A component with no stock anywhere is absent from the
+    result rather than present as zero, so callers read it with ``.get(id, 0)``.
+    """
+    if not component_ids:
+        return {}
+    rows = session.exec(
+        select(
+            ComponentLocation.component_id,
+            func.coalesce(func.sum(ComponentLocation.quantity), 0),
+        )
+        .where(col(ComponentLocation.component_id).in_(component_ids))
+        .group_by(col(ComponentLocation.component_id))
+    ).all()
+    return {component_id: int(total) for component_id, total in rows}
+
+
 def total_quantities_by_component(
     session: Session,
 ) -> dict[int, int]:

@@ -31,7 +31,12 @@ from app.models.enums import MatchDomain, MountingType, ParameterDataType
 from app.models.invoice import Invoice, InvoiceImportLine, InvoiceLine
 from app.models.location import ComponentLocation
 from app.models.match_rule import MatchRule
-from app.services import attachment_service, audit_service, link_service
+from app.services import (
+    attachment_service,
+    audit_service,
+    equivalence_service,
+    link_service,
+)
 from app.services import manufacturer_service as ms
 from app.services._common import refuse_if_deleted, require_entity
 from app.services.errors import DuplicateComponentError, ValidationError
@@ -1059,6 +1064,25 @@ def list_components(session: Session, *, type_id: int | None = None) -> list[Com
     return list(session.exec(statement.order_by(col(Component.id))).all())
 
 
+def components_by_id(
+    session: Session, component_ids: set[int]
+) -> dict[int, Component]:
+    """Fetch several components at once, soft-deleted ones included.
+
+    Deliberately NOT filtered on ``deleted_at``: the callers are the ones that have
+    to SHOW a part taken out of use — a BOM line's assignment, a group of
+    equivalent parts — and each decides for itself what a retired one means.
+    """
+    if not component_ids:
+        return {}
+    return {
+        cast(int, component.id): component
+        for component in session.exec(
+            select(Component).where(col(Component.id).in_(component_ids))
+        ).all()
+    }
+
+
 def find_components_by_mpn(session: Session, mpn: str) -> list[Component]:
     """Return non-deleted components matching an MPN (BOM import, §21).
 
@@ -1373,13 +1397,16 @@ def hard_delete_component(
     ).all():
         session.delete(cl)
     # Neither attachments nor links have an FK cascade — clean both here so a hard
-    # delete leaves nothing orphaned (§10, §20).
+    # delete leaves nothing orphaned (§10, §20). A membership in a group of
+    # equivalent parts goes the same way, and takes the group with it when that
+    # leaves one part equivalent to nothing.
     attachment_service.delete_attachments_for(
         session, entity_type="component", entity_id=component_id
     )
     link_service.delete_links_for(
         session, entity_type="component", entity_id=component_id
     )
+    equivalence_service.delete_members_for(session, component_id)
     session.delete(component)
     session.commit()
 

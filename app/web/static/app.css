@@ -321,6 +321,15 @@ table.data thead th {
 table.data tbody td { padding: 11px 14px; border-bottom: 1px solid var(--border); }
 table.data tbody tr:last-child td { border-bottom: none; }
 table.data tbody tr:hover { background: var(--row-hover); }
+/* A totals row. The base table only padded `tbody`, so a total sat flush against
+   the table's edge: its number landed 14px to the right of the column it sums and
+   its label started where no header does. Same padding as a body cell fixes both.
+   The rest is so the row reads as a conclusion rather than one more entry — a
+   heavier rule, a tinted ground, and its own weight. */
+table.data tfoot td {
+  padding: 11px 14px; border-top: 2px solid var(--border-strong);
+  background: var(--surface-2); font-weight: 650;
+}
 table.data td.num { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 table.data td.line-actions { text-align: right; white-space: nowrap; }
 table.data td.line-actions .btn { margin-left: 4px; }
@@ -933,6 +942,37 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
    row's right edge; later buttons reset to 0 (the flex `gap` spaces them) — else a
    second auto margin would split the space and strand Edit in the middle. */
 .link-item .btn { margin-left: auto; }
+
+/* ---------- equivalent parts panel (one physical part, several MPNs) ---------- */
+/* The note explaining why the entries are one part, under the card heading, with
+   the button that rewrites it on the same line. */
+.eq-note-row, .eq-note-form {
+  display: flex; align-items: center; gap: 10px; margin: -6px 0 12px;
+}
+.eq-note { margin: 0; font-size: 13px; }
+/* The text yields so a long note cannot push the button out of reach, and the
+   input takes the room the text had. */
+.eq-note-row .eq-note { flex: 1; min-width: 0; }
+.eq-note-form .eq-note-input { flex: 1; min-width: 0; }
+.eq-note-error { margin: -6px 0 12px; }
+/* The panel's own table is short by nature (a handful of variants), so it never
+   needs the 70vh scroll .table-wrap gives a data table. */
+.equivalents-widget .eq-table-wrap { max-height: none; }
+/* Air between the last variant and the total, so the rule above the total reads as
+   a break rather than another row's border. On the last BODY row, because
+   `border-collapse` leaves no room between cells for a margin to live in. */
+.equivalents-widget tbody tr:last-child td { padding-bottom: 20px; }
+/* Wider than the 440px default: the search results carry five columns, and an MPN
+   is exactly the kind of string that must not wrap. Capped and column-flexed so a
+   long result list scrolls inside the dialog rather than off the screen. */
+.eq-dialog { width: min(680px, calc(100vw - 32px)); max-height: calc(100vh - 48px); }
+.eq-dialog > article {
+  display: flex; flex-direction: column; max-height: calc(100vh - 48px);
+}
+.eq-dialog article > header { flex: none; }
+.eq-dialog .dialog-body { overflow-y: auto; }
+.eq-dialog .eq-results-wrap { max-height: 46vh; }
+.eq-dialog .eq-results-empty { margin: 0; }
 .link-item .btn ~ .btn { margin-left: 0; }
 
 /* ---------- component image gallery + lightbox (§10) ---------- */

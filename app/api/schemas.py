@@ -775,3 +775,66 @@ class BomAssignmentRead(BaseModel):
     references: str
     component_id: int
     created_at: datetime
+
+
+class EquivalenceLinkWrite(BaseModel):
+    """Another catalogue entry that is the same physical part as this one."""
+
+    component_id: int
+    # Only used when the group is being created (or has no note yet): the reason
+    # belongs to the group, not to the act of adding one more variant to it.
+    notes: str | None = None
+
+
+class EquivalenceNotesWrite(BaseModel):
+    """Why these catalogue entries are one part. Blank clears the note."""
+
+    notes: str | None = None
+
+
+class EquivalenceMemberRead(BaseModel):
+    """One catalogue entry in a group of equivalent parts.
+
+    Carries its own ``stock`` rather than only the group total: the point of the
+    panel is seeing that 400 of these sit under one index and 120 under another.
+    """
+
+    component_id: int
+    mpn: str | None
+    manufacturer: str | None
+    package: str | None
+    stock: int
+    deleted: bool
+
+
+class EquivalenceRead(BaseModel):
+    """A component's group of equivalent parts, as the component page reads it.
+
+    ``members`` always contains the component itself, so an ungrouped part is a
+    group of one rather than a special case the client has to spell out, and
+    ``total_stock`` is the number a BOM line pointed at any member would see: the
+    sum over EVERY member. A member taken out of use is included and contributes
+    nothing, because a part cannot be retired while its stock is on the shelf.
+    """
+
+    group_id: int | None
+    notes: str | None
+    total_stock: int
+    members: list[EquivalenceMemberRead]
+
+
+class EquivalenceCandidateRead(BaseModel):
+    """A part offered as "this is the same as that one".
+
+    ``grouped`` marks a candidate that already belongs to some other group. It is
+    still listed, because hiding it would leave the searcher looking for a part
+    that is plainly in the catalogue; the panel shows it as unavailable and says
+    why, which the add would otherwise only reveal after a failed click.
+    """
+
+    component_id: int
+    mpn: str | None
+    manufacturer: str | None
+    package: str | None
+    stock: int
+    grouped: bool
