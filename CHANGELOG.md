@@ -9,6 +9,48 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## A part that arrives with its picture
+
+- **#171** — an import from a shop URL or a scanned label now brings the product
+  photo home as well: it is downloaded onto the component as that component is
+  created, so the detail page the create jumps to shows the part instead of an
+  empty gallery. Every shop hands the URL over in an answer we already ask for, so
+  nothing costs an extra round-trip — Mouser's `ImagePath`, Digi-Key's `PhotoUrl`,
+  TME's `assets.primary_photo`, and element14's `image`, which gives a filename
+  rather than a URL, so the store host and the locale segment are assembled here.
+  (Any country store serves the `en_GB` path — `pl.farnell.com` answers it with the
+  same bytes `uk.farnell.com` does — so the locale is fixed per brand rather than
+  guessed from the store.)
+
+  Whether the file then arrives is the shop's business. Unlike the datasheet there
+  is no link kept and nothing is said: a photo that can't be downloaded leaves the
+  gallery empty, which states it plainly enough and is the cue to add one by hand.
+  Expect that of Mouser, whose images sit behind the same Akamai that already
+  refuses our datasheet downloads from a hosted server (#160).
+
+  The download is awaited before the dialog hands control back, because the caller
+  goes straight to the new component's page and a request still in flight would
+  miss the gallery that page loads — the photo would appear only after a reload.
+  It runs alongside the datasheet's rather than after it, and the dialog says it
+  is saving the files while they are in flight: each download is bounded by the
+  server's 30-second whole-fetch timeout, and a shop that stalls instead of
+  refusing would otherwise leave a form that no longer responds and explains
+  nothing.
+
+  element14 turned out to send a ready-made `mainImageURL` beside the filename its
+  documentation describes, so that is what the import takes; the documented
+  assembly (store host plus a locale segment) stayed as the fallback. Checking that
+  against a live answer also closed a gap in the tests: the fixture built from real
+  API bytes had its `image` branch cut, back when nothing read it.
+
+- **#171** — fixes, in passing, a hole the photo would have widened. A bag scanned
+  while the dialog is still up reopens it without resetting the datasheet and photo
+  URLs captured outside the form, and the new lookup only clears them once it
+  answers. So a second scan whose lookup FAILED — no key for that shop, the API
+  down, an unsupported code — left the previous part's datasheet (and now photo) to
+  be attached to whatever was then filled in by hand. They are dropped as the new
+  code goes in, before anything is looked up.
+
 ## An invoice line that crossed a thousand złotych
 
 - **#169** — a Mouser invoice whose line total reached `1 533,95` failed to

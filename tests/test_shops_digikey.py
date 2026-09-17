@@ -20,6 +20,7 @@ _PRODUCT = {
         "Manufacturer": {"Name": "Walsin Technology Corporation"},
         "Description": {"ProductDescription": "RES SMD 1.2K OHM 1% 1/16W 0402"},
         "DatasheetUrl": "https://example.com/ds.pdf",
+        "PhotoUrl": "https://mediacdn.digikey.com/photos/walsin/MR04X1201FTL.jpg",
         "Category": {"Name": "Chip Resistor - Surface Mount"},
         "Parameters": [
             {"ParameterText": "Resistance", "ValueText": "1.2 kOhms"},
@@ -80,6 +81,26 @@ def test_fetch_normalises_a_product() -> None:
     assert product.category == "resistor"  # inferred from "Chip Resistor…"
     # Values stay RAW; cleaning is client-side and NUMBER-only.
     assert dict(product.parameters)["Resistance"] == "1.2 kOhms"
+
+
+def test_fetch_takes_the_product_photo() -> None:
+    product = DigiKeyProvider().fetch(
+        "https://www.digikey.pl/pl/products/detail/walsin/MR04X1201FTL/13908146",
+        transport=_transport(),
+    )
+    assert (
+        product.image_url
+        == "https://mediacdn.digikey.com/photos/walsin/MR04X1201FTL.jpg"
+    )
+
+
+def test_a_photo_that_is_not_a_string_is_ignored() -> None:
+    """Every field here is shop-controlled, so none of them is assumed to be text."""
+    product = DigiKeyProvider().fetch(
+        "https://www.digikey.pl/pl/products/detail/walsin/MR04X1201FTL/13908146",
+        transport=_transport({"Product": {**_PRODUCT["Product"], "PhotoUrl": []}}),
+    )
+    assert product.image_url is None
 
 
 def test_fetch_takes_the_mpn_before_the_digikey_id() -> None:

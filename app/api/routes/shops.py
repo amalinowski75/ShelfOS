@@ -93,6 +93,7 @@ def lookup_product(
         description=product.description,
         package=product.package,
         datasheet_url=product.datasheet_url,
+        image_url=product.image_url,
         parameters=[ShopParameter(name=n, value=v) for n, v in product.parameters],
         source_url=product.source_url,
         from_label_only=product.from_label_only,

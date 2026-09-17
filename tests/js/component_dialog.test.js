@@ -804,3 +804,248 @@ describe("component_dialog.js — the datasheet a shop won't hand over", () => {
     );
   });
 });
+
+describe("component_dialog.js — the shop's product photo", () => {
+  // A shop import that carries a photo downloads it onto the new component, so the
+  // detail page the create jumps to already shows the part. No link fallback and no
+  // toast: an absent photo on the page that opens is the cue to add one by hand.
+  const PHOTO = "https://mediacdn.digikey.com/photos/USB5734.jpg";
+
+  function importedPart({ image, download = true }) {
+    const calls = [];
+    // The download answers a turn late, so a test can tell "the request was sent"
+    // from "the file is on the component": only the latter is worth anything to the
+    // page about to be opened.
+    const state = { stored: false };
+    const impl = (url, opts) => {
+      calls.push({ url, body: opts && opts.body ? JSON.parse(opts.body) : null });
+      if (url === "/api/shops/lookup")
+        return ok({
+          mpn: "USB5734",
+          source_url: "https://www.digikey.pl/ProductDetail/USB5734",
+          image_url: image,
+        });
+      if (url === "/api/attachments/from-url")
+        return new Promise((resolve) =>
+          setTimeout(() => {
+            state.stored = download;
+            resolve(
+              download
+                ? { ok: true, json: () => Promise.resolve({ id: 3 }) }
+                : {
+                    ok: false,
+                    status: 422,
+                    json: () =>
+                      Promise.resolve({ detail: "could not fetch the URL" }),
+                  },
+            );
+          }, 0),
+        );
+      if (url === "/api/components") return ok({ id: 7 });
+      return ok({});
+    };
+    return { calls, impl, state };
+  }
+
+  async function createAfterImport(page, onCreated = () => {}) {
+    open(page, onCreated, null, { importCode: "USB5734", navigates: true });
+    await tick();
+    page.document
+      .getElementById("component-form")
+      .dispatchEvent(
+        new page.window.Event("submit", { cancelable: true, bubbles: true }),
+      );
+    await tick();
+    await tick();
+  }
+
+  const photoCalls = (calls) =>
+    calls.filter(
+      (c) => c.url === "/api/attachments/from-url" && c.body.kind === "photo",
+    );
+
+  it("downloads it onto the component before the caller navigates", async () => {
+    // Awaited, not fired and forgotten: the caller's hook is what jumps to the new
+    // component's page, and a request still in flight would miss the gallery that
+    // page loads — the photo would be there only after a manual reload.
+    const { calls, impl, state } = importedPart({ image: PHOTO });
+    const page = loadPage(dialogFixture(), SCRIPTS, { fetchImpl: impl });
+    let atNavigation = null;
+
+    await createAfterImport(page, () => {
+      atNavigation = { sent: photoCalls(calls), stored: state.stored };
+    });
+
+    expect(atNavigation.stored).toBe(true); // the answer was in, not merely asked for
+    expect(atNavigation.sent).toHaveLength(1);
+    expect(atNavigation.sent[0].body).toMatchObject({
+      entity_type: "component",
+      entity_id: 7,
+      url: PHOTO,
+      kind: "photo",
+    });
+  });
+
+  it("asks for nothing when the shop offered no photo", async () => {
+    const { calls, impl } = importedPart({ image: null });
+    const page = loadPage(dialogFixture(), SCRIPTS, { fetchImpl: impl });
+
+    await createAfterImport(page);
+
+    expect(photoCalls(calls)).toHaveLength(0);
+  });
+
+  it("says nothing and links nothing when the download fails", async () => {
+    // Deliberately unlike the datasheet: a picture nobody asked for by name is not
+    // worth a toast, and a photo kept as a link would show up nowhere.
+    const { calls, impl } = importedPart({ image: PHOTO, download: false });
+    const session = {};
+    const page = loadPage(dialogFixture(), SCRIPTS, {
+      fetchImpl: impl,
+      sessionStorage: session,
+    });
+
+    await createAfterImport(page);
+
+    const kinds = calls
+      .filter((c) => c.url === "/api/links")
+      .map((c) => c.body.kind);
+    expect(kinds).toEqual(["shop"]); // the shop page, and nothing about a photo
+    expect(page.window.sessionStorage.getItem("shelfos:pending-toast")).toBe(null);
+    expect(page.document.querySelector(".toast")).toBe(null);
+  });
+
+  it("does not carry it into the next, manually filled component", async () => {
+    // The dialog is reused; a stale URL would attach the imported part's picture to
+    // a component created by hand right after.
+    const { calls, impl } = importedPart({ image: PHOTO });
+    const page = loadPage(dialogFixture(), SCRIPTS, { fetchImpl: impl });
+
+    await createAfterImport(page);
+    const afterImport = photoCalls(calls).length;
+
+    open(page, () => {});
+    await tick();
+    page.document
+      .getElementById("component-form")
+      .dispatchEvent(
+        new page.window.Event("submit", { cancelable: true, bubbles: true }),
+      );
+    await tick();
+    await tick();
+
+    expect(afterImport).toBe(1);
+    expect(photoCalls(calls)).toHaveLength(1); // still just the imported one
+  });
+});
+
+describe("component_dialog.js — what the import leaves behind", () => {
+  // The two files a shop import captures live outside the form, so the reset that
+  // a reopen does cannot clear them — and the new lookup only clears them once it
+  // answers. A lookup that fails before that is the case this covers.
+  const PHOTO = "https://mediacdn.digikey.com/photos/USB5734.jpg";
+  const DATASHEET = "https://www.digikey.pl/datasheet/USB5734.pdf";
+
+  function scanner() {
+    const calls = [];
+    let lookupFails = false;
+    const impl = (url, opts) => {
+      calls.push({ url, body: opts && opts.body ? JSON.parse(opts.body) : null });
+      if (url === "/api/shops/lookup") {
+        if (lookupFails)
+          return Promise.resolve({
+            ok: false,
+            status: 422,
+            json: () => Promise.resolve({ detail: "unsupported shop" }),
+          });
+        return ok({
+          mpn: "USB5734",
+          source_url: "https://www.digikey.pl/ProductDetail/USB5734",
+          datasheet_url: DATASHEET,
+          image_url: PHOTO,
+        });
+      }
+      if (url === "/api/attachments/from-url") return ok({ id: 3 });
+      if (url === "/api/components") return ok({ id: 7 });
+      return ok({});
+    };
+    return { calls, impl, fail: () => (lookupFails = true) };
+  }
+
+  async function submit(page) {
+    page.document
+      .getElementById("component-form")
+      .dispatchEvent(
+        new page.window.Event("submit", { cancelable: true, bubbles: true }),
+      );
+    await tick();
+    await tick();
+  }
+
+  it("does not attach the previous bag's files when the next lookup fails", async () => {
+    // Scan bag A (import lands, files captured) → bag B is scanned while the dialog
+    // is still up → B's lookup 422s → the user fills the form in by hand and
+    // creates. Component B must not come out wearing A's photo and datasheet.
+    const { calls, impl, fail } = scanner();
+    const page = loadPage(dialogFixture(), SCRIPTS, { fetchImpl: impl });
+    syncOpen(page);
+
+    open(page, () => {}, null, { importCode: "USB5734" });
+    await tick();
+    fail();
+    open(page, () => {}, null, { importCode: "NOT-A-SHOP" }); // the reopen path
+    await tick();
+    await submit(page);
+
+    const attached = calls
+      .filter((c) => c.url === "/api/attachments/from-url")
+      .map((c) => c.body.kind);
+    expect(attached).toEqual([]);
+    const linked = calls.filter((c) => c.url === "/api/links").map((c) => c.body.kind);
+    expect(linked).toEqual([]); // not even A's shop link
+  });
+
+  it("downloads the datasheet and the photo at the same time", async () => {
+    // Each download is bounded by the server's 30s whole-fetch timeout, and a shop
+    // that stalls rather than refusing would hold the dialog for both budgets if
+    // these ran one after the other.
+    let inFlight = 0;
+    let peak = 0;
+    const release = [];
+    const impl = (url, opts) => {
+      if (url === "/api/shops/lookup")
+        return ok({
+          mpn: "USB5734",
+          datasheet_url: DATASHEET,
+          image_url: PHOTO,
+        });
+      if (url === "/api/attachments/from-url") {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        return new Promise((resolve) =>
+          release.push(() => {
+            inFlight -= 1;
+            resolve({ ok: true, json: () => Promise.resolve({ id: 3 }) });
+          }),
+        );
+      }
+      if (url === "/api/components") return ok({ id: 7 });
+      return ok({});
+    };
+    const page = loadPage(dialogFixture(), SCRIPTS, { fetchImpl: impl });
+
+    open(page, () => {}, null, { importCode: "USB5734", navigates: true });
+    await tick();
+    const submitted = submit(page);
+    await tick();
+
+    expect(peak).toBe(2);
+    // …and the wait is explained rather than looking like a dead form.
+    const status = page.document.getElementById("shop-import-status");
+    expect(status.hidden).toBe(false);
+    expect(status.textContent).toMatch(/saving its files/i);
+
+    release.forEach((r) => r());
+    await submitted;
+  });
+});

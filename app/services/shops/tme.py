@@ -290,7 +290,8 @@ def _nested_name(container: object) -> str | None:
 
 
 def _absolute(url: str) -> str:
-    """Give a document URL a scheme and host; url_fetch rejects anything without.
+    """Give a document or photo URL a scheme and host; url_fetch rejects anything
+    without.
 
     Observed values are protocol-relative ("//www.tme.eu/Document/…"), but urljoin
     also covers a host-relative "/Document/…" — which would otherwise reach the user
@@ -328,6 +329,22 @@ def _parameters(payload: object) -> list[tuple[str, str]]:
             # Values stay raw: engineering cleaning is client-side and NUMBER-only.
             parameters.append((name, ", ".join(values)))
     return parameters
+
+
+def _photo_url(product: dict[str, Any]) -> str | None:
+    """``assets.primary_photo.prime`` — the product's main photo, or None.
+
+    It rides along on the core product, so the photo costs no extra round-trip
+    (unlike the datasheet, which needs the files endpoint). TME offers three
+    renditions; ``prime`` is the 640×480 middle one — the thumbnail is too small
+    to keep and we generate our own anyway, and the high-resolution one is
+    optional and several times the size for a picture shown at thumbnail size.
+    Like a document URL it arrives protocol-relative, hence _absolute.
+    """
+    assets = product.get("assets")
+    photo = assets.get("primary_photo") if isinstance(assets, dict) else None
+    url = _text(photo.get("prime")) if isinstance(photo, dict) else None
+    return _absolute(url) if url else None
 
 
 def _datasheet_url(payload: object) -> str | None:
@@ -521,6 +538,7 @@ class TmeProvider:
             manufacturer=_nested_name(product.get("manufacturer")),
             description=description,
             datasheet_url=datasheet_url,
+            image_url=_photo_url(product),
             category=infer_category(category, description),
             shop_category=category,
             parameters=parameters,

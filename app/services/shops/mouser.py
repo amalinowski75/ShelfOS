@@ -199,6 +199,7 @@ class MouserProvider:
             manufacturer=part.get("Manufacturer") or None,
             description=part.get("Description") or None,
             datasheet_url=part.get("DataSheetUrl") or None,
+            image_url=part.get("ImagePath") or None,
             category=infer_category(part.get("Category"), part.get("Description")),
             shop_category=part.get("Category") or None,
             parameters=parameters,

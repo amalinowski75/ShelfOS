@@ -46,6 +46,7 @@ def test_lookup_returns_a_normalised_product(
             category="resistor",
             shop_category="Chip Resistor - Surface Mount",
             datasheet_url="https://x/d.pdf",
+            image_url="https://x/photo.jpg",
             parameters=[("Resistance", "10k")],
         ),
     )
@@ -57,6 +58,8 @@ def test_lookup_returns_a_normalised_product(
     # The raw shop category rides along; the dialog mines it for the mounting type.
     assert body["shop_category"] == "Chip Resistor - Surface Mount"
     assert body["datasheet_url"] == "https://x/d.pdf"
+    # The photo the dialog downloads onto the component once it is created.
+    assert body["image_url"] == "https://x/photo.jpg"
     assert body["parameters"] == [{"name": "Resistance", "value": "10k"}]
 
 
