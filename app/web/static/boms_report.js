@@ -74,16 +74,34 @@ function bomMpnFormatter(cell) {
 // The component someone assigned to this line, if any. Kept in its own column so
 // the CSV's MPN stays visible beside it — "what the file says" and "what we build
 // it from" are different facts, and comparing them is the point.
+//
+// A "+N" beside it means the Stock figure counts N further catalogue entries that
+// are the same physical part (D15) — otherwise the column and the number beside it
+// would disagree, and the disagreement would look like a bug rather than the
+// feature. `matched` holds them, assigned first, so the tail is the variants.
 function bomAssignedFormatter(cell) {
   const assigned = cell.getValue();
   if (!assigned) return '<span class="muted">—</span>';
   const label = esc(assigned.mpn || `#${assigned.component_id}`);
   const link = `<a class="cell-mono" href="/components/${Number(assigned.component_id)}">${label}</a>`;
   // A part retired after it was assigned still shows — silently dropping the
-  // assignment would leave the line looking untouched.
-  return assigned.deleted
-    ? `${link} <span class="badge b-danger"><span class="dot"></span>not in use</span>`
-    : link;
+  // assignment would leave the line looking untouched. It counts no variants
+  // either: the report gives it none, because it can build nothing.
+  if (assigned.deleted) {
+    return `${link} <span class="badge b-danger"><span class="dot"></span>not in use</span>`;
+  }
+  const variants = (cell.getRow().getData().matched || []).slice(1);
+  if (!variants.length) return link;
+  // The title is an ATTRIBUTE, so every field goes through esc() — an MPN is a
+  // free-text component field, and a stray quote would otherwise end the
+  // attribute and put the rest of it into the markup.
+  const names = variants
+    .map((v) => `${esc(v.mpn || `#${Number(v.component_id)}`)} (${Number(v.stock)})`)
+    .join(", ");
+  return (
+    `${link} <span class="badge b-neutral"` +
+    ` title="Stock also counted from ${names}">+${variants.length}</span>`
+  );
 }
 
 // Substitutes on one line: each value links to its component; `esc()` guards the
