@@ -46,6 +46,8 @@ if (takeDialog && takeTableEl) {
   const rows = document.getElementById("take-rows");
   const blockers = document.getElementById("take-blockers");
   const blockersText = document.getElementById("take-blockers-text");
+  const equivalents = document.getElementById("take-equivalents");
+  const equivalentsText = document.getElementById("take-equivalents-text");
   const confirmBtn = document.getElementById("take-confirm");
   const summary = document.getElementById("take-summary");
   const errorRow = document.getElementById("take-error-row");
@@ -152,6 +154,19 @@ if (takeDialog && takeTableEl) {
       blockersText.textContent =
         `${blocked.length} line${blocked.length === 1 ? "" : "s"} cannot be taken, ` +
         "marked below. Assign a component to them on the report first.";
+    }
+    // The BOM report counts every entry of the same part; this take still draws
+    // only from the one assigned. Saying so beats letting the two pages disagree
+    // in silence — a line the report called "ok" can be short here. Not a
+    // refusal: what it will take is correct, just less than the report promised.
+    // Temporary, and it goes when the take draws from the variants too.
+    const sharing = plan.references_with_equivalents || [];
+    equivalents.hidden = sharing.length === 0;
+    if (sharing.length) {
+      equivalentsText.textContent =
+        `${sharing.length} line${sharing.length === 1 ? "" : "s"} ` +
+        "can also be built from other entries of the same part. This take draws " +
+        "only from the one assigned, so it may come up shorter than the report.";
     }
     confirmBtn.disabled = !plan.can_run;
     // Says what is in the way when the button will not go. The panel and the
