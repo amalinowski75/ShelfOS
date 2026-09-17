@@ -414,6 +414,37 @@ describe("bom_take.js — the preview", () => {
     expect(document.querySelector("#take-rows .badge").textContent).toContain("40");
   });
 
+  it("says when the report counted stock this take will not reach", async () => {
+    // The BOM report sums every entry of the same part; the take still draws only
+    // from the one assigned. Left unsaid, a line the report called "ok" would come
+    // up short here with nothing on screen explaining why.
+    const sharing = () =>
+      plan({ references_with_equivalents: ["R1,R2"] });
+    const { impl } = server(sharing);
+    const { document } = loadPage(bomTakeFixture(), SCRIPTS, { fetchImpl: impl });
+    document.getElementById("bom-take").click();
+    pickGathering(document);
+    await tick();
+
+    const note = document.getElementById("take-equivalents");
+    expect(note.hidden).toBe(false);
+    expect(note.textContent).toContain("1 line");
+    expect(note.textContent).toContain("only from the one assigned");
+    // Informational, never a refusal: what it takes is correct, just less than
+    // the report promised.
+    expect(document.getElementById("take-confirm").disabled).toBe(false);
+  });
+
+  it("keeps quiet when no line has another entry of its part", async () => {
+    const { impl } = server(plan);
+    const { document } = loadPage(bomTakeFixture(), SCRIPTS, { fetchImpl: impl });
+    document.getElementById("bom-take").click();
+    pickGathering(document);
+    await tick();
+
+    expect(document.getElementById("take-equivalents").hidden).toBe(true);
+  });
+
   it("shows what fits of a designator group and the whole of it on hover", async () => {
     // "R1, R2, … R48" is as wide as the board is big; the cell would otherwise set
     // the column width for the entire table.

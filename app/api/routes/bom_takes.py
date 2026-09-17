@@ -52,6 +52,10 @@ def _plan_json(plan: svc.TakePlan) -> dict[str, object]:
         "can_run": plan.can_run,
         "blocked_references": plan.blocked_references,
         "unanswered_references": plan.unanswered_references,
+        # Lines whose part has other entries the BOM report counts and this take
+        # does not (D15). Informational, never a refusal — it says what the two
+        # pages disagree about, and it goes when the take draws from them too.
+        "references_with_equivalents": plan.references_with_equivalents,
         "total_shortfall": plan.total_shortfall,
         "lines": [
             {
@@ -64,6 +68,7 @@ def _plan_json(plan: svc.TakePlan) -> dict[str, object]:
                 "shortfall": line.shortfall,
                 "needs_choice": line.needs_choice,
                 "blocked": line.blocked,
+                "equivalents": line.equivalents,
                 "sources": [source(s) for s in line.sources],
                 "candidates": [source(c) for c in line.candidates],
             }

@@ -10,6 +10,7 @@ from app import config
 from app.models.enums import LocationType, ParameterDataType
 from app.services import bom_service as bs
 from app.services import component_service as cs
+from app.services import equivalence_service as es
 from app.services import location_service as ls
 from app.services import stock_service as ss
 from app.services.errors import NotFoundError, ValidationError
@@ -460,6 +461,253 @@ def test_assigning_again_replaces_the_choice(
     line_report = bs.build_bom_report(session, bom.id)["lines"][0]
     assert line_report["assigned"]["component_id"] == second.id
     assert line_report["stock"] == 7
+
+
+# --- one part under several indexes (D15) ----------------------------------
+
+
+def _grouped(session: Session):  # type: ignore[no-untyped-def]
+    """A one-line BOM needing 10, and three stocked entries of ONE part.
+
+    40 loose, 400 on tape, 250 on a tray — the shape the whole feature exists for:
+    a line pointed at the loose bag is short of a 20-board run while 650 of the
+    same transistor sit beside it under other part numbers.
+    """
+    resistor = _inventory(session)
+    for mpn, stock in (("PART-BULK", 40), ("PART-TR", 400), ("PART-TRAY", 250)):
+        resistor(mpn, 1000, stock)
+    parts = {
+        mpn: cs.find_components_by_mpn(session, mpn)[0]
+        for mpn in ("PART-BULK", "PART-TR", "PART-TRAY")
+    }
+    data = b"Reference,Qty,Value,MPN\nR1,10,1k,\n"  # no MPN: assignment only
+    bom = bs.create_bom(session, name="b", filename="b.csv", data=data, user_id=1)
+    return bom, bs.get_bom_lines(session, bom.id)[0], parts
+
+
+def test_a_resolved_line_counts_every_entry_of_the_same_part(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    bom, line, parts = _grouped(session)
+    bs.assign_component(
+        session, bom.id, line.id, component_id=parts["PART-BULK"].id, user_id=1
+    )
+
+    alone = bs.build_bom_report(session, bom.id, boards=20)["lines"][0]
+    assert alone["stock"] == 40  # the assigned entry on its own
+    assert alone["status"] == "short" and alone["missing"] == 160
+
+    es.link_components(
+        session, parts["PART-BULK"].id, parts["PART-TR"].id, user_id=1
+    )
+    es.link_components(
+        session, parts["PART-BULK"].id, parts["PART-TRAY"].id, user_id=1
+    )
+    grouped = bs.build_bom_report(session, bom.id, boards=20)["lines"][0]
+
+    # The same line, the same assignment, the same shelves — only the catalogue
+    # now says the three entries are one part.
+    assert grouped["stock"] == 690
+    assert grouped["status"] == "ok" and grouped["missing"] == 0
+    assert grouped["boards_possible"] == 69  # 690 ÷ 10 per board
+
+
+def test_the_assigned_entry_comes_first_among_its_equivalents(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    bom, line, parts = _grouped(session)
+    es.link_components(
+        session, parts["PART-TR"].id, parts["PART-BULK"].id, user_id=1
+    )
+    bs.assign_component(
+        session, bom.id, line.id, component_id=parts["PART-BULK"].id, user_id=1
+    )
+
+    matched = bs.build_bom_report(session, bom.id)["lines"][0]["matched"]
+
+    # PART-TR was grouped FIRST, so member order alone would put it at the head —
+    # and the report page sends a row click to `matched[0]`, which has to be the
+    # part the line is actually assigned to.
+    assert [m["mpn"] for m in matched] == ["PART-BULK", "PART-TR"]
+    assert matched[0]["stock"] == 40 and matched[1]["stock"] == 400
+
+
+def test_a_retired_variant_adds_nothing_and_is_not_listed(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    bom, line, parts = _grouped(session)
+    es.link_components(
+        session, parts["PART-BULK"].id, parts["PART-TR"].id, user_id=1
+    )
+    bs.assign_component(
+        session, bom.id, line.id, component_id=parts["PART-BULK"].id, user_id=1
+    )
+    # Empty it first: a part cannot be taken out of use while its stock is on the
+    # shelf, which is also why it can contribute nothing afterwards.
+    where = ss.list_component_locations(session, parts["PART-TR"].id)[0]
+    ss.remove_stock(
+        session,
+        component_id=parts["PART-TR"].id,
+        location_id=where.location_id,
+        quantity=400,
+        user_id=1,
+    )
+    cs.soft_delete_component(
+        session, parts["PART-TR"].id, reason="discontinued", user_id=1
+    )
+
+    report_line = bs.build_bom_report(session, bom.id)["lines"][0]
+
+    # Listed nowhere a take could reach for it: `matched` is the parts this
+    # figure is summed over, and a retired entry is not one of them.
+    assert [m["mpn"] for m in report_line["matched"]] == ["PART-BULK"]
+    assert report_line["stock"] == 40
+
+
+def test_an_unresolved_line_is_not_widened_into_a_bigger_guess(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    resistor = _inventory(session)
+    resistor("RES-1K", 1000, 5)
+    resistor("RES-1K-TR", 1000, 900)
+    named = cs.find_components_by_mpn(session, "RES-1K")[0]
+    tape = cs.find_components_by_mpn(session, "RES-1K-TR")[0]
+    es.link_components(session, named.id, tape.id, user_id=1)
+    bom = _bom_of(session, "R1,10,1k,RES-1K,\n")
+
+    report_line = bs.build_bom_report(session, bom.id)["lines"][0]
+
+    # Nobody has said what this line is built from. The MPN lookup is a candidate,
+    # not an answer, and following its group would turn one guess into a larger
+    # one — with a stock figure behind it that reads like fact.
+    assert report_line["status"] == "unresolved"
+    assert [m["mpn"] for m in report_line["matched"]] == ["RES-1K"]
+
+
+def test_two_lines_sharing_a_group_do_not_each_claim_all_of_it(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """The headline number must not count one shelf twice."""
+    resistor = _inventory(session)
+    resistor("PART-BULK", 1000, 40)
+    resistor("PART-TR", 1000, 650)
+    bulk = cs.find_components_by_mpn(session, "PART-BULK")[0]
+    tape = cs.find_components_by_mpn(session, "PART-TR")[0]
+    es.link_components(session, bulk.id, tape.id, user_id=1)
+    bom = _bom_of(session, "R1,10,1k,,\nR2,10,1k,,\n")
+    first, second = bs.get_bom_lines(session, bom.id)
+    # The natural workflow the group makes possible: one line off the reel, the
+    # other out of the bag. Two assignments, one shelf.
+    bs.assign_component(session, bom.id, first.id, component_id=bulk.id, user_id=1)
+    bs.assign_component(session, bom.id, second.id, component_id=tape.id, user_id=1)
+
+    report = bs.build_bom_report(session, bom.id)
+
+    # Both lines still SHOW the whole pool — that is what is on the shelf for
+    # each, and the per-line figures have never been allocated.
+    assert [ln["stock"] for ln in report["lines"]] == [690, 690]
+    assert [ln["boards_possible"] for ln in report["lines"]] == [69, 69]
+    # The summary is the number someone acts on, and 690 parts consumed 20 at a
+    # time is 34 boards, not 69.
+    assert report["summary"]["buildable"] == 34
+
+
+def test_two_lines_on_one_ungrouped_part_share_its_stock_too(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    resistor = _inventory(session)
+    resistor("ONE-PART", 1000, 50)
+    part = cs.find_components_by_mpn(session, "ONE-PART")[0]
+    bom = _bom_of(session, "R1,10,1k,,\nR2,10,1k,,\n")
+    for line in bs.get_bom_lines(session, bom.id):
+        bs.assign_component(session, bom.id, line.id, component_id=part.id, user_id=1)
+
+    report = bs.build_bom_report(session, bom.id)
+
+    # Not a grouping problem — the same shelf reached twice. Grouping only made it
+    # easy to hit by accident, so the pool is keyed on the parts drawn from, which
+    # covers a plain repeat assignment as well.
+    assert report["summary"]["buildable"] == 2  # 50 ÷ 20 per board
+
+
+def test_separate_pools_still_take_the_smallest(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    resistor = _inventory(session)
+    resistor("PLENTY", 1000, 900)
+    resistor("SCARCE", 2000, 25)
+    bom = _bom_of(session, "R1,10,1k,,\nR2,10,2k,,\n")
+    first, second = bs.get_bom_lines(session, bom.id)
+    bs.assign_component(
+        session,
+        bom.id,
+        first.id,
+        component_id=cs.find_components_by_mpn(session, "PLENTY")[0].id,
+        user_id=1,
+    )
+    bs.assign_component(
+        session,
+        bom.id,
+        second.id,
+        component_id=cs.find_components_by_mpn(session, "SCARCE")[0].id,
+        user_id=1,
+    )
+
+    report = bs.build_bom_report(session, bom.id)
+
+    # Nothing is shared here, so the answer is the limiting line, as before.
+    assert report["summary"]["buildable"] == 2  # 25 ÷ 10, not 900 ÷ 10
+
+
+def test_the_group_lookup_does_not_query_per_line(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """Two queries for the whole BOM, not two per assigned line."""
+    from sqlalchemy import event
+
+    resistor = _inventory(session)
+    rows = []
+    for n in range(4):
+        resistor(f"P{n}", 1000 + n, 10)
+        rows.append(f"R{n},1,{n}k,\n")
+    bom = bs.create_bom(
+        session,
+        name="b",
+        filename="b.csv",
+        data=b"Reference,Qty,Value,MPN\n" + "".join(rows).encode(),
+        user_id=1,
+    )
+    for n, line in enumerate(bs.get_bom_lines(session, bom.id)):
+        bs.assign_component(
+            session,
+            bom.id,
+            line.id,
+            component_id=cs.find_components_by_mpn(session, f"P{n}")[0].id,
+            user_id=1,
+        )
+
+    member_selects = 0
+
+    def count(conn, cursor, statement, parameters, context, executemany):  # type: ignore[no-untyped-def]
+        nonlocal member_selects
+        normalized = statement.lstrip().lower()
+        if (
+            normalized.startswith("select")
+            and "component_equivalence_members" in normalized
+        ):
+            member_selects += 1
+
+    bind = session.get_bind()
+    event.listen(bind, "before_cursor_execute", count)
+    try:
+        report = bs.build_bom_report(session, bom.id)
+    finally:
+        event.remove(bind, "before_cursor_execute", count)
+
+    assert len(report["lines"]) == 4
+    # One lookup for every assigned part's membership; none of them is grouped, so
+    # there is no second query for the members of a group.
+    assert member_selects == 1
 
 
 def test_assignment_overrides_even_a_line_that_already_matches(

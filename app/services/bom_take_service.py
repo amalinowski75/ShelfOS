@@ -33,6 +33,7 @@ from app.models.component import Component
 from app.models.enums import StockReason
 from app.models.location import ComponentLocation, Location
 from app.services import bom_service as bs
+from app.services import equivalence_service as es
 from app.services import location_service as ls
 from app.services import stock_service as ss
 from app.services._common import require_entity
@@ -73,6 +74,12 @@ class PlannedLine:
     needs_choice: bool = False
     shortfall: int = 0
     blocked: str | None = None
+    # How many OTHER catalogue entries are the same part as the assigned one
+    # (D15) — stock this take does not reach for, although the BOM report counts
+    # it. Reported so the dialog can say so instead of quietly disagreeing with
+    # the page the user just read. Temporary: it goes when the take itself draws
+    # from the variants.
+    equivalents: int = 0
 
 
 @dataclass
@@ -99,6 +106,11 @@ class TakePlan:
     @property
     def total_shortfall(self) -> int:
         return sum(ln.shortfall for ln in self.lines)
+
+    @property
+    def references_with_equivalents(self) -> list[str]:
+        """Lines whose part has other entries this take will not draw from."""
+        return [ln.references for ln in self.lines if ln.equivalents]
 
 
 def components_by_id(session: Session, ids: set[int]) -> dict[int, Component]:
@@ -183,6 +195,23 @@ def plan_take(
         session,
         {c.id for c in components.values() if c.deleted_at is None and c.id},
     )
+    # What the BOM report counts and this take does not: the other live entries of
+    # the same part (D15). Two queries for the plan, and only so the dialog can
+    # say so out loud. Goes when the take learns to draw from them.
+    same_part = es.equivalent_ids_for(session, set(components))
+    variants = components_by_id(
+        session, {member for members in same_part.values() for member in members}
+    )
+    ignored_variants = {
+        component_id: sum(
+            1
+            for member in members
+            if member != component_id
+            and (other := variants.get(member)) is not None
+            and other.deleted_at is None
+        )
+        for component_id, members in same_part.items()
+    }
     # What each slot has LEFT as the plan walks the lines. Two designator groups
     # can be assigned to the same component (the assignment is unique per
     # references, not per component), and without this each of them would plan
@@ -228,6 +257,7 @@ def plan_take(
 
         entry.component_id = component.id
         component_id = cast(int, component.id)
+        entry.equivalents = ignored_variants.get(component_id, 0)
 
         def claim(source: PlannedSource, amount: int, part: int = component_id) -> int:
             """Take ``amount`` from this slot and keep the running total honest."""

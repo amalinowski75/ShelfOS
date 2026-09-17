@@ -29,6 +29,7 @@ from app.models.component import (
 from app.models.enums import AttachmentKind, ParameterDataType
 from app.services import attachment_service, link_service
 from app.services import component_service as cs
+from app.services import equivalence_service as es
 from app.services import manufacturer_service as mfs
 from app.services import stock_service as ss
 from app.services._common import require_entity
@@ -641,9 +642,16 @@ def build_bom_report(
 
     ``boards`` is how many copies of the board are being built: it scales what each
     line *needs* (``total_quantity``), and hence its status, but not what stock can
-    *cover* — ``boards_possible`` (per line) and ``summary.buildable`` (its minimum)
-    stay measured in whole boards, so they answer "how many boards will these parts
-    make?" whatever number was asked for.
+    *cover* — ``boards_possible`` (per line) and ``summary.buildable`` stay measured
+    in whole boards, so they answer "how many boards will these parts make?"
+    whatever number was asked for.
+
+    The per-line figures — ``stock``, ``missing``, ``boards_possible`` — are NOT
+    allocated across lines: each shows the whole of what its parts hold, exactly as
+    the substitute suggestions do. Two lines built from the same parts therefore
+    both show all of it. ``summary.buildable`` is the number that must not be
+    fooled by that, so it is computed per POOL of shared stock: the parts a line
+    draws on, divided by what every line drawing on them needs per board.
 
     A line is *resolved* when a person has assigned a live component to it, and
     that is the only thing this report accepts as knowing what a line is built
@@ -657,6 +665,19 @@ def build_bom_report(
     and one unresolved line caps it at 0. MPN candidates (``matched``) and
     substitutes are still reported per line — they are what the picker offers —
     but neither counts toward buildability.
+
+    A resolved line's stock is the total across every catalogue entry that is the
+    SAME PART as the one assigned (D15). Tape, tray and loose bulk of one
+    transistor carry different MPNs and are separate components, so a line pointed
+    at the reel would otherwise read as short with the bulk bag sitting beside it
+    on the shelf. The assignment still names one component — that is the decision —
+    and the group only widens where its stock is counted from.
+
+    ``matched`` carries those entries for a resolved line, the assigned one first
+    (the page treats its head as the line's own component). Retired variants are
+    left out: they hold no stock, and the list is also what a take may draw from.
+    An UNRESOLVED line's ``matched`` is unchanged — the MPN candidates, which are
+    a guess and are not widened into a bigger one.
     """
     boards = max(1, boards)
     bom = get_bom(session, bom_id)
@@ -665,11 +686,20 @@ def build_bom_report(
     assignments = list_assignments(session, bom_id)
     assigned_by_refs = {a.references: a for a in assignments}
     ordered_refs = {marked.references for marked in list_ordered(session, bom_id)}
-    # Resolve the assigned components in one query, like the stock totals and the
-    # value definitions below — not one `session.get` per line.
+    # What each assigned part is the same thing as (§D15). Two queries for the
+    # whole BOM, not two per line.
+    same_part = es.equivalent_ids_for(
+        session, {a.component_id for a in assignments}
+    )
+    # Resolve the assigned components AND their variants in one query, like the
+    # stock totals and the value definitions below — not one `session.get` per line.
     assigned_components = {
         cast(int, c.id): c
-        for c in _components_by_id(session, {a.component_id for a in assignments})
+        for c in _components_by_id(
+            session,
+            {a.component_id for a in assignments}
+            | {member for ids in same_part.values() for member in ids},
+        )
     }
     # Resolve each substitutable category's value parameter once (not per line).
     value_defs = _value_defs_by_category(
@@ -680,7 +710,18 @@ def build_bom_report(
     # "Assign the obvious ones" drives to zero, and what a bulk take will demand
     # be zero. It reaches `summary` through the `**counts` splat below.
     counts = {"ok": 0, "short": 0, "out": 0, "unresolved": 0}
-    buildable: int | None = None
+    # Whole boards the run can make, worked out per POOL of shared stock rather
+    # than per line. Two lines drawing on the same parts — "R1 off the reel, R2
+    # out of the bag", now one group — each see the same total, so a per-line
+    # minimum would count that stock twice and promise boards the shelf cannot
+    # make. The key is the set of components a line draws on, so lines assigned to
+    # different members of one group land in the same pool, and so do two lines
+    # assigned to the same ungrouped part.
+    pool_stock: dict[frozenset[int], int] = {}
+    pool_demand: dict[frozenset[int], int] = {}
+    # A line that stops the run outright: unresolved, or one that needs no parts
+    # at all (which the old per-line minimum also read as zero).
+    blocks_the_run = False
     report_lines: list[dict[str, object]] = []
 
     for line in lines:
@@ -704,7 +745,26 @@ def build_bom_report(
         resolved = assigned_live
 
         if assigned_live:
-            matched = [cast(Component, assigned_component)]
+            # The assigned part AND everything the catalogue says is the same
+            # part: a line pointed at the reel is short by nothing if the bulk bag
+            # beside it covers the rest. The assigned one comes first, because the
+            # page treats the head of this list as the line's own component (it is
+            # where clicking the row goes).
+            #
+            # Retired variants are left out rather than shown at zero. They hold no
+            # stock — a part cannot be taken out of use while its stock is on the
+            # shelf — so this list stays what it says it is: the parts this line's
+            # figure is summed over, and the ones a take could draw from.
+            head = cast(Component, assigned_component)
+            assigned_id = cast(int, head.id)
+            variants = [
+                component
+                for member_id in same_part.get(assigned_id, [])
+                if member_id != assigned_id
+                and (component := assigned_components.get(member_id)) is not None
+                and component.deleted_at is None
+            ]
+            matched = [head, *variants]
         elif assignment is not None:
             matched = []
         else:
@@ -735,7 +795,12 @@ def build_bom_report(
         per_line = (
             matched_stock // line.quantity if resolved and line.quantity else 0
         )
-        buildable = per_line if buildable is None else min(buildable, per_line)
+        if resolved and line.quantity:
+            pool = frozenset(cast(int, c.id) for c in matched)
+            pool_stock[pool] = matched_stock
+            pool_demand[pool] = pool_demand.get(pool, 0) + line.quantity
+        else:
+            blocks_the_run = True
 
         # Substitutes answer "what else could go here?" — a question already
         # answered once a component has been assigned.
@@ -780,6 +845,9 @@ def build_bom_report(
                 # about stock: an ordered line stays short until the parts land.
                 "ordered": line.references in ordered_refs,
                 "stock": matched_stock,
+                # For a resolved line: the assigned part and its equivalents, in
+                # the order the stock figure sums them. For an unresolved one: the
+                # MPN candidates.
                 "matched": [
                     {
                         "component_id": c.id,
@@ -805,6 +873,18 @@ def build_bom_report(
                 ),
                 "substitutes": substitutes,
             }
+        )
+
+    # The limiting pool, not the limiting line. `None` for a BOM with no lines at
+    # all — "we have not been asked" rather than "none" — which is what the
+    # per-line minimum used to say by never being set.
+    if not lines:
+        buildable: int | None = None
+    elif blocks_the_run:
+        buildable = 0
+    else:
+        buildable = min(
+            pool_stock[pool] // demand for pool, demand in pool_demand.items()
         )
 
     return {

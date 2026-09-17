@@ -119,6 +119,41 @@ def equivalent_ids(session: Session, component_id: int) -> list[int]:
     return [m.component_id for m in members_of(session, member.group_id)]
 
 
+def equivalent_ids_for(
+    session: Session, component_ids: set[int]
+) -> dict[int, list[int]]:
+    """:func:`equivalent_ids` for several components at once, in two queries.
+
+    For the BOM report, which asks the question once per assigned line and would
+    otherwise walk the membership table twice per line. Every component asked
+    about appears in the result, an ungrouped one mapped to itself alone, so the
+    caller reads it the same way whatever the answer.
+
+    Includes retired members, with the warning :func:`equivalent_ids` gives.
+    """
+    if not component_ids:
+        return {}
+    mine = memberships_for(session, component_ids)
+    group_ids = {member.group_id for member in mine.values()}
+    by_group: dict[int, list[int]] = {}
+    if group_ids:
+        rows = session.exec(
+            select(ComponentEquivalenceMember)
+            .where(col(ComponentEquivalenceMember.group_id).in_(group_ids))
+            .order_by(col(ComponentEquivalenceMember.id))
+        ).all()
+        for row in rows:
+            by_group.setdefault(row.group_id, []).append(row.component_id)
+    return {
+        component_id: (
+            by_group[mine[component_id].group_id]
+            if component_id in mine
+            else [component_id]
+        )
+        for component_id in component_ids
+    }
+
+
 _CANDIDATE_LIMIT = 25
 # LIKE's own wildcards, escaped so a typed "%" searches for a per-cent sign rather
 # than matching the whole catalogue.

@@ -62,6 +62,46 @@ def take_ready(client: TestClient):  # type: ignore[no-untyped-def]
     }
 
 
+def test_preview_names_the_lines_whose_part_has_other_entries(
+    client: TestClient, take_ready
+) -> None:  # type: ignore[no-untyped-def]
+    """The BOM report counts a group; this take does not, and says so."""
+    ctype = client.post("/api/types", json={"name": "IC2"}).json()
+    tape = client.post(
+        "/api/components",
+        json={"type_id": ctype["id"], "mpn": "PART-A-TR"},
+    ).json()
+    shelf = client.post("/api/locations", json={"type": "shelf", "name": "R"}).json()
+    client.post(
+        "/api/stock/add",
+        json={
+            "component_id": tape["id"],
+            "location_id": shelf["id"],
+            "quantity": 900,
+        },
+    )
+    body = {"boards": 1, "source_location_id": take_ready["gathering_id"]}
+
+    quiet = client.post(
+        f"/api/boms/{take_ready['bom_id']}/take/preview", json=body
+    ).json()
+    assert quiet["references_with_equivalents"] == []
+    assert quiet["lines"][0]["equivalents"] == 0
+
+    client.post(
+        f"/api/components/{take_ready['component_id']}/equivalents",
+        json={"component_id": tape["id"]},
+    )
+    sharing = client.post(
+        f"/api/boms/{take_ready['bom_id']}/take/preview", json=body
+    ).json()
+
+    assert sharing["references_with_equivalents"] == [sharing["lines"][0]["references"]]
+    assert sharing["lines"][0]["equivalents"] == 1
+    # Informational only — the run is still possible, and what it takes is right.
+    assert sharing["can_run"] is True
+
+
 def test_preview_says_what_would_happen_without_doing_it(
     client: TestClient, take_ready
 ) -> None:  # type: ignore[no-untyped-def]

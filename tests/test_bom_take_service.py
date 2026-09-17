@@ -16,6 +16,7 @@ from app.seed import ensure_demo_user
 from app.services import bom_service as bs
 from app.services import bom_take_service as bts
 from app.services import component_service as cs
+from app.services import equivalence_service as es
 from app.services import location_service as ls
 from app.services import stock_service as ss
 from app.services.errors import NotFoundError, ValidationError
@@ -893,3 +894,78 @@ def test_a_reversed_take_no_longer_holds_its_bom(
     bs.delete_bom(session, cast(int, bom.id))
 
     assert bts.get_take(session, cast(int, take.id)).name == take.name
+
+
+# --- what this take does NOT reach for (D15) --------------------------------
+
+
+def test_the_plan_counts_the_entries_it_will_not_draw_from(
+    session: Session, shop
+) -> None:  # type: ignore[no-untyped-def]
+    """The BOM report sums a group; this take still empties one bin.
+
+    Reported rather than silently different, so the dialog can say so. Goes when
+    the take learns to draw from the variants.
+    """
+    bulk = shop.part("PART-BULK")
+    tape = shop.part("PART-TR")
+    shop.stock(bulk, shop.shelf_a_id, 40)
+    shop.stock(tape, shop.shelf_b_id, 400)
+    es.link_components(session, bulk, tape, user_id=1)
+    bom = shop.bom("U1,10,x,\n")
+    shop.assign(cast(int, bom.id), "U1", bulk)
+
+    plan = bts.plan_take(
+        session,
+        cast(int, bom.id),
+        boards=20,
+        source_location_id=shop.gathering_id,
+    )
+
+    assert plan.references_with_equivalents == ["U1"]
+    assert plan.lines[0].equivalents == 1
+    # And the divergence itself, which is what the note exists to explain: the
+    # report calls this line covered, the take is 160 short of it.
+    assert plan.lines[0].shortfall == 160
+
+
+def test_a_part_with_no_other_entries_reports_none(
+    session: Session, shop
+) -> None:  # type: ignore[no-untyped-def]
+    part = shop.part("PART-A")
+    shop.stock(part, shop.shelf_a_id, 100)
+    bom = shop.bom("U1,1,x,\n")
+    shop.assign(cast(int, bom.id), "U1", part)
+
+    plan = bts.plan_take(
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+    )
+
+    assert plan.references_with_equivalents == []
+    assert plan.lines[0].equivalents == 0
+
+
+def test_a_retired_variant_is_not_counted_as_stock_left_behind(
+    session: Session, shop
+) -> None:  # type: ignore[no-untyped-def]
+    bulk = shop.part("PART-BULK")
+    tape = shop.part("PART-TR")
+    shop.stock(bulk, shop.shelf_a_id, 40)
+    es.link_components(session, bulk, tape, user_id=1)
+    cs.soft_delete_component(session, tape, reason="discontinued", user_id=1)
+    bom = shop.bom("U1,1,x,\n")
+    shop.assign(cast(int, bom.id), "U1", bulk)
+
+    plan = bts.plan_take(
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+    )
+
+    # Nothing is being left behind: a retired entry holds no stock, so warning
+    # about it would send someone looking for parts that are not there.
+    assert plan.references_with_equivalents == []

@@ -210,6 +210,59 @@ describe("boms_report.js — assigned component", () => {
     expect(html).toContain("&lt;img");
   });
 
+  it("says how many further entries the stock figure counts", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const html = window.bomAssignedFormatter(
+      fakeCell(
+        { component_id: 8, mpn: "AO3400A", deleted: false },
+        {
+          matched: [
+            { component_id: 8, mpn: "AO3400A", stock: 40 },
+            { component_id: 9, mpn: "AO3400A-TR", stock: 400 },
+            { component_id: 11, mpn: "AO3400A/TRAY", stock: 250 },
+          ],
+        },
+      ),
+    );
+
+    // Without this the column names one part and the Stock beside it shows 690,
+    // which reads as a bug rather than as the feature.
+    expect(html).toContain(">+2<");
+    expect(html).toContain("AO3400A-TR (400)");
+    expect(html).toContain("AO3400A/TRAY (250)");
+  });
+
+  it("says nothing when the assigned part stands alone", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const html = window.bomAssignedFormatter(
+      fakeCell(
+        { component_id: 8, mpn: "AO3400A", deleted: false },
+        { matched: [{ component_id: 8, mpn: "AO3400A", stock: 40 }] },
+      ),
+    );
+    expect(html).not.toContain("+");
+  });
+
+  it("escapes a variant's MPN inside the title attribute", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const html = window.bomAssignedFormatter(
+      fakeCell(
+        { component_id: 8, mpn: "AO3400A", deleted: false },
+        {
+          matched: [
+            { component_id: 8, mpn: "AO3400A", stock: 40 },
+            { component_id: 9, mpn: 'x" onmouseover="alert(1)', stock: 1 },
+          ],
+        },
+      ),
+    );
+
+    // The names go into an ATTRIBUTE: an unescaped quote would close it and put
+    // the rest into the markup as another attribute.
+    expect(html).not.toContain('onmouseover="alert(1)"');
+    expect(html).toContain("&quot;");
+  });
+
   it("offers Assign on every line, and Change/Remove once one is assigned", () => {
     const { window } = loadPage(bomReportFixture(), SCRIPTS);
     // A line that already matches its MPN can still be built from something else.
