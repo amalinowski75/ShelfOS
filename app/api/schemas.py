@@ -809,8 +809,9 @@ class EquivalenceRead(BaseModel):
 
     ``members`` always contains the component itself, so an ungrouped part is a
     group of one rather than a special case the client has to spell out, and
-    ``total_stock`` is the number a BOM line pointed at any member would see —
-    the sum over the members still in use.
+    ``total_stock`` is the number a BOM line pointed at any member would see: the
+    sum over EVERY member. A member taken out of use is included and contributes
+    nothing, because a part cannot be retired while its stock is on the shelf.
     """
 
     group_id: int | None

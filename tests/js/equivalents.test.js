@@ -221,9 +221,122 @@ describe("equivalents.js", () => {
     expect(del[1].headers["X-CSRF-Token"]).toBe(CSRF);
   });
 
+  it("does not offer Remove on the page of a retired part", async () => {
+    // The role still says "user" — it is the PAGE that is not editable, because
+    // the part has been taken out of use. Trusting the role here is how a group
+    // gets dissolved from the one page whose write controls are all hidden.
+    const { document } = loadPage(
+      equivalentsWidgetFixture({ canWrite: false }),
+      SCRIPTS,
+      { fetchImpl: feedImpl(pair), role: "user" },
+    );
+    await tick();
+
+    expect(document.querySelectorAll(".eq-rows tr")).toHaveLength(2);
+    expect(document.querySelectorAll(".eq-rows button")).toHaveLength(0);
+  });
+
+  it("offers to write a note on a group that has none", async () => {
+    const unexplained = { ...pair, notes: null };
+    const { document } = loadPage(equivalentsWidgetFixture(), SCRIPTS, {
+      fetchImpl: feedImpl(unexplained),
+    });
+    await tick();
+
+    const button = document.querySelector(".eq-note-edit");
+    expect(button.hidden).toBe(false);
+    expect(button.textContent).toBe("Add a note");
+    // The row is on screen for the button's sake, with no empty note beside it.
+    expect(document.querySelector(".eq-note-row").hidden).toBe(false);
+    expect(document.querySelector(".eq-note").hidden).toBe(true);
+  });
+
+  it("keeps the note out of the way of an ungrouped part", async () => {
+    const { document } = loadPage(equivalentsWidgetFixture(), SCRIPTS, {
+      fetchImpl: feedImpl(alone),
+    });
+    await tick();
+
+    // There is no group, so there is nothing a note could be about.
+    expect(document.querySelector(".eq-note-row").hidden).toBe(true);
+    expect(document.querySelector(".eq-note-edit").hidden).toBe(true);
+  });
+
+  it("rewrites a note that was typed wrong", async () => {
+    const fixed = { ...pair, notes: "tape and bulk of the same die" };
+    const { document, fetchMock } = loadPage(equivalentsWidgetFixture(), SCRIPTS, {
+      fetchImpl: feedImpl(
+        { ...pair, notes: "tape and blk of the same die" },
+        {
+          extra: (url, opts) =>
+            opts.method === "PUT" ? { ok: true, json: async () => fixed } : null,
+        },
+      ),
+    });
+    await tick();
+
+    document.querySelector(".eq-note-edit").click();
+    const input = document.querySelector(".eq-note-input");
+    // Opens on what is there now, so a typo is corrected rather than retyped.
+    expect(input.value).toBe("tape and blk of the same die");
+    input.value = "tape and bulk of the same die";
+    document
+      .querySelector(".eq-note-form")
+      .dispatchEvent(new document.defaultView.Event("submit", { cancelable: true }));
+    await tick();
+
+    const put = fetchMock.mock.calls.find(([, opts]) => opts && opts.method === "PUT");
+    expect(put[0]).toBe("/api/components/7/equivalents/notes");
+    expect(put[1].headers["X-CSRF-Token"]).toBe(CSRF);
+    expect(JSON.parse(put[1].body)).toEqual({
+      notes: "tape and bulk of the same die",
+    });
+    expect(document.querySelector(".eq-note").textContent).toBe(
+      "tape and bulk of the same die",
+    );
+    expect(document.querySelector(".eq-note-form").hidden).toBe(true);
+  });
+
+  it("sends a blank note, because clearing one is an edit too", async () => {
+    const { document, fetchMock } = loadPage(equivalentsWidgetFixture(), SCRIPTS, {
+      fetchImpl: feedImpl(pair, {
+        extra: (url, opts) =>
+          opts.method === "PUT"
+            ? { ok: true, json: async () => ({ ...pair, notes: null }) }
+            : null,
+      }),
+    });
+    await tick();
+
+    document.querySelector(".eq-note-edit").click();
+    document.querySelector(".eq-note-input").value = "   ";
+    document
+      .querySelector(".eq-note-form")
+      .dispatchEvent(new document.defaultView.Event("submit", { cancelable: true }));
+    await tick();
+
+    const put = fetchMock.mock.calls.find(([, opts]) => opts && opts.method === "PUT");
+    expect(JSON.parse(put[1].body)).toEqual({ notes: "" });
+    expect(document.querySelector(".eq-note-edit").textContent).toBe("Add a note");
+  });
+
+  it("asks why only while the group is being created", async () => {
+    const { document } = loadPage(equivalentsWidgetFixture(), SCRIPTS, {
+      fetchImpl: feedImpl(pair),
+    });
+    await tick();
+
+    document.querySelector(".eq-add").click();
+    await tick();
+
+    // The group exists, so its note is edited on the panel; an input here would
+    // be one the server ignores.
+    expect(document.querySelector(".eq-notes-field").hidden).toBe(true);
+  });
+
   it("gives a read-only account no way to change the group", async () => {
     const { document } = loadPage(
-      equivalentsWidgetFixture({ withDialog: false }),
+      equivalentsWidgetFixture({ canWrite: false }),
       SCRIPTS,
       { fetchImpl: feedImpl(pair), role: "read-only" },
     );

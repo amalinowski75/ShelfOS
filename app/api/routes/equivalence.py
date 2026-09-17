@@ -26,10 +26,28 @@ from app.models.component import Component
 from app.services import component_service as cs
 from app.services import equivalence_service as svc
 from app.services import stock_service as ss
-from app.services._common import require_entity
+from app.services._common import refuse_if_deleted, require_entity
 from app.services.errors import ValidationError
 
 router = APIRouter(prefix="/api/components", tags=["equivalence"])
+
+
+def _require_live_page(session: Session, component_id: int) -> Component:
+    """The component the request was addressed through, refused if it is retired.
+
+    Every write here is a decision about a part that is in use, and the component
+    page hides its write controls once the part is taken out of use. Without this
+    the panel is the one place that stayed writable: its Remove button would
+    dissolve a group from a page the rest of the app treats as read-only, and the
+    membership a restore was supposed to bring back would already be gone.
+
+    The check is on the page's component, never on the other one: dropping a
+    RETIRED variant out of a live part's group is exactly what someone looking at
+    the live part should be able to do.
+    """
+    component = require_entity(session, Component, component_id, "component")
+    refuse_if_deleted(component, component.mpn or f"component #{component_id}")
+    return component
 
 
 def _read(session: Session, component_id: int) -> EquivalenceRead:
@@ -123,6 +141,7 @@ def add_equivalent(
     this, and adding a part to an existing group changes what every other row's
     total means.
     """
+    _require_live_page(session, component_id)
     svc.link_components(
         session,
         component_id,
@@ -140,6 +159,7 @@ def set_equivalence_notes(
     session: Session = Depends(get_session),
 ) -> EquivalenceRead:
     """Rewrite why these entries are one part (writers). Blank clears it."""
+    _require_live_page(session, component_id)
     group = svc.group_for(session, component_id)
     if group is None or group.id is None:
         raise ValidationError("that component is not grouped with any other part")
@@ -160,6 +180,7 @@ def remove_equivalent(
     ``other_id`` has to actually be in that group, so a stale panel cannot dissolve
     a group somewhere else in the catalogue.
     """
+    _require_live_page(session, component_id)
     if other_id not in svc.equivalent_ids(session, component_id):
         raise ValidationError(
             "that component is not in this group of equivalent parts"

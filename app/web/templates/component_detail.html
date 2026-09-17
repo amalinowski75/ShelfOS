@@ -141,16 +141,36 @@
   {# The other catalogue entries that are this same physical part — tape, tray and
      bulk of one component carry different MPNs, and a BOM line pointed at any of
      them should see the total. Rows load from /api/components/<id>/equivalents. #}
+  {# `data-can-write` carries the TEMPLATE's answer, which is role AND not-retired.
+     The scripts' own `canWrite` is role alone, so a panel trusting it would keep
+     offering Remove on the page of a part taken out of use — the one page whose
+     write controls are otherwise all hidden. #}
   <div class="card card-pad equivalents-widget"
        data-component-id="{{ component.id }}"
-       data-mpn="{{ component.mpn or '' }}">
+       data-mpn="{{ component.mpn or '' }}"
+       {% if can_write %}data-can-write="yes"{% endif %}>
     <div class="widget-head">
       <h2>Equivalent parts</h2>
       {% if can_write %}
       <button type="button" class="btn btn-secondary btn-sm eq-add">+ Add</button>
       {% endif %}
     </div>
-    <p class="muted eq-note" hidden></p>
+    <div class="eq-note-row" hidden>
+      <p class="muted eq-note"></p>
+      {% if can_write %}
+      <button type="button" class="btn btn-ghost btn-sm eq-note-edit"></button>
+      {% endif %}
+    </div>
+    {% if can_write %}
+    <form class="eq-note-form" hidden>
+      <input class="control eq-note-input" maxlength="2000"
+             aria-label="Why these entries are one part"
+             placeholder="e.g. tape and bulk of the same die" />
+      <button type="submit" class="btn btn-secondary btn-sm">Save</button>
+      <button type="button" class="btn btn-ghost btn-sm eq-note-cancel">Cancel</button>
+    </form>
+    <p class="error eq-note-error" hidden></p>
+    {% endif %}
     <div class="table-wrap eq-table-wrap" hidden>
       <table class="data">
         <thead>

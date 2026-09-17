@@ -60,9 +60,12 @@ class ComponentEquivalenceMember(SQLModel, table=True):
 
     A component soft-deleted after it was grouped keeps its membership. Deletion is
     reversible (``restore_component``), and dropping the row would quietly lose a
-    decision the restore could not bring back; the stock sums skip a deleted member
-    instead, which is the same rule the BOM report already applies to an assignment
-    whose part was retired.
+    decision the restore could not bring back.
+
+    Nothing filters such a member out of a stock sum, and nothing needs to: a part
+    cannot be taken out of use while its stock is on the shelf, so a retired member
+    holds zero. It is still marked as retired everywhere it is shown, because a row
+    that reads like any other is a part someone could plan a board around.
     """
 
     __tablename__ = "component_equivalence_members"

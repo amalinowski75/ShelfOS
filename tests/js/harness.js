@@ -446,13 +446,27 @@ export function linksWidgetFixture({ withForm = true } = {}) {
     </div>`;
 }
 
-// The "Equivalent parts" panel on a component page: the group table plus the
-// search dialog a writer adds a variant from (mirrors component_detail.html).
-export function equivalentsWidgetFixture({ withDialog = true, mpn = "AO3400A" } = {}) {
-  const addBtn = withDialog
+// The "Equivalent parts" panel on a component page: the group table, the note and
+// its editor, and the search dialog a writer adds a variant from (mirrors
+// component_detail.html). `canWrite` is the TEMPLATE's answer — role and
+// not-retired — so passing false covers both a read-only account and the page of
+// a part taken out of use.
+export function equivalentsWidgetFixture({ canWrite = true, mpn = "AO3400A" } = {}) {
+  const addBtn = canWrite
     ? `<button type="button" class="btn eq-add"></button>`
     : "";
-  const dialog = withDialog
+  const noteEdit = canWrite
+    ? `<button type="button" class="btn eq-note-edit"></button>`
+    : "";
+  const noteForm = canWrite
+    ? `<form class="eq-note-form" hidden>
+         <input class="control eq-note-input" />
+         <button type="submit">Save</button>
+         <button type="button" class="eq-note-cancel"></button>
+       </form>
+       <p class="error eq-note-error" hidden></p>`
+    : "";
+  const dialog = canWrite
     ? `<dialog class="eq-dialog">
          <header><strong>Add an equivalent part</strong></header>
          <div class="dialog-body">
@@ -467,9 +481,11 @@ export function equivalentsWidgetFixture({ withDialog = true, mpn = "AO3400A" } 
        </dialog>`
     : "";
   return `
-    <div class="card equivalents-widget" data-component-id="7" data-mpn="${mpn}">
+    <div class="card equivalents-widget" data-component-id="7" data-mpn="${mpn}"
+         ${canWrite ? 'data-can-write="yes"' : ""}>
       <div class="widget-head"><h2>Equivalent parts</h2>${addBtn}</div>
-      <p class="muted eq-note" hidden></p>
+      <div class="eq-note-row" hidden><p class="muted eq-note"></p>${noteEdit}</div>
+      ${noteForm}
       <div class="table-wrap eq-table-wrap" hidden>
         <table class="data">
           <tbody class="eq-rows"></tbody>

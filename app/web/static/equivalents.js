@@ -4,15 +4,27 @@
 //
 // Reads /api/components/<id>/equivalents, which always returns this component as a
 // member, so a part on its own is a group of one and needs no special case here
-// beyond choosing the empty text. `esc`, `csrfToken`, `errorMessage` and `canWrite`
-// come from shared.js.
+// beyond choosing the empty text. `esc`, `csrfToken` and `errorMessage` come from
+// shared.js.
+//
+// Whether the panel may be CHANGED is read from the widget, not from shared.js's
+// `canWrite`. That one is role alone, while the page hides its write controls for
+// a retired part too — and a Remove button surviving on a page the rest of the app
+// treats as read-only would dissolve a group from the one place that still offered
+// it.
 
 (function () {
   const widget = document.querySelector(".equivalents-widget");
   if (!widget) return;
 
   const componentId = Number(widget.dataset.componentId);
+  const canEdit = Boolean(widget.dataset.canWrite);
+  const noteRow = widget.querySelector(".eq-note-row");
   const noteEl = widget.querySelector(".eq-note");
+  const noteEditBtn = widget.querySelector(".eq-note-edit");
+  const noteForm = widget.querySelector(".eq-note-form");
+  const noteInput = widget.querySelector(".eq-note-input");
+  const noteError = widget.querySelector(".eq-note-error");
   const tableWrap = widget.querySelector(".eq-table-wrap");
   const rowsEl = widget.querySelector(".eq-rows");
   const footEl = widget.querySelector(".eq-foot");
@@ -30,12 +42,33 @@
       : `<a class="cell-mono" href="/components/${Number(row.component_id)}">${label}</a>`;
   }
 
+  // The group as last read, so the note editor and the add dialog know whether
+  // there is a group to write a note to.
+  let current = null;
+
+  function renderNote(group) {
+    const grouped = group.group_id != null;
+    noteEl.textContent = group.notes || "";
+    noteEl.hidden = !group.notes;
+    if (noteEditBtn) {
+      // "Add a note" rather than "Edit note" when there is nothing to edit: a
+      // group created without one must still be explainable afterwards.
+      noteEditBtn.textContent = group.notes ? "Edit note" : "Add a note";
+      noteEditBtn.hidden = !grouped;
+    }
+    if (noteForm) noteForm.hidden = true;
+    if (noteError) noteError.hidden = true;
+    // Nothing to show and nothing to press: an ungrouped part has no note, and a
+    // reader of a group without one has no reason to see an empty row.
+    noteRow.hidden = !grouped || (!group.notes && !canEdit);
+  }
+
   function render(group) {
+    current = group;
     const members = group.members || [];
     rowsEl.replaceChildren();
     footEl.replaceChildren();
-    noteEl.textContent = group.notes || "";
-    noteEl.hidden = !group.notes;
+    renderNote(group);
     // One member is this component alone — a group of one says nothing, and the
     // server deletes such a group, so it is the "not grouped" state.
     const grouped = members.length > 1;
@@ -56,7 +89,7 @@
         `<td class="num">${Number(row.stock)}</td>`;
       const actions = document.createElement("td");
       actions.style.textAlign = "right";
-      if (canWrite) {
+      if (canEdit) {
         const remove = document.createElement("button");
         remove.type = "button";
         remove.className = "btn btn-ghost btn-sm";
@@ -67,9 +100,9 @@
       tr.appendChild(actions);
       rowsEl.appendChild(tr);
     }
-    // The number the BOM will use, spelled out under the column it comes from —
-    // a total that only counts the parts still in use, which is why it can be
-    // smaller than the column above it adds up to.
+    // The number the BOM will use, spelled out under the column it comes from.
+    // It is the plain sum of the column: a member taken out of use adds nothing
+    // to it, because a part cannot be retired while its stock is on the shelf.
     const foot = document.createElement("tr");
     foot.innerHTML =
       `<td colspan="3"><strong>Total a BOM line sees</strong></td>` +
@@ -86,7 +119,8 @@
       rowsEl.replaceChildren();
       footEl.replaceChildren();
       tableWrap.hidden = true;
-      noteEl.hidden = true;
+      noteRow.hidden = true;
+      current = null;
       emptyEl.textContent = "Could not load equivalent parts — refresh to try again.";
       emptyEl.hidden = false;
     }
@@ -116,6 +150,63 @@
     } finally {
       removing = false;
     }
+  }
+
+  // --- the note: why these entries are one part -----------------------------
+  // The add dialog asks for it only when the group is being created, and the
+  // service fills a BLANK note alone, so without this the first wording typed
+  // would be the last one possible — a typo in it could not be fixed from the
+  // product at all.
+  if (noteForm && noteEditBtn) {
+    let saving = false;
+
+    noteEditBtn.addEventListener("click", () => {
+      noteInput.value = (current && current.notes) || "";
+      noteError.hidden = true;
+      noteForm.hidden = false;
+      noteRow.hidden = true;
+      noteInput.focus();
+    });
+
+    noteForm.querySelector(".eq-note-cancel").addEventListener("click", () => {
+      if (current) renderNote(current);
+    });
+
+    noteForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (saving) return;
+      saving = true;
+      // Sent as typed, blank included: clearing a note that turned out to be
+      // wrong is as much an edit as rewriting it, and the server reads an empty
+      // string as "no note".
+      const notes = noteInput.value.trim();
+      (async () => {
+        try {
+          const resp = await fetch(
+            `/api/components/${componentId}/equivalents/notes`,
+            {
+              method: "PUT",
+              headers: {
+                "Content-Type": "application/json",
+                "X-CSRF-Token": csrfToken,
+              },
+              body: JSON.stringify({ notes }),
+            },
+          );
+          if (!resp.ok) {
+            noteError.textContent = await errorMessage(resp);
+            noteError.hidden = false;
+            return;
+          }
+          render(await resp.json());
+        } catch {
+          noteError.textContent = "Could not reach the server.";
+          noteError.hidden = false;
+        } finally {
+          saving = false;
+        }
+      })();
+    });
   }
 
   if (!dialog || !addBtn) {
@@ -246,10 +337,11 @@
 
   addBtn.addEventListener("click", () => {
     setError("");
-    notesEl.value = noteEl.textContent || "";
-    // The note belongs to the group and is only taken when it has none, so hide
-    // the field once one is written rather than showing an input that is ignored.
-    notesField.hidden = Boolean(noteEl.textContent);
+    notesEl.value = "";
+    // Asked only while the group is being created. Once it exists the note is
+    // edited on the panel, and an input here would be one the server ignores —
+    // `link_components` fills a blank note, it does not overwrite one.
+    notesField.hidden = Boolean(current && current.group_id != null);
     // Start from this part's own number: the variants of "AO3400A" are spelled
     // "AO3400A-TR" and "AO3400A/BULK", so its MPN is the search that finds them.
     searchEl.value = widget.dataset.mpn || "";

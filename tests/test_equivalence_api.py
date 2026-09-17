@@ -230,6 +230,59 @@ def test_an_unknown_component_is_a_404(client: TestClient) -> None:
     )
 
 
+def test_a_retired_part_page_can_be_read_but_not_written(client: TestClient) -> None:
+    bulk = _part(client, "AO3400A")
+    tape = _part(client, "AO3400A-TR")
+    spare = _part(client, "AO3400A/TRAY")
+    client.post(f"/api/components/{bulk}/equivalents", json={"component_id": tape})
+    client.request(
+        "DELETE", f"/api/admin/components/{bulk}", json={"reason": "discontinued"}
+    )
+
+    # Looking is fine — the group is part of what the page says about the part.
+    assert client.get(f"/api/components/{bulk}/equivalents").status_code == 200
+    # Every write is not. The component page hides its write controls once a part
+    # is out of use, and this panel must not be the one place that stayed open:
+    # the membership it would drop is exactly what a restore is supposed to bring
+    # back.
+    assert (
+        client.post(
+            f"/api/components/{bulk}/equivalents", json={"component_id": spare}
+        ).status_code
+        == 422
+    )
+    assert (
+        client.put(
+            f"/api/components/{bulk}/equivalents/notes", json={"notes": "x"}
+        ).status_code
+        == 422
+    )
+    assert (
+        client.delete(f"/api/components/{bulk}/equivalents/{tape}").status_code == 422
+    )
+    still_there = client.get(f"/api/components/{bulk}/equivalents").json()
+    assert {m["component_id"] for m in still_there["members"]} == {bulk, tape}
+
+
+def test_a_retired_variant_can_still_be_dropped_from_a_live_part(
+    client: TestClient,
+) -> None:
+    bulk = _part(client, "AO3400A")
+    tape = _part(client, "AO3400A-TR")
+    client.post(f"/api/components/{bulk}/equivalents", json={"component_id": tape})
+    client.request(
+        "DELETE", f"/api/admin/components/{tape}", json={"reason": "discontinued"}
+    )
+
+    resp = client.delete(f"/api/components/{bulk}/equivalents/{tape}")
+
+    # The refusal above is about the page's own part, never the other one: saying
+    # "that discontinued entry is not the same part after all" is a decision about
+    # the live part, made from its page, and it has to stay possible.
+    assert resp.status_code == 204
+    assert client.get(f"/api/components/{bulk}/equivalents").json()["group_id"] is None
+
+
 def _count_selects(engine: Engine, tables: set[str]) -> tuple[dict[str, int], object]:
     """Count SELECTs per table while the returned listener is attached."""
     counts = dict.fromkeys(tables, 0)

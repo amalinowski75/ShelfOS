@@ -935,8 +935,17 @@ dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 .link-item .btn { margin-left: auto; }
 
 /* ---------- equivalent parts panel (one physical part, several MPNs) ---------- */
-/* The note explaining why the entries are one part, under the card heading. */
-.eq-note { margin: -6px 0 12px; font-size: 13px; }
+/* The note explaining why the entries are one part, under the card heading, with
+   the button that rewrites it on the same line. */
+.eq-note-row, .eq-note-form {
+  display: flex; align-items: center; gap: 10px; margin: -6px 0 12px;
+}
+.eq-note { margin: 0; font-size: 13px; }
+/* The text yields so a long note cannot push the button out of reach, and the
+   input takes the room the text had. */
+.eq-note-row .eq-note { flex: 1; min-width: 0; }
+.eq-note-form .eq-note-input { flex: 1; min-width: 0; }
+.eq-note-error { margin: -6px 0 12px; }
 /* The panel's own table is short by nature (a handful of variants), so it never
    needs the 70vh scroll .table-wrap gives a data table. */
 .equivalents-widget .eq-table-wrap { max-height: none; }

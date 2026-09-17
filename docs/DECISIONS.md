@@ -198,7 +198,11 @@ Three rules make the group mean something:
 A part taken out of use keeps its membership: the delete is reversible, and
 dropping the row would lose a decision the restore could not bring back. It
 contributes no stock either way — a component cannot be deleted while its parts
-are on the shelf.
+are on the shelf. Its page becomes read-only for the group as well, refused in the
+API and not offered in the UI, so the membership a restore is meant to bring back
+cannot be dropped from the one page whose other write controls are already hidden.
+A retired variant can still be dropped from a LIVE part's page, because that is a
+decision about the live part.
 
 Chosen over the alternative of letting a BOM line name several components, which
 was the shape first asked for. That version is less code, but the equivalence is

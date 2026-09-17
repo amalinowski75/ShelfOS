@@ -649,6 +649,11 @@ def test_component_detail_carries_the_equivalent_parts_panel(
     assert 'data-mpn="AO3400A"' in html
     assert "eq-add" in html  # a writer gets the button and its dialog
     assert "eq-dialog" in html
+    # The panel reads its writability from the page, not from the role: this is
+    # what keeps Remove off a retired part's page, where every other write control
+    # is already hidden.
+    assert 'data-can-write="yes"' in html
+    assert "eq-note-form" in html  # the note can be rewritten after the fact
 
     client.post(
         "/api/admin/users",
@@ -658,6 +663,30 @@ def test_component_detail_carries_the_equivalent_parts_panel(
     read_only = anon_client.get(f"/components/{component['id']}").text
     assert "equivalents-widget" in read_only  # the group is still visible…
     assert "eq-dialog" not in read_only  # …but there is no way to change it
+    assert "data-can-write" not in read_only
+    assert "eq-note-form" not in read_only
+
+
+def test_a_retired_part_page_shows_the_group_without_write_controls(
+    client: TestClient,
+) -> None:
+    """Same flag as read-only, for the other reason a page cannot be written."""
+    ctype = client.post("/api/types", json={"name": "mosfet"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "AO3400A"}
+    ).json()
+    client.request(
+        "DELETE",
+        f"/api/admin/components/{component['id']}",
+        json={"reason": "discontinued"},
+    )
+
+    html = client.get(f"/components/{component['id']}").text
+
+    assert "equivalents-widget" in html
+    # An admin is looking at it, so the role says yes and the page says no.
+    assert "data-can-write" not in html
+    assert "eq-dialog" not in html
 
 
 def test_component_detail_movements_name_who_moved_the_stock(
