@@ -27,6 +27,10 @@ from app.models.enums import (
     StockReason,
     UserRole,
 )
+from app.models.equivalence import (
+    ComponentEquivalenceGroup,
+    ComponentEquivalenceMember,
+)
 from app.models.invoice import Invoice, InvoiceImportLine, InvoiceLine
 from app.models.link import Link
 from app.models.location import ComponentLocation, Location
@@ -47,6 +51,8 @@ __all__ = [
     "BomTakeAllocation",
     "BomTakeLine",
     "Component",
+    "ComponentEquivalenceGroup",
+    "ComponentEquivalenceMember",
     "ComponentLocation",
     "ComponentParameter",
     "ComponentStatus",
