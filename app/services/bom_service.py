@@ -29,6 +29,7 @@ from app.models.component import (
 from app.models.enums import AttachmentKind, ParameterDataType
 from app.services import attachment_service, link_service
 from app.services import component_service as cs
+from app.services import equivalence_service as es
 from app.services import manufacturer_service as mfs
 from app.services import stock_service as ss
 from app.services._common import require_entity
@@ -657,6 +658,19 @@ def build_bom_report(
     and one unresolved line caps it at 0. MPN candidates (``matched``) and
     substitutes are still reported per line — they are what the picker offers —
     but neither counts toward buildability.
+
+    A resolved line's stock is the total across every catalogue entry that is the
+    SAME PART as the one assigned (D15). Tape, tray and loose bulk of one
+    transistor carry different MPNs and are separate components, so a line pointed
+    at the reel would otherwise read as short with the bulk bag sitting beside it
+    on the shelf. The assignment still names one component — that is the decision —
+    and the group only widens where its stock is counted from.
+
+    ``matched`` carries those entries for a resolved line, the assigned one first
+    (the page treats its head as the line's own component). Retired variants are
+    left out: they hold no stock, and the list is also what a take may draw from.
+    An UNRESOLVED line's ``matched`` is unchanged — the MPN candidates, which are
+    a guess and are not widened into a bigger one.
     """
     boards = max(1, boards)
     bom = get_bom(session, bom_id)
@@ -665,11 +679,20 @@ def build_bom_report(
     assignments = list_assignments(session, bom_id)
     assigned_by_refs = {a.references: a for a in assignments}
     ordered_refs = {marked.references for marked in list_ordered(session, bom_id)}
-    # Resolve the assigned components in one query, like the stock totals and the
-    # value definitions below — not one `session.get` per line.
+    # What each assigned part is the same thing as (§D15). Two queries for the
+    # whole BOM, not two per line.
+    same_part = es.equivalent_ids_for(
+        session, {a.component_id for a in assignments}
+    )
+    # Resolve the assigned components AND their variants in one query, like the
+    # stock totals and the value definitions below — not one `session.get` per line.
     assigned_components = {
         cast(int, c.id): c
-        for c in _components_by_id(session, {a.component_id for a in assignments})
+        for c in _components_by_id(
+            session,
+            {a.component_id for a in assignments}
+            | {member for ids in same_part.values() for member in ids},
+        )
     }
     # Resolve each substitutable category's value parameter once (not per line).
     value_defs = _value_defs_by_category(
@@ -704,7 +727,26 @@ def build_bom_report(
         resolved = assigned_live
 
         if assigned_live:
-            matched = [cast(Component, assigned_component)]
+            # The assigned part AND everything the catalogue says is the same
+            # part: a line pointed at the reel is short by nothing if the bulk bag
+            # beside it covers the rest. The assigned one comes first, because the
+            # page treats the head of this list as the line's own component (it is
+            # where clicking the row goes).
+            #
+            # Retired variants are left out rather than shown at zero. They hold no
+            # stock — a part cannot be taken out of use while its stock is on the
+            # shelf — so this list stays what it says it is: the parts this line's
+            # figure is summed over, and the ones a take could draw from.
+            head = cast(Component, assigned_component)
+            assigned_id = cast(int, head.id)
+            variants = [
+                component
+                for member_id in same_part.get(assigned_id, [])
+                if member_id != assigned_id
+                and (component := assigned_components.get(member_id)) is not None
+                and component.deleted_at is None
+            ]
+            matched = [head, *variants]
         elif assignment is not None:
             matched = []
         else:
@@ -780,6 +822,9 @@ def build_bom_report(
                 # about stock: an ordered line stays short until the parts land.
                 "ordered": line.references in ordered_refs,
                 "stock": matched_stock,
+                # For a resolved line: the assigned part and its equivalents, in
+                # the order the stock figure sums them. For an unresolved one: the
+                # MPN candidates.
                 "matched": [
                     {
                         "component_id": c.id,
