@@ -104,9 +104,13 @@
     // It is the plain sum of the column: a member taken out of use adds nothing
     // to it, because a part cannot be retired while its stock is on the shelf.
     const foot = document.createElement("tr");
+    // `num` on the total as well as on the rows above: the column is right-aligned
+    // and tabular, and a total in a different face would not line up under the
+    // figures it adds. The trailing empty cell keeps the row's ground running the
+    // full width of the table, under the actions column too.
     foot.innerHTML =
-      `<td colspan="3"><strong>Total a BOM line sees</strong></td>` +
-      `<td class="num"><strong>${Number(group.total_stock)}</strong></td><td></td>`;
+      `<td colspan="3">Total a BOM line sees</td>` +
+      `<td class="num">${Number(group.total_stock)}</td><td></td>`;
     footEl.appendChild(foot);
   }
 

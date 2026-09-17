@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { JSDOM } from "jsdom";
 import { describe, it, expect } from "vitest";
 import {
   loadPage,
@@ -344,5 +346,77 @@ describe("equivalents.js", () => {
 
     expect(document.querySelectorAll(".eq-rows tr")).toHaveLength(2);
     expect(document.querySelectorAll(".eq-rows button")).toHaveLength(0);
+  });
+});
+
+describe("app.css — the group's total row", () => {
+  // Rendered against the real stylesheet: the bug this pins was that the base
+  // table styled `tbody` alone, so the total had no padding at all — its number
+  // sat 14px to the right of the column it sums, and its label started where no
+  // header does.
+  const dom = () => {
+    const css = readFileSync(
+      new URL("../../app/web/static/app.css", import.meta.url),
+      "utf8",
+    );
+    return new JSDOM(
+      `<style>${css}</style>
+       <div class="equivalents-widget"><table class="data">
+         <tbody>
+           <tr><td id="first">AO3400A</td><td class="num">40</td></tr>
+           <tr><td id="last">AO3400A-TR</td><td class="num" id="last-num">400</td></tr>
+         </tbody>
+         <tfoot>
+           <tr><td id="label">Total a BOM line sees</td>
+               <td class="num" id="total">440</td></tr>
+         </tfoot>
+       </table></div>`,
+    );
+  };
+
+  const styleOf = (window, id) =>
+    window.getComputedStyle(window.document.getElementById(id));
+
+  it("pads the total like a body cell, so both columns line up", () => {
+    const { window } = dom();
+    const body = styleOf(window, "first");
+    const label = styleOf(window, "label");
+    const total = styleOf(window, "total");
+
+    expect(label.paddingLeft).toBe(body.paddingLeft);
+    // The load-bearing one: the number is right-aligned, so it is the RIGHT
+    // padding that decides whether it sits under the figures it adds up.
+    expect(total.paddingRight).toBe(body.paddingRight);
+    expect(total.textAlign).toBe("right");
+  });
+
+  it("sets the total apart from the rows above it", () => {
+    // A TEXT check for the border and the ground, deliberately: both are written
+    // with `var()`, and jsdom drops a shorthand it cannot resolve, so its computed
+    // style reports nothing for either. The weight carries no custom property, so
+    // that one is read from the render like the padding above.
+    const css = readFileSync(
+      new URL("../../app/web/static/app.css", import.meta.url),
+      "utf8",
+    );
+    const rule = css.match(/table\.data tfoot td \{([^}]*)\}/);
+    expect(rule).not.toBeNull();
+
+    // A rule heavier than the 1px a row border draws, its own ground, and its own
+    // weight — three ways of saying "this line is not another variant".
+    expect(rule[1]).toMatch(/border-top:\s*2px solid/);
+    expect(rule[1]).toMatch(/background:\s*var\(/);
+    const { window } = dom();
+    expect(Number(styleOf(window, "label").fontWeight)).toBeGreaterThan(400);
+  });
+
+  it("leaves air between the last variant and the total", () => {
+    const { window } = dom();
+
+    // `border-collapse` leaves nowhere for a margin, so the gap is the last body
+    // row's own padding.
+    expect(
+      parseFloat(styleOf(window, "last").paddingBottom),
+    ).toBeGreaterThan(parseFloat(styleOf(window, "first").paddingBottom));
   });
 });
