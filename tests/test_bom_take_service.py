@@ -951,13 +951,48 @@ def test_the_gathering_branch_is_drained_across_every_entry_first(
 
     line = plan.lines[0]
     # What was put out for this board was put out for it whatever index it
-    # carries, so both gathered bins empty before the shelf is touched.
+    # carries, so both gathered bins empty before the shelf is touched. Emptiest
+    # first WITHIN the branch: the 10 gathered under one index go before the 20
+    # gathered under the other, whatever either entry holds out on the shelf.
     assert [(s.location_id, s.quantity) for s in line.sources[:2]] == [
-        (shop.connectors_id, 20),
         (shop.resistors_id, 10),
+        (shop.connectors_id, 20),
     ]
     assert sum(s.quantity for s in line.sources) == 100
     assert line.sources[2].location_id == shop.shelf_a_id
+
+
+def test_the_shelf_order_is_decided_on_what_is_left_out_there(
+    session: Session, shop
+) -> None:  # type: ignore[no-untyped-def]
+    """A reel can be the fullest entry overall and the emptiest one on the shelf."""
+    tape = shop.part("PART-TR")
+    bulk = shop.part("PART-BULK")
+    es.link_components(session, tape, bulk, user_id=1)
+    bom = shop.bom("U1,540,x,\n")  # more than the gathered pile covers
+    shop.assign(cast(int, bom.id), "U1", tape)
+    shop.stock(tape, shop.connectors_id, 500)  # gathered for this board
+    shop.stock(tape, shop.shelf_a_id, 3)  # …and a remnant out on the shelf
+    shop.stock(bulk, shop.shelf_b_id, 50)  # a full-ish bag, nothing gathered
+
+    plan = bts.plan_take(
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+    )
+
+    line = plan.lines[0]
+    # Ranked by total, the reel is the fullest entry (503) and would be reached
+    # last, leaving its 3-piece remnant on the shelf for ever — the exact thing
+    # "emptiest first" exists to prevent. The second pass ranks on what is left
+    # OUT THERE, so the remnant is closed out and the bag covers the rest.
+    assert [(s.location_id, s.quantity) for s in line.sources] == [
+        (shop.connectors_id, 500),
+        (shop.shelf_a_id, 3),
+        (shop.shelf_b_id, 37),
+    ]
+    assert line.shortfall == 0
 
 
 def test_the_location_question_is_asked_about_one_entry_at_a_time(

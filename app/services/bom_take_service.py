@@ -123,21 +123,6 @@ def components_by_id(session: Session, ids: set[int]) -> dict[int, Component]:
     }
 
 
-def assigned_component_by_line(session: Session, bom_id: int) -> dict[int, int]:
-    """``{bom line id: assigned component id}`` for this BOM.
-
-    For reading an answer that named no component: before a line could be built
-    from several entries of one part, "the location for this line" could only have
-    meant the assigned one.
-    """
-    assignments = {a.references: a for a in bs.list_assignments(session, bom_id)}
-    return {
-        cast(int, line.id): assignments[line.references].component_id
-        for line in bs.get_bom_lines(session, bom_id)
-        if line.references in assignments
-    }
-
-
 def _slots_by_component(
     session: Session, component_ids: set[int]
 ) -> dict[int, list[ComponentLocation]]:
@@ -181,7 +166,7 @@ def plan_take(
     boards: int,
     source_location_id: int,
     overrides: dict[int, int] | None = None,
-    choices: dict[tuple[int, int], int] | None = None,
+    choices: dict[tuple[int, int | None], int] | None = None,
 ) -> TakePlan:
     """Work out what this take would do. Reads only; writes nothing.
 
@@ -189,7 +174,9 @@ def plan_take(
     ``line.quantity * boards`` — parts get lost during assembly, so the number is
     editable. ``choices`` maps a (line id, component id) pair to the location the user
     picked when several outside the gathering branch hold THAT entry of the part —
-    a line built from two entries can be asked twice.
+    a line built from two entries can be asked twice. A ``None`` component is an
+    answer from a page that did not name one: it is matched to whichever entry
+    actually holds that bin (see below).
     """
     boards = max(1, boards)
     overrides = overrides or {}
@@ -238,10 +225,37 @@ def plan_take(
             paths[location_id] = ls.format_path(session, location_id)
         return paths[location_id]
 
-    def left_of(part_id: int) -> int:
-        """What is still unspoken-for across this part's bins."""
+    def left_of(part_id: int, *, inside: bool) -> int:
+        """What is still unspoken-for in this part's bins on one side of the tree.
+
+        Read when the pass that uses it is about to run, never once for the line.
+        That re-read is what keeps a 3-piece remnant ahead of a 50-piece bag when
+        the same entry also had 500 gathered: ranked before the gathering pass, the
+        reel is the fullest entry there is and would be reached last, leaving its
+        remnant on the shelf for ever.
+
+        The side matters to the FIRST pass, where a gathered bin must not be ranked
+        by what its entry also holds out on a shelf. By the time the second runs,
+        the gathering branch is empty — it only stops early when the line is
+        already satisfied — so there the two readings agree.
+        """
         return sum(
-            unclaimed[(part_id, slot.location_id)] for slot in slots.get(part_id, [])
+            unclaimed[(part_id, slot.location_id)]
+            for slot in slots.get(part_id, [])
+            if (slot.location_id in inside_ids) is inside
+        )
+
+    def emptiest_first(parts: list[Component], *, inside: bool) -> list[Component]:
+        """The entries in the order to draw from them, emptiest leading.
+
+        The id breaks a tie so the order cannot drift between runs.
+        """
+        return sorted(
+            parts,
+            key=lambda part: (
+                left_of(cast(int, part.id), inside=inside),
+                cast(int, part.id),
+            ),
         )
 
     def bins_of(part: Component, *, inside: bool) -> list[PlannedSource]:
@@ -308,10 +322,10 @@ def plan_take(
         # names one component — that is the decision — and this is only where the
         # parts may come from.
         #
-        # Emptiest first. A part-used bag and a loose remnant go before a sealed
-        # reel, which is what a person reaching onto the shelf does: it closes out
-        # the awkward leftovers instead of leaving a dozen bins with nine parts in
-        # them. The id breaks a tie so the order cannot drift between runs.
+        # Each pass orders these for itself, emptiest entry first: a part-used bag
+        # and a loose remnant go before a sealed reel, which is what a person
+        # reaching onto the shelf does — it closes out the awkward leftovers
+        # instead of leaving a dozen bins with nine parts in them.
         #
         # No filter for a retired entry here, and none is needed: `slots` is built
         # from the live entries alone, and a part cannot be taken out of use while
@@ -322,14 +336,13 @@ def plan_take(
             for member_id in same_part.get(assigned_id, [assigned_id])
             if (variant := variants.get(member_id)) is not None
         ] or [component]
-        parts.sort(key=lambda part: (left_of(cast(int, part.id)), cast(int, part.id)))
 
         remaining = entry.requested
         # The gathering branch is EXHAUSTED before anything else is considered, and
         # across every entry of the part: what was put out for this board was put
         # out for it whatever index it carries. Spreading across the sub-containers
         # needs no question — they are all "the parts I gathered".
-        for part in parts:
+        for part in emptiest_first(parts, inside=True):
             for candidate in bins_of(part, inside=True):
                 if remaining <= 0:
                     break
@@ -338,8 +351,10 @@ def plan_take(
             if remaining <= 0:
                 break
 
-        # Then the ordinary shelves, one entry of the part at a time.
-        for part in parts:
+        # Then the ordinary shelves, one entry of the part at a time — ordered
+        # again, and on what is left OUT HERE, because the pass above has just
+        # changed both.
+        for part in emptiest_first(parts, inside=False):
             if remaining <= 0:
                 break
             outside = bins_of(part, inside=False)
@@ -352,13 +367,29 @@ def plan_take(
             if len(outside) > 1:
                 entry.candidates.extend(outside)
             chosen_id = choices.get((line_id, part_id))
+            named_the_entry = chosen_id is not None
+            if chosen_id is None:
+                # An answer from a page old enough not to name an entry. Such a
+                # page rendered every candidate into ONE picker, so the location it
+                # sends can belong to a variant rather than to the assigned part —
+                # reading it as the assigned part's would refuse a choice the page
+                # itself offered. Match it to the entry that actually holds the bin.
+                unnamed = choices.get((line_id, None))
+                if unnamed is not None and _has_slot(slots, part_id, unnamed):
+                    chosen_id = unnamed
             if chosen_id is not None:
                 picked = next(
                     (c for c in outside if c.location_id == chosen_id), None
                 )
-                if picked is None and not _has_slot(slots, part_id, chosen_id):
-                    # The location never held this part at all — a client sending
-                    # something the plan never offered, not a person's answer.
+                if (
+                    named_the_entry
+                    and picked is None
+                    and not _has_slot(slots, part_id, chosen_id)
+                ):
+                    # The location never held this entry at all — a client sending
+                    # something the plan never offered, not a person's answer. Only
+                    # for an answer that NAMED the entry: an unnamed one is matched
+                    # above or left alone, never turned into a refusal.
                     raise ValidationError(
                         f"'{line.references}' does not have stock at the location "
                         "chosen for it"
@@ -455,7 +486,7 @@ def execute_take(
     boards: int,
     source_location_id: int,
     overrides: dict[int, int] | None = None,
-    choices: dict[tuple[int, int], int] | None = None,
+    choices: dict[tuple[int, int | None], int] | None = None,
     user_id: int,
 ) -> BomTake:
     """Run the take: remove the stock and write the snapshot, all or nothing.
