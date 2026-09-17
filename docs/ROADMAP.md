@@ -87,8 +87,8 @@ Priorities set by the user on 2026-07-08.
     group says once, globally, that those entries are one part (D15). Landing in
     three steps: the tables, service, API and the component page's panel (#172);
     then the BOM report summing the group (#173); then the take drawing from the
-    variants, smallest stock first, so loose bags go before a full reel — the one
-    step still open.
+    variants, emptiest first, so loose bags go before a full reel (#174). All
+    three have landed.
 
     Deferred by the user on 2026-09-17, to be picked up after those three: showing
     the group total on the **components list** as well. It is the table looked at

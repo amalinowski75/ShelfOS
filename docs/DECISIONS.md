@@ -211,13 +211,25 @@ an UNRESOLVED line is not widened, because its MPN lookup is already a guess and
 following that guess's group would make it a larger one with a stock figure
 behind it that reads like fact.
 
-**Known gap while the take catches up (#173).** The report counts a group; the
-take still empties the assigned bin alone, so a line the report calls covered can
-come up short in the take. Rather than let the two pages disagree in silence, the
-take's preview reports which lines it is leaving stock behind on and says so above
-the table. It is not a refusal — what the take removes is correct, just less than
-the report promised — and both the flag and the note go when the take draws from
-the variants.
+**The take draws from the group too (#174).** Two rules order it. The gathering
+branch is exhausted first, across every entry of the part: what was put out for
+this board was put out for it whatever index it carries. Then the ordinary
+shelves, EMPTIEST ENTRY FIRST — a part-used bag and a loose remnant go before a
+sealed reel, which closes out the awkward leftovers instead of leaving a dozen
+bins with nine parts in them. Ties break on the component id so the order cannot
+drift between runs.
+
+"Which shelf?" is therefore a question about an ENTRY, not about a line: the reel
+and the bulk bag can each be stocked in several places and each gets its own
+answer. A line stops at the first unanswered one rather than planning the next
+entry around it — the run is blocked until it is answered, and once it is, that
+bin may well cover the rest.
+
+The snapshot keeps one row per entry drawn from, all sharing the designator
+group. Two movements from two components cannot honestly be one row naming one of
+them. ``requested`` splits in the order the parts were drawn, so the rows still
+sum to what the line wanted, and what the shelves could not give is recorded
+against the entry the line is ASSIGNED to — the one someone chose.
 
 **Also known: the per-line figures are not allocated across lines.** ``stock``,
 ``missing`` and ``boards_possible`` each show the whole of what that line's parts
