@@ -19,29 +19,26 @@ router = APIRouter(tags=["bom takes"])
 
 
 def _answers(
-    session: Session, bom_id: int, payload: BomTakeRequest
-) -> tuple[dict[int, int], dict[tuple[int, int], int]]:
+    payload: BomTakeRequest,
+) -> tuple[dict[int, int], dict[tuple[int, int | None], int]]:
     """Split the per-line answers into the two maps the service takes.
 
     A location is chosen for one ENTRY of a part, not for the line: a line built
     from a reel and a bulk bag can be asked where to find each. An item that names
-    no component is read as the line's assigned one — which is what it meant back
-    when a line had only one — so a page loaded before this change still works.
+    no entry is passed through as such — the service matches it to whichever entry
+    holds that bin, which is the only thing that can be said about an answer from a
+    page that rendered one picker for the whole line.
     """
     overrides = {
         line.line_id: line.quantity
         for line in payload.lines
         if line.quantity is not None
     }
-    assigned = svc.assigned_component_by_line(session, bom_id)
-    choices: dict[tuple[int, int], int] = {}
-    for line in payload.lines:
-        if line.source_location_id is None:
-            continue
-        component_id = line.component_id or assigned.get(line.line_id)
-        if component_id is None:
-            continue  # a line with no assignment is refused by the plan anyway
-        choices[(line.line_id, component_id)] = line.source_location_id
+    choices: dict[tuple[int, int | None], int] = {
+        (line.line_id, line.component_id): line.source_location_id
+        for line in payload.lines
+        if line.source_location_id is not None
+    }
     return overrides, choices
 
 
@@ -99,7 +96,7 @@ def preview_take(
     POST rather than GET because the edited quantities and the chosen locations
     are a body, and this is the confirm button's dry run.
     """
-    overrides, choices = _answers(session, bom_id, payload)
+    overrides, choices = _answers(payload)
     plan = svc.plan_take(
         session,
         bom_id,
@@ -123,7 +120,7 @@ def create_take(
     user_id: int = Depends(current_user_id),
 ) -> BomTake:
     """Take the parts off the shelves and record the snapshot (writers)."""
-    overrides, choices = _answers(session, bom_id, payload)
+    overrides, choices = _answers(payload)
     return svc.execute_take(
         session,
         bom_id,

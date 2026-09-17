@@ -167,6 +167,98 @@ def test_a_location_can_be_chosen_for_one_entry_of_a_part(
     ]
 
 
+def test_an_answer_that_names_no_entry_lands_on_the_one_holding_that_bin(
+    client: TestClient, take_ready
+) -> None:  # type: ignore[no-untyped-def]
+    """A page opened before entries were told apart sends one picker's answer.
+
+    It rendered every candidate into a single select keyed by the line, so the
+    location it sends can belong to a VARIANT. Reading it as the assigned part's
+    would refuse a choice that page itself offered.
+    """
+    ctype = client.post("/api/types", json={"name": "IC2"}).json()
+    tape = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "PART-A-TR"}
+    ).json()
+    shelves = {}
+    for name, quantity in (("R1", 5), ("R2", 7)):
+        shelf = client.post(
+            "/api/locations", json={"type": "shelf", "name": name}
+        ).json()
+        client.post(
+            "/api/stock/add",
+            json={
+                "component_id": tape["id"],
+                "location_id": shelf["id"],
+                "quantity": quantity,
+            },
+        )
+        shelves[name] = shelf["id"]
+    client.post(
+        f"/api/components/{take_ready['component_id']}/equivalents",
+        json={"component_id": tape["id"]},
+    )
+    body = {"boards": 55, "source_location_id": take_ready["gathering_id"]}
+    line_id = client.get(f"/api/boms/{take_ready['bom_id']}").json()["lines"][0]["id"]
+
+    resp = client.post(
+        f"/api/boms/{take_ready['bom_id']}/take/preview",
+        json={
+            **body,
+            # No component_id: the shape the old page sends. The shelf holds the
+            # VARIANT, never the assigned part.
+            "lines": [{"line_id": line_id, "source_location_id": shelves["R2"]}],
+        },
+    )
+
+    assert resp.status_code == 200  # not a 400 on a choice the page offered
+    plan = resp.json()
+    drawn = [(s["component_id"], s["location_id"]) for s in plan["lines"][0]["sources"]]
+    assert (tape["id"], shelves["R2"]) in drawn
+    assert (tape["id"], shelves["R1"]) not in drawn  # honoured for that bin alone
+    assert plan["can_run"] is True
+
+
+def test_an_answer_naming_an_entry_that_never_held_it_is_still_refused(
+    client: TestClient, take_ready
+) -> None:  # type: ignore[no-untyped-def]
+    # Enough of the assigned part out on a shelf that the plan reaches the
+    # outside pass at all — the gathering drawer alone would cover a small run,
+    # and an unreached question is never checked.
+    shelf = client.post("/api/locations", json={"type": "shelf", "name": "R"}).json()
+    client.post(
+        "/api/stock/add",
+        json={
+            "component_id": take_ready["component_id"],
+            "location_id": shelf["id"],
+            "quantity": 50,
+        },
+    )
+    elsewhere = client.post(
+        "/api/locations", json={"type": "shelf", "name": "Nowhere"}
+    ).json()
+    line_id = client.get(f"/api/boms/{take_ready['bom_id']}").json()["lines"][0]["id"]
+
+    resp = client.post(
+        f"/api/boms/{take_ready['bom_id']}/take/preview",
+        json={
+            "boards": 60,  # 120 wanted, 100 gathered: the shelf is reached
+            "source_location_id": take_ready["gathering_id"],
+            "lines": [
+                {
+                    "line_id": line_id,
+                    "component_id": take_ready["component_id"],
+                    "source_location_id": elsewhere["id"],
+                }
+            ],
+        },
+    )
+
+    # An answer that NAMES its entry is a claim the server can check, and this one
+    # is false: a client sending something the plan never offered.
+    assert resp.status_code == 422
+
+
 def test_preview_says_what_would_happen_without_doing_it(
     client: TestClient, take_ready
 ) -> None:  # type: ignore[no-untyped-def]
