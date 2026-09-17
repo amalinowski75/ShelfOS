@@ -642,9 +642,16 @@ def build_bom_report(
 
     ``boards`` is how many copies of the board are being built: it scales what each
     line *needs* (``total_quantity``), and hence its status, but not what stock can
-    *cover* — ``boards_possible`` (per line) and ``summary.buildable`` (its minimum)
-    stay measured in whole boards, so they answer "how many boards will these parts
-    make?" whatever number was asked for.
+    *cover* — ``boards_possible`` (per line) and ``summary.buildable`` stay measured
+    in whole boards, so they answer "how many boards will these parts make?"
+    whatever number was asked for.
+
+    The per-line figures — ``stock``, ``missing``, ``boards_possible`` — are NOT
+    allocated across lines: each shows the whole of what its parts hold, exactly as
+    the substitute suggestions do. Two lines built from the same parts therefore
+    both show all of it. ``summary.buildable`` is the number that must not be
+    fooled by that, so it is computed per POOL of shared stock: the parts a line
+    draws on, divided by what every line drawing on them needs per board.
 
     A line is *resolved* when a person has assigned a live component to it, and
     that is the only thing this report accepts as knowing what a line is built
@@ -703,7 +710,18 @@ def build_bom_report(
     # "Assign the obvious ones" drives to zero, and what a bulk take will demand
     # be zero. It reaches `summary` through the `**counts` splat below.
     counts = {"ok": 0, "short": 0, "out": 0, "unresolved": 0}
-    buildable: int | None = None
+    # Whole boards the run can make, worked out per POOL of shared stock rather
+    # than per line. Two lines drawing on the same parts — "R1 off the reel, R2
+    # out of the bag", now one group — each see the same total, so a per-line
+    # minimum would count that stock twice and promise boards the shelf cannot
+    # make. The key is the set of components a line draws on, so lines assigned to
+    # different members of one group land in the same pool, and so do two lines
+    # assigned to the same ungrouped part.
+    pool_stock: dict[frozenset[int], int] = {}
+    pool_demand: dict[frozenset[int], int] = {}
+    # A line that stops the run outright: unresolved, or one that needs no parts
+    # at all (which the old per-line minimum also read as zero).
+    blocks_the_run = False
     report_lines: list[dict[str, object]] = []
 
     for line in lines:
@@ -777,7 +795,12 @@ def build_bom_report(
         per_line = (
             matched_stock // line.quantity if resolved and line.quantity else 0
         )
-        buildable = per_line if buildable is None else min(buildable, per_line)
+        if resolved and line.quantity:
+            pool = frozenset(cast(int, c.id) for c in matched)
+            pool_stock[pool] = matched_stock
+            pool_demand[pool] = pool_demand.get(pool, 0) + line.quantity
+        else:
+            blocks_the_run = True
 
         # Substitutes answer "what else could go here?" — a question already
         # answered once a component has been assigned.
@@ -850,6 +873,18 @@ def build_bom_report(
                 ),
                 "substitutes": substitutes,
             }
+        )
+
+    # The limiting pool, not the limiting line. `None` for a BOM with no lines at
+    # all — "we have not been asked" rather than "none" — which is what the
+    # per-line minimum used to say by never being set.
+    if not lines:
+        buildable: int | None = None
+    elif blocks_the_run:
+        buildable = 0
+    else:
+        buildable = min(
+            pool_stock[pool] // demand for pool, demand in pool_demand.items()
         )
 
     return {

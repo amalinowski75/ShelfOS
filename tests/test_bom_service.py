@@ -584,6 +584,81 @@ def test_an_unresolved_line_is_not_widened_into_a_bigger_guess(
     assert [m["mpn"] for m in report_line["matched"]] == ["RES-1K"]
 
 
+def test_two_lines_sharing_a_group_do_not_each_claim_all_of_it(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    """The headline number must not count one shelf twice."""
+    resistor = _inventory(session)
+    resistor("PART-BULK", 1000, 40)
+    resistor("PART-TR", 1000, 650)
+    bulk = cs.find_components_by_mpn(session, "PART-BULK")[0]
+    tape = cs.find_components_by_mpn(session, "PART-TR")[0]
+    es.link_components(session, bulk.id, tape.id, user_id=1)
+    bom = _bom_of(session, "R1,10,1k,,\nR2,10,1k,,\n")
+    first, second = bs.get_bom_lines(session, bom.id)
+    # The natural workflow the group makes possible: one line off the reel, the
+    # other out of the bag. Two assignments, one shelf.
+    bs.assign_component(session, bom.id, first.id, component_id=bulk.id, user_id=1)
+    bs.assign_component(session, bom.id, second.id, component_id=tape.id, user_id=1)
+
+    report = bs.build_bom_report(session, bom.id)
+
+    # Both lines still SHOW the whole pool — that is what is on the shelf for
+    # each, and the per-line figures have never been allocated.
+    assert [ln["stock"] for ln in report["lines"]] == [690, 690]
+    assert [ln["boards_possible"] for ln in report["lines"]] == [69, 69]
+    # The summary is the number someone acts on, and 690 parts consumed 20 at a
+    # time is 34 boards, not 69.
+    assert report["summary"]["buildable"] == 34
+
+
+def test_two_lines_on_one_ungrouped_part_share_its_stock_too(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    resistor = _inventory(session)
+    resistor("ONE-PART", 1000, 50)
+    part = cs.find_components_by_mpn(session, "ONE-PART")[0]
+    bom = _bom_of(session, "R1,10,1k,,\nR2,10,1k,,\n")
+    for line in bs.get_bom_lines(session, bom.id):
+        bs.assign_component(session, bom.id, line.id, component_id=part.id, user_id=1)
+
+    report = bs.build_bom_report(session, bom.id)
+
+    # Not a grouping problem — the same shelf reached twice. Grouping only made it
+    # easy to hit by accident, so the pool is keyed on the parts drawn from, which
+    # covers a plain repeat assignment as well.
+    assert report["summary"]["buildable"] == 2  # 50 ÷ 20 per board
+
+
+def test_separate_pools_still_take_the_smallest(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    resistor = _inventory(session)
+    resistor("PLENTY", 1000, 900)
+    resistor("SCARCE", 2000, 25)
+    bom = _bom_of(session, "R1,10,1k,,\nR2,10,2k,,\n")
+    first, second = bs.get_bom_lines(session, bom.id)
+    bs.assign_component(
+        session,
+        bom.id,
+        first.id,
+        component_id=cs.find_components_by_mpn(session, "PLENTY")[0].id,
+        user_id=1,
+    )
+    bs.assign_component(
+        session,
+        bom.id,
+        second.id,
+        component_id=cs.find_components_by_mpn(session, "SCARCE")[0].id,
+        user_id=1,
+    )
+
+    report = bs.build_bom_report(session, bom.id)
+
+    # Nothing is shared here, so the answer is the limiting line, as before.
+    assert report["summary"]["buildable"] == 2  # 25 ÷ 10, not 900 ÷ 10
+
+
 def test_the_group_lookup_does_not_query_per_line(
     session: Session, store
 ) -> None:  # type: ignore[no-untyped-def]
