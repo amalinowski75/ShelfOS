@@ -18,24 +18,40 @@ from app.services import bom_take_service as svc
 router = APIRouter(tags=["bom takes"])
 
 
-def _answers(payload: BomTakeRequest) -> tuple[dict[int, int], dict[int, int]]:
-    """Split the per-line answers into the two maps the service takes."""
+def _answers(
+    session: Session, bom_id: int, payload: BomTakeRequest
+) -> tuple[dict[int, int], dict[tuple[int, int], int]]:
+    """Split the per-line answers into the two maps the service takes.
+
+    A location is chosen for one ENTRY of a part, not for the line: a line built
+    from a reel and a bulk bag can be asked where to find each. An item that names
+    no component is read as the line's assigned one — which is what it meant back
+    when a line had only one — so a page loaded before this change still works.
+    """
     overrides = {
         line.line_id: line.quantity
         for line in payload.lines
         if line.quantity is not None
     }
-    choices = {
-        line.line_id: line.source_location_id
-        for line in payload.lines
-        if line.source_location_id is not None
-    }
+    assigned = svc.assigned_component_by_line(session, bom_id)
+    choices: dict[tuple[int, int], int] = {}
+    for line in payload.lines:
+        if line.source_location_id is None:
+            continue
+        component_id = line.component_id or assigned.get(line.line_id)
+        if component_id is None:
+            continue  # a line with no assignment is refused by the plan anyway
+        choices[(line.line_id, component_id)] = line.source_location_id
     return overrides, choices
 
 
 def _plan_json(plan: svc.TakePlan) -> dict[str, object]:
     def source(entry: svc.PlannedSource) -> dict[str, object]:
         return {
+            # Which entry of the part this bin holds: a line can draw on several,
+            # and the dialog names them and asks about each separately.
+            "component_id": entry.component_id,
+            "mpn": entry.mpn,
             "location_id": entry.location_id,
             "path": entry.path,
             "available": entry.available,
@@ -52,10 +68,6 @@ def _plan_json(plan: svc.TakePlan) -> dict[str, object]:
         "can_run": plan.can_run,
         "blocked_references": plan.blocked_references,
         "unanswered_references": plan.unanswered_references,
-        # Lines whose part has other entries the BOM report counts and this take
-        # does not (D15). Informational, never a refusal — it says what the two
-        # pages disagree about, and it goes when the take draws from them too.
-        "references_with_equivalents": plan.references_with_equivalents,
         "total_shortfall": plan.total_shortfall,
         "lines": [
             {
@@ -68,7 +80,6 @@ def _plan_json(plan: svc.TakePlan) -> dict[str, object]:
                 "shortfall": line.shortfall,
                 "needs_choice": line.needs_choice,
                 "blocked": line.blocked,
-                "equivalents": line.equivalents,
                 "sources": [source(s) for s in line.sources],
                 "candidates": [source(c) for c in line.candidates],
             }
@@ -88,7 +99,7 @@ def preview_take(
     POST rather than GET because the edited quantities and the chosen locations
     are a body, and this is the confirm button's dry run.
     """
-    overrides, choices = _answers(payload)
+    overrides, choices = _answers(session, bom_id, payload)
     plan = svc.plan_take(
         session,
         bom_id,
@@ -112,7 +123,7 @@ def create_take(
     user_id: int = Depends(current_user_id),
 ) -> BomTake:
     """Take the parts off the shelves and record the snapshot (writers)."""
-    overrides, choices = _answers(payload)
+    overrides, choices = _answers(session, bom_id, payload)
     return svc.execute_take(
         session,
         bom_id,

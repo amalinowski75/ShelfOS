@@ -225,7 +225,7 @@ def test_a_chosen_location_is_not_spilled_into_the_others(  # type: ignore[no-un
         cast(int, bom.id),
         boards=1,
         source_location_id=shop.gathering_id,
-        choices={_line_id(session, bom): shop.shelf_b_id},
+        choices={(_line_id(session, bom), part): shop.shelf_b_id},
     )
 
     line = plan.lines[0]
@@ -246,7 +246,7 @@ def test_a_choice_naming_a_location_without_stock_is_refused(  # type: ignore[no
             cast(int, bom.id),
             boards=1,
             source_location_id=shop.gathering_id,
-            choices={_line_id(session, bom): shop.connectors_id},
+            choices={(_line_id(session, bom), part): shop.connectors_id},
         )
 
 
@@ -262,7 +262,7 @@ def test_a_choice_another_line_drained_is_a_shortfall_not_a_refusal(
     shop.assign(cast(int, bom.id), "R1", part)
     shop.assign(cast(int, bom.id), "R2", part)
     lines = bs.get_bom_lines(session, cast(int, bom.id))
-    both_on_a = {cast(int, ln.id): shop.shelf_a_id for ln in lines}
+    both_on_a = {(cast(int, ln.id), part): shop.shelf_a_id for ln in lines}
 
     plan = bts.plan_take(
         session,
@@ -294,7 +294,7 @@ def test_the_candidates_stay_offered_after_the_choice_is_made(
         cast(int, bom.id),
         boards=1,
         source_location_id=shop.gathering_id,
-        choices={line_id: shop.shelf_b_id},
+        choices={(line_id, part): shop.shelf_b_id},
     )
 
     line = answered.lines[0]
@@ -896,68 +896,195 @@ def test_a_reversed_take_no_longer_holds_its_bom(
     assert bts.get_take(session, cast(int, take.id)).name == take.name
 
 
-# --- what this take does NOT reach for (D15) --------------------------------
+# --- built from any entry of the same part (D15) -----------------------------
 
 
-def test_the_plan_counts_the_entries_it_will_not_draw_from(
+def _variants(session: Session, shop):  # type: ignore[no-untyped-def]
+    """A one-line BOM for "U1" assigned to PART-TR, with PART-BULK as its twin."""
+    tape = shop.part("PART-TR")
+    bulk = shop.part("PART-BULK")
+    es.link_components(session, tape, bulk, user_id=1)
+    bom = shop.bom("U1,100,x,\n")
+    shop.assign(cast(int, bom.id), "U1", tape)
+    return bom, tape, bulk
+
+
+def test_a_line_is_topped_up_from_another_entry_of_the_same_part(
     session: Session, shop
 ) -> None:  # type: ignore[no-untyped-def]
-    """The BOM report sums a group; this take still empties one bin.
+    bom, tape, bulk = _variants(session, shop)
+    shop.stock(tape, shop.shelf_b_id, 400)
+    shop.stock(bulk, shop.shelf_a_id, 40)
 
-    Reported rather than silently different, so the dialog can say so. Goes when
-    the take learns to draw from the variants.
-    """
-    bulk = shop.part("PART-BULK")
-    tape = shop.part("PART-TR")
+    plan = bts.plan_take(
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+    )
+
+    line = plan.lines[0]
+    # Emptiest first, whichever one the line is assigned to: the 40 loose parts
+    # are closed out before a reel of 400 is opened.
+    assert [(s.component_id, s.quantity) for s in line.sources] == [
+        (bulk, 40),
+        (tape, 60),
+    ]
+    assert line.shortfall == 0
+    assert plan.can_run
+
+
+def test_the_gathering_branch_is_drained_across_every_entry_first(
+    session: Session, shop
+) -> None:  # type: ignore[no-untyped-def]
+    bom, tape, bulk = _variants(session, shop)
+    shop.stock(tape, shop.connectors_id, 20)  # gathered, under the branch
+    shop.stock(bulk, shop.resistors_id, 10)  # gathered too, other index
+    shop.stock(bulk, shop.shelf_a_id, 1000)  # the ordinary shelf
+
+    plan = bts.plan_take(
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+    )
+
+    line = plan.lines[0]
+    # What was put out for this board was put out for it whatever index it
+    # carries, so both gathered bins empty before the shelf is touched.
+    assert [(s.location_id, s.quantity) for s in line.sources[:2]] == [
+        (shop.connectors_id, 20),
+        (shop.resistors_id, 10),
+    ]
+    assert sum(s.quantity for s in line.sources) == 100
+    assert line.sources[2].location_id == shop.shelf_a_id
+
+
+def test_the_location_question_is_asked_about_one_entry_at_a_time(
+    session: Session, shop
+) -> None:  # type: ignore[no-untyped-def]
+    bom, tape, bulk = _variants(session, shop)
+    shop.stock(bulk, shop.shelf_a_id, 5)
+    shop.stock(bulk, shop.shelf_b_id, 5)  # ambiguous: two shelves hold PART-BULK
+    shop.stock(tape, shop.shelf_a_id, 500)
+    line_id = _line_id(session, bom)
+
+    unanswered = bts.plan_take(
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+    )
+
+    # The question is about PART-BULK, not about the line: the candidates say so,
+    # and the run waits for that one answer.
+    assert unanswered.lines[0].needs_choice
+    assert {c.component_id for c in unanswered.lines[0].candidates} == {bulk}
+    assert not unanswered.can_run
+
+    answered = bts.plan_take(
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+        choices={(line_id, bulk): shop.shelf_b_id},
+    )
+
+    assert answered.can_run
+    # Answered for that entry alone; the rest comes off the reel, which needed no
+    # question because it sits in one place.
+    drawn = answered.lines[0].sources
+    assert [(s.component_id, s.location_id, s.quantity) for s in drawn] == [
+        (bulk, shop.shelf_b_id, 5),
+        (tape, shop.shelf_a_id, 95),
+    ]
+
+
+def test_the_snapshot_keeps_one_row_per_entry_it_drew_from(
+    session: Session, shop
+) -> None:  # type: ignore[no-untyped-def]
+    bom, tape, bulk = _variants(session, shop)
+    shop.stock(bulk, shop.shelf_a_id, 40)
+    shop.stock(tape, shop.shelf_b_id, 60)
+
+    take = bts.execute_take(
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+        user_id=1,
+    )
+
+    rows = bts.take_lines(session, cast(int, take.id))
+    # Two movements from two components cannot honestly be one row naming one of
+    # them. Both carry the designator group, which is how a person reads them back.
+    assert [r.references for r in rows] == ["U1", "U1"]
+    assert [(r.component_id, r.requested_quantity, r.taken_quantity) for r in rows] == [
+        (bulk, 40, 40),
+        (tape, 60, 60),
+    ]
+    assert sum(r.requested_quantity for r in rows) == 100
+
+
+def test_what_the_shelves_could_not_give_lands_on_the_assigned_entry(
+    session: Session, shop
+) -> None:  # type: ignore[no-untyped-def]
+    bom, tape, bulk = _variants(session, shop)
+    shop.stock(bulk, shop.shelf_a_id, 30)
+    shop.stock(tape, shop.shelf_b_id, 20)
+
+    take = bts.execute_take(
+        session,
+        cast(int, bom.id),
+        boards=1,
+        source_location_id=shop.gathering_id,
+        user_id=1,
+    )
+
+    rows = bts.take_lines(session, cast(int, take.id))
+    by_part = {r.component_id: r for r in rows}
+    # 50 of the 100 were found. The missing 50 are recorded against the part
+    # someone chose for this line, not spread over entries that gave what they had.
+    assert (by_part[bulk].requested_quantity, by_part[bulk].taken_quantity) == (30, 30)
+    assert (by_part[tape].requested_quantity, by_part[tape].taken_quantity) == (70, 20)
+    assert sum(r.requested_quantity for r in rows) == 100
+
+
+def test_undoing_puts_each_entry_back_where_it_came_from(
+    session: Session, shop
+) -> None:  # type: ignore[no-untyped-def]
+    bom, tape, bulk = _variants(session, shop)
     shop.stock(bulk, shop.shelf_a_id, 40)
     shop.stock(tape, shop.shelf_b_id, 400)
-    es.link_components(session, bulk, tape, user_id=1)
-    bom = shop.bom("U1,10,x,\n")
-    shop.assign(cast(int, bom.id), "U1", bulk)
-
-    plan = bts.plan_take(
-        session,
-        cast(int, bom.id),
-        boards=20,
-        source_location_id=shop.gathering_id,
-    )
-
-    assert plan.references_with_equivalents == ["U1"]
-    assert plan.lines[0].equivalents == 1
-    # And the divergence itself, which is what the note exists to explain: the
-    # report calls this line covered, the take is 160 short of it.
-    assert plan.lines[0].shortfall == 160
-
-
-def test_a_part_with_no_other_entries_reports_none(
-    session: Session, shop
-) -> None:  # type: ignore[no-untyped-def]
-    part = shop.part("PART-A")
-    shop.stock(part, shop.shelf_a_id, 100)
-    bom = shop.bom("U1,1,x,\n")
-    shop.assign(cast(int, bom.id), "U1", part)
-
-    plan = bts.plan_take(
+    take = bts.execute_take(
         session,
         cast(int, bom.id),
         boards=1,
         source_location_id=shop.gathering_id,
+        user_id=1,
     )
+    assert ss.get_quantity(session, bulk, shop.shelf_a_id) == 0
+    assert ss.get_quantity(session, tape, shop.shelf_b_id) == 340
 
-    assert plan.references_with_equivalents == []
-    assert plan.lines[0].equivalents == 0
+    bts.reverse_take(session, cast(int, take.id), reason="board scrapped", user_id=1)
+
+    # Each entry's parts go back to their own bin, not all to the assigned one.
+    assert ss.get_quantity(session, bulk, shop.shelf_a_id) == 40
+    assert ss.get_quantity(session, tape, shop.shelf_b_id) == 400
 
 
-def test_a_retired_variant_is_not_counted_as_stock_left_behind(
+def test_two_lines_cannot_both_claim_one_entry_through_a_group(
     session: Session, shop
 ) -> None:  # type: ignore[no-untyped-def]
-    bulk = shop.part("PART-BULK")
+    """The running total is per (entry, bin), so a shared shelf is claimed once."""
     tape = shop.part("PART-TR")
-    shop.stock(bulk, shop.shelf_a_id, 40)
-    es.link_components(session, bulk, tape, user_id=1)
-    cs.soft_delete_component(session, tape, reason="discontinued", user_id=1)
-    bom = shop.bom("U1,1,x,\n")
-    shop.assign(cast(int, bom.id), "U1", bulk)
+    bulk = shop.part("PART-BULK")
+    es.link_components(session, tape, bulk, user_id=1)
+    shop.stock(bulk, shop.shelf_a_id, 30)
+    bom = shop.bom("R1,20,x,\nR2,20,x,\n")
+    # One line points at each entry — the workflow the group makes natural.
+    shop.assign(cast(int, bom.id), "R1", tape)
+    shop.assign(cast(int, bom.id), "R2", bulk)
 
     plan = bts.plan_take(
         session,
@@ -966,6 +1093,7 @@ def test_a_retired_variant_is_not_counted_as_stock_left_behind(
         source_location_id=shop.gathering_id,
     )
 
-    # Nothing is being left behind: a retired entry holds no stock, so warning
-    # about it would send someone looking for parts that are not there.
-    assert plan.references_with_equivalents == []
+    assert sum(s.quantity for s in plan.lines[0].sources) == 20
+    # 10 left, not another 20: the first line already took most of that bin.
+    assert sum(s.quantity for s in plan.lines[1].sources) == 10
+    assert plan.lines[1].shortfall == 10
