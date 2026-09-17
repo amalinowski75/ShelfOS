@@ -204,6 +204,13 @@ cannot be dropped from the one page whose other write controls are already hidde
 A retired variant can still be dropped from a LIVE part's page, because that is a
 decision about the live part.
 
+Where the group is READ is deliberately narrow. The BOM report sums it for a
+line someone has assigned, and the take draws from it; nothing else does. The
+assignment still names one component — that is the decision a person made — and
+an UNRESOLVED line is not widened, because its MPN lookup is already a guess and
+following that guess's group would make it a larger one with a stock figure
+behind it that reads like fact.
+
 Chosen over the alternative of letting a BOM line name several components, which
 was the shape first asked for. That version is less code, but the equivalence is
 then local to one BOM and has to be re-entered on the next one; the fact is about
