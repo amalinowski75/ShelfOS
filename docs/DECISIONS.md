@@ -205,11 +205,28 @@ A retired variant can still be dropped from a LIVE part's page, because that is 
 decision about the live part.
 
 Where the group is READ is deliberately narrow. The BOM report sums it for a
-line someone has assigned, and the take draws from it; nothing else does. The
+line someone has assigned, and the take will draw from it; nothing else does. The
 assignment still names one component — that is the decision a person made — and
 an UNRESOLVED line is not widened, because its MPN lookup is already a guess and
 following that guess's group would make it a larger one with a stock figure
 behind it that reads like fact.
+
+**Known gap while the take catches up (#173).** The report counts a group; the
+take still empties the assigned bin alone, so a line the report calls covered can
+come up short in the take. Rather than let the two pages disagree in silence, the
+take's preview reports which lines it is leaving stock behind on and says so above
+the table. It is not a refusal — what the take removes is correct, just less than
+the report promised — and both the flag and the note go when the take draws from
+the variants.
+
+**Also known: the per-line figures are not allocated across lines.** ``stock``,
+``missing`` and ``boards_possible`` each show the whole of what that line's parts
+hold, exactly as the substitute suggestions do, so two lines built from one pool
+of stock both show all of it. ``summary.buildable`` is the number people act on
+and is NOT fooled by that: it divides each pool of shared stock by what every line
+drawing on it needs per board. Grouping is what made the overlap easy to reach —
+"R1 off the reel, R2 out of the bag" is now one pool — but the same held before
+for two lines assigned to one component, and the fix covers both.
 
 Chosen over the alternative of letting a BOM line name several components, which
 was the shape first asked for. That version is less code, but the equivalence is
