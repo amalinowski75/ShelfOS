@@ -41,6 +41,8 @@ function plan(overrides = {}) {
         blocked: null,
         sources: [
           {
+            component_id: 3,
+            mpn: "RES-1K",
             location_id: 5,
             path: "Kontroler CNC / Rezystory",
             available: 50,
@@ -231,8 +233,8 @@ describe("bom_take.js — the preview", () => {
             needs_choice: true,
             sources: [],
             candidates: [
-              { location_id: 8, path: "Regal A", available: 50, quantity: 0, inside: false },
-              { location_id: 9, path: "Regal B", available: 20, quantity: 0, inside: false },
+              { component_id: 3, mpn: "RES-1K", location_id: 8, path: "Regal A", available: 50, quantity: 0, inside: false },
+              { component_id: 3, mpn: "RES-1K", location_id: 9, path: "Regal B", available: 20, quantity: 0, inside: false },
             ],
           },
         ],
@@ -251,8 +253,9 @@ describe("bom_take.js — the preview", () => {
     select.dispatchEvent(new document.defaultView.Event("change", { bubbles: true }));
     await tick();
 
+    // The answer names the ENTRY of the part it was given for, not just the line.
     expect(calls.at(-1)[2].lines).toEqual([
-      { line_id: 11, quantity: null, source_location_id: 9 },
+      { line_id: 11, component_id: 3, quantity: null, source_location_id: 9 },
     ]);
   });
 
@@ -267,6 +270,8 @@ describe("bom_take.js — the preview", () => {
             needs_choice: false,
             sources: [
               {
+                component_id: 3,
+                mpn: "RES-1K",
                 location_id: 9,
                 path: "Regal B",
                 available: 20,
@@ -275,8 +280,8 @@ describe("bom_take.js — the preview", () => {
               },
             ],
             candidates: [
-              { location_id: 8, path: "Regal A", available: 50, quantity: 0, inside: false },
-              { location_id: 9, path: "Regal B", available: 20, quantity: 0, inside: false },
+              { component_id: 3, mpn: "RES-1K", location_id: 8, path: "Regal A", available: 50, quantity: 0, inside: false },
+              { component_id: 3, mpn: "RES-1K", location_id: 9, path: "Regal B", available: 20, quantity: 0, inside: false },
             ],
           },
         ],
@@ -304,7 +309,7 @@ describe("bom_take.js — the preview", () => {
     select.dispatchEvent(new document.defaultView.Event("change", { bubbles: true }));
     await tick();
     expect(calls.at(-1)[2].lines).toEqual([
-      { line_id: 11, quantity: null, source_location_id: 8 },
+      { line_id: 11, component_id: 3, quantity: null, source_location_id: 8 },
     ]);
   });
 
@@ -414,35 +419,90 @@ describe("bom_take.js — the preview", () => {
     expect(document.querySelector("#take-rows .badge").textContent).toContain("40");
   });
 
-  it("says when the report counted stock this take will not reach", async () => {
-    // The BOM report sums every entry of the same part; the take still draws only
-    // from the one assigned. Left unsaid, a line the report called "ok" would come
-    // up short here with nothing on screen explaining why.
-    const sharing = () =>
-      plan({ references_with_equivalents: ["R1,R2"] });
-    const { impl } = server(sharing);
+  it("names the entry each bin held once a line draws on more than one", async () => {
+    const twoParts = () =>
+      plan({
+        lines: [
+          {
+            ...plan().lines[0],
+            requested: 100,
+            sources: [
+              {
+                component_id: 3,
+                mpn: "PART-BULK",
+                location_id: 8,
+                path: "Regal A",
+                available: 40,
+                quantity: 40,
+                inside: false,
+              },
+              {
+                component_id: 4,
+                mpn: "PART-TR",
+                location_id: 9,
+                path: "Regal B",
+                available: 400,
+                quantity: 60,
+                inside: false,
+              },
+            ],
+          },
+        ],
+      });
+    const { impl } = server(twoParts);
     const { document } = loadPage(bomTakeFixture(), SCRIPTS, { fetchImpl: impl });
     document.getElementById("bom-take").click();
     pickGathering(document);
     await tick();
 
-    const note = document.getElementById("take-equivalents");
-    expect(note.hidden).toBe(false);
-    expect(note.textContent).toContain("1 line");
-    expect(note.textContent).toContain("only from the one assigned");
-    // Informational, never a refusal: what it takes is correct, just less than
-    // the report promised.
-    expect(document.getElementById("take-confirm").disabled).toBe(false);
+    // "40 off the loose bag, 60 off the reel" is the whole point of the group;
+    // two bare shelf names would hide which entry each bin held.
+    const cell = document.querySelector("#take-rows tr").textContent;
+    expect(cell).toContain("PART-BULK: Regal A ×40");
+    expect(cell).toContain("PART-TR: Regal B ×60");
   });
 
-  it("keeps quiet when no line has another entry of its part", async () => {
-    const { impl } = server(plan);
+  it("asks about each ambiguous entry separately", async () => {
+    const twoQuestions = () =>
+      plan({
+        can_run: false,
+        unanswered_references: ["R1,R2"],
+        lines: [
+          {
+            ...plan().lines[0],
+            needs_choice: true,
+            sources: [],
+            candidates: [
+              { component_id: 3, mpn: "PART-BULK", location_id: 8, path: "Regal A", available: 5, quantity: 0, inside: false },
+              { component_id: 3, mpn: "PART-BULK", location_id: 9, path: "Regal B", available: 5, quantity: 0, inside: false },
+              { component_id: 4, mpn: "PART-TR", location_id: 8, path: "Regal A", available: 500, quantity: 0, inside: false },
+              { component_id: 4, mpn: "PART-TR", location_id: 9, path: "Regal B", available: 500, quantity: 0, inside: false },
+            ],
+          },
+        ],
+      });
+    const { impl, calls } = server(twoQuestions);
     const { document } = loadPage(bomTakeFixture(), SCRIPTS, { fetchImpl: impl });
     document.getElementById("bom-take").click();
     pickGathering(document);
     await tick();
 
-    expect(document.getElementById("take-equivalents").hidden).toBe(true);
+    // "Which shelf?" has a different answer for the bulk bag and for the reel, so
+    // one picker for the line would answer only one of them.
+    const selects = [...document.querySelectorAll(".take-choice")];
+    expect(selects).toHaveLength(2);
+    expect(selects.map((s) => s.dataset.component)).toEqual(["3", "4"]);
+    // And they are told apart by the part, not only by the designator group.
+    expect(selects[0].getAttribute("aria-label")).toContain("PART-BULK");
+    expect(selects[1].getAttribute("aria-label")).toContain("PART-TR");
+
+    selects[1].value = "9";
+    selects[1].dispatchEvent(new document.defaultView.Event("change", { bubbles: true }));
+    await tick();
+
+    expect(calls.at(-1)[2].lines).toEqual([
+      { line_id: 11, component_id: 4, quantity: null, source_location_id: 9 },
+    ]);
   });
 
   it("shows what fits of a designator group and the whole of it on hover", async () => {

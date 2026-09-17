@@ -46,28 +46,39 @@ if (takeDialog && takeTableEl) {
   const rows = document.getElementById("take-rows");
   const blockers = document.getElementById("take-blockers");
   const blockersText = document.getElementById("take-blockers-text");
-  const equivalents = document.getElementById("take-equivalents");
-  const equivalentsText = document.getElementById("take-equivalents-text");
   const confirmBtn = document.getElementById("take-confirm");
   const summary = document.getElementById("take-summary");
   const errorRow = document.getElementById("take-error-row");
   const errorText = document.getElementById("take-error");
 
-  // The answers the user has given, keyed by BOM line id. Kept outside the table
-  // because the table is rebuilt from each new plan.
+  // The answers the user has given. Quantities are per BOM line; a chosen
+  // location belongs to one ENTRY of the part, so those are keyed "line:entry" —
+  // a line built from a reel and a bulk bag can be asked twice. Kept outside the
+  // table because the table is rebuilt from each new plan.
   let quantities = {};
   let choices = {};
+
+  const choiceKey = (lineId, componentId) => `${Number(lineId)}:${Number(componentId)}`;
   let planToken = 0;
   let debounce = null;
 
   function takeBody() {
-    const lines = [];
-    const ids = new Set([...Object.keys(quantities), ...Object.keys(choices)]);
-    for (const id of ids) {
+    // One item per answer, not per line: a quantity override names no entry, and
+    // each chosen location names the one it was chosen for. Several items can
+    // carry the same line_id, which is how a line built from two entries says
+    // where to find each.
+    const lines = Object.entries(quantities).map(([id, quantity]) => ({
+      line_id: Number(id),
+      quantity,
+      source_location_id: null,
+    }));
+    for (const [key, locationId] of Object.entries(choices)) {
+      const [lineId, componentId] = key.split(":");
       lines.push({
-        line_id: Number(id),
-        quantity: id in quantities ? quantities[id] : null,
-        source_location_id: id in choices ? choices[id] : null,
+        line_id: Number(lineId),
+        component_id: Number(componentId),
+        quantity: null,
+        source_location_id: locationId,
       });
     }
     return {
@@ -77,10 +88,17 @@ if (takeDialog && takeTableEl) {
     };
   }
 
+  // Where a line's parts come from. Once a line draws on more than one entry of
+  // the part, each bin says which entry it held — "40 off the loose bag, 60 off
+  // the reel" is the whole point, and two bare paths would hide it.
   function plannedSources(line) {
     if (!line.sources.length) return '<span class="muted">—</span>';
+    const several = new Set(line.sources.map((s) => s.component_id)).size > 1;
     return line.sources
-      .map((s) => `${esc(s.path)} ×${Number(s.quantity)}`)
+      .map((s) => {
+        const where = `${esc(s.path)} ×${Number(s.quantity)}`;
+        return several && s.mpn ? `${esc(s.mpn)}: ${where}` : where;
+      })
       .join(" · ");
   }
 
@@ -90,26 +108,41 @@ if (takeDialog && takeTableEl) {
     // corrected by cancelling the whole dialog, which throws away every quantity
     // edited on a long BOM to fix one mis-clicked shelf.
     if (!line.candidates.length) return plannedSources(line);
-    const chosen = choices[line.line_id];
-    const options = line.candidates
-      .map(
-        (c) =>
-          `<option value="${Number(c.location_id)}"${
-            Number(chosen) === Number(c.location_id) ? " selected" : ""
-          }>${esc(c.path)} (${Number(c.available)})</option>`,
-      )
-      .join("");
-    // A blank first option so an unanswered question looks unanswered, rather
-    // than looking like a choice nobody made on purpose. Once answered it is
-    // gone: "choose a location" is not one of the places the parts can come from.
-    const blank = chosen
-      ? ""
-      : '<option value="">Choose a location…</option>';
-    const select =
-      `<select class="control take-choice" data-line="${Number(line.line_id)}"` +
-      ` aria-label="Where to take ${esc(line.references)} from">` +
-      `${blank}${options}</select>`;
-    // What the answer actually bought, beside the answer itself.
+    // One picker per ENTRY of the part that is stocked in several places. The
+    // question "which shelf?" has a different answer for the reel and for the
+    // bulk bag, so asking it once for the line would answer only one of them.
+    const byPart = new Map();
+    for (const candidate of line.candidates) {
+      const list = byPart.get(candidate.component_id) || [];
+      list.push(candidate);
+      byPart.set(candidate.component_id, list);
+    }
+    const selects = [...byPart.entries()].map(([componentId, candidates]) => {
+      const chosen = choices[choiceKey(line.line_id, componentId)];
+      const options = candidates
+        .map(
+          (c) =>
+            `<option value="${Number(c.location_id)}"${
+              Number(chosen) === Number(c.location_id) ? " selected" : ""
+            }>${esc(c.path)} (${Number(c.available)})</option>`,
+        )
+        .join("");
+      // A blank first option so an unanswered question looks unanswered, rather
+      // than looking like a choice nobody made on purpose. Once answered it is
+      // gone: "choose a location" is not one of the places the parts can come from.
+      const blank = chosen ? "" : '<option value="">Choose a location…</option>';
+      // Named by the part, not just by the line: with two pickers on one row,
+      // "where to take R1,R2 from" would label them identically.
+      const part = candidates[0].mpn || `#${Number(componentId)}`;
+      return (
+        `<select class="control take-choice" data-line="${Number(line.line_id)}"` +
+        ` data-component="${Number(componentId)}"` +
+        ` aria-label="Where to take ${esc(part)} for ${esc(line.references)} from">` +
+        `${blank}${options}</select>`
+      );
+    });
+    const select = selects.join(" ");
+    // What the answers actually bought, beside them.
     return line.sources.length ? `${select} ${plannedSources(line)}` : select;
   }
 
@@ -154,19 +187,6 @@ if (takeDialog && takeTableEl) {
       blockersText.textContent =
         `${blocked.length} line${blocked.length === 1 ? "" : "s"} cannot be taken, ` +
         "marked below. Assign a component to them on the report first.";
-    }
-    // The BOM report counts every entry of the same part; this take still draws
-    // only from the one assigned. Saying so beats letting the two pages disagree
-    // in silence — a line the report called "ok" can be short here. Not a
-    // refusal: what it will take is correct, just less than the report promised.
-    // Temporary, and it goes when the take draws from the variants too.
-    const sharing = plan.references_with_equivalents || [];
-    equivalents.hidden = sharing.length === 0;
-    if (sharing.length) {
-      equivalentsText.textContent =
-        `${sharing.length} line${sharing.length === 1 ? "" : "s"} ` +
-        "can also be built from other entries of the same part. This take draws " +
-        "only from the one assigned, so it may come up shorter than the report.";
     }
     confirmBtn.disabled = !plan.can_run;
     // Says what is in the way when the button will not go. The panel and the
@@ -248,9 +268,9 @@ if (takeDialog && takeTableEl) {
 
   rows.addEventListener("change", (e) => {
     if (!e.target.classList.contains("take-choice")) return;
-    const line = e.target.dataset.line;
-    if (e.target.value) choices[line] = Number(e.target.value);
-    else delete choices[line];
+    const key = choiceKey(e.target.dataset.line, e.target.dataset.component);
+    if (e.target.value) choices[key] = Number(e.target.value);
+    else delete choices[key];
     refreshPlan(); // a choice is one click, not a burst
   });
 
