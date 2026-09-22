@@ -101,7 +101,7 @@
 {% if can_edit and (lines or pending_import_lines) %}
 {# Scan-driven putaway: scan a bag → that line's location dialog opens; scan
    an SL<id> location label → saved, closed, ready for the next bag. #}
-{{ putaway_panel(location_options, "a bag", "Scan a bag's barcode to jump to its line, then scan a location label (SL…) to file it — just scan, no clicking needed.") }}
+{{ putaway_panel("a bag", "Scan a bag's barcode to jump to its line, then scan a location label (SL…) to file it — just scan, no clicking needed.") }}
 {% endif %}
 
 {% if can_edit and pending_import_lines %}

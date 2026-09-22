@@ -8,6 +8,14 @@
 // templates/_putaway.html; helpers (csrfToken, errorMessage, showToast) from
 // shared.js.
 //
+// The panel is OPTIONAL. A page that already knows which thing it is filing — a
+// component's own page, where a "Stock by location" row says which pile is
+// moving — renders the dialog alone, passes no adapter and reaches the flow
+// through fileTarget(). There the second step is all that is left, and it is the
+// step worth keeping: the shelf is still scanned rather than hunted for in a
+// list. With no panel the collector stays asleep until the dialog is up, so the
+// rest of that page keeps its keyboard.
+//
 // The wedge scanner is a keyboard, but this deliberately does NOT type into a
 // focused input. Keystrokes are collected in a document-level capture-phase
 // buffer and the (readonly) fields only DISPLAY it. Field tested: password
@@ -48,13 +56,15 @@ async function scanFetch(url, method, body) {
 // crash. Adapters throw it from resolve()/save(); the message is shown as-is.
 class ScanMiss extends Error {}
 
-window.initScanPutaway = function (adapter) {
-  const panel = document.getElementById("scan-panel");
-  if (!panel) return; // read-only viewer, or a page state with nothing to file
+window.initScanPutaway = function (adapter = {}) {
+  const dialog = document.getElementById("putaway-dialog");
+  if (!dialog) return; // read-only viewer, or a page state with nothing to file
 
+  // Absent on a page that opens the dialog by hand: then there is no item scan,
+  // no status line to write to, and nothing to collect between dialogs.
+  const panel = document.getElementById("scan-panel");
   const scanInput = document.getElementById("scan-input");
   const statusEl = document.getElementById("scan-status");
-  const dialog = document.getElementById("putaway-dialog");
   const form = document.getElementById("putaway-form");
   const titleEl = document.getElementById("putaway-title");
   const partEl = document.getElementById("putaway-part");
@@ -70,7 +80,7 @@ window.initScanPutaway = function (adapter) {
   // id → human path, for showing where the part just went. The server
   // re-validates the id on save, so this map is presentation, not authority.
   const LOCATIONS = new Map(
-    JSON.parse(panel.dataset.locations || "[]").map((o) => [String(o.id), o.path]),
+    JSON.parse(dialog.dataset.locations || "[]").map((o) => [String(o.id), o.path]),
   );
 
   let target = null; // what the last resolved scan is waiting to file
@@ -135,13 +145,19 @@ window.initScanPutaway = function (adapter) {
   // readonly — they are gauges, not text entry. The ring marks which field a
   // scan would land in, and goes out when the collector has stood down, so
   // "the keyboard isn't mine right now" is never invisible.
+  // Either field may be missing (a page without the panel has no item field), so
+  // both are addressed only if they are there.
   function render() {
     const live = dialog.open ? locationInput : scanInput;
     const idle = dialog.open ? scanInput : locationInput;
-    live.value = buffer;
-    idle.value = "";
-    live.classList.toggle("scan-armed", armed());
-    idle.classList.remove("scan-armed");
+    if (live) {
+      live.value = buffer;
+      live.classList.toggle("scan-armed", armed());
+    }
+    if (idle) {
+      idle.value = "";
+      idle.classList.remove("scan-armed");
+    }
   }
 
   // Both message slots keep their real content in a variable and repaint from
@@ -159,6 +175,7 @@ window.initScanPutaway = function (adapter) {
   // is reserved and clipped in CSS (.scan-status); the full text of anything
   // long also goes out as a toast, and rides here as a tooltip.
   function paintStatus(message, tone) {
+    if (!statusEl) return; // no panel, no status line — the dialog says it all
     statusEl.textContent = message;
     statusEl.className = `scan-status ${tone === "error" ? "error" : "muted"}`;
     statusEl.title = message;
@@ -436,6 +453,9 @@ window.initScanPutaway = function (adapter) {
     "keydown",
     (event) => {
       if (event.ctrlKey || event.altKey || event.metaKey) return;
+      // Without a panel there is nothing to scan into between dialogs, so the
+      // page keeps every keystroke until the dialog is actually up.
+      if (!panel && !dialog.open) return;
       const t = event.target instanceof HTMLElement ? event.target : null;
       if (t && !ownsKeyboard(t)) {
         if (t === qtyInput) {

@@ -9,8 +9,7 @@ function scanFixture({ pendingLocation = "" } = {}) {
   const selected = (v) => (pendingLocation === v ? "selected" : "");
   return `
     <div id="invoice-detail" data-invoice-id="7"></div>
-    <div id="scan-panel"
-         data-locations='[{"id": 5, "path": "Lab / Rack A / D1"}, {"id": 9, "path": "Lab / Shelf 02"}]'>
+    <div id="scan-panel">
       <input id="scan-input" readonly />
       <p id="scan-status" class="scan-status"></p>
     </div>
@@ -49,7 +48,8 @@ function scanFixture({ pendingLocation = "" } = {}) {
         <td class="line-actions"></td>
       </tr>
     </tbody></table>
-    <dialog id="putaway-dialog">
+    <dialog id="putaway-dialog"
+            data-locations='[{"id": 5, "path": "Lab / Rack A / D1"}, {"id": 9, "path": "Lab / Shelf 02"}]'>
       <strong id="putaway-title">Set location</strong>
       <form id="putaway-form">
         <p id="putaway-part"></p>
