@@ -1,4 +1,9 @@
-"""Label endpoints: what a location's label looks like, and printing it (spec §7)."""
+"""Label endpoints: what a label looks like, and printing it (spec §7).
+
+Locations and components both print through here, and past the selection the
+two paths are the same call — ``label_service`` has already reduced either to
+the handful of strings a label shows.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +13,7 @@ from sqlmodel import Session
 from app import config
 from app.api.deps import get_session
 from app.api.schemas import (
+    ComponentLabelPrintRequest,
     LabelJobRead,
     LabelPrintRequest,
     LabelPrintResult,
@@ -32,6 +38,22 @@ router = APIRouter(prefix="/api/labels", tags=["labels"])
 _MAX_ROWID = 2**63 - 1
 
 
+def _preview_geometry(tape: str | None, length: float | None) -> lp.TapeGeometry:
+    """The tape a preview is drawn for: the printer's, unless asked otherwise.
+
+    Preview what the printer would actually produce, which means asking it what
+    tape it holds, exactly as printing does; with no printer answering, the
+    configured tape stands. An override replaces only what it names — a length
+    alone must not quietly take the width back off the printer.
+    """
+    if tape is None and length is None:
+        return lp.resolve_geometry()
+    return lp.tape_geometry(
+        tape=tape if tape is not None else lp.resolve_geometry().tape,
+        length_mm=length,
+    )
+
+
 @router.get("/locations/{location_id}/preview.png")
 def preview_location_label(
     location_id: int,
@@ -51,17 +73,7 @@ def preview_location_label(
             status_code=422, detail="location id must be a positive 64-bit integer"
         )
     label = lbl.build_labels(session, ids=[location_id])[0]
-    # Preview what the printer would actually produce, which means asking it
-    # what tape it holds, exactly as printing does; with no printer answering,
-    # the configured tape stands. An override replaces only what it names — a
-    # length alone must not quietly take the width back off the printer.
-    if tape is None and length is None:
-        geometry = lp.resolve_geometry()
-    else:
-        geometry = lp.tape_geometry(
-            tape=tape if tape is not None else lp.resolve_geometry().tape,
-            length_mm=length,
-        )
+    geometry = _preview_geometry(tape, length)
     return Response(content=lp.render_png(label, geometry), media_type="image/png")
 
 
@@ -78,6 +90,52 @@ def print_location_labels(
     configured one does not match.
     """
     labels = lbl.build_labels(session, ids=payload.ids, root=payload.root)
+    outcome = lp.print_labels(
+        labels,
+        copies=payload.copies,
+        tape=payload.tape,
+        accept_loaded=payload.accept_loaded,
+    )
+    return LabelPrintResult(
+        sent=outcome.sent,
+        confirmed=outcome.confirmed,
+        tape=outcome.tape,
+        stopped=outcome.stopped,
+    )
+
+
+@router.get("/components/{component_id}/preview.png")
+def preview_component_label(
+    component_id: int,
+    tape: str | None = None,
+    length: float | None = None,
+    session: Session = Depends(get_session),
+) -> Response:
+    """The exact bitmap a component's label would be, as a PNG.
+
+    Same contract as a location's preview, and independent of whether a printer
+    is configured for the same reason: this is how the layout gets looked at.
+    """
+    if not 0 < component_id <= _MAX_ROWID:
+        raise HTTPException(
+            status_code=422, detail="component id must be a positive 64-bit integer"
+        )
+    label = lbl.build_component_labels(session, [component_id])[0]
+    geometry = _preview_geometry(tape, length)
+    return Response(content=lp.render_png(label, geometry), media_type="image/png")
+
+
+@router.post("/components/print", response_model=LabelPrintResult)
+def print_component_labels(
+    payload: ComponentLabelPrintRequest, session: Session = Depends(get_session)
+) -> LabelPrintResult:
+    """Send component labels to the label printer (writers).
+
+    The same print call as a location's, on a different selection: by the time
+    the labels reach the printer neither it nor this route can tell what they
+    describe.
+    """
+    labels = lbl.build_component_labels(session, payload.ids)
     outcome = lp.print_labels(
         labels,
         copies=payload.copies,

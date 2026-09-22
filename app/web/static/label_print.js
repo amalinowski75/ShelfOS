@@ -1,6 +1,11 @@
-// Printing location labels on the label printer (§7). The browser-printable
-// page at /labels/locations is unchanged and still there; this is the direct
-// path: pick a roll, see the bitmap the printer would get, send it.
+// Printing labels on the label printer (§7). The browser-printable page at
+// /labels/locations is unchanged and still there; this is the direct path: pick
+// a roll, see the bitmap the printer would get, send it.
+//
+// Locations and components both print through here. What differs between them
+// is one word in two URLs — the caller passes it as `kind` — because the tape
+// picker, the preview, the mismatch question and the running job are the
+// printer's business and know nothing of what is being labelled.
 //
 // The one thing this screen has to get right is disagreement. The printer can
 // say which tape it holds but not what anyone intends to do about it, so a job
@@ -26,7 +31,7 @@
   const progressText = document.getElementById("label-print-progress-text");
   const stopBtn = document.getElementById("label-print-stop");
 
-  let target = null; // {ids | root, what, preview}
+  let target = null; // {kind, ids | root, what, preview}
   let watching = null; // interval id while a run is being watched
   let loaded = null; // the tape the printer last said it holds
   let printing = false;
@@ -74,7 +79,7 @@
     // Cache-busted per selection: same URL, different tape, and the browser
     // would otherwise keep showing the first one.
     previewEl.src =
-      `/api/labels/locations/${target.preview}/preview.png` +
+      `/api/labels/${target.kind}/${target.preview}/preview.png` +
       `?tape=${encodeURIComponent(tapeEl.value)}`;
   }
 
@@ -127,7 +132,7 @@
 
       let resp;
       try {
-        resp = await fetch("/api/labels/locations/print", {
+        resp = await fetch(`/api/labels/${target.kind}/print`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -245,7 +250,9 @@
   }
 
   window.openLabelPrintDialog = async (options) => {
-    target = options;
+    // `kind` is the API's own path segment ("locations" or "components"), so a
+    // caller that forgets it prints what this dialog has always printed.
+    target = { kind: "locations", ...options };
     whatEl.textContent = options.what || "";
     clearMessages();
     stopWatching();

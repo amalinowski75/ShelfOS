@@ -69,9 +69,18 @@ def test_a_whole_raster_job_arrives() -> None:
     label while a three-byte status request still works perfectly — so this
     asserts the byte count, not merely that something arrived.
     """
-    from app.services.label_service import LabelData
+    from app.services.label_service import LabelData, location_qr_payload
 
-    labels = [LabelData(id=1, name="D1", path="Lab / D1", qr_svg="")]
+    labels = [
+        LabelData(
+            id=1,
+            name="D1",
+            detail="Lab / D1",
+            qr_payload=location_qr_payload(1),
+            separator=" / ",
+            trim="head",
+        )
+    ]
     with (
         FakePrinter([IDLE_FRAME, frame(b18=lp._STATUS_COMPLETED)]) as printer,
         PrinterBridge(printer) as bridge,

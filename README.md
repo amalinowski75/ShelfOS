@@ -111,8 +111,8 @@ Running it:
   admin, password rules, the sign-in throttle, roles
 - [`docs/shop-integrations.md`](docs/shop-integrations.md) — distributor API
   keys, importing a part from a URL, scanning a packaging label
-- [`docs/label-printing.md`](docs/label-printing.md) — location labels, the
-  Brother QL path, and a printer on another machine
+- [`docs/label-printing.md`](docs/label-printing.md) — labels for locations and
+  components, the Brother QL path, and a printer on another machine
 - [`docs/deleting-and-audit.md`](docs/deleting-and-audit.md) — what deleting a
   component does, and the audit log
 - [`deploy/README.md`](deploy/README.md) — installing it on a server: the layout

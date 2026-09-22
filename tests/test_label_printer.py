@@ -20,7 +20,11 @@ import segno
 from app import config
 from app.services import label_printer as lp
 from app.services.errors import PrinterError, ValidationError
-from app.services.label_service import LabelData, location_qr_payload
+from app.services.label_service import (
+    LabelData,
+    component_qr_payload,
+    location_qr_payload,
+)
 from PIL import Image, ImageChops
 
 from tests.fake_printer import IDLE_FRAME, FakePrinter, PrinterBridge, frame
@@ -31,7 +35,14 @@ _DEJAVU = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 def _label(
     name: str = "Drawer 03", path: str = "Lab / Rack A / Drawer 03"
 ) -> LabelData:
-    return LabelData(id=123, name=name, path=path, qr_svg="")
+    return LabelData(
+        id=123,
+        name=name,
+        detail=path,
+        qr_payload=location_qr_payload(123),
+        separator=" / ",
+        trim="head",
+    )
 
 
 def _ink_box(image: Image.Image) -> tuple[int, int, int, int] | None:
@@ -252,6 +263,90 @@ def test_a_path_too_long_to_shrink_drops_leading_segments() -> None:
     assert lines[-1].endswith("Level 12")
 
 
+def test_prose_keeps_its_hard_breaks_and_wraps_the_rest_at_spaces() -> None:
+    """A component's detail: the maker on its own line, the description after."""
+    lines, size = lp.fit_lines(
+        "STMicroelectronics\nARM Cortex-M3 MCU 32-bit 72MHz 64kB Flash LQFP-48",
+        font_path=_DEJAVU,
+        box_w=318,
+        max_px=30,
+        min_px=20,
+        max_lines=3,
+        separator=" ",
+        trim="tail",
+    )
+    assert size <= 30
+    assert lines[0] == "STMicroelectronics"
+    assert lines[1].startswith("ARM Cortex-M3")
+
+
+def test_a_maker_that_is_missing_costs_no_blank_line() -> None:
+    lines, _ = lp.fit_lines(
+        "\nCeramic capacitor",
+        font_path=_DEJAVU,
+        box_w=318,
+        max_px=30,
+        min_px=20,
+        max_lines=3,
+        separator=" ",
+        trim="tail",
+    )
+    assert lines == ["Ceramic capacitor"]
+
+
+def test_prose_too_long_to_shrink_loses_its_tail_not_its_head() -> None:
+    """The opposite end from a path, because prose is read the other way."""
+    lines, size = lp.fit_lines(
+        "Murata " + " ".join(f"word{n}" for n in range(1, 40)),
+        font_path=_DEJAVU,
+        box_w=318,
+        max_px=30,
+        min_px=20,
+        max_lines=3,
+        separator=" ",
+        trim="tail",
+    )
+    assert size == 20  # shrunk as far as it may before dropping anything
+    assert len(lines) == 3
+    assert lines[0].startswith("Murata")  # who makes it survives
+    assert lines[-1].endswith("…")  # and the cut is marked
+
+
+def test_a_whole_paragraph_dropped_is_dropped_without_a_mark() -> None:
+    """The ellipsis must not land on a line that is complete in itself.
+
+    On a 12 mm tape a short part number keeps the name at full size, leaving
+    room for ONE detail line — which is the maker, whole. Marking the cut there
+    prints "STMicroelectronics…", and a reader takes that as a truncated
+    manufacturer name rather than a description that did not fit.
+    """
+    lines, _ = lp.fit_lines(
+        "STMicroelectronics\nARM Cortex-M3 MCU 32-bit 72MHz",
+        font_path=_DEJAVU,
+        box_w=318,
+        max_px=30,
+        min_px=20,
+        max_lines=1,
+        separator=" ",
+        trim="tail",
+    )
+    assert lines == ["STMicroelectronics"]
+
+    # And where the surviving line IS cut short, the mark still belongs on it.
+    marked, _ = lp.fit_lines(
+        "STMicroelectronics\nARM Cortex-M3 MCU 32-bit 72MHz 64kB Flash LQFP-48",
+        font_path=_DEJAVU,
+        box_w=318,
+        max_px=30,
+        min_px=20,
+        max_lines=2,
+        separator=" ",
+        trim="tail",
+    )
+    assert marked[0] == "STMicroelectronics"
+    assert marked[1].startswith("ARM Cortex-M3") and marked[1].endswith("…")
+
+
 def test_a_name_too_long_shrinks_then_ellipsises() -> None:
     lines, size = lp.fit_lines(
         "Werkstattschrank-Unterschublade-17",
@@ -271,6 +366,39 @@ def test_short_text_is_left_alone_at_full_size() -> None:
         "D1", font_path=_DEJAVU, box_w=318, max_px=52, min_px=30, max_lines=1
     )
     assert (lines, size) == (["D1"], 52)
+
+
+def test_a_component_label_prints_its_own_payload_and_its_own_layout() -> None:
+    """The renderer takes the QR from the label, and never rebuilds it.
+
+    Labels of both kinds go through one render, so a component label that
+    silently carried a location's payload would still print — and scan as the
+    wrong thing entirely.
+    """
+    label = LabelData(
+        id=7,
+        name="STM32F103C8T6",
+        detail="STMicroelectronics\nARM Cortex-M3 MCU",
+        qr_payload=component_qr_payload(7),
+        separator=" ",
+        trim="tail",
+    )
+    image = lp.render_label(label)
+    expected_bytes = io.BytesIO()
+    segno.make(component_qr_payload(7), error="m", micro=False).save(
+        expected_bytes, kind="png", scale=10, border=4
+    )
+    expected = Image.open(expected_bytes).convert("1")
+    margin = round(config.LABEL_MARGIN_MM * 300 / 25.4)
+    top = margin + ((354 - 2 * margin) - expected.height) // 2
+    printed = image.crop((margin, top, margin + expected.width, top + expected.height))
+    assert printed.tobytes() == expected.tobytes()
+
+    lines, _ = lp._text_block(label, box_w=318, box_h=306)
+    assert [text for text, _, _ in lines][:2] == [
+        "STM32F103C8T6",
+        "STMicroelectronics",
+    ]
 
 
 def test_font_paths_prefers_configuration_and_reports_a_missing_file(
@@ -330,7 +458,14 @@ def test_unusable_label_settings_are_reported_at_startup(monkeypatch, caplog) ->
 
 def _labels(count: int = 3) -> list[LabelData]:
     return [
-        LabelData(id=n, name=f"D{n}", path=f"Lab / D{n}", qr_svg="")
+        LabelData(
+            id=n,
+            name=f"D{n}",
+            detail=f"Lab / D{n}",
+            qr_payload=location_qr_payload(n),
+            separator=" / ",
+            trim="head",
+        )
         for n in range(1, count + 1)
     ]
 
@@ -605,8 +740,10 @@ def test_text_never_runs_off_the_end_of_the_tape() -> None:
     label = LabelData(
         id=123,
         name="Drawer 03",
-        path="Workshop / Wall unit B / Rack A / Shelf 02 / Drawer 03",
-        qr_svg="",
+        detail="Workshop / Wall unit B / Rack A / Shelf 02 / Drawer 03",
+        qr_payload=location_qr_payload(123),
+        separator=" / ",
+        trim="head",
     )
     margin = round(config.LABEL_MARGIN_MM * 300 / 25.4)
     for length in (12, 15, 20, 30, 60):
@@ -622,8 +759,10 @@ def test_a_short_label_keeps_the_name_and_the_useful_end_of_the_path() -> None:
     label = LabelData(
         id=123,
         name="Drawer 03",
-        path="Workshop / Wall unit B / Rack A / Shelf 02 / Drawer 03",
-        qr_svg="",
+        detail="Workshop / Wall unit B / Rack A / Shelf 02 / Drawer 03",
+        qr_payload=location_qr_payload(123),
+        separator=" / ",
+        trim="head",
     )
     lines, height = lp._text_block(label, box_w=318, box_h=94)  # a 12 mm label
     assert height <= 94

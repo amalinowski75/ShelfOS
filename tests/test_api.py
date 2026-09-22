@@ -1941,6 +1941,123 @@ def test_component_scan_returns_every_component_sharing_the_number(
     assert len(resp["matches"]) == 2
 
 
+def test_component_scan_reads_our_own_label_without_a_part_number(
+    client: TestClient,
+) -> None:
+    """A ShelfOS label names the component outright (§7).
+
+    Every other path through this endpoint weighs candidates, because an MPN is
+    not an identity. This one has the id in hand, so the answer is one match and
+    no question about whose part it is — and the stock comes with it, exactly as
+    for a supplier's bag, so the caller needs no second request.
+    """
+    ids = _scan_fixture(client)
+    resp = client.post(
+        "/api/components/scan", json={"code": f"SC{ids['component']}"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["identifiers"] == ["T821108A1S100CEU"]
+    # Nothing was asked about the maker, so nothing is claimed about it.
+    assert body["scanned_manufacturer"] is None
+    assert len(body["matches"]) == 1
+    match = body["matches"][0]
+    assert match["id"] == ids["component"]
+    assert match["same_manufacturer"] is None
+    assert match["locations"] == [{"id": ids["drawer"], "path": "D1", "quantity": 100}]
+
+
+def test_our_own_label_is_read_before_it_could_be_taken_for_a_part_number(
+    client: TestClient,
+) -> None:
+    """A part really numbered like one of our labels must not shadow it.
+
+    The id in the QR is the stronger claim: it was printed by this installation
+    for this component, where the part number is a string somebody else chose.
+    """
+    ids = _scan_fixture(client)
+    decoy = client.post("/api/types", json={"name": "decoy"}).json()
+    client.post(
+        "/api/components",
+        json={"type_id": decoy["id"], "mpn": f"SC{ids['component']}"},
+    )
+    body = client.post(
+        "/api/components/scan", json={"code": f"SC{ids['component']}"}
+    ).json()
+    assert [m["id"] for m in body["matches"]] == [ids["component"]]
+
+
+def test_a_part_numbered_like_one_of_our_labels(client: TestClient) -> None:
+    """``SC`` + digits is a shape real part numbers take — Semtech's SC431.
+
+    Three things about that collision, all of them the current behaviour rather
+    than the behaviour anyone would design from scratch:
+
+    * a shop's structured label is never claimed as ours, because the pattern is
+      anchored on the whole code and a data identifier breaks it;
+    * a bare ``SC431`` naming no component of that id is refused with both
+      readings stated, rather than with a label the scanner never printed;
+    * where component #431 DOES exist, our label wins and the bag resolves to
+      it. That is a genuine ambiguity nothing in the code can settle — the
+      components page shows the part it resolved to, and its description, before
+      any stock can move.
+    """
+    ids = _scan_fixture(client)
+    semtech = client.post("/api/types", json={"name": "regulator"}).json()
+    part = client.post(
+        "/api/components",
+        json={"type_id": semtech["id"], "mpn": "SC431", "manufacturer": "Semtech"},
+    ).json()
+
+    # A shop's label carrying the same number is read as a part number.
+    structured = client.post(
+        "/api/components/scan", json={"code": "MPN:SC431 MFR:SEMTECH"}
+    ).json()
+    assert [m["id"] for m in structured["matches"]] == [part["id"]]
+
+    # A bare one, with no component #431 to be a label for, names both readings.
+    bare = client.post("/api/components/scan", json={"code": "SC431"})
+    assert bare.status_code == 404
+    detail = bare.json()["detail"]
+    assert "supplier label" in detail and "no component #431" in detail
+
+    # And a bare one whose id is live resolves to THAT component, not to the
+    # part numbered the same way.
+    mine = client.post(
+        "/api/components/scan", json={"code": f"SC{ids['component']}"}
+    )
+    assert mine.status_code == 200
+    assert [m["mpn"] for m in mine.json()["matches"]] != ["SC431"]
+
+
+def test_a_label_for_a_component_that_is_gone_says_so(client: TestClient) -> None:
+    """A bag still wearing an out-of-date label is the thing to be told about."""
+    _scan_fixture(client)
+    # Said only once the supplier parser has had its turn and made nothing of
+    # the code either — a database rebuilt since the label was printed.
+    missing = client.post("/api/components/scan", json={"code": "SC99999"})
+    assert missing.status_code == 404
+    detail = missing.json()["detail"]
+    assert "no component #99999" in detail
+    assert "supplier label" in detail  # both readings named, neither assumed
+
+    # A retired part: it takes no stock, so the flow this feeds could do
+    # nothing with the bag even if the scan resolved.
+    spare_type = client.post("/api/types", json={"name": "spare"}).json()
+    retired = client.post(
+        "/api/components", json={"type_id": spare_type["id"], "mpn": "OLD-1"}
+    ).json()
+    removed = client.request(
+        "DELETE",
+        f"/api/admin/components/{retired['id']}",
+        json={"reason": "gone"},
+    )
+    assert removed.status_code == 204
+    deleted = client.post("/api/components/scan", json={"code": f"SC{retired['id']}"})
+    assert deleted.status_code == 422
+    assert "out of date" in deleted.json()["detail"]
+
+
 def test_stock_move_relocates_and_is_atomic(client: TestClient) -> None:
     ids = _scan_fixture(client)
     moved = client.post(

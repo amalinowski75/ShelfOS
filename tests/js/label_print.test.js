@@ -178,6 +178,63 @@ describe("label_print.js", () => {
   });
 });
 
+describe("what is being labelled", () => {
+  // The dialog is the printer's, not the locations page's: it takes the API's
+  // own path segment and knows nothing else about what the labels describe.
+  it("asks the component endpoints when the caller says components", async () => {
+    const page = loadPage(FIXTURE, SCRIPTS, {
+      fetchImpl: (url) =>
+        url === "/api/labels/tapes"
+          ? ok(TAPES)
+          : ok({ sent: 1, confirmed: true, tape: "62red" }),
+    });
+    page.window.openLabelPrintDialog({
+      kind: "components",
+      ids: [7],
+      preview: 7,
+      what: "One label: “NE555P”",
+    });
+    await tick();
+
+    expect(page.document.getElementById("label-print-preview").src).toContain(
+      "/api/labels/components/7/preview.png?tape=62red",
+    );
+
+    page.document.getElementById("label-print-form").dispatchEvent(
+      new page.document.defaultView.Event("submit", {
+        cancelable: true,
+        bubbles: true,
+      }),
+    );
+    await tick();
+
+    const [url, opts] = page.fetchMock.mock.calls.at(-1);
+    expect(url).toBe("/api/labels/components/print");
+    expect(JSON.parse(opts.body)).toEqual({
+      tape: "62red",
+      accept_loaded: false,
+      ids: [7],
+    });
+  });
+
+  it("still prints locations for a caller that names no kind", async () => {
+    // The locations page has always called this without one, and a silent
+    // switch to some other endpoint would print nothing and say nothing.
+    const { document, fetchMock } = await open(
+      null,
+      routes({ print: () => ok({ sent: 1, confirmed: true, tape: "62red" }) }),
+    );
+    expect(document.getElementById("label-print-preview").src).toContain(
+      "/api/labels/locations/5/preview.png",
+    );
+    document.getElementById("label-print-form").dispatchEvent(
+      new document.defaultView.Event("submit", { cancelable: true, bubbles: true }),
+    );
+    await tick();
+    expect(fetchMock.mock.calls.at(-1)[0]).toBe("/api/labels/locations/print");
+  });
+});
+
 describe("stopping a run", () => {
   it("shows progress and a way out while the labels are going", async () => {
     // A whole cabinet is hundreds of labels; being able to say "not that" is

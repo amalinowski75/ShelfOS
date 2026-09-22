@@ -2253,6 +2253,67 @@ def test_locations_page_offers_printing_only_with_a_printer(
     assert "label_print.js" in wired
 
 
+def test_component_page_offers_printing_only_with_a_printer(
+    client: TestClient,
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    """Same rule as the locations page: no printer, no Print button."""
+    from app import config
+
+    ctype = client.post("/api/types", json={"name": "MCU"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "NE555P"}
+    ).json()
+
+    monkeypatch.setattr(config, "LABEL_DEVICE", "")
+    plain = client.get(f"/components/{component['id']}").text
+    assert "component-print-label-btn" not in plain
+    assert 'id="label-print-dialog"' not in plain
+    assert "component_label.js" not in plain
+
+    monkeypatch.setattr(config, "LABEL_DEVICE", "/dev/usb/lp0")
+    wired = client.get(f"/components/{component['id']}").text
+    assert "component-print-label-btn" in wired
+    assert 'id="label-print-dialog"' in wired
+    assert "component_label.js" in wired
+
+
+def test_printing_a_component_label_is_open_to_any_writer(
+    client: TestClient,
+    anon_client: TestClient,
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    """Editing and deleting a part are an admin's; labelling a bag is not.
+
+    A label changes nothing about the component, and the person at the bench
+    with the bag in their hand is usually not the admin.
+    """
+    from app import config
+
+    monkeypatch.setattr(config, "LABEL_DEVICE", "/dev/usb/lp0")
+    ctype = client.post("/api/types", json={"name": "MCU"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "NE555P"}
+    ).json()
+    for role in ("user", "read-only"):
+        client.post(
+            "/api/admin/users",
+            json={"username": role, "password": "password123", "role": role},
+        )
+
+    web_login(anon_client, "user", "password123")
+    writer = anon_client.get(f"/components/{component['id']}").text
+    assert "NE555P" in writer
+    assert "component-print-label-btn" in writer
+    assert "component-edit-btn" not in writer  # still an admin's
+    web_logout(anon_client)
+
+    web_login(anon_client, "read-only", "password123")
+    reader = anon_client.get(f"/components/{component['id']}").text
+    assert "NE555P" in reader  # the page really rendered, rather than redirecting
+    assert "component-print-label-btn" not in reader
+
+
 def test_labels_page_offers_the_label_printer_with_its_own_csrf_token(
     client: TestClient,
     monkeypatch,  # type: ignore[no-untyped-def]

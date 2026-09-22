@@ -1,8 +1,9 @@
-# ShelfOS — Location labels and the label printer
+# ShelfOS — Labels and the label printer
 
-The print-ready page, the Brother QL path, pointing ShelfOS at a printer that is
-on another machine, and the handful of things that catch people out. The decision
-behind writing to the device rather than going through CUPS is D12 in
+Two things get labels — a location and a component — and this is the print-ready
+page, the Brother QL path, pointing ShelfOS at a printer that is on another
+machine, and the handful of things that catch people out. The decision behind
+writing to the device rather than going through CUPS is D12 in
 [`DECISIONS.md`](DECISIONS.md).
 
 ## Printing a location label
@@ -49,6 +50,39 @@ the code does.
 would receive, and takes `?tape=` / `?length=` to try a roll without touching the
 environment — so the layout can be settled by looking, rather than by feeding tape
 through a printer. A setting that would fail is named in a startup warning.
+
+## Printing a component label
+
+A component's detail page has a **Print label** button beside Edit, and it opens
+the same dialog with the same rolls and the same preview. What comes out is the
+part number in bold, the maker on a line of its own, and the description under
+it — the same three facts the page's Overview card leads with, because they are
+what somebody holding the bag needs to read off it. A part with no number prints
+as "Component #12", and a part with no maker or no description simply leaves the
+line out rather than printing a blank one. A long description is cut from the
+end, with an ellipsis; a location path, being read from the right, is cut from
+the front instead.
+
+Unlike Edit and Delete, the button is open to any writer: sticking a label on a
+bag changes nothing about the component, and the person at the bench is usually
+not the administrator.
+
+**The QR names the component outright.** It holds `SC<id>`, the same shape as a
+location's `SL<id>`, and the scan putaway panel on the components page reads it
+before it tries anything else. That matters more than it sounds: every other way
+of scanning a bag goes through a part number, and a part number is only half an
+identity — two companies print the same one on different parts, which is why the
+panel has to ask "is this the same maker?" at all. Our own label has the id in
+it, so there is nothing to look up and nothing to ask. Scan the bag, scan the
+shelf, done.
+
+A label whose component has since been deleted says so rather than resolving:
+a retired part takes no stock, so the bag in your hand is wearing an out-of-date
+label and that is the thing worth being told.
+
+`GET /api/labels/components/<id>/preview.png` takes the same `?tape=` and
+`?length=` as the location preview, so a component label can be looked at on any
+roll without touching the environment.
 
 ## Pointing ShelfOS at a printer
 

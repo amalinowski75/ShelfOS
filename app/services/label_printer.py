@@ -1,4 +1,4 @@
-"""Location labels as bitmaps a label printer can lay on tape (spec §7).
+"""Labels as bitmaps a label printer can lay on tape (spec §7).
 
 The browser path (``label_service`` + ``labels.html``) renders a label as HTML at
 whatever size the print dialog is given. This renders the SAME label onto the
@@ -43,7 +43,7 @@ from PIL import Image, ImageDraw, ImageFont
 from app import config
 from app.services import tunnel_keys
 from app.services.errors import PrinterError, TapeMismatchError, ValidationError
-from app.services.label_service import LabelData, location_qr_payload
+from app.services.label_service import LabelData, Trim
 
 _logger = logging.getLogger("shelfos")
 
@@ -139,13 +139,13 @@ _SIDE_BY_SIDE_RATIO: Final = 1.3
 _MIN_QR_MODULE_PX: Final = 3
 
 # Type scale, in printer dots. The name is what identifies the label across the
-# room; the path is context, read close up, and may wrap.
+# room — a location's name, a part's number; the detail under it is context,
+# read close up, and may wrap.
 _NAME_MAX_PX: Final = 52
 _NAME_MIN_PX: Final = 30
-_PATH_MAX_PX: Final = 30
-_PATH_MIN_PX: Final = 20
-_PATH_MAX_LINES: Final = 3
-_PATH_SEPARATOR: Final = " / "
+_DETAIL_MAX_PX: Final = 30
+_DETAIL_MIN_PX: Final = 20
+_DETAIL_MAX_LINES: Final = 3
 
 # Sane bounds for a continuous tape's length: below this a QR plus a name does
 # not fit, above it a typo would unroll a metre of tape per label.
@@ -293,20 +293,27 @@ def _wrap(
     segments stay whole — "Rack A" split across two lines reads as two shelves.
     Without one the text is a single line, to be shrunk or ellipsised by the
     caller.
+
+    A newline in ``text`` is a break the label keeps whatever the width allows:
+    it is how a component's maker gets a line of its own rather than running on
+    into the description. An empty paragraph yields no line — nothing ever
+    accumulates to append — so a part with no maker prints no blank line where
+    one would have been.
     """
     if separator is None:
         return [text]
     lines: list[str] = []
-    current = ""
-    for segment in text.split(separator):
-        candidate = f"{current}{separator}{segment}" if current else segment
-        if current and _width(candidate, font) > box_w:
+    for paragraph in text.split("\n"):
+        current = ""
+        for segment in paragraph.split(separator):
+            candidate = f"{current}{separator}{segment}" if current else segment
+            if current and _width(candidate, font) > box_w:
+                lines.append(current)
+                current = segment
+            else:
+                current = candidate
+        if current:
             lines.append(current)
-            current = segment
-        else:
-            current = candidate
-    if current:
-        lines.append(current)
     return lines
 
 
@@ -326,14 +333,18 @@ def fit_lines(
     min_px: int,
     max_lines: int,
     separator: str | None = None,
+    trim: Trim = "head",
 ) -> tuple[list[str], int]:
     """The exact lines to draw, and the size to draw them at.
 
     Shrinks the type until the text fits in ``max_lines``; at ``min_px`` it
     gives up on shrinking and drops content instead. What it drops is the
-    opinionated part: for a separated path it drops LEADING segments and marks
-    the cut ("… / Shelf 02 / D7"). The drawer identifies the label; the room is
-    context you already have, standing in it.
+    opinionated part, and which end goes is the caller's to say. A path is read
+    from the right, so ``trim="head"`` drops LEADING segments and marks the cut
+    ("… / Shelf 02 / D7") — the drawer identifies the label, and the room is
+    context you already have, standing in it. Prose is read from the left, so
+    ``trim="tail"`` keeps the first lines and ellipsises the last: a part's
+    maker and the start of its description say more than its final two words.
 
     Pure, and returning strings, so the layout rules are testable without
     reading pixels back off a bitmap.
@@ -351,6 +362,32 @@ def fit_lines(
     font = _font(font_path, min_px)
     if separator is None:
         return [_ellipsise(text, font, box_w)], min_px
+    if trim == "tail":
+        # Wrapped a paragraph at a time, so it is known whether the last line
+        # that survived is a whole one or the front of a longer one.
+        paragraphs = [
+            _wrap(paragraph, font, box_w, separator)
+            for paragraph in text.split("\n")
+        ]
+        wrapped = [line for paragraph in paragraphs for line in paragraph]
+        complete = [
+            index == len(paragraph) - 1
+            for paragraph in paragraphs
+            for index in range(len(paragraph))
+        ]
+        lines = [_ellipsise(line, font, box_w) for line in wrapped[:max_lines]]
+        # Mark the cut only where the cut is INSIDE the line that survived. On
+        # a narrow tape a component's detail often loses its whole description
+        # and keeps the maker, and an ellipsis there reads as a truncated
+        # manufacturer name — the one thing on the label that must not look
+        # abbreviated. What was dropped whole is dropped silently; the QR still
+        # says which part this is.
+        if lines and len(wrapped) > max_lines and not complete[max_lines - 1]:
+            # _ellipsise returns the marked line unchanged when it fits and
+            # re-trims it when it does not, so the mark never pushes the line
+            # past the box it was fitted to.
+            lines[-1] = _ellipsise(lines[-1] + "…", font, box_w)
+        return lines, min_px
     segments = text.split(separator)
     for first in range(1, len(segments)):
         shortened = separator.join(["…", *segments[first:]])
@@ -362,10 +399,11 @@ def fit_lines(
 
 @lru_cache(maxsize=1)
 def _qr_modules() -> int:
-    """How many modules wide a location QR is, quiet zone included.
+    """How many modules wide a label's QR is, quiet zone included.
 
-    Constant in practice: every realistic id fits version 1 (see
-    ``label_service``), and the layout needs the number before it has a payload.
+    Constant in practice: both prefixes are two characters and every realistic
+    id fits version 1 (see ``label_service``), and the layout needs the number
+    before it has a payload.
     """
     return int(_qr_code("SL1").symbol_size(scale=1, border=_QR_BORDER)[0])
 
@@ -374,8 +412,8 @@ def _qr_code(payload: str) -> segno.QRCode:
     """The code itself, before it is drawn at any size.
 
     ``error="m"`` is a FLOOR, not the level used: segno's ``boost_error`` raises
-    it to the highest that still fits the chosen version, and an ``SL<id>``
-    payload leaves a version-1 symbol with room for H. That is the level we
+    it to the highest that still fits the chosen version, and an ``SL<id>`` or
+    ``SC<id>`` payload leaves a version-1 symbol with room for H. That is the level we
     want on thermal tape that gets thumbed and scuffed, so the boost is kept —
     named here because the argument alone reads as if M were the outcome.
 
@@ -467,10 +505,14 @@ def _text_block(
     the cutter — the one way this module could quietly produce a bad label,
     while refusing round tapes, thin QR modules and absurd lengths outright.
 
-    So the name is capped by the height it is given, and the path gets the lines
-    that are left over. Measuring it here rather than while drawing also lets a
-    layout centre the code and the text together, instead of centring each in
-    its own half and leaving a hole between them on a long label.
+    So the name is capped by the height it is given, and the detail gets the
+    lines that are left over. Measuring it here rather than while drawing also
+    lets a layout centre the code and the text together, instead of centring
+    each in its own half and leaving a hole between them on a long label.
+
+    Where the detail may be broken and which end of it to give up are the
+    label's to say, not this function's: a location path and a part's
+    description want opposite answers to both (see ``label_service``).
     """
     regular, bold = font_paths()
     # Leading of 1.25 reads better than the fonts' own, which is set for prose.
@@ -487,31 +529,32 @@ def _text_block(
     height = name_h * len(name_lines)
 
     room = box_h - height
-    path_lines: list[str] = []
-    path_px = _PATH_MIN_PX
+    detail_lines: list[str] = []
+    detail_px = _DETAIL_MIN_PX
     # Fit, then check what the fitted size really costs: shrinking may leave
     # room for a line the first estimate ruled out, and growing never happens.
-    allowed = min(_PATH_MAX_LINES, int(room // round(_PATH_MIN_PX * 1.25)))
+    allowed = min(_DETAIL_MAX_LINES, int(room // round(_DETAIL_MIN_PX * 1.25)))
     while allowed > 0:
-        path_lines, path_px = fit_lines(
-            label.path,
+        detail_lines, detail_px = fit_lines(
+            label.detail,
             font_path=regular,
             box_w=box_w,
-            max_px=_PATH_MAX_PX,
-            min_px=_PATH_MIN_PX,
+            max_px=_DETAIL_MAX_PX,
+            min_px=_DETAIL_MIN_PX,
             max_lines=allowed,
-            separator=_PATH_SEPARATOR,
+            separator=label.separator,
+            trim=label.trim,
         )
-        if len(path_lines) * round(path_px * 1.25) <= room:
+        if len(detail_lines) * round(detail_px * 1.25) <= room:
             break
         allowed -= 1
-        path_lines = []
-    lines += [(line, regular, path_px) for line in path_lines]
-    return lines, height + len(path_lines) * round(path_px * 1.25)
+        detail_lines = []
+    lines += [(line, regular, detail_px) for line in detail_lines]
+    return lines, height + len(detail_lines) * round(detail_px * 1.25)
 
 
 def render_label(label: LabelData, geometry: TapeGeometry | None = None) -> Image.Image:
-    """Draw one location label, arranged to suit the tape it will print on."""
+    """Draw one label, arranged to suit the tape it will print on."""
     geometry = geometry or tape_geometry()
     canvas_w, canvas_h, turn = _drawing_size(geometry)
     margin = _margin_for(canvas_w, canvas_h)
@@ -525,7 +568,7 @@ def render_label(label: LabelData, geometry: TapeGeometry | None = None) -> Imag
 
     canvas = Image.new("1", (canvas_w, canvas_h), 1)
     beside, qr_box = _layout(box_w, box_h)
-    qr = _qr_image(location_qr_payload(label.id), qr_box, geometry.tape)
+    qr = _qr_image(label.qr_payload, qr_box, geometry.tape)
     gap = margin
 
     text_w = (box_w - qr.width - gap) if beside else box_w

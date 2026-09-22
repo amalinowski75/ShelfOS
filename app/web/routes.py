@@ -1120,6 +1120,10 @@ def component_detail(
                 else None
             ),
             "delete_blockers": delete_blockers,
+            # No printer configured, no Print button: the dialog would have
+            # nothing to offer and the button nothing to do (same rule as the
+            # locations page).
+            "label_printing": lp.printing_configured(),
             "current_user": user,
         },
     )

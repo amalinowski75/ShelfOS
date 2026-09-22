@@ -9,6 +9,36 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## A label for the bag, not just for the drawer
+
+- **#175** — components can be printed as labels, the way locations already
+  could. The detail page has a **Print label** button beside Edit; it opens the
+  same dialog, offers the same rolls, shows the same preview of the exact bitmap
+  the printer would get, and prints on the same one-label-at-a-time path with the
+  same Stop. What comes out is the part number in bold, the maker on a line of its
+  own and the description under it — the three things the Overview card leads
+  with, because they are what someone holding the bag reads off it.
+
+  The button is open to any writer, unlike Edit and Delete: putting a label on a
+  bag changes nothing about the component, and the person at the bench is usually
+  not the administrator.
+
+  The QR holds `SC<id>`, the same shape as a location's `SL<id>`, and scan putaway
+  on the components page reads it before anything else. That is the part worth
+  having: every other way of scanning a bag goes through a part number, and a part
+  number is only half an identity — two companies print the same one on different
+  parts, which is why that panel has to ask "same maker?" at all. Our own label
+  carries the id, so there is nothing to look up and nothing to ask. A label whose
+  component has since been deleted says so instead of resolving, since a retired
+  part takes no stock and the bag is wearing an out-of-date label.
+
+  Underneath, one label is now a headline, a line of detail, and the string the QR
+  encodes — plus two facts the renderer cannot work out for itself: where the
+  detail may be broken, and which end to give up when it still will not fit. A
+  path is read from the right and loses its head ("… / Shelf 02 / D7"); a
+  description is read from the left and loses its tail. Neither renderer knows
+  what a location or a component is any more.
+
 ## A part that arrives with its picture
 
 - **#171** — an import from a shop URL or a scanned label now brings the product
