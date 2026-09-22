@@ -67,6 +67,7 @@ from app.web.presenter import (
     build_types_table,
     format_money,
     format_parameter_value,
+    short_description,
 )
 
 # Cap the invoice list until real pagination lands; the template shows a hint
@@ -1081,6 +1082,16 @@ def component_detail(
         session, (cast(int, m.id) for m in movements)
     )
 
+    # What the Move dialog shows under the part number, and the same string the
+    # components page puts there after a scan — trimmed the same way, so one
+    # component with a datasheet blurb in its notes cannot stretch the modal on
+    # one of its two entry points. The page itself still shows the whole thing.
+    stock_description = " · ".join(
+        part
+        for part in (component.manufacturer, short_description(component.notes))
+        if part
+    )
+
     # For the Add/Take stock dialog and the "New location" it can reach inline.
     # A deleted component is out of use, so it gets no write affordances at all —
     # the page is then a record of what it was, not something to work with (§20).
@@ -1104,6 +1115,7 @@ def component_detail(
             "type_name": ctype.name if ctype else "",
             "parameters": parameters,
             "locations": locations,
+            "stock_description": stock_description,
             "history": history,
             "movements": movements,
             "movement_authors": movement_authors,

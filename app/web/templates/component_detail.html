@@ -135,7 +135,7 @@
       <table class="data" id="stock-locations"
              data-component-id="{{ component.id }}"
              data-label="{{ component.mpn or ('Component #' ~ component.id) }}"
-             data-description="{{ [component.manufacturer, component.notes] | select | join(' · ') }}">
+             data-description="{{ stock_description }}">
         <thead>
           <tr>
             <th>Location</th><th style="text-align:right">Quantity</th><th>Container</th>

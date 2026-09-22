@@ -940,6 +940,46 @@ def test_component_detail_offers_a_move_per_stock_row(client: TestClient) -> Non
         assert script in html
 
 
+def test_component_detail_move_dialog_gets_a_trimmed_description(
+    client: TestClient,
+) -> None:
+    """The same slot the components page fills after a scan, filled the same way.
+
+    That page ships descriptions trimmed to table length, so a component whose
+    notes hold a pasted datasheet blurb would stretch the modal on one of the two
+    ways into it and not the other. The page itself still shows the whole thing.
+    """
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    notes = "L" + "o" * 400 + "ng"
+    component = client.post(
+        "/api/components",
+        json={
+            "type_id": ctype["id"],
+            "mpn": "RC0603",
+            "manufacturer": "Yageo",
+            "notes": notes,
+        },
+    ).json()
+    location = client.post(
+        "/api/locations", json={"type": "drawer", "name": "D1"}
+    ).json()
+    client.post(
+        "/api/stock/add",
+        json={
+            "component_id": component["id"],
+            "location_id": location["id"],
+            "quantity": 3,
+        },
+    )
+
+    html = client.get(f"/components/{component['id']}").text
+    described = html.split('data-description="', 1)[1].split('"', 1)[0]
+    assert described.startswith("Yageo · Loo")
+    assert described.endswith("…")
+    assert len(described) < len(notes)
+    assert notes in html  # the Overview card is still the whole description
+
+
 def test_component_detail_move_is_absent_without_a_writer_or_stock(
     client: TestClient, anon_client: TestClient
 ) -> None:
