@@ -363,12 +363,29 @@ def fit_lines(
     if separator is None:
         return [_ellipsise(text, font, box_w)], min_px
     if trim == "tail":
-        wrapped = _wrap(text, font, box_w, separator)
+        # Wrapped a paragraph at a time, so it is known whether the last line
+        # that survived is a whole one or the front of a longer one.
+        paragraphs = [
+            _wrap(paragraph, font, box_w, separator)
+            for paragraph in text.split("\n")
+        ]
+        wrapped = [line for paragraph in paragraphs for line in paragraph]
+        complete = [
+            index == len(paragraph) - 1
+            for paragraph in paragraphs
+            for index in range(len(paragraph))
+        ]
         lines = [_ellipsise(line, font, box_w) for line in wrapped[:max_lines]]
-        if lines and len(wrapped) > max_lines:
-            # Say that something was cut. _ellipsise returns the marked line
-            # unchanged when it fits and re-trims it when it does not, so the
-            # mark never pushes the line past the box it was fitted to.
+        # Mark the cut only where the cut is INSIDE the line that survived. On
+        # a narrow tape a component's detail often loses its whole description
+        # and keeps the maker, and an ellipsis there reads as a truncated
+        # manufacturer name — the one thing on the label that must not look
+        # abbreviated. What was dropped whole is dropped silently; the QR still
+        # says which part this is.
+        if lines and len(wrapped) > max_lines and not complete[max_lines - 1]:
+            # _ellipsise returns the marked line unchanged when it fits and
+            # re-trims it when it does not, so the mark never pushes the line
+            # past the box it was fitted to.
             lines[-1] = _ellipsise(lines[-1] + "…", font, box_w)
         return lines, min_px
     segments = text.split(separator)

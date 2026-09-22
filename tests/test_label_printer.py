@@ -312,6 +312,41 @@ def test_prose_too_long_to_shrink_loses_its_tail_not_its_head() -> None:
     assert lines[-1].endswith("…")  # and the cut is marked
 
 
+def test_a_whole_paragraph_dropped_is_dropped_without_a_mark() -> None:
+    """The ellipsis must not land on a line that is complete in itself.
+
+    On a 12 mm tape a short part number keeps the name at full size, leaving
+    room for ONE detail line — which is the maker, whole. Marking the cut there
+    prints "STMicroelectronics…", and a reader takes that as a truncated
+    manufacturer name rather than a description that did not fit.
+    """
+    lines, _ = lp.fit_lines(
+        "STMicroelectronics\nARM Cortex-M3 MCU 32-bit 72MHz",
+        font_path=_DEJAVU,
+        box_w=318,
+        max_px=30,
+        min_px=20,
+        max_lines=1,
+        separator=" ",
+        trim="tail",
+    )
+    assert lines == ["STMicroelectronics"]
+
+    # And where the surviving line IS cut short, the mark still belongs on it.
+    marked, _ = lp.fit_lines(
+        "STMicroelectronics\nARM Cortex-M3 MCU 32-bit 72MHz 64kB Flash LQFP-48",
+        font_path=_DEJAVU,
+        box_w=318,
+        max_px=30,
+        min_px=20,
+        max_lines=2,
+        separator=" ",
+        trim="tail",
+    )
+    assert marked[0] == "STMicroelectronics"
+    assert marked[1].startswith("ARM Cortex-M3") and marked[1].endswith("…")
+
+
 def test_a_name_too_long_shrinks_then_ellipsises() -> None:
     lines, size = lp.fit_lines(
         "Werkstattschrank-Unterschublade-17",
