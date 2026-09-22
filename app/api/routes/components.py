@@ -19,10 +19,11 @@ from app.auth.deps import current_user_id, require_admin
 from app.models.component import Component, ComponentParameter
 from app.models.user import User
 from app.services import component_service as cs
+from app.services import label_service as lbl
 from app.services import location_service as ls
 from app.services import manufacturer_service as mfs
 from app.services import stock_service as ss
-from app.services.errors import DuplicateComponentError
+from app.services.errors import DuplicateComponentError, NotFoundError, ValidationError
 from app.services.shops.scan import ScanResult, parse_scan
 
 router = APIRouter(prefix="/api/components", tags=["components"])
@@ -50,6 +51,59 @@ def _scan_identifiers(scan: ScanResult) -> list[str]:
     return list(seen.values())
 
 
+def _scanned_stock(session: Session, component_id: int) -> list[ScannedStockRead]:
+    """Where this component is, and how much of it — what a move would move."""
+    return [
+        ScannedStockRead(
+            id=slot.location_id,
+            path=ls.format_path(session, slot.location_id),
+            quantity=slot.quantity,
+        )
+        for slot in ss.list_component_locations(session, component_id)
+    ]
+
+
+def _our_own_label(session: Session, component_id: int) -> ComponentScanRead:
+    """The answer to a scan of one of ShelfOS's own component labels (§7).
+
+    A part number is only half an identity — two companies print the same one on
+    different parts — so every other path through this endpoint has to weigh
+    candidates. This one does not: the label names the component outright, and
+    the single match it returns is the part that was labelled.
+
+    ``same_manufacturer`` stays null, which is this API's "nothing was asked":
+    the label named no maker because it did not need to.
+    """
+    component = session.get(Component, component_id)
+    if component is None:
+        raise NotFoundError(
+            f"this label names component #{component_id}, "
+            "which is not in the inventory"
+        )
+    if component.deleted_at is not None:
+        # Retired parts take no stock, so the flow this feeds could do nothing
+        # with it anyway — and a bag still wearing the label is exactly the
+        # thing somebody needs to be told about.
+        raise ValidationError(
+            f"{component.mpn or f'Component #{component_id}'} has been deleted "
+            "from the inventory; this label is out of date"
+        )
+    return ComponentScanRead(
+        identifiers=[component.mpn or lbl.component_qr_payload(component_id)],
+        scanned_manufacturer=None,
+        matches=[
+            ScannedComponentRead(
+                id=component_id,
+                mpn=component.mpn,
+                manufacturer=component.manufacturer,
+                description=component.notes,
+                same_manufacturer=None,
+                locations=_scanned_stock(session, component_id),
+            )
+        ],
+    )
+
+
 @router.post("/scan", response_model=ComponentScanRead)
 def scan_component(
     payload: ShopLookup,
@@ -60,7 +114,14 @@ def scan_component(
     Used by scan putaway on the components page: one round trip gives the
     match and the stock a relocation would move, so the client never has to
     guess between identifiers or fetch the slots separately.
+
+    Our own label is read first and answers on its own — it carries the
+    component's id, so there is nothing to look up and nothing to disambiguate.
+    Anything else is a supplier's label, parsed for the part numbers it offers.
     """
+    own = lbl.scanned_component_id(payload.code)
+    if own is not None:
+        return _our_own_label(session, own)
     scan = parse_scan(payload.code)  # ValidationError → 422
     identifiers = _scan_identifiers(scan)
     # Through the alias table, so a bag printed "ONSEMI" is measured against the
@@ -85,14 +146,7 @@ def scan_component(
                     same_manufacturer=mfs.agrees_with(
                         scanned_maker, component.manufacturer
                     ),
-                    locations=[
-                        ScannedStockRead(
-                            id=slot.location_id,
-                            path=ls.format_path(session, slot.location_id),
-                            quantity=slot.quantity,
-                        )
-                        for slot in ss.list_component_locations(session, component_id)
-                    ],
+                    locations=_scanned_stock(session, component_id),
                 )
             )
         # Only a match that was not contradicted counts as an answer. A set that
