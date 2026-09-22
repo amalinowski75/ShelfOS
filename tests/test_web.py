@@ -6,6 +6,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 import pytest
 from app import config
@@ -2353,8 +2354,20 @@ def test_audit_feed_filters_pages_and_stays_out_of_caches(client: TestClient) ->
 
 
 def _cursor(page: dict[str, Any]) -> str:
-    """The query string that continues a page, as the browser echoes it back."""
-    return f"before_when={page['cursor']['when']}&before_id={page['cursor']['id']}"
+    """The query string that continues a page, as the browser echoes it back.
+
+    Encoded, because the browser encodes: audit.js builds this with
+    URLSearchParams, and a timestamp's "+00:00" offset has to travel as %2B —
+    a raw "+" in a query string means a space, and the server rightly refuses
+    "…593821 00:00" as not a timestamp. Written out by hand here it silently
+    depended on the HTTP client doing it for us, which the newer one does not.
+    """
+    return urlencode(
+        {
+            "before_when": page["cursor"]["when"],
+            "before_id": page["cursor"]["id"],
+        }
+    )
 
 
 def test_audit_paging_is_not_shifted_by_entries_arriving_while_it_is_read(

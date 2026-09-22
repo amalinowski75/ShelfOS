@@ -195,7 +195,7 @@ def create_bom(
     session.add(bom)
     session.flush()  # assign bom.id for the lines
     for parsed in lines:
-        session.add(BomLine(bom_id=bom.id, **vars(parsed)))
+        session.add(BomLine(bom_id=cast(int, bom.id), **vars(parsed)))
     session.commit()
     session.refresh(bom)
     bom_id = cast(int, bom.id)

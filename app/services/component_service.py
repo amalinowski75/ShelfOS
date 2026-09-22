@@ -578,7 +578,9 @@ def _sync_enum_values(
         if existing_row is None:
             session.add(
                 ParameterEnumValue(
-                    parameter_definition_id=definition.id, value=value, sort_order=order
+                    parameter_definition_id=cast(int, definition.id),
+                    value=value,
+                    sort_order=order,
                 )
             )
         else:
@@ -820,7 +822,7 @@ def _create_parameter_definition(
     for order, value in enumerate(tokens):
         session.add(
             ParameterEnumValue(
-                parameter_definition_id=definition.id,
+                parameter_definition_id=cast(int, definition.id),
                 value=value,
                 sort_order=order,
             )
