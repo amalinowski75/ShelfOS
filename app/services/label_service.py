@@ -1,38 +1,98 @@
-"""Printable location labels: a small QR plus the human-readable path (spec §7).
+"""Printable labels: a small QR plus what the thing is (spec §7).
 
-The QR encodes ``SL<id>`` — deliberately terse, and all characters from the QR
-alphanumeric set (digits + uppercase), which packs ~1.7× denser than byte mode.
-That keeps every realistic id in QR version 1 (21×21 modules, the smallest —
-version 1 at ECC M holds "SL" + 18 digits), so the code prints legibly even on
-9 mm of a 12 mm tape. A lowercase or ``:``-ed prefix would force byte mode and
-spill three-digit ids into version 2 already.
+Two kinds of thing get a label here — a location and a component — and both are
+described by the same four facts: an id, a headline, a line of detail, and the
+string the QR encodes. The renderers (``labels.html`` for the browser,
+``label_printer`` for the tape) take that and nothing else, so neither of them
+knows what a location or a component is.
 
-The prefix reserves room for a future scan dispatcher (``^SL(\\d+)$``) to tell
-a location label apart from a supplier barcode (cf.
-``app/services/shops/scan.py``), enabling a scan-the-bag / scan-the-drawer
-stock flow later.
+The QR encodes ``SL<id>`` for a location and ``SC<id>`` for a component —
+deliberately terse, and all characters from the QR alphanumeric set (digits +
+uppercase), which packs ~1.7× denser than byte mode. That keeps every realistic
+id in QR version 1 (21×21 modules, the smallest — version 1 at ECC M holds a
+two-letter prefix and 18 digits), so the code prints legibly even on 9 mm of a
+12 mm tape. A lowercase or ``:``-ed prefix would force byte mode and spill
+three-digit ids into version 2 already.
+
+The prefix is what tells our own labels apart from a supplier barcode (cf.
+``app/services/shops/scan.py``): ``^SL(\\d+)$`` is a shelf, and scanning one
+files whatever is in hand there; ``^SC(\\d+)$`` is a part, and scanning one
+names that part outright — no part number to look up, and none of the
+ambiguity that comes with an MPN two companies both print.
 """
 
 from __future__ import annotations
 
 import io
+import re
 from dataclasses import dataclass
-from typing import cast
+from typing import Literal, cast
 
 import segno
 from sqlmodel import Session
 
+from app.models.component import Component
 from app.models.location import Location
+from app.services import component_service as cs
 from app.services import location_service as ls
 from app.services._common import require_entity
 from app.services.errors import ValidationError
 
-_QR_PREFIX = "SL"
+_LOCATION_PREFIX = "SL"
+_COMPONENT_PREFIX = "SC"
+
+# How ``location_service`` spells a path; the label reuses it as the point a
+# long path may be broken at, so a wrapped label breaks between two locations
+# rather than in the middle of one's name.
+_PATH_SEPARATOR = " / "
+
+# A component's detail is prose, so it breaks at spaces like prose.
+_PROSE_SEPARATOR = " "
+
+# Past SQLite's 64-bit rowid range the driver raises OverflowError mid-query. An
+# id that far out cannot name anything, so a scan carrying one is read as "not
+# one of ours" and goes on to be tried as a supplier barcode.
+_MAX_ROWID = 2**63 - 1
+
+# The longest description a label carries. ``notes`` is uncapped free text and
+# the fitter measures it a line at a time as it shrinks the type, so one
+# component with a datasheet pasted into it would otherwise be measured
+# repeatedly to print three lines of it. Everything past this is the detail
+# page's business, not the label's.
+_MAX_DETAIL_CHARS = 120
+
+_COMPONENT_LABEL = re.compile(rf"^{_COMPONENT_PREFIX}(\d+)$", re.IGNORECASE)
+
+#: Which end of the detail is given up when it will not fit at any size.
+#: A path is read from the right — the drawer identifies the label and the room
+#: is context you already have, standing in it — so it loses its head. Prose is
+#: read from the left and loses its tail.
+Trim = Literal["head", "tail"]
 
 
 def location_qr_payload(location_id: int) -> str:
     """The string a location label's QR encodes (uppercase — see module doc)."""
-    return f"{_QR_PREFIX}{location_id}"
+    return f"{_LOCATION_PREFIX}{location_id}"
+
+
+def component_qr_payload(component_id: int) -> str:
+    """The string a component label's QR encodes (uppercase — see module doc)."""
+    return f"{_COMPONENT_PREFIX}{component_id}"
+
+
+def scanned_component_id(code: str) -> int | None:
+    """The component one of our own labels names, or ``None`` for anything else.
+
+    The one server-side reading of the ``SC<id>`` format, so a scan resolves to
+    a part the same way wherever it is scanned. Case-insensitive: plenty of QR
+    readers hand back what alphanumeric mode encoded, which is upper case, but
+    a code typed into the field by hand need not be.
+    """
+    matched = _COMPONENT_LABEL.match(code.strip())
+    if matched is None:
+        return None
+    component_id = int(matched.group(1))
+    return component_id if 0 < component_id <= _MAX_ROWID else None
 
 
 def qr_svg(payload: str) -> str:
@@ -53,12 +113,30 @@ def qr_svg(payload: str) -> str:
 
 @dataclass
 class LabelData:
-    """Everything one printed label shows."""
+    """Everything one printed label shows.
+
+    ``name`` is the headline, read across the room; ``detail`` is the small
+    print under (or beside) it, and may wrap. A newline in ``detail`` is a break
+    the label keeps — it is how a component puts its maker on a line of its own
+    instead of letting the description run up against it.
+
+    ``separator`` and ``trim`` are the two things a renderer cannot work out
+    from the text: where the detail may be broken, and which end to sacrifice
+    when it still will not fit. Both are stated outright rather than defaulted,
+    because the wrong answer to either is not a crash — it is a label that comes
+    off the tape looking fine and saying the wrong thing.
+
+    ``qr_svg`` is for the browser page only, and is empty for labels that are
+    built to go straight onto tape — the printer rasterises the payload itself.
+    """
 
     id: int
     name: str
-    path: str
-    qr_svg: str
+    detail: str
+    qr_payload: str
+    separator: str
+    trim: Trim
+    qr_svg: str = ""
 
 
 def build_labels(
@@ -70,19 +148,11 @@ def build_labels(
     """Labels for explicit ``ids``, for a subtree (``root`` and everything under
     it), or — with neither — for every location, all in tree pre-order.
 
-    ``ids`` are deduplicated (order preserved) and capped — the list arrives
-    straight from a query string, and each entry costs a QR render, so an
-    uncapped repeat-the-id request would be free heavy work for any reader.
-    The cap is the bulk-create one: what one request may create, one request
-    may print.
+    ``ids`` are deduplicated (order preserved) and capped. The cap is the
+    bulk-create one: what one request may create, one request may print.
     """
     if ids is not None:
-        ids = list(dict.fromkeys(ids))
-        if len(ids) > ls._MAX_BULK_NODES:
-            raise ValidationError(
-                f"at most {ls._MAX_BULK_NODES} labels per request; "
-                "print a subtree with root=… instead"
-            )
+        ids = _dedupe_and_cap(ids, "print a subtree with root=… instead")
     forest = ls.location_tree(session)
     nodes = ls.flatten_tree(forest)
     if root is not None:
@@ -99,8 +169,72 @@ def build_labels(
         LabelData(
             id=cast(int, node.location.id),
             name=node.location.name,
-            path=node.path,
+            detail=node.path,
+            qr_payload=location_qr_payload(cast(int, node.location.id)),
+            separator=_PATH_SEPARATOR,
+            trim="head",
             qr_svg=qr_svg(location_qr_payload(cast(int, node.location.id))),
         )
         for node in nodes
     ]
+
+
+def build_component_labels(session: Session, ids: list[int]) -> list[LabelData]:
+    """Labels for the named components, in the order they were asked for.
+
+    The part number is the headline — it is what somebody holding the bag reads
+    to know what is in it — with the maker and the description under it. The
+    maker keeps its own line: a part number is only half an identity (two
+    companies print the same number on different parts), so who made this one
+    should not have to be picked out of a sentence.
+
+    No SVG is rendered: these print to tape, and there is no browser page for
+    them to be embedded in.
+    """
+    ids = _dedupe_and_cap(ids, "print them in batches")
+    found = cs.components_by_id(session, set(ids))
+    for component_id in ids:
+        if component_id not in found:
+            require_entity(session, Component, component_id, "component")
+    return [
+        LabelData(
+            id=component_id,
+            name=found[component_id].mpn or f"Component #{component_id}",
+            detail=_component_detail(found[component_id]),
+            qr_payload=component_qr_payload(component_id),
+            separator=_PROSE_SEPARATOR,
+            trim="tail",
+        )
+        for component_id in ids
+    ]
+
+
+def _component_detail(component: Component) -> str:
+    """Who makes the part, and what it is — one per line, blanks left out.
+
+    The description is whatever ``notes`` holds, which for an imported part is
+    the maker's own product description. Collapsed to single spaces first: the
+    text may carry the line breaks it was pasted with, and those are not the
+    label's breaks.
+    """
+    maker = (component.manufacturer or "").strip()
+    description = " ".join((component.notes or "").split())
+    if len(description) > _MAX_DETAIL_CHARS:
+        description = description[:_MAX_DETAIL_CHARS].rstrip() + "…"
+    return "\n".join(part for part in (maker, description) if part)
+
+
+def _dedupe_and_cap(ids: list[int], advice: str) -> list[int]:
+    """Ids with repeats dropped (order kept), refused if there are too many.
+
+    The list arrives straight from a request, and each entry costs a QR render,
+    so an uncapped repeat-the-id request would be free heavy work for any
+    reader. ``advice`` says what to do instead, which differs by what is being
+    labelled.
+    """
+    ids = list(dict.fromkeys(ids))
+    if len(ids) > ls._MAX_BULK_NODES:
+        raise ValidationError(
+            f"at most {ls._MAX_BULK_NODES} labels per request; {advice}"
+        )
+    return ids

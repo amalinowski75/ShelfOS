@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from app.models.component import Component, ComponentType
 from app.models.enums import LocationType
 from app.services import label_service as lbl
 from app.services import location_service as ls
@@ -53,7 +54,7 @@ def _hierarchy(session: Session) -> tuple[int, int, int]:
 def test_build_labels_for_a_subtree(session: Session) -> None:
     lab_id, rack_id, drawer_id = _hierarchy(session)
     labels = lbl.build_labels(session, root=rack_id)
-    assert [(label.id, label.path) for label in labels] == [
+    assert [(label.id, label.detail) for label in labels] == [
         (rack_id, "Lab / Rack A"),
         (drawer_id, "Lab / Rack A / D1"),
     ]
@@ -64,7 +65,7 @@ def test_build_labels_for_explicit_ids_keeps_their_order(session: Session) -> No
     lab_id, _rack_id, drawer_id = _hierarchy(session)
     labels = lbl.build_labels(session, ids=[drawer_id, lab_id])
     assert [label.id for label in labels] == [drawer_id, lab_id]
-    assert labels[0].path == "Lab / Rack A / D1"
+    assert labels[0].detail == "Lab / Rack A / D1"
 
 
 def test_build_labels_defaults_to_everything_in_tree_order(session: Session) -> None:
@@ -91,3 +92,107 @@ def test_build_labels_dedupes_ids_and_caps_the_request(session: Session) -> None
     too_many = list(range(1, ls._MAX_BULK_NODES + 2))
     with pytest.raises(ValidationError, match="at most"):
         lbl.build_labels(session, ids=too_many)
+
+
+def _component(session: Session, **fields: object) -> int:
+    ctype = ComponentType(name="MCU")
+    session.add(ctype)
+    session.commit()
+    component = Component(type_id=ctype.id, **fields)  # type: ignore[arg-type]
+    session.add(component)
+    session.commit()
+    assert component.id
+    return component.id
+
+
+def test_component_qr_payload_is_prefixed_and_distinct_from_a_location() -> None:
+    assert lbl.component_qr_payload(123) == "SC123"
+    # The two prefixes are what a scan dispatches on, so they must not collide.
+    assert lbl.component_qr_payload(1) != lbl.location_qr_payload(1)
+
+
+def test_component_qr_stays_at_the_smallest_full_version() -> None:
+    import segno
+
+    for component_id in (1, 125, 99_999, int("9" * 18)):
+        qr = segno.make(lbl.component_qr_payload(component_id), error="m", micro=False)
+        assert qr.version == 1
+        assert qr.mode == "alphanumeric"
+
+
+def test_scanned_component_id_reads_our_own_label_and_nothing_else() -> None:
+    assert lbl.scanned_component_id("SC42") == 42
+    assert lbl.scanned_component_id("  sc42 ") == 42  # typed by hand, and padded
+    # A shelf label, a supplier's part number and a URL are all somebody else's.
+    assert lbl.scanned_component_id("SL42") is None
+    assert lbl.scanned_component_id("SC42A") is None
+    assert lbl.scanned_component_id("STM32F103C8T6") is None
+    assert lbl.scanned_component_id("https://www.tme.eu/SC42") is None
+    # Past SQLite's rowid range: naming nothing, so it is not read as ours —
+    # int() would parse it happily and the query would then raise mid-flight.
+    assert lbl.scanned_component_id(f"SC{2**63}") is None
+
+
+def test_component_label_leads_with_the_part_number(session: Session) -> None:
+    component_id = _component(
+        session,
+        mpn="STM32F103C8T6",
+        manufacturer="STMicroelectronics",
+        notes="ARM Cortex-M3 MCU, 64 kB Flash",
+    )
+    (label,) = lbl.build_component_labels(session, [component_id])
+    assert label.name == "STM32F103C8T6"
+    # The maker keeps a line of its own; the description follows it.
+    assert label.detail == "STMicroelectronics\nARM Cortex-M3 MCU, 64 kB Flash"
+    assert label.qr_payload == f"SC{component_id}"
+    # Prose, not a path: broken at spaces, and cut from the end when it will not
+    # fit — the opposite of a location's answers on both counts.
+    assert (label.separator, label.trim) == (" ", "tail")
+    # These print to tape, so no SVG is rendered for a page that does not exist.
+    assert label.qr_svg == ""
+
+
+def test_component_label_leaves_out_what_the_component_has_not_got(
+    session: Session,
+) -> None:
+    # No maker, no description: no blank line where they would have been, and a
+    # part with no number is still identifiable.
+    component_id = _component(session)
+    (label,) = lbl.build_component_labels(session, [component_id])
+    assert label.name == f"Component #{component_id}"
+    assert label.detail == ""
+
+    maker_only = _component(session, mpn="X", manufacturer="Acme")
+    (label,) = lbl.build_component_labels(session, [maker_only])
+    assert label.detail == "Acme"
+
+
+def test_component_label_collapses_and_caps_the_description(session: Session) -> None:
+    component_id = _component(
+        session,
+        mpn="X",
+        notes="pasted\nfrom  a   datasheet " + "very long " * 40,
+    )
+    (label,) = lbl.build_component_labels(session, [component_id])
+    description = label.detail
+    # The breaks and runs the text was pasted with are not the label's breaks.
+    assert description.startswith("pasted from a datasheet very long")
+    # Capped, and it says so — the fitter measures this text once per type size
+    # it tries, so a datasheet pasted into `notes` would be measured in full.
+    assert len(description) <= lbl._MAX_DETAIL_CHARS + 1
+    assert description.endswith("…")
+
+
+def test_component_labels_keep_their_order_dedupe_and_refuse_the_unknown(
+    session: Session,
+) -> None:
+    first = _component(session, mpn="A")
+    second = _component(session, mpn="B")
+    labels = lbl.build_component_labels(session, [second, first, second])
+    assert [label.name for label in labels] == ["B", "A"]
+
+    with pytest.raises(NotFoundError):
+        lbl.build_component_labels(session, [9999])
+
+    with pytest.raises(ValidationError, match="at most"):
+        lbl.build_component_labels(session, list(range(1, ls._MAX_BULK_NODES + 2)))
