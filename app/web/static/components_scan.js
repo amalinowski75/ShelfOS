@@ -9,10 +9,10 @@
 // row. So the scan asks, and each answer also sits on a single key: at the bench
 // one hand holds the scanner and the other the bag.
 //
-// "Move" is this page's own shape of save. A component has no location field, its
-// stock does, so a move takes a count out of one shelf and puts it on another —
-// and because the dialog now names the SOURCE, a part stocked in several places is
-// no longer a dead end that had to be sorted out from its own page.
+// "Move" is a save shape of its own, and it is shared: what a move writes (and
+// what it refuses) lives in stock_move.js, because a component's own page offers
+// the same move from a "Stock by location" row. Here the dialog also names the
+// SOURCE, so a part stocked in several places is no longer a dead end.
 (() => {
   if (!document.getElementById("scan-panel")) return;
 
@@ -100,43 +100,19 @@
     .getElementById("stock-dialog")
     ?.addEventListener("close", () => scan.resume());
 
-  // A move: which pile it comes out of, how many, and the shelf it goes to. The
-  // destination is deliberately left empty — with several piles in play, a
-  // prefilled "to" is just a wrong guess wearing a confident face.
+  // A move: which pile it comes out of, how many, and the shelf it goes to. Every
+  // pile the component is stocked in is a candidate source, since the scanned bag
+  // says which part is in hand, not which shelf it came off.
+  //
+  // No onMoved: this page's table shows totals, not places, so a move leaves it
+  // accurate and there is nothing to refresh.
   function moveTarget(component, label, held) {
-    return {
-      title: "Move stock",
+    return window.moveStockTarget({
+      componentId: component.id,
       label,
       description: describe(component),
-      locationId: null,
-      quantity: null, // the chosen source sets the count and its ceiling
-      maxQuantity: null,
-      quantityHint: "",
       sources: held.map((l) => ({ id: l.id, path: l.path, quantity: l.quantity })),
-      async save(locationId, path, quantity, fromId) {
-        if (locationId === fromId) {
-          // Nothing to do — but say so instead of showing a green "moved" toast
-          // for a move that never happened. A count smaller than the pile makes
-          // it a refusal: it states an intent this no-op cannot satisfy.
-          const whole = held.find((l) => l.id === fromId)?.quantity;
-          throw new ScanMiss(
-            quantity === whole
-              ? `Already in ${path} — nothing moved.`
-              : `Already in ${path} — the ${quantity} you typed went nowhere. ` +
-                "Scan the shelf it should move to.",
-          );
-        }
-        const moved = await scanFetch("/api/stock/move", "POST", {
-          component_id: component.id,
-          from_location_id: fromId,
-          to_location_id: locationId,
-          quantity,
-        });
-        if (!moved.ok) throw new ScanMiss(await errorMessage(moved));
-        // The table shows totals, not places, so a move leaves it accurate —
-        // nothing to refresh.
-      },
-    };
+    });
   }
 
   function askWhatNext(component) {
