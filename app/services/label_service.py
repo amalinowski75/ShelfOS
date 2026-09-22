@@ -54,12 +54,15 @@ _PROSE_SEPARATOR = " "
 # one of ours" and goes on to be tried as a supplier barcode.
 _MAX_ROWID = 2**63 - 1
 
-# The longest description a label carries. ``notes`` is uncapped free text and
-# the fitter measures it a line at a time as it shrinks the type, so one
-# component with a datasheet pasted into it would otherwise be measured
-# repeatedly to print three lines of it. Everything past this is the detail
-# page's business, not the label's.
-_MAX_DETAIL_CHARS = 120
+# The longest any one piece of a label's text may be. Every field a component
+# label draws from — ``mpn``, ``manufacturer``, ``notes`` — is uncapped free
+# text (none of them carries a ``max_length``), and the fitter measures the
+# string it is given once per type size it tries; when it finally gives up
+# shrinking, ``_ellipsise`` walks a line that has nothing to wrap at one
+# character at a time, measuring each. So a paragraph pasted into any of the
+# three is real work for one GET of a preview. Everything past this is the
+# detail page's business, not the label's.
+_MAX_TEXT_CHARS = 120
 
 _COMPONENT_LABEL = re.compile(rf"^{_COMPONENT_PREFIX}(\d+)$", re.IGNORECASE)
 
@@ -196,10 +199,19 @@ def build_component_labels(session: Session, ids: list[int]) -> list[LabelData]:
     for component_id in ids:
         if component_id not in found:
             require_entity(session, Component, component_id, "component")
+        # ``components_by_id`` deliberately includes soft-deleted parts, and a
+        # retired one must not get tape: scanning that very label answers "this
+        # label is out of date" (see the scan endpoint), so printing it would be
+        # laying down a label the rest of the system has already disowned.
+        if found[component_id].deleted_at is not None:
+            raise ValidationError(
+                f"{found[component_id].mpn or f'component #{component_id}'} has "
+                "been deleted from the inventory; there is nothing to label"
+            )
     return [
         LabelData(
             id=component_id,
-            name=found[component_id].mpn or f"Component #{component_id}",
+            name=_clip(found[component_id].mpn) or f"Component #{component_id}",
             detail=_component_detail(found[component_id]),
             qr_payload=component_qr_payload(component_id),
             separator=_PROSE_SEPARATOR,
@@ -210,18 +222,26 @@ def build_component_labels(session: Session, ids: list[int]) -> list[LabelData]:
 
 
 def _component_detail(component: Component) -> str:
-    """Who makes the part, and what it is — one per line, blanks left out.
+    """Who makes the part, and what it is — one per line, blanks left out."""
+    return "\n".join(
+        part
+        for part in (_clip(component.manufacturer), _clip(component.notes))
+        if part
+    )
 
-    The description is whatever ``notes`` holds, which for an imported part is
-    the maker's own product description. Collapsed to single spaces first: the
-    text may carry the line breaks it was pasted with, and those are not the
-    label's breaks.
+
+def _clip(text: str | None) -> str:
+    """One field of free text, made safe to measure and to draw.
+
+    Collapsed to single spaces — the value may carry the line breaks it was
+    pasted with, and those are not the label's breaks, which are its own — and
+    cut to ``_MAX_TEXT_CHARS`` for the reason given there. The cut is marked,
+    so a shortened description does not read as the whole of one.
     """
-    maker = (component.manufacturer or "").strip()
-    description = " ".join((component.notes or "").split())
-    if len(description) > _MAX_DETAIL_CHARS:
-        description = description[:_MAX_DETAIL_CHARS].rstrip() + "…"
-    return "\n".join(part for part in (maker, description) if part)
+    collapsed = " ".join((text or "").split())
+    if len(collapsed) <= _MAX_TEXT_CHARS:
+        return collapsed
+    return collapsed[:_MAX_TEXT_CHARS].rstrip() + "…"
 
 
 def _dedupe_and_cap(ids: list[int], advice: str) -> list[int]:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from app.models.component import Component, ComponentType
 from app.models.enums import LocationType
@@ -167,20 +169,49 @@ def test_component_label_leaves_out_what_the_component_has_not_got(
     assert label.detail == "Acme"
 
 
-def test_component_label_collapses_and_caps_the_description(session: Session) -> None:
+def test_component_label_collapses_and_caps_every_free_text_field(
+    session: Session,
+) -> None:
+    """None of the three fields carries a max_length, and all three are drawn.
+
+    The fitter measures the string it is given once per type size it tries, and
+    a line with nothing to wrap at is then ellipsised one character at a time —
+    so an uncapped field is real work for one GET of a preview, whichever field
+    it is.
+    """
     component_id = _component(
         session,
-        mpn="X",
+        mpn="MPN" + "x" * 500,
+        manufacturer="Maker " + "y" * 500,
         notes="pasted\nfrom  a   datasheet " + "very long " * 40,
     )
     (label,) = lbl.build_component_labels(session, [component_id])
-    description = label.detail
+    maker, description = label.detail.split("\n")
+
     # The breaks and runs the text was pasted with are not the label's breaks.
     assert description.startswith("pasted from a datasheet very long")
-    # Capped, and it says so — the fitter measures this text once per type size
-    # it tries, so a datasheet pasted into `notes` would be measured in full.
-    assert len(description) <= lbl._MAX_DETAIL_CHARS + 1
-    assert description.endswith("…")
+    for field in (label.name, maker, description):
+        # Capped, and it says so, so a shortened value does not read as whole.
+        assert len(field) <= lbl._MAX_TEXT_CHARS + 1
+        assert field.endswith("…")
+
+
+def test_a_deleted_component_gets_no_label(session: Session) -> None:
+    """Scanning that very label answers "out of date", so printing it is wrong.
+
+    ``components_by_id`` deliberately includes retired parts — its callers are
+    the ones that have to SHOW them — so this has to say so itself, or the API
+    would lay tape for a label the rest of the system has already disowned.
+    """
+    component_id = _component(session, mpn="OLD-1")
+    component = session.get(Component, component_id)
+    assert component is not None
+    component.deleted_at = datetime(2026, 9, 1, tzinfo=UTC)
+    session.add(component)
+    session.commit()
+
+    with pytest.raises(ValidationError, match="nothing to label"):
+        lbl.build_component_labels(session, [component_id])
 
 
 def test_component_labels_keep_their_order_dedupe_and_refuse_the_unknown(
