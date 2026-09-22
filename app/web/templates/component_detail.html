@@ -4,6 +4,7 @@
 {% from "_component_edit_dialog.html" import component_edit_dialog %}
 {% from "_component_delete_dialog.html" import component_delete_dialog %}
 {% from "_stock_dialog.html" import stock_dialog %}
+{% from "_putaway.html" import putaway_dialog %}
 {% set is_admin = current_user.role.value == "admin" %}
 {# A deleted component is out of use, so nothing on this page writes to it —
    the route drops its write context for the same reason (§20). #}
@@ -128,9 +129,18 @@
     <h2>Stock by location</h2>
     {% if locations %}
     <div class="table-wrap">
-      <table class="data">
+      {# The whole component's identity sits on the table, and each row's own pile
+         on its button: together they are everything component_move.js needs to
+         open the putaway dialog, with no second lookup. #}
+      <table class="data" id="stock-locations"
+             data-component-id="{{ component.id }}"
+             data-label="{{ component.mpn or ('Component #' ~ component.id) }}"
+             data-description="{{ [component.manufacturer, component.notes] | select | join(' · ') }}">
         <thead>
-          <tr><th>Location</th><th style="text-align:right">Quantity</th><th>Container</th></tr>
+          <tr>
+            <th>Location</th><th style="text-align:right">Quantity</th><th>Container</th>
+            {% if can_write %}<th></th>{% endif %}
+          </tr>
         </thead>
         <tbody>
           {% for loc in locations %}
@@ -138,6 +148,19 @@
             <td>{{ loc.path }}</td>
             <td class="num">{{ loc.quantity }}</td>
             <td><span class="badge b-neutral">{{ loc.container }}</span></td>
+            {# Per ROW, because a move is out of ONE pile: the button that names
+               the shelf is the answer to "from where", and all that is left is to
+               scan the shelf it goes to. Take-then-Add did the same thing in two
+               writes, and recorded a disappearance and an appearance instead of a
+               move. #}
+            {% if can_write %}
+            <td class="num">
+              <button type="button" class="btn btn-ghost btn-sm"
+                      data-move-from="{{ loc.id }}" data-path="{{ loc.path }}"
+                      data-quantity="{{ loc.quantity }}"
+                      aria-label="Move stock from {{ loc.path }}">Move</button>
+            </td>
+            {% endif %}
           </tr>
           {% endfor %}
         </tbody>
@@ -345,6 +368,14 @@
 {% include "_location_dialog.html" %}
 {% endif %}
 
+{# The shelf-scanning half of scan putaway, without its panel: the Move buttons
+   above open it, and there is no bag to scan on a page that already IS one part.
+   Gated on there being stock as well as a writer — with no pile on the page
+   nothing can open it, and a modal nobody can reach is just markup. #}
+{% if can_write and locations %}
+{{ putaway_dialog(location_options) }}
+{% endif %}
+
 {# Full-size viewer for the header thumbnails, with prev/next navigation. #}
 <dialog id="image-lightbox" class="lightbox">
   <button type="button" class="lightbox-nav lightbox-prev" aria-label="Previous image">&lsaquo;</button>
@@ -359,6 +390,11 @@
 <script src="/static/links.js?v={{ static_version() }}"></script>
 <script src="/static/equivalents.js?v={{ static_version() }}"></script>
 <script src="/static/image_gallery.js?v={{ static_version() }}"></script>
+{% if can_write and locations %}
+<script src="/static/scan_putaway.js?v={{ static_version() }}"></script>
+<script src="/static/stock_move.js?v={{ static_version() }}"></script>
+<script src="/static/component_move.js?v={{ static_version() }}"></script>
+{% endif %}
 {% if can_write and label_printing %}
 <script src="/static/label_print.js?v={{ static_version() }}"></script>
 <script src="/static/component_label.js?v={{ static_version() }}"></script>

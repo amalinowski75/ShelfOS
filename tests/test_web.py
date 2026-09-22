@@ -904,6 +904,78 @@ def test_component_detail_writer_can_add_and_take_stock(client: TestClient) -> N
     assert "Drawer 5" in html
 
 
+def test_component_detail_offers_a_move_per_stock_row(client: TestClient) -> None:
+    """Each "Stock by location" row moves its own pile, with the shelf scanned.
+
+    The second step is the putaway dialog's, shared with the components page, so
+    the dialog and its id→path map must be on this page — and the scan panel must
+    not: there is no bag to scan on a page that already is one part.
+    """
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post(
+        "/api/components", json={"type_id": ctype["id"], "mpn": "RC0603"}
+    ).json()
+    here = client.post("/api/locations", json={"type": "drawer", "name": "D1"}).json()
+    client.post("/api/locations", json={"type": "drawer", "name": "D2"})
+    client.post(
+        "/api/stock/add",
+        json={
+            "component_id": component["id"],
+            "location_id": here["id"],
+            "quantity": 25,
+        },
+    )
+
+    html = client.get(f"/components/{component['id']}").text
+    # The row is the "from" half of the move: which pile, and how much is in it.
+    assert f'data-move-from="{here["id"]}"' in html
+    assert 'data-quantity="25"' in html
+    assert f'data-component-id="{component["id"]}"' in html
+    assert 'id="putaway-dialog"' in html
+    assert 'id="scan-panel"' not in html
+    # The destination is scanned, so the dialog needs every location's path —
+    # including the ones this component is not stocked in.
+    assert '"path": "D2"' in html
+    for script in ("scan_putaway.js", "stock_move.js", "component_move.js"):
+        assert script in html
+
+
+def test_component_detail_move_is_absent_without_a_writer_or_stock(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    """No pile, nothing to move; no write, nothing to move it with."""
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    location = client.post(
+        "/api/locations", json={"type": "drawer", "name": "D1"}
+    ).json()
+
+    # A writer, but the part is nowhere: the table isn't rendered at all, so the
+    # dialog behind it would have nothing to open — and isn't rendered either.
+    html = client.get(f"/components/{component['id']}").text
+    assert "data-move-from" not in html
+    assert 'id="putaway-dialog"' not in html
+
+    client.post(
+        "/api/stock/add",
+        json={
+            "component_id": component["id"],
+            "location_id": location["id"],
+            "quantity": 4,
+        },
+    )
+    # Read-only sees the stock, but no way to shift it — button AND dialog gone
+    # together, since a hidden trigger is not the boundary.
+    token = _non_admin_token(client, role="read-only", username="viewer-move")
+    html = anon_client.get(
+        f"/components/{component['id']}", headers={"Authorization": f"Bearer {token}"}
+    ).text
+    assert "D1" in html
+    assert "data-move-from" not in html
+    assert 'id="putaway-dialog"' not in html
+    assert "component_move.js" not in html
+
+
 def test_location_usage_feed_drives_the_stock_dialog_filter(
     client: TestClient,
 ) -> None:

@@ -1045,8 +1045,11 @@ def component_detail(
         )
     ]
 
+    # The id rides along with the path: a row's Move button is the "from" half of
+    # a stock move, and the putaway dialog files ids, not paths.
     locations = [
         {
+            "id": cl.location_id,
             "path": ls.format_path(session, cl.location_id),
             "quantity": cl.quantity,
             "container": cl.container_type.value,
