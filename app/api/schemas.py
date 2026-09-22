@@ -172,6 +172,23 @@ class LabelPrintRequest(BaseModel):
     accept_loaded: bool = False
 
 
+class ComponentLabelPrintRequest(BaseModel):
+    """Which component labels to send to the label printer (spec §7).
+
+    No ``root`` counterpart: components are a flat list, so the only selection
+    is the one the caller names. Otherwise the same request as a location's —
+    the printer does not care which kind of label it is laying down.
+    """
+
+    ids: list[Annotated[int, Field(gt=0, le=2**63 - 1)]] = Field(min_length=1)
+    copies: int = Field(default=1, ge=1, le=10)
+    # The roll to print on. Omitted, the printer's own tape decides; named, a
+    # printer holding something else answers 409 with both tapes rather than
+    # printing, unless ``accept_loaded`` settles it in advance.
+    tape: str | None = None
+    accept_loaded: bool = False
+
+
 class TapeRead(BaseModel):
     """A tape the printer can be asked to print on."""
 

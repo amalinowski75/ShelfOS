@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import io
+import itertools
 
 from app import config
 from fastapi.testclient import TestClient
 from PIL import Image
+
+_TYPE_NAMES = itertools.count(1)
 
 
 def _location(client: TestClient, name: str = "D1") -> int:
@@ -298,3 +301,107 @@ def test_a_failed_run_reports_the_labels_it_had_already_printed(  # type: ignore
     body = response.json()
     assert (body["printed"], body["total"]) == (3, 8)
     assert "tape has run out" in body["detail"]
+
+
+def _component(client: TestClient, **fields: object) -> int:
+    # A fresh type per part: type names are unique per parent, so a second call
+    # reusing one name would fail on the type rather than on the label.
+    name = f"Type {next(_TYPE_NAMES)}"
+    ctype = client.post("/api/types", json={"name": name}).json()
+    created = client.post(
+        "/api/components", json={"type_id": ctype["id"], **fields}
+    ).json()
+    return int(created["id"])
+
+
+def test_a_component_previews_as_its_own_label(client: TestClient) -> None:
+    component_id = _component(
+        client,
+        mpn="STM32F103C8T6",
+        manufacturer="STMicroelectronics",
+        notes="ARM Cortex-M3 MCU",
+    )
+    response = client.get(f"/api/labels/components/{component_id}/preview.png")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    # Same canvas as a location's: the tape decides the size, not what is on it.
+    assert Image.open(io.BytesIO(response.content)).size == (696, 354)
+    # And the same per-request overrides, so the layout can be looked at on any
+    # roll without touching the environment.
+    die_cut = client.get(
+        f"/api/labels/components/{component_id}/preview.png?tape=62x29"
+    )
+    assert Image.open(io.BytesIO(die_cut.content)).size == (696, 271)
+
+
+def test_preview_of_a_missing_or_absurd_component(client: TestClient) -> None:
+    assert client.get("/api/labels/components/999/preview.png").status_code == 404
+    huge = "9" * 26
+    assert client.get(f"/api/labels/components/{huge}/preview.png").status_code == 422
+
+
+def test_printing_component_labels_sends_them_to_the_device(  # type: ignore[no-untyped-def]
+    client: TestClient, tmp_path, monkeypatch
+) -> None:
+    device = tmp_path / "lp0"
+    device.touch()
+    monkeypatch.setattr(config, "LABEL_DEVICE", str(device))
+    first = _component(client, mpn="STM32F103C8T6", manufacturer="ST")
+    second = _component(client, mpn="NE555P", manufacturer="TI")
+
+    response = client.post(
+        "/api/labels/components/print", json={"ids": [first, second]}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "sent": 2,
+        "confirmed": False,
+        "tape": "62",
+        "stopped": False,
+    }
+    assert device.read_bytes().startswith(b"\x1bia\x01")
+
+
+def test_printing_component_labels_rejects_an_empty_or_unknown_selection(  # type: ignore[no-untyped-def]
+    client: TestClient, tmp_path, monkeypatch
+) -> None:
+    (tmp_path / "lp0").touch()
+    monkeypatch.setattr(config, "LABEL_DEVICE", str(tmp_path / "lp0"))
+    # There is no "print them all" for components: a selection is required.
+    assert (
+        client.post("/api/labels/components/print", json={"ids": []}).status_code == 422
+    )
+    assert (
+        client.post("/api/labels/components/print", json={"ids": [999]}).status_code
+        == 404
+    )
+
+
+def test_printing_component_labels_is_a_write(
+    client: TestClient, anon_client: TestClient, tmp_path, monkeypatch  # type: ignore[no-untyped-def]
+) -> None:
+    (tmp_path / "lp0").touch()
+    monkeypatch.setattr(config, "LABEL_DEVICE", str(tmp_path / "lp0"))
+    component_id = _component(client, mpn="NE555P")
+    client.post(
+        "/api/admin/users",
+        json={"username": "viewer", "password": "password123", "role": "read-only"},
+    )
+    token = client.post(
+        "/api/auth/token", json={"username": "viewer", "password": "password123"}
+    ).json()["access_token"]
+
+    refused = anon_client.post(
+        "/api/labels/components/print",
+        json={"ids": [component_id]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert refused.status_code == 403
+    # Looking at one, as ever, is not a write.
+    allowed = anon_client.get(
+        f"/api/labels/components/{component_id}/preview.png",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert allowed.status_code == 200
