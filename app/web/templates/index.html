@@ -96,7 +96,7 @@
    invoice — scan an SL<id> label and the stock goes there — so the markup and the
    collector are shared. #}
 {% if can_write %}
-{{ putaway_panel(location_options, "a bag", "Scan a bag's barcode to find its component, then choose what to do with it — open its details, add stock, or move stock to a shelf you scan.") }}
+{{ putaway_panel("a bag", "Scan a bag's barcode to find its component, then choose what to do with it — open its details, add stock, or move stock to a shelf you scan.") }}
 {{ putaway_dialog(location_options) }}
 {{ scan_choice_dialog() }}
 {% endif %}
@@ -134,5 +134,8 @@
 <script src="/static/type_dialog.js?v={{ static_version() }}"></script>
 <script src="/static/app.js?v={{ static_version() }}"></script>
 <script src="/static/scan_putaway.js?v={{ static_version() }}"></script>
+{# What a move writes, shared with a component's own page — components_scan.js
+   builds its Move target with it, so it has to come first. #}
+<script src="/static/stock_move.js?v={{ static_version() }}"></script>
 <script src="/static/components_scan.js?v={{ static_version() }}"></script>
 {% endblock %}

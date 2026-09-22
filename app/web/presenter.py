@@ -63,7 +63,7 @@ _BASE_COLUMNS: list[dict[str, object]] = [
 _TABLE_NOTES_CHARS = 200
 
 
-def _short(text: str | None) -> str:
+def short_description(text: str | None) -> str:
     """A description trimmed to table length, with an ellipsis when it was cut."""
     value = (text or "").strip()
     if len(value) <= _TABLE_NOTES_CHARS:
@@ -202,7 +202,7 @@ def build_component_table(
             "type": type_names.get(component.type_id, ""),
             "manufacturer": component.manufacturer or "",
             "mpn": component.mpn or "",
-            "notes": _short(component.notes),
+            "notes": short_description(component.notes),
             "package": component.package or "",
             "mounting_type": component.mounting_type.value,
             "quantity": totals.get(component_id, 0),

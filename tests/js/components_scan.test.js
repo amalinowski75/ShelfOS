@@ -13,13 +13,19 @@ function trackOpen(dialog) {
   return spy;
 }
 
-const SCRIPTS = ["shared.js", "scan_putaway.js", "components_scan.js"];
+const SCRIPTS = [
+  "shared.js",
+  "scan_putaway.js",
+  "stock_move.js",
+  "components_scan.js",
+];
 // With the New Component dialog too, for the "code matches nothing → create it"
 // path, which reaches into openComponentDialog (component_dialog.js).
 const SCRIPTS_WITH_DIALOG = [
   "shared.js",
   "component_dialog.js",
   "scan_putaway.js",
+  "stock_move.js",
   "components_scan.js",
 ];
 
@@ -29,12 +35,12 @@ const SCRIPTS_WITH_DIALOG = [
 function componentsFixture({ withCreate = false } = {}) {
   return `
     <div id="components-table"></div>
-    <div id="scan-panel"
-         data-locations='[{"id": 5, "path": "Lab / Rack A / D1"}, {"id": 9, "path": "Lab / Shelf 02"}]'>
+    <div id="scan-panel">
       <input id="scan-input" readonly />
       <p id="scan-status" class="scan-status"></p>
     </div>
-    <dialog id="putaway-dialog">
+    <dialog id="putaway-dialog"
+            data-locations='[{"id": 5, "path": "Lab / Rack A / D1"}, {"id": 9, "path": "Lab / Shelf 02"}]'>
       <strong id="putaway-title">Set location</strong>
       <form id="putaway-form">
         <p id="putaway-part"></p>

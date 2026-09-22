@@ -9,6 +9,24 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## Move a bag without taking it out of stock first
+
+- **#177** — a component's page now has a **Move** button on every "Stock by
+  location" row, and it opens the same putaway dialog the components page uses:
+  the row says which pile is moving, and the shelf it moves to is SCANNED. Until
+  now that trip was Take here, then Add there — two dialogs, two writes, and a
+  ledger that recorded a disappearance and an appearance where one move had
+  happened. The scan flow could already do it properly, but only for a bag you
+  had in your hand to scan.
+
+  The dialog is the same markup and the same collector as before; what changed is
+  that its scan panel is now optional. A page that already knows what it is
+  filing — this one IS one part — renders the dialog alone and hands it a target,
+  and with no panel the keystroke collector stays asleep until the dialog is up,
+  so the rest of the page keeps its keyboard. What a move writes, and its refusal
+  to "move" stock onto the shelf it is already on, moved into one place that both
+  surfaces call.
+
 ## A label for the bag, not just for the drawer
 
 - **#175** — components can be printed as labels, the way locations already

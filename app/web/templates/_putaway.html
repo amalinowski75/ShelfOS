@@ -4,12 +4,15 @@
    goes on — so they share this markup and app/web/static/scan_putaway.js; only
    what a scan resolves to, and what "save" means, differ (their adapters).
 
+   The dialog also stands on its own, without the panel: a component's own page
+   has nothing to scan an item with (it IS the item) and opens the dialog from a
+   "Stock by location" row instead, so the shelf can still be scanned.
+
    The ids are page-unique rather than prefixed: only one of these surfaces is
    ever rendered at a time. #}
 
-{% macro putaway_panel(location_options, what, hint) %}
-<div class="card card-pad" id="scan-panel" style="margin-top: 20px"
-     data-locations='{{ location_options | tojson }}'>
+{% macro putaway_panel(what, hint) %}
+<div class="card card-pad" id="scan-panel" style="margin-top: 20px">
   <h2>Scan putaway</h2>
   <p class="muted">{{ hint }}</p>
   {# Readonly on purpose: scans are collected document-wide and only DISPLAYED
@@ -26,7 +29,10 @@
 {% endmacro %}
 
 {% macro putaway_dialog(location_options) %}
-<dialog id="putaway-dialog">
+{# The locations ride on the DIALOG, not on the panel: the dialog is what reads
+   them (a scanned SL<id> becomes the path it shows), and it is the half that a
+   page without a scan panel renders on its own. #}
+<dialog id="putaway-dialog" data-locations='{{ location_options | tojson }}'>
   <article>
     <header>
       {# "Set location" is the invoice flow's name for this. A target can rename it
