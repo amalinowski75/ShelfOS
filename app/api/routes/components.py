@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from fastapi import APIRouter, Depends, status
 from sqlmodel import Session
 
@@ -63,7 +65,7 @@ def _scanned_stock(session: Session, component_id: int) -> list[ScannedStockRead
     ]
 
 
-def _our_own_label(session: Session, component_id: int) -> ComponentScanRead:
+def _our_own_label(session: Session, component: Component) -> ComponentScanRead:
     """The answer to a scan of one of ShelfOS's own component labels (§7).
 
     A part number is only half an identity — two companies print the same one on
@@ -74,12 +76,7 @@ def _our_own_label(session: Session, component_id: int) -> ComponentScanRead:
     ``same_manufacturer`` stays null, which is this API's "nothing was asked":
     the label named no maker because it did not need to.
     """
-    component = session.get(Component, component_id)
-    if component is None:
-        raise NotFoundError(
-            f"this label names component #{component_id}, "
-            "which is not in the inventory"
-        )
+    component_id = cast(int, component.id)
     if component.deleted_at is not None:
         # Retired parts take no stock, so the flow this feeds could do nothing
         # with it anyway — and a bag still wearing the label is exactly the
@@ -115,14 +112,29 @@ def scan_component(
     match and the stock a relocation would move, so the client never has to
     guess between identifiers or fetch the slots separately.
 
-    Our own label is read first and answers on its own — it carries the
+    Our own label answers on its own where it resolves — it carries the
     component's id, so there is nothing to look up and nothing to disambiguate.
-    Anything else is a supplier's label, parsed for the part numbers it offers.
+    Where it does not, the code is handed on to the supplier parser rather than
+    refused: ``SC`` followed by digits is a shape real part numbers take
+    (Semtech's SC431, SC1117), and claiming every code of that shape for
+    ourselves would make such a bag unscannable. Only when the parser has no
+    reading of it either is the label explanation given, which is what a stale
+    label — a database rebuilt since it was printed — actually needs to hear.
     """
     own = lbl.scanned_component_id(payload.code)
-    if own is not None:
-        return _our_own_label(session, own)
-    scan = parse_scan(payload.code)  # ValidationError → 422
+    labelled = session.get(Component, own) if own is not None else None
+    if labelled is not None:
+        return _our_own_label(session, labelled)
+    try:
+        scan = parse_scan(payload.code)  # ValidationError → 422
+    except ValidationError:
+        if own is not None:
+            raise NotFoundError(
+                f"nothing matches {payload.code}: it is not a code this can "
+                f"read as a supplier label, and there is no component #{own} "
+                "for it to be a ShelfOS label for"
+            ) from None
+        raise
     identifiers = _scan_identifiers(scan)
     # Through the alias table, so a bag printed "ONSEMI" is measured against the
     # spelling its components are stored under.

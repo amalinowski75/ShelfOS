@@ -1987,12 +1987,59 @@ def test_our_own_label_is_read_before_it_could_be_taken_for_a_part_number(
     assert [m["id"] for m in body["matches"]] == [ids["component"]]
 
 
+def test_a_part_numbered_like_one_of_our_labels(client: TestClient) -> None:
+    """``SC`` + digits is a shape real part numbers take — Semtech's SC431.
+
+    Three things about that collision, all of them the current behaviour rather
+    than the behaviour anyone would design from scratch:
+
+    * a shop's structured label is never claimed as ours, because the pattern is
+      anchored on the whole code and a data identifier breaks it;
+    * a bare ``SC431`` naming no component of that id is refused with both
+      readings stated, rather than with a label the scanner never printed;
+    * where component #431 DOES exist, our label wins and the bag resolves to
+      it. That is a genuine ambiguity nothing in the code can settle — the
+      components page shows the part it resolved to, and its description, before
+      any stock can move.
+    """
+    ids = _scan_fixture(client)
+    semtech = client.post("/api/types", json={"name": "regulator"}).json()
+    part = client.post(
+        "/api/components",
+        json={"type_id": semtech["id"], "mpn": "SC431", "manufacturer": "Semtech"},
+    ).json()
+
+    # A shop's label carrying the same number is read as a part number.
+    structured = client.post(
+        "/api/components/scan", json={"code": "MPN:SC431 MFR:SEMTECH"}
+    ).json()
+    assert [m["id"] for m in structured["matches"]] == [part["id"]]
+
+    # A bare one, with no component #431 to be a label for, names both readings.
+    bare = client.post("/api/components/scan", json={"code": "SC431"})
+    assert bare.status_code == 404
+    detail = bare.json()["detail"]
+    assert "supplier label" in detail and "no component #431" in detail
+
+    # And a bare one whose id is live resolves to THAT component, not to the
+    # part numbered the same way.
+    mine = client.post(
+        "/api/components/scan", json={"code": f"SC{ids['component']}"}
+    )
+    assert mine.status_code == 200
+    assert [m["mpn"] for m in mine.json()["matches"]] != ["SC431"]
+
+
 def test_a_label_for_a_component_that_is_gone_says_so(client: TestClient) -> None:
     """A bag still wearing an out-of-date label is the thing to be told about."""
     _scan_fixture(client)
+    # Said only once the supplier parser has had its turn and made nothing of
+    # the code either — a database rebuilt since the label was printed.
     missing = client.post("/api/components/scan", json={"code": "SC99999"})
     assert missing.status_code == 404
-    assert "not in the inventory" in missing.json()["detail"]
+    detail = missing.json()["detail"]
+    assert "no component #99999" in detail
+    assert "supplier label" in detail  # both readings named, neither assumed
 
     # A retired part: it takes no stock, so the flow this feeds could do
     # nothing with the bag even if the scan resolved.
