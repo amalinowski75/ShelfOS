@@ -134,5 +134,8 @@
 <script src="/static/type_dialog.js?v={{ static_version() }}"></script>
 <script src="/static/app.js?v={{ static_version() }}"></script>
 <script src="/static/scan_putaway.js?v={{ static_version() }}"></script>
+{# What a move writes, shared with a component's own page — components_scan.js
+   builds its Move target with it, so it has to come first. #}
+<script src="/static/stock_move.js?v={{ static_version() }}"></script>
 <script src="/static/components_scan.js?v={{ static_version() }}"></script>
 {% endblock %}

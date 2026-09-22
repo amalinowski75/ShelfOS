@@ -1340,7 +1340,11 @@ def test_components_page_offers_scan_putaway_for_writers(
     assert 'id="scan-panel"' in html
     assert 'id="putaway-dialog"' in html
     assert '"path": "D1"' in html  # the id→path map the toast reads
-    assert "scan_putaway.js" in html and "components_scan.js" in html
+    # Every script the flow needs, not just the two it started with: the chooser's
+    # Move answer builds its target with stock_move.js, so a page that serves the
+    # adapter without it answers M with a TypeError.
+    for script in ("scan_putaway.js", "stock_move.js", "components_scan.js"):
+        assert script in html
 
     # Read-only accounts get neither the panel nor the dialog.
     client.post(
