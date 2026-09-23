@@ -123,24 +123,6 @@ def components_by_id(session: Session, ids: set[int]) -> dict[int, Component]:
     }
 
 
-def _slots_by_component(
-    session: Session, component_ids: set[int]
-) -> dict[int, list[ComponentLocation]]:
-    """Every stocked slot for these components, in one query rather than per line."""
-    if not component_ids:
-        return {}
-    rows = session.exec(
-        select(ComponentLocation)
-        .where(col(ComponentLocation.component_id).in_(component_ids))
-        .where(col(ComponentLocation.quantity) > 0)
-        .order_by(col(ComponentLocation.id))
-    ).all()
-    slots: dict[int, list[ComponentLocation]] = {}
-    for row in rows:
-        slots.setdefault(row.component_id, []).append(row)
-    return slots
-
-
 def _has_slot(
     slots: dict[int, list[ComponentLocation]], component_id: int, location_id: int
 ) -> bool:
@@ -198,7 +180,7 @@ def plan_take(
         session, {member for members in same_part.values() for member in members}
     )
     # Bins for every entry a line could be built from, not just the assigned one.
-    slots = _slots_by_component(
+    slots = ss.slots_by_component(
         session,
         {
             c.id

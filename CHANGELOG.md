@@ -9,6 +9,25 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## Where a BOM line's parts are
+
+- **#178** — the BOM report has a **Location** column, right after Assigned: every
+  bin holding the assigned part, with its full path and how many are in it, so a
+  build can be picked straight off the report instead of opening each component
+  in turn. It counts the same entries the Stock figure does — the assigned part
+  and everything grouped with it as the same part — and adds them up per bin, so
+  the quantities in the cell sum to the Stock beside it. An unresolved line shows
+  a dash, for the same reason it shows no stock: its MPN candidates are a guess,
+  and a guess should not send anyone to a drawer.
+
+  The column sorts and filters like the rest. It sorts by path the way a person
+  reads one — Drawer 2 before Drawer 10 — with empty lines at the bottom in both
+  directions, and its filter matches on the paths only, so typing a number finds
+  a drawer rather than a quantity. The bins cost two queries for the whole BOM
+  (the stocked slots, then one walk of the location table for their paths), not
+  one per line; the slot lookup is the one the bulk take already used, now
+  shared from the stock service.
+
 ## Move a bag without taking it out of stock first
 
 - **#177** — a component's page now has a **Move** button on every "Stock by

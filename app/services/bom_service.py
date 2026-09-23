@@ -30,6 +30,7 @@ from app.models.enums import AttachmentKind, ParameterDataType
 from app.services import attachment_service, link_service
 from app.services import component_service as cs
 from app.services import equivalence_service as es
+from app.services import location_service as ls
 from app.services import manufacturer_service as mfs
 from app.services import stock_service as ss
 from app.services._common import require_entity
@@ -635,6 +636,18 @@ def _short_footprint(value: str | None) -> str | None:
     return value.split(":", 1)[1] if ":" in value else value
 
 
+def _reading_order(text: str) -> tuple[object, ...]:
+    """Sort key putting "Drawer 2" before "Drawer 10", as the table's sort does.
+
+    ``re.split`` with a capturing group always alternates text and digits, text
+    first, so two keys compare str with str and int with int, position by position.
+    """
+    return tuple(
+        int(part) if index % 2 else part.casefold()
+        for index, part in enumerate(re.split(r"(\d+)", text))
+    )
+
+
 def build_bom_report(
     session: Session, bom_id: int, *, boards: int = 1
 ) -> dict[str, object]:
@@ -678,6 +691,11 @@ def build_bom_report(
     left out: they hold no stock, and the list is also what a take may draw from.
     An UNRESOLVED line's ``matched`` is unchanged — the MPN candidates, which are
     a guess and are not widened into a bigger one.
+
+    ``locations`` says where a resolved line's stock sits: one entry per stocked
+    bin of any part in ``matched``, with its full path and the quantity the bin
+    holds across those parts, in reading order ("Drawer 2" before "Drawer 10").
+    An unresolved line has none, for the same reason it has no stock figure.
     """
     boards = max(1, boards)
     bom = get_bom(session, bom_id)
@@ -701,6 +719,21 @@ def build_bom_report(
             | {member for ids in same_part.values() for member in ids},
         )
     }
+    # Where the assigned parts sit on the shelf: every stocked bin of every live
+    # entry a resolved line draws on, in one query, and each bin's full path from
+    # one walk of the location table — not a path lookup per bin.
+    slots = ss.slots_by_component(
+        session,
+        {cid for cid, c in assigned_components.items() if c.deleted_at is None},
+    )
+    location_paths = (
+        {
+            cast(int, node.location.id): node.path
+            for node in ls.flatten_tree(ls.location_tree(session))
+        }
+        if slots
+        else {}
+    )
     # Resolve each substitutable category's value parameter once (not per line).
     value_defs = _value_defs_by_category(
         session, {ln.category for ln in lines if ln.category in _VALUE_CATEGORIES}
@@ -802,6 +835,28 @@ def build_bom_report(
         else:
             blocks_the_run = True
 
+        # The bins this line's stock figure is summed over, so the two can be read
+        # against each other: one entry per location, the quantities of every
+        # same-part entry in it added up. Only for a resolved line — an
+        # unresolved one's candidates are a guess, and pointing someone at a
+        # drawer on the strength of a guess is how the wrong part gets pulled.
+        held: dict[int, int] = {}
+        if resolved:
+            for component in matched:
+                for slot in slots.get(cast(int, component.id), []):
+                    where = slot.location_id
+                    held[where] = held.get(where, 0) + slot.quantity
+        locations = [
+            {"location_id": where, "path": path, "quantity": held[where]}
+            for path, where in sorted(
+                (
+                    (location_paths.get(where, f"#{where}"), where)
+                    for where in held
+                ),
+                key=lambda pair: _reading_order(pair[0]),
+            )
+        ]
+
         # Substitutes answer "what else could go here?" — a question already
         # answered once a component has been assigned.
         substitutes: list[dict[str, object]] = []
@@ -871,6 +926,7 @@ def build_bom_report(
                     if assignment is not None
                     else None
                 ),
+                "locations": locations,
                 "substitutes": substitutes,
             }
         )

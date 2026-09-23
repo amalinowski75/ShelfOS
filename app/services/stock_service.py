@@ -258,6 +258,24 @@ def list_component_locations(
     )
 
 
+def slots_by_component(
+    session: Session, component_ids: set[int]
+) -> dict[int, list[ComponentLocation]]:
+    """Every stocked slot for these components, in one query rather than per line."""
+    if not component_ids:
+        return {}
+    rows = session.exec(
+        select(ComponentLocation)
+        .where(col(ComponentLocation.component_id).in_(component_ids))
+        .where(col(ComponentLocation.quantity) > 0)
+        .order_by(col(ComponentLocation.id))
+    ).all()
+    slots: dict[int, list[ComponentLocation]] = {}
+    for row in rows:
+        slots.setdefault(row.component_id, []).append(row)
+    return slots
+
+
 def stock_by_location(session: Session) -> dict[int, list[ComponentLocation]]:
     """Every stocked slot (qty > 0) grouped by its location, in one query.
 

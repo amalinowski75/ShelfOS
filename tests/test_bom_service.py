@@ -710,6 +710,102 @@ def test_the_group_lookup_does_not_query_per_line(
     assert member_selects == 1
 
 
+def test_a_resolved_line_says_which_bins_hold_its_part(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    bom, line, parts = _grouped(session)  # every entry starts in drawer D1
+    cabinet = ls.create_location(session, type=LocationType.RACK, name="Cab")
+    drawers = {
+        n: ls.create_location(
+            session, type=LocationType.DRAWER, name=f"Drawer {n}", parent_id=cabinet.id
+        )
+        for n in (2, 10)
+    }
+    d1 = ss.list_component_locations(session, parts["PART-BULK"].id)[0].location_id
+    # The reel is split across two drawers of the cabinet; five of the loose bag
+    # share Drawer 2 with it. The tray stays ungrouped, so it must not show.
+    for part, drawer, quantity in (
+        ("PART-TR", 10, 300),
+        ("PART-TR", 2, 100),
+        ("PART-BULK", 2, 5),
+    ):
+        ss.move_stock(
+            session,
+            component_id=parts[part].id,
+            from_location_id=d1,
+            to_location_id=drawers[drawer].id,
+            quantity=quantity,
+            user_id=1,
+        )
+    es.link_components(
+        session, parts["PART-BULK"].id, parts["PART-TR"].id, user_id=1
+    )
+
+    # Unresolved: nobody has said what the line is, so no drawer is named either.
+    assert bs.build_bom_report(session, bom.id)["lines"][0]["locations"] == []
+
+    bs.assign_component(
+        session, bom.id, line.id, component_id=parts["PART-BULK"].id, user_id=1
+    )
+    report_line = bs.build_bom_report(session, bom.id)["lines"][0]
+
+    # One entry per bin, every same-part entry in it added up, full paths, and
+    # Drawer 2 before Drawer 10 — the order a person reads them in.
+    assert [(loc["path"], loc["quantity"]) for loc in report_line["locations"]] == [
+        ("Cab / Drawer 2", 105),
+        ("Cab / Drawer 10", 300),
+        ("D1", 35),
+    ]
+    # The bins are exactly what the stock figure is summed over.
+    assert sum(loc["quantity"] for loc in report_line["locations"]) == (
+        report_line["stock"]
+    )
+
+
+def test_the_bins_are_looked_up_once_for_the_whole_bom(
+    session: Session, store
+) -> None:  # type: ignore[no-untyped-def]
+    from sqlalchemy import event
+
+    resistor = _inventory(session)
+    rows = []
+    for n in range(4):
+        resistor(f"P{n}", 1000 + n, 10)
+        rows.append(f"R{n},1,{n}k,P{n}\n")
+    bom = bs.create_bom(
+        session,
+        name="b",
+        filename="b.csv",
+        data=b"Reference,Qty,Value,MPN\n" + "".join(rows).encode(),
+        user_id=1,
+    )
+    assert _resolve(session, bom.id) == 4
+    # A request starts with an empty session; without this, every location built
+    # above is still in the identity map and a lookup per bin would cost no SQL.
+    bom_id = bom.id
+    session.expunge_all()
+
+    selects: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):  # type: ignore[no-untyped-def]
+        normalized = statement.lstrip().lower()
+        if normalized.startswith("select"):
+            selects.append(normalized)
+
+    bind = session.get_bind()
+    event.listen(bind, "before_cursor_execute", record)
+    try:
+        report = bs.build_bom_report(session, bom_id)
+    finally:
+        event.remove(bind, "before_cursor_execute", record)
+
+    assert all(line["locations"] for line in report["lines"])
+    # Bins: the stock totals and the bins themselves, never one per line.
+    assert sum("from component_locations" in s for s in selects) == 2
+    # Paths: one walk of the location table, not a parent chain per bin.
+    assert sum("from locations" in s for s in selects) == 1
+
+
 def test_assignment_overrides_even_a_line_that_already_matches(
     session: Session, store
 ) -> None:  # type: ignore[no-untyped-def]

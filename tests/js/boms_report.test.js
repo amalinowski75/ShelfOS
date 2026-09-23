@@ -494,6 +494,75 @@ describe("boms_report.js — ordered", () => {
   });
 });
 
+describe("boms_report.js — location", () => {
+  const BINS = [
+    { location_id: 3, path: "Cab / Drawer 2", quantity: 105 },
+    { location_id: 4, path: "Cab / Drawer 10", quantity: 300 },
+  ];
+
+  function locationColumn(window) {
+    return window.bomReportColumns().find((c) => c.field === "locations");
+  }
+
+  it("sits right after the assigned part", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const fields = window.bomReportColumns().map((c) => c.field);
+    expect(fields.indexOf("locations")).toBe(fields.indexOf("assigned") + 1);
+  });
+
+  it("names every bin with what it holds, and a dash when there is none", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const html = window.bomLocationsFormatter(fakeCell(BINS));
+    expect(html).toContain("Cab / Drawer 2");
+    expect(html).toContain("(105)");
+    expect(html).toContain("Cab / Drawer 10");
+    expect(html).toContain(" · ");
+    expect(window.bomLocationsFormatter(fakeCell([]))).toContain("—");
+    expect(window.bomLocationsFormatter(fakeCell(undefined))).toContain("—");
+  });
+
+  it("escapes a location name, in the cell and in the tooltip", () => {
+    // A location name is free text a user typed.
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const evil = [{ location_id: 1, path: "<img src=x onerror=alert(1)>", quantity: 1 }];
+    for (const html of [
+      window.bomLocationsFormatter(fakeCell(evil)),
+      window.bomLocationsTooltip(evil),
+    ]) {
+      expect(html).not.toContain("<img");
+      expect(html).toContain("&lt;img");
+    }
+  });
+
+  it("filters on the paths, case-insensitively, and not on the quantities", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const column = locationColumn(window);
+    expect(column.headerFilter).toBe("input");
+    const filter = column.headerFilterFunc;
+    expect(filter("drawer 10", BINS)).toBe(true);
+    expect(filter("DRAWER 7", BINS)).toBe(false);
+    expect(filter("105", BINS)).toBe(false); // a count, not a place
+    expect(filter("drawer", [])).toBe(false);
+    expect(filter("", [])).toBe(true); // an empty box filters nothing
+  });
+
+  it("sorts Drawer 2 before Drawer 10, and empty lines last either way", () => {
+    const { window } = loadPage(bomReportFixture(), SCRIPTS);
+    const sorter = locationColumn(window).sorter;
+    expect(typeof sorter).toBe("function");
+    const two = [{ path: "Cab / Drawer 2", quantity: 1 }];
+    const ten = [{ path: "Cab / Drawer 10", quantity: 1 }];
+    // Tabulator's descending sort calls the sorter with the arguments swapped
+    // and ascending order of the result; replay that for both directions.
+    const order = (values, dir) =>
+      [...values]
+        .sort((a, b) => (dir === "asc" ? sorter(a, b, null, null, null, dir) : sorter(b, a, null, null, null, dir)))
+        .map((v) => (v.length ? v[0].path : "—"));
+    expect(order([ten, [], two], "asc")).toEqual(["Cab / Drawer 2", "Cab / Drawer 10", "—"]);
+    expect(order([two, [], ten], "desc")).toEqual(["Cab / Drawer 10", "Cab / Drawer 2", "—"]);
+  });
+});
+
 describe("boms_report.js — row navigation", () => {
   it("targets a RESOLVED line's component, and nothing else", () => {
     const { window } = loadPage(bomReportFixture(), SCRIPTS);
