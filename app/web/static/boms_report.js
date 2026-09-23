@@ -2,6 +2,7 @@
 // lines as a sortable, per-column-filterable Tabulator table. `esc` comes from
 // shared.js. The feed (/api/boms/{id}/report) returns { bom, summary, lines[] };
 // each line: references, value, category, mpn, quantity, status, stock, missing,
+// locations[] (location_id, path, quantity) — resolved lines only — and
 // substitutes[] (component_id, mpn, package, value, stock, exact).
 //
 // The table renders every row up front (no height cap → no virtual DOM; see the
@@ -102,6 +103,54 @@ function bomAssignedFormatter(cell) {
     `${link} <span class="badge b-neutral"` +
     ` title="Stock also counted from ${names}">+${variants.length}</span>`
   );
+}
+
+// Where a resolved line's parts are: one "path (qty)" per bin, on one line, the
+// quantities of every same-part entry in a bin already added up by the feed. The
+// full list, one bin per line, goes in the tooltip for when it doesn't fit.
+// Paths are location NAMES — free text a user typed — so they go through esc().
+function bomLocationsFormatter(cell) {
+  const locations = cell.getValue() || [];
+  if (!locations.length) return '<span class="muted">—</span>';
+  return locations
+    .map((loc) => `${esc(loc.path)} <span class="muted">(${Number(loc.quantity)})</span>`)
+    .join(" · ");
+}
+
+// Tabulator innerHTMLs a tooltip, so this escapes exactly like the cell does.
+function bomLocationsTooltip(locations) {
+  return (locations || [])
+    .map((loc) => `${esc(loc.path)} (${Number(loc.quantity)})`)
+    .join("\n");
+}
+
+// What the column sorts and filters on: the paths alone. The quantities are
+// already in the Stock column, and a filter for "Drawer 1" should not also catch
+// a bin that happens to hold 1 part.
+function bomLocationsText(locations) {
+  return (locations || []).map((loc) => String(loc.path ?? "")).join(" · ");
+}
+
+// Paths compare the way a person reads them — "Drawer 2" before "Drawer 10" —
+// and a line with nothing on the shelf sinks to the bottom whichever way the
+// column is sorted, rather than filling the top of a descending sort with dashes.
+// Tabulator hands a descending sort its arguments swapped, so "sink" means the
+// opposite sign there.
+function bomLocationsSorter(a, b, aRow, bRow, column, dir) {
+  const x = bomLocationsText(a);
+  const y = bomLocationsText(b);
+  if (!x || !y) {
+    if (x === y) return 0;
+    const sink = dir === "desc" ? -1 : 1;
+    return x ? -sink : sink;
+  }
+  return x.localeCompare(y, undefined, { numeric: true, sensitivity: "base" });
+}
+
+// Case-insensitive substring over the paths, like every other text filter here.
+function bomLocationsFilter(headerValue, rowValue) {
+  const needle = String(headerValue ?? "").trim().toLowerCase();
+  return !needle || bomLocationsText(rowValue).toLowerCase().includes(needle);
 }
 
 // Substitutes on one line: each value links to its component; `esc()` guards the
@@ -222,6 +271,17 @@ function bomReportColumns() {
       field: "assigned",
       headerSort: false,
       formatter: bomAssignedFormatter,
+    },
+    {
+      // Beside Assigned: the part, then where to go and get it. Resolved lines
+      // only — an unresolved line's MPN candidates are a guess, not a drawer.
+      title: "Location",
+      field: "locations",
+      formatter: bomLocationsFormatter,
+      tooltip: (e, cell) => bomLocationsTooltip(cell.getValue()),
+      sorter: bomLocationsSorter,
+      ...bomTextFilter("Location"),
+      headerFilterFunc: bomLocationsFilter,
     },
     {
       title: "Status",
