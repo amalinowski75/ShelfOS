@@ -180,8 +180,18 @@ export function loadPage(
 
   // Seeded before the scripts run: app.js reads its remembered column widths into
   // a module-level variable at load, so setting them afterwards would be too late.
-  for (const [key, value] of Object.entries(storage ?? {})) {
-    window.localStorage.setItem(key, value);
+  // "throws" stands for blocked site data: every touch of localStorage throws,
+  // the way a browser refuses it, from the first line a script runs.
+  if (storage === "throws") {
+    Object.defineProperty(window, "localStorage", {
+      get() {
+        throw new window.DOMException("The operation is insecure.", "SecurityError");
+      },
+    });
+  } else {
+    for (const [key, value] of Object.entries(storage ?? {})) {
+      window.localStorage.setItem(key, value);
+    }
   }
   // Same for sessionStorage (locations.js restores tree expansion at load).
   for (const [key, value] of Object.entries(session ?? {})) {

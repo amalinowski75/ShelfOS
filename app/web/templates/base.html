@@ -6,6 +6,9 @@
     <meta name="csrf-token" content="{{ request.session.get('csrf_token', '') }}" />
     <meta name="user-role" content="{{ current_user.role.value if current_user else '' }}" />
     <title>{% block title %}ShelfOS{% endblock %}</title>
+    {# First and blocking: it puts the chosen theme on <html> before anything is
+       painted, so a dark choice never flashes white. #}
+    <script src="/static/theme.js?v={{ static_version() }}"></script>
     <link
       rel="stylesheet"
       href="https://unpkg.com/tabulator-tables@6.3.0/dist/css/tabulator.min.css"
@@ -72,6 +75,16 @@
               {% endif %}
               <a href="/docs">API</a>
               <button type="button" id="change-password-btn">Change password</button>
+              {# Remembered in this browser only; theme.js applies it. #}
+              <label class="settings-theme">
+                Theme
+                <select id="theme-select">
+                  <option value="">System</option>
+                  <option value="light">Light</option>
+                  <option value="dark">Dark</option>
+                  <option value="dim">Dim</option>
+                </select>
+              </label>
             </div>
           </div>
           <form action="/logout" method="post">

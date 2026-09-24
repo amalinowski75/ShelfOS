@@ -3028,6 +3028,35 @@ def test_settings_menu_hides_the_admin_only_entries_from_a_reader(
     assert 'id="change-password-btn"' in menu
 
 
+def test_the_theme_is_set_before_the_stylesheet_on_every_page(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    """A dark choice must be on <html> before the first paint, signed in or not.
+
+    theme.js is the only thing that sets data-theme, so a page without it — or
+    with it after app.css, or deferred — shows the OS theme, or flashes white.
+    """
+    for html in (client.get("/").text, anon_client.get("/login").text):
+        head = html.split("</head>", 1)[0]
+        tag = re.search(r"<script[^>]*/static/theme\.js[^>]*>", head)
+        assert tag, "theme.js missing from <head>"
+        assert "defer" not in tag.group(0) and "async" not in tag.group(0)
+        assert head.index("/static/theme.js") < head.index("/static/app.css")
+
+
+def test_settings_menu_offers_every_theme(client: TestClient) -> None:
+    html = client.get("/").text
+
+    menu = html.split('<div class="settings-menu"', 1)[1].split("</div>", 1)[0]
+    picker = menu.split('<select id="theme-select">', 1)[1].split("</select>", 1)[0]
+    # The values theme.js and app.css know; "" is System, i.e. no data-theme.
+    values = re.findall(r'<option value="([^"]*)"', picker)
+    assert values == ["", "light", "dark", "dim"]
+    css = (Path(__file__).parent.parent / "app/web/static/app.css").read_text()
+    for theme in ("light", "dark", "dim"):
+        assert f':root[data-theme="{theme}"]' in css, theme
+
+
 def test_no_page_ships_a_front_end_library_nothing_uses(client: TestClient) -> None:
     """HTMX was fetched on every page load for months and never used once.
 

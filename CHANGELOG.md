@@ -9,6 +9,17 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## Colour themes
+
+- **#179** — a **Theme** picker at the bottom of the Settings menu: System, Light,
+  Dark or a new **Dim** (grey instead of near-black, softer text and accent). It is
+  remembered per browser and applied before the first paint, so a dark choice never
+  flashes white. The palette is now written once per colour with `light-dark()`
+  instead of in three drifting copies, and declaring `color-scheme` makes the
+  browser's own parts — a select's dropdown list, scrollbars — follow the theme.
+  A choice reaches every open tab at once. Browsers older than `light-dark()`
+  (Chrome 123, Firefox 120, Safari 17.5) get the light palette and no picker.
+
 ## Where a BOM line's parts are
 
 - **#178** — the BOM report has a **Location** column, right after Assigned: every
