@@ -9,6 +9,13 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## A part's stock across its group
+
+- **#180** — the components list has a **Group qty** column right after Qty: the
+  stock of every entry marked as the same part, this one included, which is the
+  figure the BOM report's Stock gives. It is blank for a part in no group, so the
+  grouped rows stand out; Qty still counts the one entry that Add and Take act on.
+
 ## Colour themes
 
 - **#179** — a **Theme** picker at the bottom of the Settings menu: System, Light,

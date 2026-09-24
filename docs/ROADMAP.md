@@ -81,7 +81,7 @@ Priorities set by the user on 2026-07-08.
     skipped suite as passed, which is why the filtering is there rather than in
     `on: paths:`, where it would skip the required check itself.
 
-11. **One part under several indexes (equivalence groups).** ⏳ **In progress.**
+11. **One part under several indexes (equivalence groups).** ✅ **Done.**
     Tape, tray and bulk of the same component carry different MPNs, so a BOM line
     pointed at one of them reads as short while the drawer beside it is full. A
     group says once, globally, that those entries are one part (D15). Landing in
@@ -90,11 +90,9 @@ Priorities set by the user on 2026-07-08.
     variants, emptiest first, so loose bags go before a full reel (#174). All
     three have landed.
 
-    Deferred by the user on 2026-09-17, to be picked up after those three: showing
-    the group total on the **components list** as well. It is the table looked at
-    most often, and what a "stock" column there should say once a part can be
-    several entries is its own question — the BOM was the one that needed
-    answering first.
+    The components list followed: a **Group qty** column after Qty (#180) gives
+    the whole group's stock and stays blank for a part in no group, while Qty
+    keeps counting the one entry (D15).
 
 Known gap, not yet closed: `delete_location` refuses only on non-zero stock, so
 the temporary branch a BOM take gathered from is deletable the moment the take
@@ -110,9 +108,8 @@ contradict what "out of use" means. `reverse_take` now refuses up front, naming
 the lines, rather than failing mid-loop; actually undoing such a take would mean
 restoring the component first, which is a decision for a person.
 
-Deferred / unscheduled: BOM & KiCad integration (§22), Playwright UI tests,
-`app.js` JS test coverage (stock dialogs + New Type builder — needs a
-`window.Tabulator` stub).
+Deferred / unscheduled: Playwright UI tests. (BOM & KiCad integration, §22, landed
+in #38/#39; `app.js` coverage in #22.)
 
 ### Schema changes without migrations
 

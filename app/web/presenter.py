@@ -29,6 +29,7 @@ from app.models.location import Location
 from app.services import attachment_service as att
 from app.services import audit_service
 from app.services import component_service as cs
+from app.services import equivalence_service as es
 from app.services import invoice_service as inv
 from app.services import location_service as ls
 from app.services import stock_service as ss
@@ -48,6 +49,11 @@ _BASE_COLUMNS: list[dict[str, object]] = [
     {"title": "Package", "field": "package"},
     {"title": "Mounting", "field": "mounting_type"},
     {"title": "Qty", "field": "quantity"},
+    # Stock of the whole group of entries marked as the same part (D15) — this
+    # one included, so it is the figure the BOM report's Stock column gives.
+    # Empty (None) for a part in no group: a number there would only repeat Qty,
+    # and the blank is what lets the grouped parts stand out.
+    {"title": "Group qty", "field": "group_quantity"},
 ]
 
 
@@ -177,6 +183,7 @@ def build_component_table(
 
     totals = ss.total_quantities_by_component(session)
     components = cs.list_components(session, type_id=type_id)
+    same_part = _live_equivalents(session, {cast(int, c.id) for c in components})
 
     # Preload type names and (when needed) parameter values in one query each,
     # instead of a per-row lookup, so the table scales past demo size.
@@ -206,6 +213,7 @@ def build_component_table(
             "package": component.package or "",
             "mounting_type": component.mounting_type.value,
             "quantity": totals.get(component_id, 0),
+            "group_quantity": _group_quantity(same_part[component_id], totals),
         }
         if with_photos:
             # The id alone: the client builds the thumbnail URL from it, and the
@@ -224,6 +232,35 @@ def build_component_table(
         rows.append(row)
 
     return {"columns": columns, "data": rows}
+
+
+def _live_equivalents(session: Session, listed: set[int]) -> dict[int, list[int]]:
+    """Each listed part's group, retired members left out.
+
+    A group keeps a retired member (D15), so without this a part whose only
+    partner has been retired would count as grouped, and its Group qty would
+    repeat its Qty with no partner anywhere on the list. The listed parts are live
+    already; only the other members — retired ones, or live ones of a type the
+    list is filtered away from — cost a query, and only grouped parts have any.
+    """
+    same_part = es.equivalent_ids_for(session, listed)
+    others = {member for ids in same_part.values() for member in ids} - listed
+    live = listed | {
+        component_id
+        for component_id, component in cs.components_by_id(session, others).items()
+        if component.deleted_at is None
+    }
+    return {
+        component_id: [member for member in ids if member in live]
+        for component_id, ids in same_part.items()
+    }
+
+
+def _group_quantity(members: list[int], totals: dict[int, int]) -> int | None:
+    """What the whole group holds, or ``None`` for a part with no live partner."""
+    if len(members) < 2:
+        return None
+    return sum(totals.get(member, 0) for member in members)
 
 
 def _load_parameter_values(

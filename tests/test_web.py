@@ -317,6 +317,7 @@ def test_components_feed_generic_view(client: TestClient) -> None:
         "package",
         "mounting_type",
         "quantity",
+        "group_quantity",
     ]
     # Titled for what it holds — a shop import puts the product description here.
     assert [c["title"] for c in feed["columns"]][3] == "Description"
@@ -1119,6 +1120,116 @@ def test_build_component_table_empty(session) -> None:  # type: ignore[no-untype
     payload = build_component_table(session)
     assert payload["data"] == []
     assert [c["field"] for c in payload["columns"]][0] == "type"
+
+
+def _stocked_parts(session, stock: dict[str, tuple[str, int]]) -> dict[str, int]:  # type: ignore[no-untyped-def]
+    """``{mpn: (type name, quantity)}`` as components in one drawer; ``{mpn: id}``."""
+    from app.models.enums import LocationType
+    from app.services import component_service as cs
+    from app.services import location_service as ls
+    from app.services import stock_service as ss
+
+    drawer = ls.create_location(session, type=LocationType.DRAWER, name="D1")
+    types: dict[str, int] = {}
+    ids: dict[str, int] = {}
+    for mpn, (type_name, quantity) in stock.items():
+        if type_name not in types:
+            types[type_name] = cs.create_type(session, type_name).id
+        ids[mpn] = cs.create_component(session, types[type_name], mpn=mpn).id
+        if quantity:
+            ss.add_stock(
+                session,
+                component_id=ids[mpn],
+                location_id=drawer.id,
+                quantity=quantity,
+                user_id=1,
+            )
+    return ids
+
+
+def _group_quantities(session, type_id: int | None = None) -> dict[str, Any]:  # type: ignore[no-untyped-def]
+    rows = build_component_table(session, type_id)["data"]
+    return {row["mpn"]: row["group_quantity"] for row in rows}
+
+
+def test_group_qty_follows_qty_and_sums_the_whole_group(session) -> None:  # type: ignore[no-untyped-def]
+    from app.services import equivalence_service as es
+
+    ids = _stocked_parts(
+        session,
+        {
+            "PART-BULK": ("transistor", 40),
+            "PART-TR": ("transistor", 400),
+            "PART-TRAY": ("transistor", 0),
+            "OTHER": ("transistor", 7),
+        },
+    )
+    fields = [c["field"] for c in build_component_table(session)["columns"]]
+    assert fields[fields.index("quantity") + 1] == "group_quantity"
+
+    # Nothing grouped yet: the column is blank everywhere, not a copy of Qty.
+    assert set(_group_quantities(session).values()) == {None}
+
+    es.link_components(session, ids["PART-BULK"], ids["PART-TR"], user_id=1)
+    es.link_components(session, ids["PART-BULK"], ids["PART-TRAY"], user_id=1)
+
+    # Every member shows the same total, its own stock included — an empty member
+    # too, which is the row where the column says the most.
+    assert _group_quantities(session) == {
+        "PART-BULK": 440,
+        "PART-TR": 440,
+        "PART-TRAY": 440,
+        "OTHER": None,
+    }
+
+
+def test_group_qty_counts_members_outside_the_filtered_type(session) -> None:  # type: ignore[no-untyped-def]
+    """The type filter narrows the rows, not the group a row belongs to."""
+    from app.models.component import Component
+    from app.services import equivalence_service as es
+
+    ids = _stocked_parts(
+        session, {"TAPE": ("transistor", 400), "LOOSE": ("misc", 40)}
+    )
+    es.link_components(session, ids["TAPE"], ids["LOOSE"], user_id=1)
+
+    transistor = session.get(Component, ids["TAPE"]).type_id
+    assert _group_quantities(session, transistor) == {"TAPE": 440}
+
+
+def test_group_qty_drops_a_retired_member_from_the_rows_not_the_group(session) -> None:  # type: ignore[no-untyped-def]
+    from app.services import component_service as cs
+    from app.services import equivalence_service as es
+
+    ids = _stocked_parts(
+        session,
+        {
+            "TAPE": ("transistor", 400),
+            "BULK": ("transistor", 40),
+            "OLD": ("transistor", 0),
+        },
+    )
+    es.link_components(session, ids["TAPE"], ids["BULK"], user_id=1)
+    es.link_components(session, ids["TAPE"], ids["OLD"], user_id=1)
+    cs.soft_delete_component(session, ids["OLD"], user_id=1)
+
+    # The retired entry is gone from the list and, holding nothing, adds nothing.
+    assert _group_quantities(session) == {"TAPE": 440, "BULK": 440}
+
+
+def test_group_qty_is_blank_once_the_only_partner_is_retired(session) -> None:  # type: ignore[no-untyped-def]
+    """The group keeps the retired member (D15); the column must not count it."""
+    from app.services import component_service as cs
+    from app.services import equivalence_service as es
+
+    ids = _stocked_parts(
+        session, {"TAPE": ("transistor", 400), "OLD": ("transistor", 0)}
+    )
+    es.link_components(session, ids["TAPE"], ids["OLD"], user_id=1)
+    assert _group_quantities(session) == {"TAPE": 400, "OLD": 400}
+
+    cs.soft_delete_component(session, ids["OLD"], user_id=1)
+    assert _group_quantities(session) == {"TAPE": None}
 
 
 def _seed_admin(session) -> None:  # type: ignore[no-untyped-def]
