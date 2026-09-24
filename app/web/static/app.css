@@ -185,6 +185,19 @@ a { color: var(--accent-strong); text-underline-offset: 2px; }
 }
 .settings-menu > *:hover { background: var(--surface-2); }
 .settings-menu > *[aria-current] { color: var(--accent-ink); background: var(--accent-soft); }
+/* The theme picker is a row of its own, under a rule: it changes how the app
+   looks, where the entries above go somewhere. */
+.settings-menu > .settings-theme {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-top: 4px; padding-top: 9px; border-top: 1px solid var(--border);
+  border-radius: 0 0 7px 7px; cursor: default;
+}
+.settings-menu > .settings-theme:hover { background: transparent; }
+.settings-theme select {
+  font: inherit; font-size: 13.5px; color: var(--text);
+  background: var(--surface-2); border: 1px solid var(--border-strong);
+  border-radius: 6px; padding: 3px 6px; cursor: pointer;
+}
 
 /* ---------- page header ---------- */
 .head {
