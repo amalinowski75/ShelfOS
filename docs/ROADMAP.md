@@ -94,13 +94,14 @@ Priorities set by the user on 2026-07-08.
     the whole group's stock and stays blank for a part in no group, while Qty
     keeps counting the one entry (D15).
 
-Known gap, not yet closed: `delete_location` refuses only on non-zero stock, so
-the temporary branch a BOM take gathered from is deletable the moment the take
-empties it. Nothing breaks (SQLite does not enforce the key here, and the pages
-render such a location as "—"), but undoing that take then fails, naming the
-location it can no longer find. Teaching `delete_location` to refuse while an
-un-reversed take references the branch is the fix — the shape `delete_bom` already
-uses, which refuses while a take of that BOM has not been reversed.
+Closed in #181: `delete_location` used to refuse only on non-zero stock, so the
+temporary branch a BOM take gathered from was deletable the moment the take
+emptied it, and undoing that take then failed on the missing location. It now
+also refuses while a take that has not been reversed drew from anywhere in the
+branch — the gathering bins and any ordinary shelf the take emptied alike, since
+undo puts parts back wherever they came from — and names the take. The same shape
+`delete_bom` uses. A reversed take holds nothing; its snapshot reads a deleted
+location as "—".
 
 A take whose part was later taken out of use cannot be reversed at all —
 `add_stock` refuses a retired component, and putting stock back into one would
