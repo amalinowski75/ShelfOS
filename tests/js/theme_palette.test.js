@@ -1,5 +1,5 @@
-// The palette in app.css, read as text: jsdom cannot evaluate light-dark(), so
-// these check the declarations themselves.
+// The palette in app.css, read as text: jsdom cannot evaluate light-dark() or
+// @supports, so these check the declarations themselves.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -23,9 +23,53 @@ function declarations(body) {
   return out;
 }
 
+// One side of every light-dark(a, b) in a value (0 = light, 1 = dark).
+function side(value, which) {
+  let out = "";
+  let i = 0;
+  for (;;) {
+    const j = value.indexOf("light-dark(", i);
+    if (j < 0) return out + value.slice(i);
+    out += value.slice(i, j);
+    let k = j + "light-dark(".length;
+    let depth = 1;
+    const args = [""];
+    for (; ; k++) {
+      const ch = value[k];
+      if (ch === "(") depth++;
+      if (ch === ")" && --depth === 0) break;
+      if (ch === "," && depth === 1) args.push("");
+      else args[args.length - 1] += ch;
+    }
+    out += args[which].trim();
+    i = k + 1;
+  }
+}
+
+// A shadow list with the layers the other theme owns (coloured transparent) dropped.
+const withoutClearLayers = (value) =>
+  value
+    .split(/,(?![^(]*\))/)
+    .map((layer) => layer.trim())
+    .filter((layer) => !layer.endsWith("transparent"))
+    .join(", ");
+
 const root = declarations(block(":root {"));
 const themed = Object.keys(root).filter((name) => root[name].includes("light-dark("));
+const fallback = declarations(block("@supports not (color: light-dark(#000, #fff)) {\n  :root {"));
 const dim = declarations(block(':root[data-theme="dim"] {'));
+
+describe("the fallback for browsers without light-dark()", () => {
+  it("sets every themed token, and only those", () => {
+    expect(Object.keys(fallback).sort()).toEqual([...themed].sort());
+  });
+
+  it("is the light side of :root, value for value", () => {
+    for (const name of themed) {
+      expect(fallback[name], name).toBe(withoutClearLayers(side(root[name], 0)));
+    }
+  });
+});
 
 describe("the dim palette", () => {
   it("sets every themed token, so none falls through to Dark", () => {

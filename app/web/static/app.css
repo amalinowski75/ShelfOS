@@ -57,6 +57,44 @@
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
 }
 
+/* Below light-dark() (Chrome/Edge 123, Firefox 120, Safari 17.5) every token
+   above is invalid and resolves to nothing: transparent grounds, black text,
+   no accent. An older tablet kept by the shelves gets the light palette
+   instead — without the theme picker, which has nothing to switch there.
+   The light side of :root, copied; tests/js/theme_palette.test.js keeps the
+   two equal. */
+@supports not (color: light-dark(#000, #fff)) {
+  :root {
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --surface-2: #f1f4f8;
+    --border: #e4e9f0;
+    --border-strong: #cdd6e2;
+    --text: #101826;
+    --muted: #64748b;
+    --faint: #94a3b8;
+    --accent: #0d9488;
+    --accent-strong: #0f766e;
+    --accent-soft: #d5f4ee;
+    --accent-ink: #0b4f47;
+    --on-accent: #ffffff;
+    --row-hover: #eef6f4;
+    --row-picked: #c7ece3;
+    --ok: #15803d;
+    --ok-soft: #dcf5e3;
+    --warn: #b45309;
+    --warn-soft: #fbeccb;
+    --danger: #b91c1c;
+    --danger-soft: #fbe0e0;
+    --neutral: #475569;
+    --neutral-soft: #e8edf3;
+    --unfilled-tint: #fbe0e0;
+    --ring: rgba(13, 148, 136, .32);
+    --shadow-sm: 0 1px 2px rgba(16, 24, 38, .06);
+    --shadow-md: 0 6px 22px -8px rgba(16, 24, 38, .18);
+  }
+}
+
 /* A theme chosen in the Settings menu wins over the OS in both directions. */
 :root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"] { color-scheme: dark; }
@@ -200,6 +238,10 @@ a { color: var(--accent-strong); text-underline-offset: 2px; }
   font: inherit; font-size: 13.5px; color: var(--text);
   background: var(--surface-2); border: 1px solid var(--border-strong);
   border-radius: 6px; padding: 3px 6px; cursor: pointer;
+}
+/* No light-dark(), no themes to pick between: see the fallback at the top. */
+@supports not (color: light-dark(#000, #fff)) {
+  .settings-menu > .settings-theme { display: none; }
 }
 
 /* ---------- page header ---------- */
