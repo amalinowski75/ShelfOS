@@ -64,7 +64,10 @@
 /* Dim: a dark theme turned down — grey grounds instead of near-black navy,
    softer text and a desaturated accent, for long sessions in a dim room.
    Every colour token is set here, so none falls through to the dark side of
-   light-dark() by accident. Text colours stay at 4.5:1 or better on --surface. */
+   light-dark() by accident. Every text colour reaches 4.5:1 on each ground it
+   is drawn on: --surface, --surface-2, --row-picked, and a status colour on its
+   own -soft fill (the badges) — which is why those fills are thinner here (.10)
+   than in Dark. tests/js/theme_palette.test.js holds that. */
 :root[data-theme="dim"] {
   color-scheme: dark;
 
@@ -74,25 +77,25 @@
   --border: #444c56;
   --border-strong: #545d68;
   --text: #adbac7;
-  --muted: #909dab;
+  --muted: #9eabb8;
   --faint: #6e7a87;
 
-  --accent: #4fb3a6;
+  --accent: #5cc0b3;
   --accent-strong: #6cc5b8;
-  --accent-soft: rgba(79, 179, 166, .15);
+  --accent-soft: rgba(92, 192, 179, .15);
   --accent-ink: #8fd3c8;
   --on-accent: #0f2a27;
   --row-hover: #333a44;
-  --row-picked: #365356;
+  --row-picked: #2c4a4b;
 
-  --ok: #57ab5a;      --ok-soft: rgba(87, 171, 90, .15);
-  --warn: #c69026;    --warn-soft: rgba(198, 144, 38, .15);
-  --danger: #f47067;  --danger-soft: rgba(244, 112, 103, .14);
-  --neutral: #a3afbc; --neutral-soft: rgba(163, 175, 188, .14);
+  --ok: #6fbf73;      --ok-soft: rgba(111, 191, 115, .10);
+  --warn: #d4a72c;    --warn-soft: rgba(212, 167, 44, .10);
+  --danger: #f88a82;  --danger-soft: rgba(248, 138, 130, .10);
+  --neutral: #a3afbc; --neutral-soft: rgba(163, 175, 188, .10);
   /* --danger-soft flattened onto --surface; see :root for why it is opaque. */
-  --unfilled-tint: #493c41;
+  --unfilled-tint: #413c42;
 
-  --ring: rgba(79, 179, 166, .38);
+  --ring: rgba(92, 192, 179, .38);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, .3);
   --shadow-md: 0 10px 30px -10px rgba(0, 0, 0, .5);
 }
