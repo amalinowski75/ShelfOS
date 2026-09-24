@@ -61,6 +61,42 @@
 :root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"] { color-scheme: dark; }
 
+/* Dim: a dark theme turned down — grey grounds instead of near-black navy,
+   softer text and a desaturated accent, for long sessions in a dim room.
+   Every colour token is set here, so none falls through to the dark side of
+   light-dark() by accident. Text colours stay at 4.5:1 or better on --surface. */
+:root[data-theme="dim"] {
+  color-scheme: dark;
+
+  --bg: #22272e;
+  --surface: #2d333b;
+  --surface-2: #373e47;
+  --border: #444c56;
+  --border-strong: #545d68;
+  --text: #adbac7;
+  --muted: #909dab;
+  --faint: #6e7a87;
+
+  --accent: #4fb3a6;
+  --accent-strong: #6cc5b8;
+  --accent-soft: rgba(79, 179, 166, .15);
+  --accent-ink: #8fd3c8;
+  --on-accent: #0f2a27;
+  --row-hover: #333a44;
+  --row-picked: #365356;
+
+  --ok: #57ab5a;      --ok-soft: rgba(87, 171, 90, .15);
+  --warn: #c69026;    --warn-soft: rgba(198, 144, 38, .15);
+  --danger: #f47067;  --danger-soft: rgba(244, 112, 103, .14);
+  --neutral: #a3afbc; --neutral-soft: rgba(163, 175, 188, .14);
+  /* --danger-soft flattened onto --surface; see :root for why it is opaque. */
+  --unfilled-tint: #493c41;
+
+  --ring: rgba(79, 179, 166, .38);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .3);
+  --shadow-md: 0 10px 30px -10px rgba(0, 0, 0, .5);
+}
+
 /* ---------- base ---------- */
 * { box-sizing: border-box; }
 
