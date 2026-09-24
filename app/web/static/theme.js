@@ -47,6 +47,17 @@
     });
   }
 
+  // A choice made in another ShelfOS tab reaches this one without a reload,
+  // the sign-in page included. The event only fires in the tabs that did NOT
+  // make the change; a null key means the whole storage was cleared.
+  window.addEventListener("storage", (event) => {
+    if (event.key !== KEY && event.key !== null) return;
+    const theme = stored();
+    apply(theme);
+    const picker = document.getElementById("theme-select");
+    if (picker) picker.value = theme;
+  });
+
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", wirePicker);
   } else {

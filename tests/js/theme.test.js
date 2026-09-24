@@ -34,6 +34,11 @@ function contentLoaded(document) {
   );
 }
 
+// What another tab's write looks like to this one.
+function storageEvent(window, key, newValue) {
+  window.dispatchEvent(new window.StorageEvent("storage", { key, newValue }));
+}
+
 function choose(picker, value) {
   picker.value = value;
   picker.dispatchEvent(new picker.ownerDocument.defaultView.Event("change"));
@@ -97,6 +102,33 @@ describe("theme.js", () => {
     expect(picker.value).toBe("");
     choose(picker, "dark");
     expect(root.dataset.theme).toBe("dark");
+  });
+
+  it("follows a choice made in another tab", async () => {
+    const { window, root, picker } = await load();
+    window.localStorage.setItem(KEY, "dim");
+    storageEvent(window, KEY, "dim");
+    expect(root.dataset.theme).toBe("dim");
+    expect(picker.value).toBe("dim");
+
+    window.localStorage.removeItem(KEY);
+    storageEvent(window, KEY, null);
+    expect(root.hasAttribute("data-theme")).toBe(false);
+    expect(picker.value).toBe("");
+  });
+
+  it("follows another tab on a page with no picker (signed out)", async () => {
+    const { window, root } = await load("<p>Sign in</p>");
+    window.localStorage.setItem(KEY, "dark");
+    storageEvent(window, KEY, "dark");
+    expect(root.dataset.theme).toBe("dark");
+  });
+
+  it("ignores another tab's change to some other key", async () => {
+    const { window, root } = await load(PICKER, { [KEY]: "light" });
+    window.localStorage.removeItem(KEY); // as if cleared behind our back
+    storageEvent(window, "components-columns", "[]");
+    expect(root.dataset.theme).toBe("light");
   });
 
   it("still switches this page when storage refuses the write", async () => {
