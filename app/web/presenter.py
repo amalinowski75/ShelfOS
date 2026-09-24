@@ -183,7 +183,7 @@ def build_component_table(
 
     totals = ss.total_quantities_by_component(session)
     components = cs.list_components(session, type_id=type_id)
-    same_part = es.equivalent_ids_for(session, {cast(int, c.id) for c in components})
+    same_part = _live_equivalents(session, {cast(int, c.id) for c in components})
 
     # Preload type names and (when needed) parameter values in one query each,
     # instead of a per-row lookup, so the table scales past demo size.
@@ -234,12 +234,30 @@ def build_component_table(
     return {"columns": columns, "data": rows}
 
 
-def _group_quantity(members: list[int], totals: dict[int, int]) -> int | None:
-    """What the whole group holds, or ``None`` for a part that is in no group.
+def _live_equivalents(session: Session, listed: set[int]) -> dict[int, list[int]]:
+    """Each listed part's group, retired members left out.
 
-    Retired members are summed along with the rest: they hold no stock, since a
-    part cannot be retired with stock on the shelf, so they add nothing.
+    A group keeps a retired member (D15), so without this a part whose only
+    partner has been retired would count as grouped, and its Group qty would
+    repeat its Qty with no partner anywhere on the list. The listed parts are live
+    already; only the other members — retired ones, or live ones of a type the
+    list is filtered away from — cost a query, and only grouped parts have any.
     """
+    same_part = es.equivalent_ids_for(session, listed)
+    others = {member for ids in same_part.values() for member in ids} - listed
+    live = listed | {
+        component_id
+        for component_id, component in cs.components_by_id(session, others).items()
+        if component.deleted_at is None
+    }
+    return {
+        component_id: [member for member in ids if member in live]
+        for component_id, ids in same_part.items()
+    }
+
+
+def _group_quantity(members: list[int], totals: dict[int, int]) -> int | None:
+    """What the whole group holds, or ``None`` for a part with no live partner."""
     if len(members) < 2:
         return None
     return sum(totals.get(member, 0) for member in members)

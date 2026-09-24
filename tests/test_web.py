@@ -1217,6 +1217,21 @@ def test_group_qty_drops_a_retired_member_from_the_rows_not_the_group(session) -
     assert _group_quantities(session) == {"TAPE": 440, "BULK": 440}
 
 
+def test_group_qty_is_blank_once_the_only_partner_is_retired(session) -> None:  # type: ignore[no-untyped-def]
+    """The group keeps the retired member (D15); the column must not count it."""
+    from app.services import component_service as cs
+    from app.services import equivalence_service as es
+
+    ids = _stocked_parts(
+        session, {"TAPE": ("transistor", 400), "OLD": ("transistor", 0)}
+    )
+    es.link_components(session, ids["TAPE"], ids["OLD"], user_id=1)
+    assert _group_quantities(session) == {"TAPE": 400, "OLD": 400}
+
+    cs.soft_delete_component(session, ids["OLD"], user_id=1)
+    assert _group_quantities(session) == {"TAPE": None}
+
+
 def _seed_admin(session) -> None:  # type: ignore[no-untyped-def]
     from app.models.enums import UserRole
     from app.services import user_service as us
