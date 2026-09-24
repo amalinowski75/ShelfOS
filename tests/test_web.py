@@ -3312,20 +3312,23 @@ def test_a_read_only_account_sees_the_record_but_no_undo(
 def test_the_take_survives_its_gathering_location_being_deleted(
     client: TestClient, tmp_path, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
-    """`delete_location` refuses only on non-zero stock, so an emptied gathering
-    branch is deletable the moment the take is done."""
+    """Once the take is reversed it holds its locations no longer, so an emptied
+    gathering branch can go — and the snapshot must still render."""
     ready = _take_ready(client, tmp_path, monkeypatch)
+    delete = f"/api/locations/{ready['gathering_id']}?recursive=true"
+    # Standing takes hold the branch in place; reverse it first, as the user must.
+    client.post(
+        f"/api/bom-takes/{ready['take_id']}/reverse", json={"reason": "scrapped"}
+    )
     client.post(
         "/api/stock/remove",
         json={
             "component_id": ready["component_id"],
             "location_id": ready["drawer_id"],
-            "quantity": 94,
+            "quantity": 100,  # everything, the reversed 6 included
         },
     )
-    assert client.delete(
-        f"/api/locations/{ready['gathering_id']}?recursive=true"
-    ).status_code in (200, 204)
+    assert client.delete(delete).status_code == 204
     take_id = ready["take_id"]
 
     assert client.get(f"/bom-takes/{take_id}").status_code == 200

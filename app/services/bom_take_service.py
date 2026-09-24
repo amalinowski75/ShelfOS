@@ -666,9 +666,9 @@ def reverse_take(
 def take_detail(session: Session, take_id: int) -> dict[str, object]:
     """The snapshot as the page and the API both want it.
 
-    Location paths are resolved defensively: `delete_location` refuses only on
-    non-zero stock, so the gathering tree is deletable the moment a take empties
-    it, and a snapshot must survive that as "—" rather than a 500.
+    Location paths are resolved defensively: `delete_location` refuses while
+    this take stands, but once it is reversed the gathering tree it emptied can
+    go, and the snapshot must survive that as "—" rather than a 500.
     """
     take = get_take(session, take_id)
     lines = take_lines(session, take_id)
