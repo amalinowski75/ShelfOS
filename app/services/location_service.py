@@ -12,6 +12,7 @@ from typing import Final, cast
 
 from sqlmodel import Session, col, select
 
+from app.models.bom_take import BomTake, BomTakeAllocation
 from app.models.enums import LocationType
 from app.models.invoice import InvoiceImportLine, InvoiceLine
 from app.models.location import ComponentLocation, Location
@@ -159,12 +160,12 @@ def format_path(session: Session, location_id: int) -> str:
 def path_or_dash(session: Session, location_id: int | None) -> str:
     """The location's path, or ``"—"`` when it is gone (or was never set).
 
-    A location can be deleted while rows still name it: ``delete_location``
-    refuses only on non-zero stock, so a branch emptied by a BOM take is
-    immediately deletable, and the ledger already keeps its ``location_id``
-    afterwards by design. Anything rendering a historical reference needs this
-    rather than a 500 — the same shape as ``presenter.build_audit_table``'s
-    suppressed lookup.
+    A location can be deleted while rows still name it: once nothing stands in the
+    way (no stock, no un-reversed BOM take drawing from it), ``delete_location``
+    lets it go, and the ledger and a reversed take's snapshot keep its
+    ``location_id`` afterwards by design. Anything rendering a historical
+    reference needs this rather than a 500 — the same shape as
+    ``presenter.build_audit_table``'s suppressed lookup.
     """
     if location_id is None:
         return "—"
@@ -416,6 +417,14 @@ def delete_location(
     ANY location in the branch holds a non-zero quantity, nothing is deleted
     and the error names where the stock sits.
 
+    So does a BOM take that has not been reversed and drew from anywhere in the
+    branch. Undoing a take puts every part back where it came from, so a bin the
+    take emptied is still that take's to refill — the gathering branch most of
+    all, which a take empties by design and would otherwise be deletable the
+    moment it finished. The error names the location and the take; undo the take
+    first. A reversed take does not block: its snapshot reads a deleted
+    location as "—".
+
     Zero-quantity ``ComponentLocation`` rows are cache, not history, and are
     cleaned up. Everything else that points into the branch gets ``location_id``
     cleared: invoice lines, so the invoice page keeps rendering (the line
@@ -449,6 +458,20 @@ def delete_location(
         raise ValidationError(
             f"'{format_path(session, stocked.location_id)}' still holds stock; "
             "move or remove it first"
+        )
+    standing = session.exec(
+        select(BomTake.name, BomTakeAllocation.location_id)
+        .join(BomTake, col(BomTake.id) == col(BomTakeAllocation.take_id))
+        .where(col(BomTakeAllocation.location_id).in_(ids))
+        .where(col(BomTake.reversed_at).is_(None))
+        .order_by(col(BomTake.id))
+    ).first()
+    if standing is not None:
+        take_name, taken_from = standing
+        raise ValidationError(
+            f"'{take_name}' took parts from '{format_path(session, taken_from)}' "
+            "and has not been reversed — undoing it puts them back there. Undo "
+            "the take before deleting this location."
         )
     for slot in slots:
         session.delete(slot)

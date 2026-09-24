@@ -93,5 +93,9 @@ def delete_location(
     session: Session = Depends(get_session),
     user_id: int = Depends(current_user_id),
 ) -> None:
-    """Delete an empty location; ``recursive`` takes its whole stock-free branch."""
+    """Delete an empty location; ``recursive`` takes its whole stock-free branch.
+
+    Refused (422) while stock sits anywhere in it, or while a BOM take that has not
+    been reversed drew from it — undoing that take puts the parts back there.
+    """
     ls.delete_location(session, location_id, recursive=recursive, user_id=user_id)

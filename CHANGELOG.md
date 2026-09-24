@@ -9,6 +9,14 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## A take keeps the bins it drew from
+
+- **#181** — a location can no longer be deleted while a BOM take that drew from
+  it has not been reversed. The gathering branch a take empties used to be
+  deletable the moment the take finished, and undoing the take then failed on the
+  missing bin. The refusal names the take and the bin; any shelf the take emptied
+  is held the same way, since undo puts parts back wherever they came from.
+
 ## A part's stock across its group
 
 - **#180** — the components list has a **Group qty** column right after Qty: the
