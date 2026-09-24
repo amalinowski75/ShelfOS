@@ -245,6 +245,16 @@ was the shape first asked for. That version is less code, but the equivalence is
 then local to one BOM and has to be re-entered on the next one; the fact is about
 the parts, so it belongs to the parts.
 
+**The components list reads it too (2026-09-24).** "Nothing else does" above no
+longer holds: the list has a **Group qty** column right after Qty. It is the whole
+group's stock, the row's own included — the figure the BOM report's Stock gives
+an assigned line — and it is blank for a part in no group rather than repeating
+Qty, so the grouped rows are the ones that stand out. Qty itself is untouched and
+still counts the one entry: a second column instead of redefining the first,
+because "what is in this entry's bins" is still the question behind Add, Take and
+every label. The type filter narrows the rows, not the groups; a member of another
+type still counts.
+
 ## D14. HTMX is not used  [2026-09-06]
 
 D8 planned `app/web/` as "Jinja2 / HTMX". The Jinja2 half happened; the HTMX half
