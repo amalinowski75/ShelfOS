@@ -17,6 +17,8 @@ pull request, which carries the reasoning and the verification.
   flashes white. The palette is now written once per colour with `light-dark()`
   instead of in three drifting copies, and declaring `color-scheme` makes the
   browser's own parts — a select's dropdown list, scrollbars — follow the theme.
+  A choice reaches every open tab at once. Browsers older than `light-dark()`
+  (Chrome 123, Firefox 120, Safari 17.5) get the light palette and no picker.
 
 ## Where a BOM line's parts are
 
