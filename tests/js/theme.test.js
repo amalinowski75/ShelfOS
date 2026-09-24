@@ -19,16 +19,19 @@ const PICKER = `
 // DOMContentLoaded — which jsdom fires after loadPage has returned.
 async function load(body = PICKER, storage = {}) {
   const page = loadPage(body, SCRIPTS, { localStorage: storage });
-  if (page.document.readyState === "loading") {
-    await new Promise((resolve) =>
-      page.document.addEventListener("DOMContentLoaded", resolve, { once: true }),
-    );
-  }
+  await contentLoaded(page.document);
   return {
     ...page,
     root: page.document.documentElement,
     picker: page.document.getElementById("theme-select"),
   };
+}
+
+function contentLoaded(document) {
+  if (document.readyState !== "loading") return Promise.resolve();
+  return new Promise((resolve) =>
+    document.addEventListener("DOMContentLoaded", resolve, { once: true }),
+  );
 }
 
 function choose(picker, value) {
@@ -72,6 +75,28 @@ describe("theme.js", () => {
     choose(picker, "");
     expect(root.hasAttribute("data-theme")).toBe(false);
     expect(window.localStorage.getItem(KEY)).toBe(null);
+  });
+
+  it("wires a picker the parser reaches only after the script has run", async () => {
+    // In base.html theme.js sits in <head>, before the Settings menu exists; the
+    // harness injects it after the body. Load it with no picker, add the picker
+    // before DOMContentLoaded — as the parser would — and only then let it fire.
+    const page = loadPage("<p>Before the menu</p>", SCRIPTS);
+    expect(page.document.readyState).toBe("loading");
+    page.document.body.insertAdjacentHTML("beforeend", PICKER);
+    await contentLoaded(page.document);
+
+    const picker = page.document.getElementById("theme-select");
+    choose(picker, "dim");
+    expect(page.document.documentElement.dataset.theme).toBe("dim");
+  });
+
+  it("follows the OS and keeps the picker working when storage is blocked", async () => {
+    const { root, picker } = await load(PICKER, "throws");
+    expect(root.hasAttribute("data-theme")).toBe(false);
+    expect(picker.value).toBe("");
+    choose(picker, "dark");
+    expect(root.dataset.theme).toBe("dark");
   });
 
   it("still switches this page when storage refuses the write", async () => {
