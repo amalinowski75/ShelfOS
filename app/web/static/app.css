@@ -2,42 +2,54 @@
  *
  * A calm, technical look for an electronics inventory: cool slate neutrals,
  * a single teal accent, monospace for data (part numbers, quantities, units).
- * Light and dark are both first-class; components read the theme via tokens. */
+ * Light and dark are both first-class; components read the theme via tokens.
+ *
+ * Each colour token is written once, as light-dark(<light>, <dark>), and the
+ * browser picks a side from `color-scheme`. With no data-theme on <html> that
+ * follows the OS; the theme picker in the Settings menu (theme.js) pins it.
+ * `color-scheme` also switches the browser's own parts — a <select>'s dropdown
+ * list, scrollbars, date pickers — which no token can reach. */
 
 :root {
-  --bg: #f6f7f9;
-  --surface: #ffffff;
-  --surface-2: #f1f4f8;
-  --border: #e4e9f0;
-  --border-strong: #cdd6e2;
-  --text: #101826;
-  --muted: #64748b;
-  --faint: #94a3b8;
+  color-scheme: light dark;
 
-  --accent: #0d9488;
-  --accent-strong: #0f766e;
-  --accent-soft: #d5f4ee;
-  --accent-ink: #0b4f47;
-  --on-accent: #ffffff;
-  --row-hover: #eef6f4;
+  --bg: light-dark(#f6f7f9, #0a1120);
+  --surface: light-dark(#ffffff, #111b2e);
+  --surface-2: light-dark(#f1f4f8, #17233a);
+  --border: light-dark(#e4e9f0, #22314b);
+  --border-strong: light-dark(#cdd6e2, #334564);
+  --text: light-dark(#101826, #e7edf6);
+  --muted: light-dark(#64748b, #9fb0c9);
+  --faint: light-dark(#94a3b8, #6b7d99);
+
+  --accent: light-dark(#0d9488, #2dd4bf);
+  --accent-strong: light-dark(#0f766e, #5eead4);
+  --accent-soft: light-dark(#d5f4ee, rgba(45, 212, 191, .14));
+  --accent-ink: light-dark(#0b4f47, #7ff0e2);
+  --on-accent: light-dark(#ffffff, #04231f);
+  --row-hover: light-dark(#eef6f4, #182a40);
   /* The picked row in a chooser. Opaque on purpose: a translucent tint
      composites against whatever is behind the row, which is unpredictable
      inside a dialog. Clearly stronger than --row-hover, and still a
      background the ordinary --text reads against. */
-  --row-picked: #c7ece3;
+  --row-picked: light-dark(#c7ece3, #1e3a52);
 
-  --ok: #15803d;      --ok-soft: #dcf5e3;
-  --warn: #b45309;    --warn-soft: #fbeccb;
-  --danger: #b91c1c;  --danger-soft: #fbe0e0;
-  --neutral: #475569; --neutral-soft: #e8edf3;
+  --ok: light-dark(#15803d, #4ade80);          --ok-soft: light-dark(#dcf5e3, rgba(74, 222, 128, .14));
+  --warn: light-dark(#b45309, #fbbf24);        --warn-soft: light-dark(#fbeccb, rgba(251, 191, 36, .14));
+  --danger: light-dark(#b91c1c, #f87171);      --danger-soft: light-dark(#fbe0e0, rgba(248, 113, 113, .14));
+  --neutral: light-dark(#475569, #a7b6cc);     --neutral-soft: light-dark(#e8edf3, rgba(167, 182, 204, .14));
   /* The unfilled-field tint, and the one soft fill that must be OPAQUE — it lands
      on a <select>, whose dropdown list inherits it with nothing behind it to
-     composite against. Here that is --danger-soft itself; see the dark block. */
-  --unfilled-tint: #fbe0e0;
+     composite against. Light: --danger-soft itself. Dark: what --danger-soft
+     LOOKS like on a dialog, the same rgba flattened onto --surface. */
+  --unfilled-tint: light-dark(#fbe0e0, #312737);
 
-  --ring: rgba(13, 148, 136, .32);
-  --shadow-sm: 0 1px 2px rgba(16, 24, 38, .06);
-  --shadow-md: 0 6px 22px -8px rgba(16, 24, 38, .18);
+  --ring: light-dark(rgba(13, 148, 136, .32), rgba(45, 212, 191, .38));
+  --shadow-sm: 0 1px 2px light-dark(rgba(16, 24, 38, .06), rgba(0, 0, 0, .4));
+  /* Dark wants a deeper shadow, not just a darker one, and light-dark() only
+     takes colours — so each side's shadow is laid down, the other made clear. */
+  --shadow-md: 0 6px 22px -8px light-dark(rgba(16, 24, 38, .18), transparent),
+               0 10px 30px -10px light-dark(transparent, rgba(0, 0, 0, .6));
 
   --radius: 12px;
   --radius-sm: 8px;
@@ -45,62 +57,9 @@
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0a1120;
-    --surface: #111b2e;
-    --surface-2: #17233a;
-    --border: #22314b;
-    --border-strong: #334564;
-    --text: #e7edf6;
-    --muted: #9fb0c9;
-    --faint: #6b7d99;
-
-    --accent: #2dd4bf;
-    --accent-strong: #5eead4;
-    --accent-soft: rgba(45, 212, 191, .14);
-    --accent-ink: #7ff0e2;
-    --on-accent: #04231f;
-    --row-hover: #182a40;
-    --row-picked: #1e3a52;
-
-    --ok: #4ade80;      --ok-soft: rgba(74, 222, 128, .14);
-    --warn: #fbbf24;    --warn-soft: rgba(251, 191, 36, .14);
-    --danger: #f87171;  --danger-soft: rgba(248, 113, 113, .14);
-    --neutral: #a7b6cc; --neutral-soft: rgba(167, 182, 204, .14);
-    /* What --danger-soft already LOOKS like on a dialog: the same rgba flattened
-       onto --surface. Opaque because a dropdown list draws it over the popup's own
-       light ground, where 14% of anything comes out near-white and the light --text
-       on it is unreadable. */
-    --unfilled-tint: #312737;
-
-    --ring: rgba(45, 212, 191, .38);
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .4);
-    --shadow-md: 0 10px 30px -10px rgba(0, 0, 0, .6);
-  }
-}
-
-/* Explicit theme toggle wins over the OS preference in both directions. */
-:root[data-theme="light"] {
-  --bg: #f6f7f9; --surface: #ffffff; --surface-2: #f1f4f8;
-  --border: #e4e9f0; --border-strong: #cdd6e2;
-  --text: #101826; --muted: #64748b; --faint: #94a3b8;
-  --accent: #0d9488; --accent-strong: #0f766e; --accent-soft: #d5f4ee; --accent-ink: #0b4f47; --on-accent: #ffffff; --row-hover: #eef6f4; --row-picked: #c7ece3;
-  --ok: #15803d; --ok-soft: #dcf5e3; --warn: #b45309; --warn-soft: #fbeccb;
-  --danger: #b91c1c; --danger-soft: #fbe0e0; --neutral: #475569; --neutral-soft: #e8edf3;
-  --ring: rgba(13, 148, 136, .32);
-  --shadow-sm: 0 1px 2px rgba(16, 24, 38, .06); --shadow-md: 0 6px 22px -8px rgba(16, 24, 38, .18);
-}
-:root[data-theme="dark"] {
-  --bg: #0a1120; --surface: #111b2e; --surface-2: #17233a;
-  --border: #22314b; --border-strong: #334564;
-  --text: #e7edf6; --muted: #9fb0c9; --faint: #6b7d99;
-  --accent: #2dd4bf; --accent-strong: #5eead4; --accent-soft: rgba(45, 212, 191, .14); --accent-ink: #7ff0e2; --on-accent: #04231f; --row-hover: #182a40; --row-picked: #1e3a52;
-  --ok: #4ade80; --ok-soft: rgba(74, 222, 128, .14); --warn: #fbbf24; --warn-soft: rgba(251, 191, 36, .14);
-  --danger: #f87171; --danger-soft: rgba(248, 113, 113, .14); --neutral: #a7b6cc; --neutral-soft: rgba(167, 182, 204, .14);
-  --ring: rgba(45, 212, 191, .38);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .4); --shadow-md: 0 10px 30px -10px rgba(0, 0, 0, .6);
-}
+/* A theme chosen in the Settings menu wins over the OS in both directions. */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
 
 /* ---------- base ---------- */
 * { box-sizing: border-box; }
