@@ -29,6 +29,7 @@ from app.models.location import Location
 from app.services import attachment_service as att
 from app.services import audit_service
 from app.services import component_service as cs
+from app.services import equivalence_service as es
 from app.services import invoice_service as inv
 from app.services import location_service as ls
 from app.services import stock_service as ss
@@ -48,6 +49,11 @@ _BASE_COLUMNS: list[dict[str, object]] = [
     {"title": "Package", "field": "package"},
     {"title": "Mounting", "field": "mounting_type"},
     {"title": "Qty", "field": "quantity"},
+    # Stock of the whole group of entries marked as the same part (D15) — this
+    # one included, so it is the figure the BOM report's Stock column gives.
+    # Empty (None) for a part in no group: a number there would only repeat Qty,
+    # and the blank is what lets the grouped parts stand out.
+    {"title": "Group qty", "field": "group_quantity"},
 ]
 
 
@@ -177,6 +183,7 @@ def build_component_table(
 
     totals = ss.total_quantities_by_component(session)
     components = cs.list_components(session, type_id=type_id)
+    same_part = es.equivalent_ids_for(session, {cast(int, c.id) for c in components})
 
     # Preload type names and (when needed) parameter values in one query each,
     # instead of a per-row lookup, so the table scales past demo size.
@@ -206,6 +213,7 @@ def build_component_table(
             "package": component.package or "",
             "mounting_type": component.mounting_type.value,
             "quantity": totals.get(component_id, 0),
+            "group_quantity": _group_quantity(same_part[component_id], totals),
         }
         if with_photos:
             # The id alone: the client builds the thumbnail URL from it, and the
@@ -224,6 +232,17 @@ def build_component_table(
         rows.append(row)
 
     return {"columns": columns, "data": rows}
+
+
+def _group_quantity(members: list[int], totals: dict[int, int]) -> int | None:
+    """What the whole group holds, or ``None`` for a part that is in no group.
+
+    Retired members are summed along with the rest: they hold no stock, since a
+    part cannot be retired with stock on the shelf, so they add nothing.
+    """
+    if len(members) < 2:
+        return None
+    return sum(totals.get(member, 0) for member in members)
 
 
 def _load_parameter_values(

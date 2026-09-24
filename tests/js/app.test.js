@@ -61,7 +61,9 @@ describe("app.js — table formatting", () => {
 
   it("gives every data column a live text header filter, but not the actions column", () => {
     const { window } = loadPage(typePageFixture(), SCRIPTS);
-    for (const field of ["mpn", "notes", "package", "mounting_type", "quantity", "type"]) {
+    for (const field of [
+      "mpn", "notes", "package", "mounting_type", "quantity", "group_quantity", "type",
+    ]) {
       const col = window.columnDef({ field, title: `Col ${field}` });
       // "input" + Tabulator's default "like" func = case-insensitive substring
       // filter applied live; multiple active filters AND together. That runtime
@@ -165,6 +167,27 @@ describe("app.js — table formatting", () => {
     expect(headerFilterFunc("1234", 1234)).toBe(true);
     expect(headerFilterFunc(shown, 1234)).toBe(true);
     expect(headerFilterFunc("99", 1234)).toBe(false);
+  });
+
+  it("renders Group qty like Qty, and a part in no group as a blank cell", () => {
+    const { window } = loadPage(typePageFixture(), SCRIPTS);
+    const group = window.columnDef({ field: "group_quantity", title: "Group qty" });
+    const cell = (value) => ({ getValue: () => value });
+
+    expect(group.formatter(cell(null))).toBe(""); // not "0": no group is not empty stock
+    expect(group.formatter(cell(0))).toContain("is-zero");
+    expect(group.formatter(cell(1234))).toBe(
+      `<span class="cell-qty">${(1234).toLocaleString()}</span>`,
+    );
+    expect(group.hozAlign).toBe("right");
+    expect(group.sorter).toBe("number");
+    expect(group.headerTooltip).toMatch(/same part/);
+
+    // Typed digits find a grouped row by either form, and never a blank one —
+    // String(null) is "null", which a stray "nu" would otherwise match.
+    expect(group.headerFilterFunc("1234", 1234)).toBe(true);
+    expect(group.headerFilterFunc((1234).toLocaleString(), 1234)).toBe(true);
+    expect(group.headerFilterFunc("nu", null)).toBe(false);
   });
 
   it("sorts numeric columns by magnitude, not by the display string", () => {

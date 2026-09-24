@@ -198,22 +198,20 @@ function columnDef(column) {
     case "quantity":
       return {
         ...base,
-        hozAlign: "right",
-        sorter: "number", // sort by magnitude, not lexically
-        // The cell shows a thousands-separated number ("1,234") but the default
-        // "like" filter only matches the raw value ("1234"); accept either so
-        // typing what you see filters as expected.
-        headerFilterFunc: (term, value) => {
-          const needle = String(term);
-          return (
-            String(value).includes(needle) ||
-            Number(value).toLocaleString().includes(needle)
-          );
-        },
+        ...quantityColumn,
+        formatter: (cell) => quantityCell(Number(cell.getValue()) || 0),
+      };
+    case "group_quantity":
+      return {
+        ...base,
+        ...quantityColumn,
+        headerTooltip:
+          "Stock of this part together with every entry marked as the same part",
+        // Blank for a part in no group — the feed sends null there, not 0, because
+        // an empty cell is what makes the grouped rows stand out.
         formatter: (cell) => {
-          const value = Number(cell.getValue()) || 0;
-          const zero = value === 0 ? " is-zero" : "";
-          return `<span class="cell-qty${zero}">${value.toLocaleString()}</span>`;
+          const value = cell.getValue();
+          return value == null ? "" : quantityCell(Number(value) || 0);
         },
       };
     default:
@@ -223,6 +221,28 @@ function columnDef(column) {
         ? { ...base, sorter: numericParamSorter(column.field) }
         : base;
   }
+}
+
+// What Qty and Group qty share: a right-aligned count that sorts by magnitude.
+const quantityColumn = {
+  hozAlign: "right",
+  sorter: "number", // sort by magnitude, not lexically
+  // The cell shows a thousands-separated number ("1,234") but the default
+  // "like" filter only matches the raw value ("1234"); accept either so
+  // typing what you see filters as expected. A blank Group qty matches nothing.
+  headerFilterFunc: (term, value) => {
+    if (value == null) return false;
+    const needle = String(term);
+    return (
+      String(value).includes(needle) ||
+      Number(value).toLocaleString().includes(needle)
+    );
+  },
+};
+
+function quantityCell(value) {
+  const zero = value === 0 ? " is-zero" : "";
+  return `<span class="cell-qty${zero}">${value.toLocaleString()}</span>`;
 }
 
 function actionColumn() {
