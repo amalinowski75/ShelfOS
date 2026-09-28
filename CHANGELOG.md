@@ -9,6 +9,13 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## TME invoices with a part that has no RoHS mark
+
+- **#182** — a TME invoice with a part TME holds no RoHS mark for (a VISATON
+  speaker) imports again. The parser read the manufacturer symbol up to the
+  `; Zgodność RoHS` that always followed it, so without one it found no symbol
+  and refused the invoice as "recognised 1 of 2 TME lines".
+
 ## Undoing a take whose bin has been deleted
 
 - **#181** — undoing a BOM take no longer fails when a location it drew from has
