@@ -94,13 +94,13 @@ Priorities set by the user on 2026-07-08.
     the whole group's stock and stays blank for a part in no group, while Qty
     keeps counting the one entry (D15).
 
-Closed in #181: `delete_location` used to refuse only on non-zero stock, so the
-temporary branch a BOM take gathered from was deletable the moment the take
-emptied it, and undoing that take then failed on the missing location. It now
-also refuses while a take that has not been reversed drew from anywhere in the
-branch — the gathering bins and any ordinary shelf the take emptied alike, since
-undo puts parts back wherever they came from — and names the take. The same shape
-`delete_bom` uses. A reversed take holds nothing; its snapshot reads a deleted
+Closed in #181: `delete_location` refuses only on non-zero stock, so the
+temporary branch a BOM take gathered from is deletable the moment the take empties
+it, and undoing that take used to fail on the missing location. Holding every bin
+a standing take drew from was tried and dropped in review: a take is almost never
+reversed, so it would pin those bins for good. Instead the undo asks where the
+parts of a deleted bin go back (the dialog shows a location picker only then);
+every other part still returns to its own bin, and the snapshot reads a deleted
 location as "—".
 
 A take whose part was later taken out of use cannot be reversed at all —
