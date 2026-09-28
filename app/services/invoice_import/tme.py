@@ -36,13 +36,7 @@ _ITEM = re.compile(
     r"^\s*(\d+)\s+(.+?)\s+([\d \xa0]+?)\s+SZT\s+([\d.,]+)\s*/\s*(\d*)\s*SZT"
     r"\s+\d+\s+[\d.,\s]+$"
 )
-# What ends the item table: the totals, a page's carry-over line (both halves of
-# it), and the prepayment block a prepaid order prints straight under the last
-# item. Each one matters for the item above it — whatever is not stopped here is
-# read as that item's continuation, and so as the tail of its last field.
-_STOP = re.compile(
-    r"Razem:|Legenda:|Do zapłaty:|z przeniesienia|Do przeniesienia:|Otrzymano zaliczk"
-)
+_STOP = re.compile(r"Razem:|Legenda:|Do zapłaty:|z przeniesienia")
 _MANUFACTURER = re.compile(r"Producent:\s*(.+?)\s*;")
 # The article column's observed wrap point: an article this long may be truncated.
 # It is a *suspicion*, not proof — a complete symbol can fill the column exactly
@@ -56,9 +50,13 @@ _BREAK_CHARS = ("-", "/", ".")
 # bare token of the characters TME symbols are built from. Deliberately excludes
 # whitespace, ";" and ":" — the marks every description row carries.
 _ARTICLE_TAIL = re.compile(r"^[0-9A-Za-z][0-9A-Za-z*./_-]*$")
-# Usually closed by the "; Zgodność RoHS" that follows it — but a part TME holds
-# no RoHS mark for (a VISATON speaker) ends the block on the symbol itself.
-_MPN = re.compile(r"Symbol producenta:\s*(.+?)\s*(?:;|$)")
+# Closed by the "; Zgodność RoHS" that follows it — except on a part TME holds no
+# RoHS mark for (a VISATON speaker), whose block ends on the symbol itself; that
+# case is read off the symbol's own row instead (see :func:`_open_symbol`).
+_MPN = re.compile(r"Symbol producenta:\s*(.+?)\s*;")
+# The second half of the label, which is where the value starts even when the
+# label itself wrapped ("…; Symbol" + "producenta: 8006").
+_OPEN_LABEL = "producenta:"
 
 
 class TmeInvoiceParser:
@@ -205,7 +203,7 @@ def _line(header: re.Match[str], cont_lines: list[str]) -> ParsedLine:
     joined = re.sub(r"\s+", " ", re.sub(r"_{2,}", " ", joined))
     manufacturer_m = _MANUFACTURER.search(joined)
     mpn_m = _MPN.search(joined)
-    mpn = mpn_m.group(1).strip() if mpn_m else None
+    mpn = mpn_m.group(1).strip() if mpn_m else _open_symbol(cont_lines)
     # The article column is TME's OWN symbol — the invoice's supplier index, which
     # enrichment prefers over the MPN (it is TME's canonical key).
     symbol = article or None
@@ -243,6 +241,32 @@ def _line(header: re.Match[str], cont_lines: list[str]) -> ParsedLine:
         # "Koszty wysyłki" shipping line) — the orchestrator skips it.
         kind="component" if mpn else "shipping",
     )
+
+
+def _open_symbol(cont_lines: list[str]) -> str | None:
+    """The manufacturer symbol when no ``;`` closes it, read off its own row.
+
+    Everything after it in the block is whatever the table printed under the
+    item — the totals, a page footer, a prepayment block — and differs from one
+    invoice to the next, so reading to the end of the block would put that text
+    into the MPN. The symbol is one token and TME breaks rows only at spaces, so
+    it never continues onto the next row: take the one token after the label (on
+    the label's row, or alone on the row below when the label ends its row).
+
+    Anything else on that row means the layout isn't what this expects, so the
+    answer is None: the line reads as a charge, and the ``Producent:`` count in
+    :meth:`TmeInvoiceParser.parse` refuses the invoice rather than import a
+    guessed MPN.
+    """
+    rows = [re.sub(r"_{2,}", " ", row).strip() for row in cont_lines]
+    for index, row in enumerate(rows):
+        if _OPEN_LABEL not in row:
+            continue
+        value = row.split(_OPEN_LABEL, 1)[1].strip()
+        if not value:
+            value = next((later for later in rows[index + 1 :] if later), "")
+        return value if value and len(value.split()) == 1 else None
+    return None
 
 
 def _search(pattern: re.Pattern[str], text: str, what: str) -> str:

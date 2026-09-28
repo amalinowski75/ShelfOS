@@ -371,6 +371,41 @@ def test_tme_reads_a_line_with_no_rohs_mark() -> None:
     assert speaker.description == "Głośnik;ekranowany,uniwersalny;10W;8Ω;50,5x90,5x43mm"
 
 
+def test_tme_reads_a_last_line_with_no_rohs_mark_on_an_unpaid_invoice() -> None:
+    # Not prepaid: no "Otrzymano zaliczkę…" block under the last item, so the
+    # totals table follows it directly — and must not become part of the MPN.
+    lines = _text("tme_no_rohs.txt").splitlines()
+    start = next(i for i, row in enumerate(lines) if "Otrzymano zaliczk" in row)
+    end = next(i for i, row in enumerate(lines) if "Legenda:" in row)
+    text = "\n".join(lines[:start] + lines[end + 1 :])
+
+    invoice = TmeInvoiceParser().parse(text)
+
+    assert [line.mpn for line in invoice.lines if line.kind == "component"] == [
+        "T821108A1R100CEU",
+        "8006",
+    ]
+
+
+def test_tme_reads_an_open_symbol_under_a_wrapped_label() -> None:
+    from app.services.invoice_import.tme import _open_symbol
+
+    assert _open_symbol(["Producent: VISATON; Symbol producenta:", "8006", ""]) == (
+        "8006"
+    )
+
+
+def test_tme_refuses_an_open_symbol_it_cannot_delimit() -> None:
+    # More than one token after an unclosed label: a guess, so no MPN — which
+    # the Producent: count then turns into a refusal of the whole invoice.
+    text = _text("tme_no_rohs.txt").replace(
+        "Symbol producenta: 8006", "Symbol producenta: 8006 EXTRA"
+    )
+
+    with pytest.raises(ValidationError, match="recognised 1 of 2"):
+        TmeInvoiceParser().parse(text)
+
+
 def test_tme_ends_a_line_with_no_rohs_mark_at_the_page_break() -> None:
     # The same open field just before a page break: the carry-over line and the
     # page footer must not be read as the rest of the symbol.
