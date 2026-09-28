@@ -298,27 +298,36 @@ def test_a_take_removes_the_stock_and_answers_with_its_snapshot(
     assert [t["id"] for t in past] == [take["id"]]
 
 
-def test_the_branch_a_standing_take_emptied_cannot_be_deleted(
+def test_undo_puts_a_deleted_bins_parts_where_it_is_told(
     client: TestClient, take_ready
 ) -> None:  # type: ignore[no-untyped-def]
-    """Its undo would have nowhere to put the parts back."""
+    """The emptied gathering branch can go while the take stands; its undo then
+    asks where those parts go back."""
     take = client.post(
         f"/api/boms/{take_ready['bom_id']}/takes",
         json={"boards": 50, "source_location_id": take_ready["gathering_id"]},
     ).json()
-    assert _held(client, take_ready) == 0  # empty, so stock no longer blocks it
+    shelf = client.post("/api/locations", json={"type": "shelf", "name": "R"}).json()
 
     resp = client.delete(
         f"/api/locations/{take_ready['gathering_id']}", params={"recursive": True}
     )
+    assert resp.status_code == 204
 
-    assert resp.status_code == 422
-    assert take["name"] in resp.json()["detail"]
+    reverse = f"/api/bom-takes/{take['id']}/reverse"
+    refused = client.post(reverse, json={"reason": "scrapped"})
+    assert refused.status_code == 422
+    assert "U1" in refused.json()["detail"]
+
     reversed_ = client.post(
-        f"/api/bom-takes/{take['id']}/reverse", json={"reason": "scrapped"}
+        reverse, json={"reason": "scrapped", "return_location_id": shelf["id"]}
     )
     assert reversed_.status_code == 200
-    assert _held(client, take_ready) == 100
+    held = client.get(
+        "/api/stock/quantity",
+        params={"component_id": take_ready["component_id"], "location_id": shelf["id"]},
+    ).json()["quantity"]
+    assert held == 100
 
 
 def test_a_typed_quantity_is_honoured(client: TestClient, take_ready) -> None:  # type: ignore[no-untyped-def]

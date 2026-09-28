@@ -914,68 +914,78 @@ def _take_all(session: Session, shop, stocked: dict[int, int]):  # type: ignore[
     return take, part
 
 
-def test_the_gathering_branch_stays_while_a_take_from_it_stands(
+def test_a_standing_take_does_not_hold_the_bins_it_emptied(
     session: Session, shop
 ) -> None:  # type: ignore[no-untyped-def]
-    """Emptied by the take, so no stock blocks it — but undo refills it."""
-    take, part = _take_all(session, shop, {shop.resistors_id: 10})
-
-    with pytest.raises(ValidationError, match=take.name) as refused:
-        ls.delete_location(session, shop.gathering_id, recursive=True, user_id=1)
-    # Named by where the parts came from, not by the branch that was pointed at.
-    assert "Kontroler CNC / Rezystory" in str(refused.value)
-    with pytest.raises(ValidationError, match=take.name):
-        ls.delete_location(session, shop.resistors_id, user_id=1)
-
-    # Nothing went, and the undo that needs it still works.
-    assert ls.format_path(session, shop.resistors_id) == "Kontroler CNC / Rezystory"
-    bts.reverse_take(session, cast(int, take.id), reason="scrapped", user_id=1)
-    assert ss.get_quantity(session, part, shop.resistors_id) == 10
-
-
-def test_an_ordinary_shelf_the_take_emptied_is_held_too(
-    session: Session, shop
-) -> None:  # type: ignore[no-untyped-def]
-    """Not only the gathering branch: undo puts parts back wherever they were."""
-    take, _ = _take_all(session, shop, {shop.shelf_a_id: 5})
-
-    with pytest.raises(ValidationError, match=take.name):
-        ls.delete_location(session, shop.shelf_a_id, user_id=1)
-
-
-def test_a_bin_the_take_did_not_touch_can_still_go(
-    session: Session, shop
-) -> None:  # type: ignore[no-untyped-def]
-    """The guard is about where the take drew from, not the whole gathering tree."""
-    _take_all(session, shop, {shop.resistors_id: 10})
-
-    assert ls.delete_location(session, shop.connectors_id, user_id=1) == 1
-    assert ls.delete_location(session, shop.shelf_b_id, user_id=1) == 1
-
-
-def test_a_reversed_take_no_longer_holds_its_locations(
-    session: Session, shop
-) -> None:  # type: ignore[no-untyped-def]
-    """Once undone, the take owes the bin nothing; its snapshot reads it as "—"."""
-    take, part = _take_all(session, shop, {shop.resistors_id: 10})
-    bts.reverse_take(session, cast(int, take.id), reason="scrapped", user_id=1)
-    # Undo put the parts back; clear them the ordinary way so only the take is left.
-    ss.remove_stock(
-        session,
-        component_id=part,
-        location_id=shop.resistors_id,
-        quantity=10,
-        user_id=1,
-    )
+    """A take is almost never undone, so it must not pin every bin it touched —
+    the gathering branch and an ordinary shelf alike."""
+    take, _ = _take_all(session, shop, {shop.resistors_id: 10, shop.shelf_a_id: 5})
 
     removed = ls.delete_location(
         session, shop.gathering_id, recursive=True, user_id=1
     )
     assert removed == 3
+    assert ls.delete_location(session, shop.shelf_a_id, user_id=1) == 1
 
+    # The snapshot still reads, the deleted bins as "—"…
     detail = bts.take_detail(session, cast(int, take.id))
     assert detail["source_path"] == "—"
-    assert [s["path"] for s in detail["lines"][0]["sources"]] == ["—"]  # type: ignore[index]
+    assert {s["path"] for s in detail["lines"][0]["sources"]} == {"—"}  # type: ignore[index]
+    # …and says which lines an undo will have to ask about.
+    assert detail["gone_references"] == ["U1"]
+
+
+def test_undo_asks_where_the_parts_of_a_deleted_bin_go(
+    session: Session, shop
+) -> None:  # type: ignore[no-untyped-def]
+    take, part = _take_all(session, shop, {shop.resistors_id: 10, shop.shelf_a_id: 5})
+    ls.delete_location(session, shop.gathering_id, recursive=True, user_id=1)
+
+    with pytest.raises(ValidationError, match="U1"):
+        bts.reverse_take(session, cast(int, take.id), reason="scrapped", user_id=1)
+    # Refused before the claim: still undoable, nothing put back anywhere.
+    assert bts.get_take(session, cast(int, take.id)).reversed_at is None
+    assert ss.get_quantity(session, part, shop.shelf_a_id) == 0
+
+    bts.reverse_take(
+        session,
+        cast(int, take.id),
+        reason="scrapped",
+        user_id=1,
+        return_location_id=shop.shelf_b_id,
+    )
+    # The deleted drawer's 10 go where the user said; the shelf that still exists
+    # gets its own 5 back, not the chosen location.
+    assert ss.get_quantity(session, part, shop.shelf_b_id) == 10
+    assert ss.get_quantity(session, part, shop.shelf_a_id) == 5
+
+
+def test_undo_to_a_location_that_does_not_exist_moves_nothing(
+    session: Session, shop
+) -> None:  # type: ignore[no-untyped-def]
+    take, part = _take_all(session, shop, {shop.resistors_id: 10, shop.shelf_a_id: 5})
+    ls.delete_location(session, shop.resistors_id, user_id=1)
+
+    with pytest.raises(NotFoundError):
+        bts.reverse_take(
+            session,
+            cast(int, take.id),
+            reason="scrapped",
+            user_id=1,
+            return_location_id=shop.resistors_id,  # the one just deleted
+        )
+    assert bts.get_take(session, cast(int, take.id)).reversed_at is None
+    assert ss.get_quantity(session, part, shop.shelf_a_id) == 0
+
+
+def test_a_take_whose_bins_all_stand_asks_nothing(
+    session: Session, shop
+) -> None:  # type: ignore[no-untyped-def]
+    take, part = _take_all(session, shop, {shop.resistors_id: 10})
+
+    assert bts.take_detail(session, cast(int, take.id))["gone_references"] == []
+    bts.reverse_take(session, cast(int, take.id), reason="scrapped", user_id=1)
+    assert ss.get_quantity(session, part, shop.resistors_id) == 10
 
 
 # --- built from any entry of the same part (D15) -----------------------------

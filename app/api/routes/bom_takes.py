@@ -155,5 +155,9 @@ def reverse_take(
 ) -> BomTake:
     """Put everything back, saying why (writers)."""
     return svc.reverse_take(
-        session, take_id, reason=payload.reason, user_id=user_id
+        session,
+        take_id,
+        reason=payload.reason,
+        user_id=user_id,
+        return_location_id=payload.return_location_id,
     )
