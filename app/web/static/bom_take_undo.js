@@ -1,6 +1,8 @@
 // Undoing a BOM take. The reason is required — a reversal that does not say what
 // happened to the board is a hole in the record the snapshot exists to keep — so
-// Confirm stays disabled until something is typed.
+// Confirm stays disabled until something is typed. When a bin the take drew from
+// has been deleted since, the dialog also carries a location picker, and Confirm
+// waits for that too: those parts have no bin of their own to go back to.
 
 const takeUndoDialog = document.getElementById("take-undo-dialog");
 if (takeUndoDialog) {
@@ -11,14 +13,17 @@ if (takeUndoDialog) {
   const confirm = document.getElementById("take-undo-confirm");
   const errorRow = document.getElementById("take-undo-error-row");
   const error = document.getElementById("take-undo-error");
+  const returnTo = document.getElementById("take-undo-location");
 
   const setEnabled = () => {
-    confirm.disabled = !reason.value.trim();
+    confirm.disabled = !reason.value.trim() || (returnTo !== null && !returnTo.value);
   };
   reason.addEventListener("input", setEnabled);
+  returnTo?.addEventListener("change", setEnabled);
 
   document.getElementById("take-undo")?.addEventListener("click", () => {
     reason.value = "";
+    if (returnTo) returnTo.value = "";
     setEnabled();
     errorRow.hidden = true;
     takeUndoDialog.showModal();
@@ -30,14 +35,16 @@ if (takeUndoDialog) {
 
   let running = false;
   confirm.addEventListener("click", async () => {
-    if (running || !reason.value.trim()) return;
+    if (running || confirm.disabled) return;
     running = true;
     confirm.disabled = true;
+    const body = { reason: reason.value };
+    if (returnTo) body.return_location_id = Number(returnTo.value);
     try {
       const resp = await fetch(`/api/bom-takes/${takeId}/reverse`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-        body: JSON.stringify({ reason: reason.value }),
+        body: JSON.stringify(body),
       });
       if (resp.ok) {
         // Reload rather than patch the page: the whole thing changes — the badge,

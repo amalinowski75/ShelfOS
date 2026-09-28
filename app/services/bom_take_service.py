@@ -584,13 +584,57 @@ def take_allocations(session: Session, take_id: int) -> list[BomTakeAllocation]:
     )
 
 
+def _existing_locations(session: Session, ids: set[int]) -> set[int]:
+    """Which of these locations still exist — one query for a whole take."""
+    if not ids:
+        return set()
+    return {
+        cast(int, found)
+        for found in session.exec(
+            select(Location.id).where(col(Location.id).in_(ids))
+        ).all()
+    }
+
+
+def _gone_references(
+    lines: dict[int, BomTakeLine],
+    allocations: list[BomTakeAllocation],
+    existing: set[int],
+) -> list[str]:
+    """The lines whose parts came from a location that has since been deleted.
+
+    A take does not hold the bins it drew from: it is almost never reversed, and
+    pinning every shelf a build touched — until the user falsified the stock
+    record to free it — is the worse trade. So a bin can go while the take
+    stands, and its undo is then told where those parts go back instead.
+    """
+    return sorted(
+        {
+            lines[a.take_line_id].references
+            for a in allocations
+            if a.location_id not in existing
+        }
+    )
+
+
 def reverse_take(
-    session: Session, take_id: int, *, reason: str, user_id: int
+    session: Session,
+    take_id: int,
+    *,
+    reason: str,
+    user_id: int,
+    return_location_id: int | None = None,
 ) -> BomTake:
     """Put everything back where it came from, saying why.
 
     The reason is required: a reversal that does not say what happened to the
     board is a hole in exactly the record this table exists to keep.
+
+    A part whose source location has been deleted since goes back to
+    ``return_location_id`` instead — required only then, and refused up front,
+    naming the lines, when it is missing. Every other part still goes back to its
+    own bin. The snapshot keeps the deleted id: it records where the part came
+    from, and the reversal movement records where it went.
     """
     take = get_take(session, take_id)
     reason = (reason or "").strip()
@@ -619,6 +663,15 @@ def reverse_take(
             "these lines were built from parts that are no longer in use, so "
             "their stock cannot be put back: " + ", ".join(retired)
         )
+    existing = _existing_locations(session, {a.location_id for a in allocations})
+    gone = _gone_references(lines, allocations, existing)
+    if gone and return_location_id is None:
+        raise ValidationError(
+            "these lines came from locations that have since been deleted, so "
+            "say where their parts go back: " + ", ".join(gone)
+        )
+    if gone:
+        require_entity(session, Location, cast(int, return_location_id), "location")
 
     now = datetime.now(UTC)
     # Claim the reversal atomically, the way finalize_invoice claims an invoice: a
@@ -643,7 +696,11 @@ def reverse_take(
             movement = ss.add_stock(
                 session,
                 component_id=line.component_id,
-                location_id=allocation.location_id,
+                location_id=(
+                    allocation.location_id
+                    if allocation.location_id in existing
+                    else cast(int, return_location_id)
+                ),
                 quantity=allocation.quantity,
                 user_id=user_id,
                 reason=StockReason.CORRECTION,
@@ -669,10 +726,14 @@ def take_detail(session: Session, take_id: int) -> dict[str, object]:
     Location paths are resolved defensively: `delete_location` refuses only on
     non-zero stock, so the gathering tree is deletable the moment a take empties
     it, and a snapshot must survive that as "—" rather than a 500.
+
+    ``gone_references`` names the lines whose source is gone, so the undo dialog
+    can ask where their parts go back before the server has to refuse it.
     """
     take = get_take(session, take_id)
     lines = take_lines(session, take_id)
     allocations = take_allocations(session, take_id)
+    existing = _existing_locations(session, {a.location_id for a in allocations})
     by_line: dict[int, list[dict[str, object]]] = {}
     for allocation in allocations:
         by_line.setdefault(allocation.take_line_id, []).append(
@@ -697,6 +758,9 @@ def take_detail(session: Session, take_id: int) -> dict[str, object]:
         "created_at": take.created_at.isoformat(),
         "reversed_at": take.reversed_at.isoformat() if take.reversed_at else None,
         "reversal_reason": take.reversal_reason,
+        "gone_references": _gone_references(
+            {cast(int, ln.id): ln for ln in lines}, allocations, existing
+        ),
         "lines": [
             {
                 "id": line.id,

@@ -775,6 +775,9 @@ class BomTakeRequest(BaseModel):
 
 class BomTakeReverse(BaseModel):
     reason: str
+    # Where parts go back when the bin they came from has been deleted since;
+    # required only then. Every other part returns to its own bin.
+    return_location_id: int | None = None
 
 
 class BomTakeRead(BaseModel):

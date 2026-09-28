@@ -416,6 +416,11 @@ def delete_location(
     ANY location in the branch holds a non-zero quantity, nothing is deleted
     and the error names where the stock sits.
 
+    A BOM take that drew from the branch does NOT block, reversed or not. A take
+    records a real build and is almost never undone, so holding every bin it
+    touched would pin them for good; instead its undo asks where the parts of a
+    deleted bin go back (``bom_take_service.reverse_take``).
+
     Zero-quantity ``ComponentLocation`` rows are cache, not history, and are
     cleaned up. Everything else that points into the branch gets ``location_id``
     cleared: invoice lines, so the invoice page keeps rendering (the line

@@ -9,6 +9,14 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## Undoing a take whose bin has been deleted
+
+- **#181** — undoing a BOM take no longer fails when a location it drew from has
+  been deleted since (the emptied gathering branch, typically). The undo dialog
+  then asks where those parts go back; everything else returns to its own bin.
+  Deleting a location stays unaffected by takes: a take is almost never undone,
+  so holding the bins it touched would have pinned them for good.
+
 ## A part's stock across its group
 
 - **#180** — the components list has a **Group qty** column right after Qty: the

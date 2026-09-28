@@ -680,6 +680,32 @@ describe("bom_take_undo.js", () => {
     expect(navigations).not.toHaveLength(0);
   });
 
+  it("waits for a location when a source bin is gone, and sends it", async () => {
+    const fetchImpl = vi.fn(() => Promise.resolve({ ok: true, json: async () => ({}) }));
+    const { document } = loadPage(bomTakeUndoFixture({ asksWhere: true }), UNDO, {
+      fetchImpl,
+    });
+    document.getElementById("take-undo").click();
+    const confirm = document.getElementById("take-undo-confirm");
+    const reason = document.getElementById("take-undo-reason");
+    reason.value = "scrapped";
+    reason.dispatchEvent(new document.defaultView.Event("input", { bubbles: true }));
+    expect(confirm.disabled).toBe(true); // a reason alone is not enough here
+
+    const where = document.getElementById("take-undo-location");
+    where.value = "31";
+    where.dispatchEvent(new document.defaultView.Event("change", { bubbles: true }));
+    expect(confirm.disabled).toBe(false);
+
+    confirm.click();
+    await tick();
+    const [, opts] = fetchImpl.mock.calls.at(-1);
+    expect(JSON.parse(opts.body)).toEqual({
+      reason: "scrapped",
+      return_location_id: 31,
+    });
+  });
+
   it("shows a refusal without closing the dialog", async () => {
     const fetchImpl = () =>
       Promise.resolve({

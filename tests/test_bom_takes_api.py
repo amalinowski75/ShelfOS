@@ -298,6 +298,38 @@ def test_a_take_removes_the_stock_and_answers_with_its_snapshot(
     assert [t["id"] for t in past] == [take["id"]]
 
 
+def test_undo_puts_a_deleted_bins_parts_where_it_is_told(
+    client: TestClient, take_ready
+) -> None:  # type: ignore[no-untyped-def]
+    """The emptied gathering branch can go while the take stands; its undo then
+    asks where those parts go back."""
+    take = client.post(
+        f"/api/boms/{take_ready['bom_id']}/takes",
+        json={"boards": 50, "source_location_id": take_ready["gathering_id"]},
+    ).json()
+    shelf = client.post("/api/locations", json={"type": "shelf", "name": "R"}).json()
+
+    resp = client.delete(
+        f"/api/locations/{take_ready['gathering_id']}", params={"recursive": True}
+    )
+    assert resp.status_code == 204
+
+    reverse = f"/api/bom-takes/{take['id']}/reverse"
+    refused = client.post(reverse, json={"reason": "scrapped"})
+    assert refused.status_code == 422
+    assert "U1" in refused.json()["detail"]
+
+    reversed_ = client.post(
+        reverse, json={"reason": "scrapped", "return_location_id": shelf["id"]}
+    )
+    assert reversed_.status_code == 200
+    held = client.get(
+        "/api/stock/quantity",
+        params={"component_id": take_ready["component_id"], "location_id": shelf["id"]},
+    ).json()["quantity"]
+    assert held == 100
+
+
 def test_a_typed_quantity_is_honoured(client: TestClient, take_ready) -> None:  # type: ignore[no-untyped-def]
     line_id = client.get(f"/api/boms/{take_ready['bom_id']}").json()["lines"][0]["id"]
 
