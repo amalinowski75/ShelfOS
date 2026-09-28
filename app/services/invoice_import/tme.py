@@ -36,7 +36,13 @@ _ITEM = re.compile(
     r"^\s*(\d+)\s+(.+?)\s+([\d \xa0]+?)\s+SZT\s+([\d.,]+)\s*/\s*(\d*)\s*SZT"
     r"\s+\d+\s+[\d.,\s]+$"
 )
-_STOP = re.compile(r"Razem:|Legenda:|Do zapłaty:|z przeniesienia")
+# What ends the item table: the totals, a page's carry-over line (both halves of
+# it), and the prepayment block a prepaid order prints straight under the last
+# item. Each one matters for the item above it — whatever is not stopped here is
+# read as that item's continuation, and so as the tail of its last field.
+_STOP = re.compile(
+    r"Razem:|Legenda:|Do zapłaty:|z przeniesienia|Do przeniesienia:|Otrzymano zaliczk"
+)
 _MANUFACTURER = re.compile(r"Producent:\s*(.+?)\s*;")
 # The article column's observed wrap point: an article this long may be truncated.
 # It is a *suspicion*, not proof — a complete symbol can fill the column exactly
@@ -50,7 +56,9 @@ _BREAK_CHARS = ("-", "/", ".")
 # bare token of the characters TME symbols are built from. Deliberately excludes
 # whitespace, ";" and ":" — the marks every description row carries.
 _ARTICLE_TAIL = re.compile(r"^[0-9A-Za-z][0-9A-Za-z*./_-]*$")
-_MPN = re.compile(r"Symbol producenta:\s*(.+?)\s*;")
+# Usually closed by the "; Zgodność RoHS" that follows it — but a part TME holds
+# no RoHS mark for (a VISATON speaker) ends the block on the symbol itself.
+_MPN = re.compile(r"Symbol producenta:\s*(.+?)\s*(?:;|$)")
 
 
 class TmeInvoiceParser:

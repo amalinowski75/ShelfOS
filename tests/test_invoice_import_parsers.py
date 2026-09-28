@@ -352,6 +352,37 @@ def test_tme_classifies_shipping_line() -> None:
     assert sum(1 for line in invoice.lines if line.kind == "component") == 10
 
 
+def test_tme_reads_a_line_with_no_rohs_mark() -> None:
+    # "Symbol producenta: 8006" is the last thing in the block — no "; Zgodność
+    # RoHS" after it to close the field — and the prepaid order's "Otrzymano
+    # zaliczkę…" block follows straight under it.
+    invoice = TmeInvoiceParser().parse(_text("tme_no_rohs.txt"))
+
+    assert [line.kind for line in invoice.lines] == [
+        "component",
+        "shipping",
+        "component",
+    ]
+    speaker = _by_mpn(invoice, "8006")
+    assert speaker.manufacturer == "VISATON"
+    assert speaker.supplier_part_number == "VS-SC5.9-8"
+    assert speaker.quantity == 2
+    assert speaker.unit_price == Decimal("41.36")
+    assert speaker.description == "Głośnik;ekranowany,uniwersalny;10W;8Ω;50,5x90,5x43mm"
+
+
+def test_tme_ends_a_line_with_no_rohs_mark_at_the_page_break() -> None:
+    # The same open field just before a page break: the carry-over line and the
+    # page footer must not be read as the rest of the symbol.
+    text = _text("tme.txt").replace(
+        "GRM31CR60J227ME11L; Zgodność RoHS", "GRM31CR60J227ME11L"
+    )
+
+    invoice = TmeInvoiceParser().parse(text)
+
+    assert _by_mpn(invoice, "GRM31CR60J227ME11L").manufacturer == "MURATA"
+
+
 # --- Mouser ------------------------------------------------------------------
 
 

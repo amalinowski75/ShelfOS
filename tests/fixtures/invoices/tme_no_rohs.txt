@@ -1,0 +1,122 @@
+                                                                                  
+                  Transfer Multisort Elektronik Sp. z o.o.                        
+                                                     Data dostawy / usługi: 25.09.2026
+                  93-350 Łódź, ul. Ustronna 41, Polska                            
+                  NIP: 729-010-89-84, VAT No: PL7290108984, Regon: 473171710 Data wystawienia faktury*: 25.09.2026
+                  EORI: PL729010898400000                                         
+                  Sąd rejonowy dla Łodzi-Śródmieścia, Nr KRS: 0000165815          
+                                                     Forma wysyłki:  InPost paczkomaty
+                  Kapitał zakładowy: 3 300 000 zł, numer rejestrowy BDO: 000006165
+                                                     Forma płatności: Przedpłata  
+                  Tel.: (+48) 42 645 55 55, fax: (+48) 42 645 55 00, e-mail: tme@tme.eu
+                  www.tme.eu                         Incoterms:      EXW ŁÓDŹ     
+                                                     Zlecenie numer: 35579690     
+          Nabywca                                                                 
+          SAMPLE BUYER SAMPLE CO                                                  
+          UL. SAMPLE 1                                                            
+          00-000 SAMPLE CITY, Polska                                              
+          NIP: 0000000000                                                         
+      Faktura VAT                                                                 
+      Numer faktury: 1261604881                                                   
+      Numer KSeF: 7290108984-20260925-6D405DC0007D-09                             
+      Faktura wystawiona w cenach netto w walucie: PLN                            
+       Lp.            Artykuł/Opis        Ilość  Cena netto PLN %VAT Wartość netto PLN
+      1   T821-1-08-R1                     20 SZT   19,76/10 SZT 23       39,52   
+          Złącze:IDC;gniazdo;męskie;PIN:8;kątowe 90°;THT;2,54mm;2x4               
+          Producent: AMPHENOL COMMUNICATIONS SOLUTIONS; Symbol                    
+          producenta: T821108A1R100CEU; Zgodność RoHS                             
+      2   Koszty wysyłki                    1 SZT     15,90/SZT 23        15,90   
+      3   VS-SC5.9-8                        2 SZT     41,36/SZT 23        82,72   
+          Głośnik;ekranowany,uniwersalny;10W;8Ω;50,5x90,5x43mm                    
+          Producent: VISATON; Symbol producenta: 8006                             
+                                                                                  
+      Otrzymano zaliczkę dnia 25.09.2026 na kwotę 169,91 PLN                      
+                  Rozliczenie wpłaconej zaliczki:                                 
+                     A       B         C          D             E                 
+           PROFORMA1265241677 25.09.2026  169,91     169,91          0,00         
+                  1261604881 25.09.2026  -169,91     -169,91         0,00         
+                  Pozostało do rozliczenia: 0,00       0,00          0,00         
+      Legenda: A - Nr dokumentu; B - Data dokumentu; C - Wartość zamówionego towaru; D - wartość wpłaconej zaliczki; E - różnica (C - D);
+                                                                                  
+                                                                                  
+                                                      PLN                         
+                                    Wartość netto %VAT   VAT       Wartość brutto 
+                                          138,14 23           31,77      169,91   
+                             Razem:       138,14              31,77      169,91   
+      Więcej informacji o niedostarczonych produktach, wystawionych fakturach i płatnościach znajdą Państwo po zalogowaniu na naszej stronie www.tme.eu.
+      *Data wystawienia, z zastrzeżeniem art. 106na ust. 1 ustawy o VAT.          
+                                                                             __   
+      Do zapłaty: 0,00 PLN                                                        
+      Bank, Nr. Konta: mBank S.A. PL53 1140 1108 0000 3779 1000 1001         __   
+      SWIFT: BREXPLPWLOD                                                          
+                                                                             __   
+                                                                             __   
+      Informujemy, że reklamacje ilościowe należy zgłosić w terminie 7 dni od otrzymania przesyłki.
+      Transfer Multisort Elektronik Sp. z o.o. TEP : 100              Strona: 1/2 
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                  Transfer Multisort Elektronik Sp. z o.o.                        
+                                                     Data dostawy / usługi: 25.09.2026
+                  93-350 Łódź, ul. Ustronna 41, Polska                            
+                  NIP: 729-010-89-84, VAT No: PL7290108984, Regon: 473171710 Data wystawienia faktury*: 25.09.2026
+                  EORI: PL729010898400000                                         
+                  Sąd rejonowy dla Łodzi-Śródmieścia, Nr KRS: 0000165815          
+                                                     Forma wysyłki:  InPost paczkomaty
+                  Kapitał zakładowy: 3 300 000 zł, numer rejestrowy BDO: 000006165
+                                                     Forma płatności: Przedpłata  
+                  Tel.: (+48) 42 645 55 55, fax: (+48) 42 645 55 00, e-mail: tme@tme.eu
+                  www.tme.eu                         Incoterms:      EXW ŁÓDŹ     
+                                                     Zlecenie numer: 35579690     
+      Faktura VAT                                                                 
+      Numer faktury: 1261604881                                                   
+      KSeF QR                                                                     
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+      7290108984-20260925-6D405DC0007D-09                                         
+      https://qr.ksef.mf.gov.pl/invoice/REDACTED
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                                  
+                                                                             __   
+                                                                                  
+                                                                             __   
+                                                                             __   
+                                                                             __   
+                                                                                  
+                                                                                  
+      Transfer Multisort Elektronik Sp. z o.o. TEP : 100              Strona: 2/2 
+                                                                                  
+                                                                                  
+                                                                                  
