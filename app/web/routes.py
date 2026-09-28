@@ -907,10 +907,24 @@ def bom_take_page(
         bom: Bom | None = boms_svc.get_bom(session, cast(int, detail["bom_id"]))
     except NotFoundError:
         bom = None
+    # Only an undo that has parts with nowhere to go asks where; the tree walk is
+    # skipped for every other page view.
+    asks_where = (
+        user.role.value != "read-only"
+        and not detail["reversed_at"]
+        and bool(detail["gone_references"])
+    )
     return templates.TemplateResponse(
         request,
         "bom_take.html",
-        {"take": detail, "bom": bom, "current_user": user},
+        {
+            "take": detail,
+            "bom": bom,
+            "current_user": user,
+            "location_options": (
+                _location_options(ls.location_tree(session)) if asks_where else []
+            ),
+        },
     )
 
 

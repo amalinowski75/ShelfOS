@@ -3312,30 +3312,45 @@ def test_a_read_only_account_sees_the_record_but_no_undo(
 def test_the_take_survives_its_gathering_location_being_deleted(
     client: TestClient, tmp_path, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
-    """Once the take is reversed it holds its locations no longer, so an emptied
-    gathering branch can go — and the snapshot must still render."""
+    """`delete_location` refuses only on non-zero stock, so an emptied gathering
+    branch is deletable while the take stands."""
     ready = _take_ready(client, tmp_path, monkeypatch)
-    delete = f"/api/locations/{ready['gathering_id']}?recursive=true"
-    # Standing takes hold the branch in place; reverse it first, as the user must.
-    client.post(
-        f"/api/bom-takes/{ready['take_id']}/reverse", json={"reason": "scrapped"}
-    )
     client.post(
         "/api/stock/remove",
         json={
             "component_id": ready["component_id"],
             "location_id": ready["drawer_id"],
-            "quantity": 100,  # everything, the reversed 6 included
+            "quantity": 94,
         },
     )
-    assert client.delete(delete).status_code == 204
+    assert (
+        client.delete(f"/api/locations/{ready['gathering_id']}?recursive=true").status_code
+        == 204
+    )
     take_id = ready["take_id"]
 
-    assert client.get(f"/bom-takes/{take_id}").status_code == 200
+    html = client.get(f"/bom-takes/{take_id}").text
     rows = client.get(f"/web/api/bom-takes/{take_id}/lines").json()
 
     # The path it can no longer resolve reads as a dash, not as a 500.
     assert rows[0]["from"].startswith("—")
+    # And the undo asks where U1's parts go now, offering the locations that exist.
+    assert 'id="take-undo-location"' in html
+    assert "U1 came from locations" in html
+    shelf = client.post("/api/locations", json={"type": "shelf", "name": "R"}).json()
+    html = client.get(f"/bom-takes/{take_id}").text
+    assert f'<option value="{shelf["id"]}">R</option>' in html
+
+
+def test_a_take_whose_bins_stand_asks_nowhere(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    take_id = _take_ready(client, tmp_path, monkeypatch)["take_id"]
+
+    html = client.get(f"/bom-takes/{take_id}").text
+
+    assert 'id="take-undo"' in html
+    assert 'id="take-undo-location"' not in html
 
 
 def test_the_snapshot_survives_its_bom_being_deleted(

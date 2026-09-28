@@ -608,11 +608,20 @@ export function bomTakeLinesFixture() {
 }
 
 // The snapshot page's undo dialog (mirrors bom_take.html).
-export function bomTakeUndoFixture() {
+// `{ asksWhere: true }` is the page for a take whose source bin has been deleted
+// since: the dialog then carries the location picker for those parts.
+export function bomTakeUndoFixture({ asksWhere = false } = {}) {
+  const picker = asksWhere
+    ? `<select id="take-undo-location">
+        <option value="">— choose a location —</option>
+        <option value="31">Regal B</option>
+      </select>`
+    : "";
   return `
     <button type="button" id="take-undo">Undo this take</button>
     <dialog id="take-undo-dialog" data-take-id="12">
       <button type="button" data-close>Cancel</button>
+      ${picker}
       <textarea id="take-undo-reason"></textarea>
       <p class="error-row" id="take-undo-error-row" hidden>
         <span id="take-undo-error"></span>

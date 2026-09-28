@@ -56,6 +56,22 @@
       Everything goes back where it came from. The take stays on record, marked as
       reversed.
     </p>
+    {% if take.gone_references %}
+    {# The bins these lines came from have been deleted since, so "where it came
+       from" no longer exists for them — the rest still goes back to its own bin. #}
+    <label class="field">
+      <span>
+        {{ take.gone_references | join(", ") }} came from locations that have since
+        been deleted. Put their parts back in:
+      </span>
+      <select class="control" id="take-undo-location" required>
+        <option value="">— choose a location —</option>
+        {% for opt in location_options %}
+        <option value="{{ opt.id }}">{{ opt.path }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    {% endif %}
     <label class="field">
       <span>Why?</span>
       <textarea class="control" id="take-undo-reason" rows="3"
