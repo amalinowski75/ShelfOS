@@ -166,6 +166,23 @@ def shop_key(url: str | None) -> str | None:
     return next((k for k, p in _BY_INDEX.items() if p is provider), None)
 
 
+def shop_key_by_name(name: str | None) -> str | None:
+    """The shop key of the provider named ``name`` ("TME", "Digi-Key" …), or None.
+
+    An invoice records its supplier by the shop's display name — the parsers set
+    the same names the providers carry — and a hand-made one may name any.
+    """
+    wanted = (name or "").strip().casefold()
+    return next(
+        (
+            k
+            for k, p in _BY_INDEX.items()
+            if getattr(p, "name", "").casefold() == wanted
+        ),
+        None,
+    )
+
+
 def resolve(url: str) -> ShopProvider | None:
     """The provider whose host matches ``url``, or None."""
     for provider in _PROVIDERS:

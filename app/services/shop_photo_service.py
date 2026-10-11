@@ -30,10 +30,11 @@ from app import config
 from app.models.attachment import Attachment
 from app.models.component import Component
 from app.models.enums import AttachmentKind
+from app.models.invoice import Invoice, InvoiceLine
 from app.services import attachment_service, shops, url_fetch
 from app.services import manufacturer_service as ms
 from app.services._common import normalize, refuse_if_deleted, require_entity
-from app.services.errors import ValidationError
+from app.services.errors import NotFoundError, ValidationError
 
 # Shops asked by part number once the imported image has failed, in order. Only
 # shops whose API takes an MPN: TME's takes its own catalogue symbol instead.
@@ -46,6 +47,7 @@ def attach_photo(
     image_url: str | None,
     *,
     source_url: str | None = None,
+    lookup: tuple[str, list[str]] | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> tuple[Attachment, bool]:
     """Give the component a product photo; ``(attachment, created)``.
@@ -55,6 +57,11 @@ def attach_photo(
     Then each fallback shop is asked by the component's MPN — except the one
     ``source_url`` came from, which would only offer the same picture again —
     and its image used if the answer is this part.
+
+    ``lookup`` — ``(shop key, part numbers)``, best first — is for a caller that
+    knows the shop the part came from but not its image, such as an invoice line:
+    with no ``image_url``, that shop is asked by its own catalogue index first
+    (the lookup the invoice import makes) and its image tried, then the fallbacks.
 
     A component that already has a photo gets it back with ``created`` False,
     and nothing is fetched: a retried or doubled request must not stack copies.
@@ -99,6 +106,13 @@ def attach_photo(
             reasons.append(f"{source}: {exc}")
             return None
 
+    source = shops.shop_key(source_url)
+    if not image_url and lookup is not None:
+        source, numbers = lookup
+        image_url, reason = _own_shop_image(session, component, source, numbers)
+        if image_url is None:
+            reasons.append(f"{source}: {reason}")
+
     if image_url:
         attached = attempt(image_url, "the shop's image")
         if attached is not None:
@@ -108,7 +122,6 @@ def attach_photo(
         what = "part number" if not component.mpn else "manufacturer"
         reasons.append(f"no {what} to check another shop's answer against")
     else:
-        source = shops.shop_key(source_url)
         for shop in FALLBACK_SHOPS:
             if shop == source:
                 continue
@@ -128,6 +141,67 @@ def attach_photo(
                 return attached, True
 
     raise ValidationError("no photo could be downloaded — " + "; ".join(reasons))
+
+
+def attach_invoice_line_photo(
+    session: Session, invoice_id: int, line_id: int
+) -> tuple[Attachment, bool]:
+    """Give an invoice line's component a photo, asking the invoice's shop first.
+
+    For the invoice page right after finalize: an invoice keeps no image URL —
+    the import's shop answer is not stored — so the shop is asked again, by the
+    line's own catalogue number (the key the import looked it up by) and then the
+    component's MPN. A supplier no provider serves (a hand-made invoice) goes
+    straight to the fallbacks. A component that already has a photo is returned
+    as it is, with no shop asked, so every line can simply be offered.
+    """
+    line = session.get(InvoiceLine, line_id)
+    if line is None or line.invoice_id != invoice_id:
+        raise NotFoundError(f"invoice line {line_id} not found")
+    invoice = require_entity(session, Invoice, invoice_id, "invoice")
+    component = require_entity(session, Component, line.component_id, "component")
+    shop = shops.shop_key_by_name(invoice.supplier)
+    numbers = [
+        n for n in dict.fromkeys((line.supplier_part_number, component.mpn)) if n
+    ]
+    return attach_photo(
+        session,
+        line.component_id,
+        None,
+        lookup=(shop, numbers) if shop and numbers else None,
+    )
+
+
+def _own_shop_image(
+    session: Session, component: Component, shop: str, numbers: list[str]
+) -> tuple[str | None, str]:
+    """The image the part's own shop shows for it, by that shop's catalogue index.
+
+    Checked more leniently than a fallback's answer: the part was bought there,
+    under that very index, so a maker named on one side only does not refuse it,
+    and an answer naming no MPN (TME may not) is taken on the index alone. A
+    stated different MPN or a plainly different maker still does.
+    """
+    try:
+        product = shops.import_by_index(
+            shop, numbers, manufacturer=component.manufacturer
+        )
+    except ValidationError as exc:
+        return None, str(exc)
+    if (
+        product.mpn
+        and component.mpn
+        and normalize(product.mpn) != normalize(component.mpn)
+    ):
+        return None, f"answered with {product.mpn}"
+    if ms.conflicts_with(
+        ms.canonical_name(session, product.manufacturer),
+        ms.canonical_name(session, component.manufacturer),
+    ):
+        return None, f"answered with {product.manufacturer}'s part"
+    if not product.image_url:
+        return None, "no image for this part"
+    return product.image_url, ""
 
 
 def _fallback_image(

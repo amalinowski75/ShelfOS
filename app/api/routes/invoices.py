@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import cast
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
 from sqlmodel import Session
 
 from app import config
 from app.api.deps import get_session
 from app.api.schemas import (
+    AttachmentRead,
     ImportLineAdopt,
     InvoiceCreate,
     InvoiceDetailRead,
@@ -25,9 +26,11 @@ from app.api.schemas import (
     LineLocationSet,
 )
 from app.auth.deps import current_user_id
+from app.models.attachment import Attachment
 from app.models.invoice import Invoice, InvoiceLine
 from app.services import invoice_import_service as imp
 from app.services import invoice_service as inv
+from app.services import shop_photo_service
 from app.services.errors import ValidationError
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
@@ -299,6 +302,31 @@ def remove_line(
     user_id: int = Depends(current_user_id),
 ) -> None:
     inv.remove_line(session, invoice_id, line_id, user_id=user_id)
+
+
+@router.post(
+    "/{invoice_id}/lines/{line_id}/photo",
+    response_model=AttachmentRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def invoice_line_photo(
+    invoice_id: int,
+    line_id: int,
+    response: Response,
+    session: Session = Depends(get_session),
+) -> Attachment:
+    """Give the line's component a product photo from the invoice's shop, or another.
+
+    The invoice page calls it for each line once the invoice is finalized. 200
+    with the photo already there (nothing is fetched), 201 with a new one, 422
+    naming what each source said when none could be had. Writers only.
+    """
+    attachment, created = shop_photo_service.attach_invoice_line_photo(
+        session, invoice_id, line_id
+    )
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    return attachment
 
 
 @router.post("/{invoice_id}/finalize", response_model=Invoice)
