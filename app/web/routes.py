@@ -20,7 +20,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session
 
-from app import config
+from app import config, version
 from app.api.deps import get_session
 from app.auth.deps import (
     bind_session_to_credentials,
@@ -109,6 +109,10 @@ def _static_version() -> str:
 
 
 templates.env.globals["static_version"] = _static_version
+# The About dialog in the Settings menu, on every signed-in page.
+templates.env.globals["app_version"] = version.current
+templates.env.globals["repo_url"] = version.REPO_URL
+templates.env.globals["changelog_url"] = version.CHANGELOG_URL
 templates.env.globals["format_money"] = format_money
 # Build a distributor product-page link from an invoice line's shop + part number,
 # so the review row can hand it to the New Component dialog's "open in shop" button.

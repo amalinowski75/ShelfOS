@@ -9,9 +9,10 @@ from typing import Any
 from urllib.parse import urlencode
 
 import pytest
-from app import config
+from app import config, version
 from app.models.component import ComponentParameter, ParameterDefinition
 from app.models.enums import ParameterDataType
+from app.web import routes as web_routes
 from app.web.presenter import (
     build_component_table,
     format_money,
@@ -3125,6 +3126,70 @@ def test_settings_menu_holds_the_instance_level_controls(client: TestClient) -> 
     for gone in ('href="/label-printer"', 'href="/users"', 'href="/docs"'):
         assert gone not in nav
     assert 'href="/locations"' in nav  # a place to work, so still there
+
+
+def _about(client: TestClient) -> str:
+    html = client.get("/").text
+    return html.split('<dialog id="about-dialog">', 1)[1].split("</dialog>", 1)[0]
+
+
+def test_about_is_in_the_settings_menu_with_the_logo_and_the_links(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    html = client.get("/").text
+    menu = html.split('<div class="settings-menu"', 1)[1].split("</div>", 1)[0]
+    assert 'id="about-btn"' in menu
+    assert "/static/about_dialog.js" in html
+
+    about = _about(client)
+    logos = dict(re.findall(r'<img class="logo (logo-\w+)" src="([^"]+)"', about))
+    assert sorted(logos) == ["logo-dark", "logo-light"]
+    for src in logos.values():
+        assert anon_client.get(src).status_code == 200, src
+    assert 'href="https://github.com/amalinowski75/ShelfOS"' in about
+    assert (
+        'href="https://github.com/amalinowski75/ShelfOS/blob/main/CHANGELOG.md"'
+        in about
+    )
+    # Links out open beside ShelfOS, and without handing it a window.opener.
+    for tag in re.findall(r'<a [^>]*href="https://[^"]*"[^>]*>', about):
+        assert 'target="_blank"' in tag and 'rel="noopener"' in tag, tag
+
+
+@pytest.mark.parametrize(
+    ("build", "shown"),
+    [
+        (version.Version(pr=185, ahead=0, commit="c9b38f6"), "#185</a>"),
+        (
+            version.Version(pr=185, ahead=3, commit="97580c9"),
+            "#185</a> + 3 commits (<code>97580c9</code>)",
+        ),
+        (
+            version.Version(pr=185, ahead=1, commit="97580c9"),
+            "#185</a> + 1 commit (<code>97580c9</code>)",
+        ),
+        (
+            version.Version(pr=None, ahead=4, commit="1a2b3c4"),
+            "development build <code>1a2b3c4</code>",
+        ),
+        (version.UNKNOWN, "unknown"),
+    ],
+)
+def test_about_names_the_build_by_its_pull_request(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    build: version.Version,
+    shown: str,
+) -> None:
+    monkeypatch.setitem(web_routes.templates.env.globals, "app_version", lambda: build)
+    about = _about(client)
+    facts = about.split('<dl class="about-facts">', 1)[1].split("</dl>", 1)[0]
+    version_dd = facts.split("<dd>", 1)[1].split("</dd>", 1)[0].strip()
+    assert version_dd.endswith(shown), version_dd
+    if build.pr is not None:
+        assert f'href="https://github.com/amalinowski75/ShelfOS/pull/{build.pr}"' in (
+            version_dd
+        )
 
 
 def test_settings_menu_hides_the_admin_only_entries_from_a_reader(

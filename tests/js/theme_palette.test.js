@@ -123,7 +123,7 @@ describe.each(Object.keys(PALETTES))("the %s palette", (name) => {
   });
 });
 
-describe("the header logo", () => {
+describe("the logo, in the header and in About", () => {
   // The logo's lettering has fixed colours: a theme with a dark ground needs the
   // light-lettered logo-dark.svg, or the name is dark grey on near-black.
   const darkThemes = [...CSS.matchAll(/:root\[data-theme="(\w+)"\]\s*\{([^}]*)\}/g)]
@@ -163,28 +163,28 @@ describe("the header logo", () => {
 
   it("shows the light-ground version by default", () => {
     const all = displays(CSS);
-    expect(all[".brand .logo"]).toBe("block");
-    expect(all[".brand .logo-dark"]).toBe("none");
+    expect(all[".logo"]).toBe("block");
+    expect(all[".logo-dark"]).toBe("none");
   });
 
   it.each(["dark", "dim"])("swaps to the dark-ground version under %s", (theme) => {
     expect(darkThemes).toContain(theme);
     const rules = displays(supported);
-    expect(rules[`:root[data-theme="${theme}"] .brand .logo-light`]).toBe("none");
-    expect(rules[`:root[data-theme="${theme}"] .brand .logo-dark`]).toBe("block");
+    expect(rules[`:root[data-theme="${theme}"] .logo-light`]).toBe("none");
+    expect(rules[`:root[data-theme="${theme}"] .logo-dark`]).toBe("block");
   });
 
   it("swaps under System when the OS is dark", () => {
     const rules = displays(atBlock("@media (prefers-color-scheme: dark)"));
-    expect(rules[":root:not([data-theme]) .brand .logo-light"]).toBe("none");
-    expect(rules[":root:not([data-theme]) .brand .logo-dark"]).toBe("block");
+    expect(rules[":root:not([data-theme]) .logo-light"]).toBe("none");
+    expect(rules[":root:not([data-theme]) .logo-dark"]).toBe("block");
     expect(supported).toContain("@media (prefers-color-scheme: dark)");
   });
 
   it("swaps in every dark theme and in no light one", () => {
     const swapped = (logo, display) =>
       Object.entries(displays(supported))
-        .filter(([selector, value]) => selector.endsWith(` .brand .${logo}`) && value === display)
+        .filter(([selector, value]) => selector.endsWith(` .${logo}`) && value === display)
         .map(([selector]) => selector.match(/data-theme="(\w+)"/)?.[1])
         .filter(Boolean)
         .sort();
