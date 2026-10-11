@@ -38,7 +38,7 @@ from brother_ql.conversion import convert
 from brother_ql.exceptions import BrotherQLError
 from brother_ql.labels import ALL_LABELS, Color, FormFactor
 from brother_ql.raster import BrotherQLRaster
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from app import config
 from app.services import tunnel_keys
@@ -153,10 +153,11 @@ _DETAIL_MAX_LINES: Final = 3
 # one-colour logo) so the server needs no SVG renderer:
 #   inkscape label_logo.svg --export-type=png --export-height=384 \
 #     --export-background=white --export-background-opacity=1
-# 4.5 mm tall: 3 mm, about the height of the small print, came off the printer
-# too small to notice.
+# The height is of the drawing itself, cropped of the SVG's empty bands. 3.1 mm
+# is what a test print showed was right, after 2.1 mm came off the printer too
+# small to notice.
 _LOGO_FILE: Final = Path(__file__).with_name("label_logo.png")
-_LOGO_HEIGHT_MM: Final = 4.5
+_LOGO_HEIGHT_MM: Final = 3.1
 
 # Sane bounds for a continuous tape's length: below this a QR plus a name does
 # not fit, above it a typo would unroll a metre of tape per label.
@@ -457,11 +458,17 @@ def _qr_image(payload: str, box_px: int, tape: str) -> Image.Image:
 def _logo(height_px: int) -> Image.Image:
     """The logo at ``height_px`` dots tall, in pure black and white.
 
-    Thresholded rather than dithered: a dithered edge is grey speckle on a
-    thermal head, and the logo is solid shapes that survive a hard cut.
+    Cropped to its ink first: the SVG's viewBox has empty bands above and below
+    the drawing, and every blank row would be height the room check reserves
+    and nothing prints in. Thresholded rather than dithered: a dithered edge is
+    grey speckle on a thermal head, and the logo is solid shapes that survive a
+    hard cut.
     """
     with Image.open(_LOGO_FILE) as source:
         grey = source.convert("L")
+    ink = ImageOps.invert(grey).getbbox()
+    if ink is not None:
+        grey = grey.crop(ink)
     width = round(grey.width * height_px / grey.height)
     scaled = grey.resize((width, height_px), Image.Resampling.LANCZOS)
     return scaled.point(lambda value: 255 if value >= 128 else 0, mode="1")
@@ -517,6 +524,27 @@ def _layout(box_w: int, box_h: int) -> tuple[bool, int]:
     if beside:
         return True, min(box_h, round(box_w * _QR_WIDTH_SHARE), ceiling)
     return False, min(box_w, round(box_h * _QR_HEIGHT_SHARE), ceiling)
+
+
+def _beside_tops(box_h: int, qr_h: int, text_h: int, lowest: int) -> tuple[int, int]:
+    """Where the QR and the text beside it start, from the top of the box.
+
+    Each is centred on the box, unless the text would then start below
+    ``lowest`` — the logo is in the corner and needs it to sit higher. Lifting
+    the text alone would leave it visibly above the code beside it, so the QR
+    goes up by the same amount, keeping the two centred on each other. Where
+    the QR is too tall to follow that far, both go to the top instead: two
+    blocks top-aligned read as deliberate, two that miss each other's centre
+    by a few dots do not.
+    """
+    qr_y = max(0, (box_h - qr_h) // 2)
+    text_y = max(0, (box_h - text_h) // 2)
+    if text_y <= lowest:
+        return qr_y, text_y
+    lift = text_y - lowest
+    if lift <= qr_y:
+        return qr_y - lift, lowest
+    return 0, 0
 
 
 def _text_block(
@@ -610,21 +638,22 @@ def render_label(label: LabelData, geometry: TapeGeometry | None = None) -> Imag
     used_h = text_h if beside else qr.height + gap + text_h
     spare = box_h - used_h
     logo = _logo(round(_LOGO_HEIGHT_MM * _PX_PER_MM))
-    lift = 0
+    # The lowest the text may start, from the top of the box: anywhere, unless
+    # the logo is in its corner and the text has to clear it.
+    lowest = max(0, spare)
     if logo.width <= text_w and spare >= logo.height + gap:
         canvas.paste(logo, (margin + box_w - logo.width, margin + box_h - logo.height))
-        # Centred as before, but lifted where centring would put the foot of
-        # the text into the logo's corner.
-        lift = max(0, spare // 2 - (spare - logo.height - gap))
+        lowest = spare - logo.height - gap
 
     if beside:
-        canvas.paste(qr, (margin, margin + (box_h - qr.height) // 2))
-        text_x = margin + qr.width + gap
-        text_y = margin + max(0, spare // 2 - lift)
+        qr_y, text_y = _beside_tops(box_h, qr.height, text_h, lowest)
+        canvas.paste(qr, (margin, margin + qr_y))
+        text_x, text_y = margin + qr.width + gap, margin + text_y
     else:
         # Code and text are centred as one block, so the pair sits together
-        # wherever the tape leaves spare length.
-        top = margin + max(0, spare // 2 - lift)
+        # wherever the tape leaves spare length — lifted together, where
+        # centring would put the text into the logo's corner.
+        top = margin + max(0, min(spare // 2, lowest))
         canvas.paste(qr, (margin + (box_w - qr.width) // 2, top))
         text_x, text_y = margin, top + qr.height + gap
 

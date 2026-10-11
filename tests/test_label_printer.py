@@ -448,7 +448,10 @@ def _upright_with_and_without_logo(
 
     with_logo = upright(lp.render_label(label, geometry))
     with monkeypatch.context() as patch:
-        patch.setattr(lp, "_LOGO_HEIGHT_MM", 1000.0)  # fits nowhere
+        # A logo one dot wide and taller than any tape: fits nowhere, costs
+        # nothing. (Asking _logo for a huge height would scale the real bitmap
+        # to half a gigapixel and keep it in its cache.)
+        patch.setattr(lp, "_logo", lambda height_px: Image.new("1", (1, 100_000), 1))
         without = upright(lp.render_label(label, geometry))
     margin = lp._margin_for(canvas_w, canvas_h)
     logo = lp._logo(round(lp._LOGO_HEIGHT_MM * lp._PX_PER_MM))
@@ -521,6 +524,47 @@ def test_the_logo_never_lands_on_the_text(monkeypatch: pytest.MonkeyPatch) -> No
             carried.add(choice.id)
     # Not vacuous: the common rolls do carry it.
     assert {"62", "29x90", "62x29"} <= carried
+
+
+def test_the_logo_is_cropped_to_its_drawing() -> None:
+    """Every row of the logo prints something: the SVG's empty bands are gone,
+    so its height is the drawing's and the room check reserves no blank tape."""
+    logo = lp._logo(round(lp._LOGO_HEIGHT_MM * lp._PX_PER_MM))
+    assert _ink_box(logo) == (0, 0, logo.width, logo.height)
+
+
+@pytest.mark.parametrize(
+    ("box_h", "qr_h", "text_h", "lowest", "tops"),
+    [
+        # Room enough: both centred, as without a logo.
+        (200, 180, 80, 100, (10, 60)),
+        # The text must go 20 up and the code can follow: still centred on
+        # each other (both centres at 80).
+        (200, 100, 80, 40, (30, 40)),
+        # The code can rise only 5: both to the top rather than out of step.
+        (200, 190, 80, 30, (0, 0)),
+    ],
+)
+def test_the_code_beside_the_text_moves_with_it(
+    box_h: int, qr_h: int, text_h: int, lowest: int, tops: tuple[int, int]
+) -> None:
+    assert lp._beside_tops(box_h, qr_h, text_h, lowest) == tops
+
+
+def test_a_label_lifted_for_the_logo_keeps_its_code_level_with_the_text() -> None:
+    """54 x 29 mm: the text has to rise for the logo, and the code, which nearly
+    fills the height, cannot follow as far; both start at the top margin."""
+    geometry = lp.tape_geometry(tape="54x29")
+    label = _label()
+    image = lp.render_label(geometry=geometry, label=label)
+    canvas_w, canvas_h, _ = lp._drawing_size(geometry)
+    margin = lp._margin_for(canvas_w, canvas_h)
+    beside, qr_box = lp._layout(canvas_w - 2 * margin, canvas_h - 2 * margin)
+    assert beside
+    qr = lp._qr_image(label.qr_payload, qr_box, geometry.tape)
+    quiet = qr.width // lp._qr_modules() * lp._QR_BORDER
+    code = _ink_box(image.crop((0, 0, margin + qr.width, canvas_h)))
+    assert code is not None and code[1] == margin + quiet
 
 
 def test_render_png_is_a_png_of_the_same_bitmap() -> None:
