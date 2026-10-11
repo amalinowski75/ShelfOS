@@ -67,19 +67,47 @@ Neither is fetched from your browser: the server downloads them, which means the
 shop has to be willing to serve a datacenter address.
 
 The two differ in what happens when it isn't. A datasheet that can't be downloaded
-is kept as a link instead, and the dialog says so — losing it would matter. A photo
-that can't be downloaded is simply absent: no link, no notice. The component page
-opens with an empty gallery, which is the cue to add one by hand.
+is kept as a link instead, and the dialog says so — losing it would matter.
+
+A photo is fetched from another shop instead. If the shop you imported from has no
+picture of the part, or won't let the server download it, ShelfOS asks Digi-Key and
+then element14 for the same part number. It takes their picture only when the
+answer is this part: the part number has to match, and the maker must not be a
+different company. One number can belong to two makers, even in a single shop —
+element14 answers a Keystone `5270` with ABB's part. A shop's longer spelling of the
+same name, such as "NXP USA Inc." for "NXP Semiconductors", is accepted. Each shop
+lookup counts against that shop's API quota, and a shop without a key is skipped.
+
+If no shop has a picture, the photo is simply absent: no link, no notice. The
+component page opens with an empty gallery, which is the cue to add one by hand.
 
 Both downloads run at once, and the dialog stays up saying it is saving the files
 until they are in — that way the component page opens with them already attached.
 A shop that stalls rather than refusing can make that wait noticeable; it ends at
 the server's download timeout.
 
-Expect that of Mouser, whose images sit behind the same Akamai that already refuses
-our datasheet downloads from a hosted server — the same import usually gets both
-when ShelfOS runs on your own machine. TME, Digi-Key and element14 serve their
-images from plain CDNs.
+Expect refusals from Mouser. Its images sit behind the same Akamai that refuses
+our datasheet downloads, and since October 2026 it refuses them from a laptop as
+well as from a hosted server. TME, Digi-Key and element14 serve their images from
+plain CDNs, which is why a Mouser part's picture usually comes from Digi-Key or
+element14.
+
+### Photos for parts already in stock
+
+`scripts/fetch_missing_photos.py` gives the same treatment to components that have
+no photo yet. It goes through every one of them, looks the part up at the shop its
+link points to, falls back to Digi-Key and element14 the same way, and reports
+what it couldn't do. It works only through the HTTP API of a running ShelfOS, so it
+never opens the database:
+
+```
+python scripts/fetch_missing_photos.py --url http://localhost:9000 --user admin --dry-run
+python scripts/fetch_missing_photos.py --url http://localhost:9000 --user admin
+```
+
+`--dry-run` looks the parts up but attaches nothing. The script spaces its Mouser
+lookups to stay under Mouser's limit of 30 calls a minute, so a run over a few
+hundred parts takes several minutes.
 
 ## When the same maker arrives spelled two ways
 
