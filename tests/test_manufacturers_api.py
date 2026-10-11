@@ -400,3 +400,23 @@ def test_same_mpn_says_per_candidate_whether_the_makers_conflict(
     assert verdicts("MCHP")["Microchip"] is False
     # A question asked with no maker gets no verdict at all.
     assert set(verdicts(None).values()) == {None}
+
+
+def test_a_maker_stored_before_its_alias_is_no_conflict(client: TestClient) -> None:
+    """Recording an alias never rewrites a component already filed under it.
+
+    So the component still says "MCHP" after MCHP → Microchip is recorded, and a
+    shop answering "Microchip" has to be measured against what that spelling
+    means now, not against the letters — they share no token at all.
+    """
+    _component(client, mpn="SHARED-3", manufacturer="MCHP")
+    _alias(client, "MCHP", "Microchip")
+
+    body = client.get(
+        "/api/manufacturers/same-mpn",
+        params={"mpn": "SHARED-3", "manufacturer": "Microchip"},
+    ).json()
+
+    [candidate] = body["candidates"]
+    assert candidate["manufacturer"] == "MCHP"  # stored as it was
+    assert candidate["manufacturer_conflicts"] is False

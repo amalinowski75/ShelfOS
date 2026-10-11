@@ -626,11 +626,8 @@ class SameMpnCandidateRead(BaseModel):
     #: Whether the incoming maker and this candidate's are plainly two companies —
     #: for a caller checking that a shop's answer is the part it asked about, where
     #: one number sold under two makers is the case to catch. Deliberately
-    #: tolerant: the same company through the alias table (``agrees_with``), or a
-    #: shared name token the way a shop lookup breaks ties
-    #: (``manufacturer_matches``: "NXP USA Inc." vs "NXP Semiconductors"), is no
-    #: conflict. Not an identity test, then — the token rule fuses some distinct
-    #: makers. Null when either side names nobody: silence contradicts nothing.
+    #: tolerant — see ``manufacturer_service.conflicts_with``. Null when either
+    #: side names nobody: silence contradicts nothing.
     manufacturer_conflicts: bool | None = None
 
 

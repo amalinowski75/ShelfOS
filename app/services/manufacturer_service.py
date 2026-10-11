@@ -22,6 +22,7 @@ from sqlmodel import Session, col, select
 from app.models.manufacturer import ManufacturerAlias
 from app.services._common import normalize, require_entity
 from app.services.errors import ValidationError
+from app.services.shops.base import manufacturer_matches
 
 
 def _blank_to_none(text: str | None) -> str | None:
@@ -182,6 +183,28 @@ def agrees_with(canonical: str | None, stored: str | None) -> bool | None:
     if not canonical or not stored:
         return None
     return normalize(stored) == normalize(canonical)
+
+
+def conflicts_with(canonical: str | None, stored: str | None) -> bool | None:
+    """Whether two makers are plainly two different companies.
+
+    For checking that a shop's answer is the part that was asked about, where one
+    number sold under two makers (Farnell answers a Keystone "5270" with ABB's) is
+    the case to catch. Deliberately tolerant, unlike :func:`agrees_with`: a shared
+    name token, the way a shop lookup breaks ties (:func:`manufacturer_matches`),
+    is no conflict either — a distributor's "NXP USA Inc." is the component's "NXP
+    Semiconductors", and ``agrees_with`` alone refused a quarter of the right
+    answers on spelling. Not an identity test, then: the token rule fuses some
+    distinct makers, so never use it to decide that two parts are one.
+
+    Both names are expected to have been through :func:`canonical_name` — the
+    stored one too, since recording an alias never rewrites a component filed
+    under the old spelling. ``None`` when either side names nobody.
+    """
+    agrees = agrees_with(canonical, stored)
+    if agrees is None:
+        return None
+    return not (agrees or manufacturer_matches(canonical, stored))
 
 
 def delete_alias(session: Session, alias_id: int) -> None:

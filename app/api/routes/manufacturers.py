@@ -27,17 +27,8 @@ from app.auth.deps import require_admin
 from app.models.user import User
 from app.services import component_service as cs
 from app.services import manufacturer_service as ms
-from app.services.shops.base import manufacturer_matches
 
 router = APIRouter(prefix="/api/manufacturers", tags=["manufacturers"])
-
-
-def _conflicts(canonical: str | None, stored: str | None) -> bool | None:
-    """Whether two makers are plainly different companies (see SameMpnCandidateRead)."""
-    agrees = ms.agrees_with(canonical, stored)
-    if agrees is None:
-        return None
-    return not (agrees or manufacturer_matches(canonical, stored))
 
 
 @router.get("/same-mpn", response_model=SameMpnRead)
@@ -71,7 +62,11 @@ def parts_sharing_mpn(
                 records_alias=ms.would_record_alias(
                     session, alias=manufacturer, canonical=component.manufacturer
                 ),
-                manufacturer_conflicts=_conflicts(canonical, component.manufacturer),
+                # The stored name through the alias table too: recording an alias
+                # never rewrites a component filed under it before.
+                manufacturer_conflicts=ms.conflicts_with(
+                    canonical, ms.canonical_name(session, component.manufacturer)
+                ),
             )
             for component in found
         ],
