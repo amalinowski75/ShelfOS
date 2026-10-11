@@ -153,9 +153,10 @@ _DETAIL_MAX_LINES: Final = 3
 # one-colour logo) so the server needs no SVG renderer:
 #   inkscape label_logo.svg --export-type=png --export-height=384 \
 #     --export-background=white --export-background-opacity=1
-# 3 mm tall puts "ShelfOS" at about the height of the small print.
+# 4.5 mm tall: 3 mm, about the height of the small print, came off the printer
+# too small to notice.
 _LOGO_FILE: Final = Path(__file__).with_name("label_logo.png")
-_LOGO_HEIGHT_MM: Final = 3.0
+_LOGO_HEIGHT_MM: Final = 4.5
 
 # Sane bounds for a continuous tape's length: below this a QR plus a name does
 # not fit, above it a typo would unroll a metre of tape per label.
