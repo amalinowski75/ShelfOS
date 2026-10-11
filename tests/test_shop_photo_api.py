@@ -21,11 +21,12 @@ class Shops:
         self.blocked: set[str] = {MOUSER}  # Akamai's block page, refused
         self.fetched: list[str] = []
         self.asked: list[str] = []
-        monkeypatch.setattr(shops, "import_by_index", self._lookup)
+        self.empty: set[str] = set()  # a 200 with nothing in it
+        monkeypatch.setattr(shops, "import_by_mpn", self._lookup)
         monkeypatch.setattr(url_fetch, "fetch_url", self._fetch)
 
     def _lookup(
-        self, shop_key: str, candidates: list[str], *, manufacturer: str | None = None
+        self, shop_key: str, mpn: str, *, manufacturer: str | None = None
     ) -> ProductData:
         self.asked.append(shop_key)
         answer = self.answers.get(shop_key, ValidationError("no product found"))
@@ -37,7 +38,8 @@ class Shops:
         self.fetched.append(url)
         if url in self.blocked:
             raise ValidationError("that URL returned a web page, not a file")
-        return b"\xff\xd8\xff\xe0 jpeg", url.rsplit("/", 1)[-1]
+        data = b"" if url in self.empty else b"\xff\xd8\xff\xe0 jpeg"
+        return data, url.rsplit("/", 1)[-1]
 
 
 @pytest.fixture
@@ -57,10 +59,15 @@ def _component(
     return int(resp.json()["id"])
 
 
-def _photo(client: TestClient, component_id: int, image_url: str | None):  # type: ignore[no-untyped-def]
+def _photo(  # type: ignore[no-untyped-def]
+    client: TestClient,
+    component_id: int,
+    image_url: str | None,
+    source_url: str | None = None,
+):
     return client.post(
         f"/api/components/{component_id}/photo-from-shops",
-        json={"image_url": image_url},
+        json={"image_url": image_url, "source_url": source_url},
     )
 
 
@@ -191,11 +198,128 @@ def test_without_a_part_number_only_the_given_image_is_tried(
 ) -> None:
     cid = _component(client, mpn=None)
 
-    assert _photo(client, cid, MOUSER).status_code == 422
-    assert fake.asked == []  # nothing to check another shop's answer against
-    resp = _photo(client, cid, None)
+    resp = _photo(client, cid, MOUSER)
+
     assert resp.status_code == 422
+    assert fake.asked == []  # nothing to check another shop's answer against
     assert "no part number" in resp.json()["detail"]
+
+
+def test_without_a_maker_only_the_given_image_is_tried(
+    client: TestClient, fake: Shops
+) -> None:
+    """Nothing tells Keystone's 5270 from ABB's when the component names no maker."""
+    fake.answers["farnell"] = ProductData(
+        mpn="5270", manufacturer="ABB", image_url=FARNELL
+    )
+    cid = _component(client, mpn="5270", maker=None)
+
+    resp = _photo(client, cid, MOUSER)
+
+    assert resp.status_code == 422
+    assert fake.asked == []
+    assert "no manufacturer" in resp.json()["detail"]
+
+
+def test_a_shop_answer_naming_no_maker_is_refused(
+    client: TestClient, fake: Shops
+) -> None:
+    fake.answers["digikey"] = ProductData(
+        mpn="PCF8574ADWR", manufacturer=None, image_url=DIGIKEY
+    )
+    cid = _component(client)
+
+    resp = _photo(client, cid, MOUSER)
+
+    assert resp.status_code == 422
+    assert DIGIKEY not in fake.fetched
+
+
+def test_the_shop_imported_from_is_not_asked_again(
+    client: TestClient, fake: Shops
+) -> None:
+    """It would only offer the picture that was just refused, for a paid call."""
+    fake.blocked.add(DIGIKEY)
+    cid = _component(client)
+
+    _photo(client, cid, DIGIKEY, source_url="https://www.digikey.pl/en/products/x")
+
+    assert fake.asked == ["farnell"]
+
+
+def test_a_photo_already_there_is_returned_not_fetched_again(
+    client: TestClient, fake: Shops
+) -> None:
+    cid = _component(client)
+    first = _photo(client, cid, DIGIKEY)
+
+    again = _photo(client, cid, FARNELL)
+
+    assert (first.status_code, again.status_code) == (201, 200)
+    assert again.json()["id"] == first.json()["id"]
+    assert fake.fetched == [DIGIKEY]
+    assert _photos(client, cid) == ["x.jpg"]
+
+
+def test_a_deleted_component_spends_no_shop_s_quota(
+    client: TestClient, fake: Shops
+) -> None:
+    cid = _component(client)
+    assert client.delete(f"/api/admin/components/{cid}").status_code == 204
+
+    resp = _photo(client, cid, MOUSER)
+
+    assert resp.status_code == 422
+    assert "deleted" in resp.json()["detail"]
+    assert (fake.fetched, fake.asked) == ([], [])
+
+
+def test_a_file_that_cannot_be_stored_moves_on_to_the_next_source(
+    client: TestClient, fake: Shops
+) -> None:
+    """A 200 with an empty body downloads fine and is still no photo."""
+    fake.answers["digikey"] = ProductData(
+        mpn="PCF8574ADWR", manufacturer="TI", image_url=DIGIKEY
+    )
+    fake.empty.add(FARNELL)
+    cid = _component(client)
+
+    resp = _photo(client, cid, FARNELL)
+
+    assert resp.status_code == 201, resp.text
+    assert _photos(client, cid) == ["x.jpg"]
+
+
+def test_the_chain_shares_one_time_budget(
+    client: TestClient, fake: Shops, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each step used to get the full timeout, so three stalls tripled the wait."""
+    from app import config
+    from app.services import shop_photo_service
+
+    now = [0.0]
+    budgets: list[float] = []
+
+    def stalling_fetch(url: str, *, deadline: float, **_k: object) -> tuple[bytes, str]:
+        budgets.append(deadline - now[0])
+        now[0] = deadline  # a host that stalls to the very end
+        raise ValidationError("timed out")
+
+    monkeypatch.setattr(url_fetch, "fetch_url", stalling_fetch)
+    real = shop_photo_service.attach_photo
+    monkeypatch.setattr(
+        shop_photo_service,
+        "attach_photo",
+        lambda *a, **k: real(*a, **k, clock=lambda: now[0]),
+    )
+    cid = _component(client)
+
+    resp = _photo(client, cid, MOUSER)
+
+    assert resp.status_code == 422
+    assert budgets == [config.ATTACHMENT_URL_TOTAL_TIMEOUT]  # one budget, used up
+    assert fake.asked == []  # no lookup started that could not finish in time
+    assert "not asked, out of time" in resp.json()["detail"]
 
 
 def test_a_missing_component_is_404(client: TestClient, fake: Shops) -> None:
@@ -222,3 +346,16 @@ def test_read_only_accounts_cannot_attach(
 
     assert resp.status_code == 403
     assert fake.fetched == []
+
+
+def test_a_shop_page_names_its_shop() -> None:
+    assert shops.shop_key("https://www.mouser.pl/ProductDetail/X") == "mouser"
+    assert shops.shop_key("https://uk.farnell.com/dp/1") == "farnell"
+    assert shops.shop_key("https://www.tme.eu/details/abc/") == "tme"
+    assert shops.shop_key("https://example.com/x") is None
+    assert shops.shop_key(None) is None
+
+
+def test_only_a_shop_searchable_by_part_number_is_asked_by_one() -> None:
+    with pytest.raises(ValidationError, match="cannot be searched by part number"):
+        shops.import_by_mpn("tme", "PCF8574ADWR")

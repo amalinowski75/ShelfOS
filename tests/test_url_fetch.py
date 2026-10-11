@@ -253,3 +253,23 @@ def test_accepts_an_svg_which_is_markup_but_not_a_page(monkeypatch) -> None:  # 
         "https://example.com/symbol.svg", transport=_ok(content=svg)
     )
     assert data == svg
+
+
+def test_a_caller_s_deadline_ends_the_fetch_sooner(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A budget shared across several fetches: one already spent fetches nothing."""
+    import time
+
+    _resolve_to(monkeypatch, "93.184.216.34")
+    with pytest.raises(ValidationError, match="timed out"):
+        url_fetch.fetch_url(
+            "https://example.com/x.jpg",
+            transport=_ok(),
+            deadline=time.monotonic() - 1,
+        )
+    # …while a later one still gets no more than the fetch's own ceiling.
+    data, _name = url_fetch.fetch_url(
+        "https://example.com/x.jpg",
+        transport=_ok(),
+        deadline=time.monotonic() + 10 * config.ATTACHMENT_URL_TOTAL_TIMEOUT,
+    )
+    assert data == b"data"

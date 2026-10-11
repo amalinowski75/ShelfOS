@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import cast
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 from sqlmodel import Session
 
 from app.api.deps import get_session
@@ -249,16 +249,27 @@ def update_component(
 def photo_from_shops(
     component_id: int,
     payload: ShopPhotoRequest,
+    response: Response,
     session: Session = Depends(get_session),
 ) -> Attachment:
     """Attach a product photo: the import's own image, else another shop's.
 
     For the import dialog, right after it creates the component. A shop that
     will not let the server download its image (Mouser) no longer leaves the
-    part without one, as long as Digi-Key or Farnell sells the same part. 422,
-    naming what each source said, when no photo could be had. Writers only.
+    part without one, as long as Digi-Key or element14 sells the same part. A
+    component that already has a photo gets it back with 200 and nothing is
+    fetched, so a retry cannot stack copies. 422, naming what each source said,
+    when no photo could be had. Writers only.
     """
-    return shop_photo_service.attach_photo(session, component_id, payload.image_url)
+    attachment, created = shop_photo_service.attach_photo(
+        session,
+        component_id,
+        payload.image_url,
+        source_url=payload.source_url,
+    )
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    return attachment
 
 
 @router.get("/{component_id}/parameters", response_model=list[ComponentParameter])
