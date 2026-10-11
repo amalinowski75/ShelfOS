@@ -8,7 +8,7 @@ catalogue number — and adds the shop link, datasheet and photo it lacks.
 from __future__ import annotations
 
 import pytest
-from app.services import shop_photo_service, shops, url_fetch
+from app.services import shop_files_service, shops, url_fetch
 from app.services.errors import ValidationError
 from app.services.shops.base import ProductData
 from fastapi.testclient import TestClient
@@ -70,7 +70,7 @@ class Shops:
 @pytest.fixture
 def fake(monkeypatch: pytest.MonkeyPatch) -> Shops:
     # A shop found down stays down for a while across requests; not across tests.
-    monkeypatch.setattr(shop_photo_service, "_down", {})
+    monkeypatch.setattr(shop_files_service, "_down", {})
     return Shops(monkeypatch)
 
 
@@ -256,8 +256,10 @@ def test_a_refused_image_falls_back_to_another_shop(
 
     assert body["photo"] == "added"
     assert fake.fetched == [MOUSER, DIGIKEY]
-    # The invoice's own shop is not asked a second time as a fallback.
-    assert fake.asked_fallback == ["digikey"]
+    # The invoice's own shop is not asked a second time as a fallback, and each
+    # fallback once, for the datasheet and the photo alike.
+    assert "mouser" not in fake.asked_fallback
+    assert sorted(fake.asked_fallback) == ["digikey", "farnell"]
 
 
 def test_an_answer_naming_no_mpn_is_taken_on_the_number(
@@ -446,7 +448,7 @@ def test_a_shop_never_asked_is_still_a_fallback(
 
     assert body["photo"] == "added"
     assert fake.asked_own == []
-    assert fake.asked_fallback == ["digikey"]
+    assert fake.asked_fallback[0] == "digikey"
 
 
 def test_the_datasheet_and_the_photo_share_one_time_budget(
@@ -520,3 +522,37 @@ def test_the_attachments_are_listed_once(
     _fill(client, invoice_id, line_id)
 
     assert len(listed) == 1
+
+
+def test_a_refused_datasheet_comes_from_another_shop_not_as_a_link(
+    client: TestClient, fake: Shops
+) -> None:
+    """TME's document host refuses a server; Digi-Key's PDF downloads."""
+    ti_sheet = "https://www.ti.com/lit/ds/symlink/x.pdf"
+    fake.own["tme"] = ProductData(**WALSIN, image_url=TME, datasheet_url=SHEET)
+    fake.fallback["digikey"] = ProductData(
+        **WALSIN, image_url=DIGIKEY, datasheet_url=ti_sheet
+    )
+    invoice_id, line_id, cid = _line(client)
+
+    body = _fill(client, invoice_id, line_id).json()
+
+    assert body["datasheet"] == "added"
+    assert _has(client, cid)["datasheet"] == ["x.pdf"]
+    assert not any(k.startswith("datasheet:") for k in _has(client, cid)["links"])
+
+
+def test_one_lookup_per_fallback_shop_serves_both_files(
+    client: TestClient, fake: Shops
+) -> None:
+    """A line wanting a photo and a datasheet asks Digi-Key once, not twice."""
+    ti_sheet = "https://www.ti.com/lit/ds/symlink/x.pdf"
+    fake.fallback["digikey"] = ProductData(
+        **WALSIN, image_url=DIGIKEY, datasheet_url=ti_sheet
+    )
+    invoice_id, line_id, _ = _line(client, spn=None)  # no own-shop answer
+
+    body = _fill(client, invoice_id, line_id).json()
+
+    assert (body["photo"], body["datasheet"]) == ("added", "added")
+    assert fake.asked_fallback == ["digikey"]

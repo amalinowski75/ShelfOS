@@ -16,18 +16,20 @@ from app.api.schemas import (
     ParameterValueSet,
     ScannedComponentRead,
     ScannedStockRead,
+    ShopDatasheetRequest,
     ShopLookup,
     ShopPhotoRequest,
 )
 from app.auth.deps import current_user_id, require_admin
 from app.models.attachment import Attachment
 from app.models.component import Component, ComponentParameter
+from app.models.enums import AttachmentKind
 from app.models.user import User
 from app.services import component_service as cs
 from app.services import label_service as lbl
 from app.services import location_service as ls
 from app.services import manufacturer_service as mfs
-from app.services import shop_photo_service
+from app.services import shop_files_service
 from app.services import stock_service as ss
 from app.services.errors import DuplicateComponentError, NotFoundError, ValidationError
 from app.services.shops.scan import ScanResult, parse_scan
@@ -261,10 +263,43 @@ def photo_from_shops(
     fetched, so a retry cannot stack copies. 422, naming what each source said,
     when no photo could be had. Writers only.
     """
-    attachment, created = shop_photo_service.attach_photo(
+    attachment, created = shop_files_service.attach_from_shops(
         session,
         component_id,
+        AttachmentKind.PHOTO,
         payload.image_url,
+        source_url=payload.source_url,
+    )
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    return attachment
+
+
+@router.post(
+    "/{component_id}/datasheet-from-shops",
+    response_model=AttachmentRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def datasheet_from_shops(
+    component_id: int,
+    payload: ShopDatasheetRequest,
+    response: Response,
+    session: Session = Depends(get_session),
+) -> Attachment:
+    """Attach a datasheet file: the import's own, else another shop's.
+
+    The photo's twin, for the same dialog. TME's document host and Mouser's
+    Akamai refuse a server, so their datasheets used to be kept only as links;
+    Digi-Key or element14 selling the same part now gives the file. 200 with a
+    datasheet file already there, 422 naming what each source said when none
+    could be had — the dialog then keeps the import's URL as a link, as before.
+    Writers only.
+    """
+    attachment, created = shop_files_service.attach_from_shops(
+        session,
+        component_id,
+        AttachmentKind.DATASHEET,
+        payload.datasheet_url,
         source_url=payload.source_url,
     )
     if not created:

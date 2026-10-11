@@ -24,7 +24,7 @@ from app.models.enums import AttachmentKind, FillStatus, LinkKind
 from app.models.invoice import Invoice, InvoiceLine
 from app.services import attachment_service, link_service, shops, url_fetch
 from app.services import manufacturer_service as ms
-from app.services import shop_photo_service as photos
+from app.services import shop_files_service as shop_files
 from app.services._common import normalize, refuse_if_deleted, require_entity
 from app.services.errors import NotFoundError, ValidationError
 from app.services.shops.base import ProductData
@@ -63,16 +63,17 @@ def fill_in_invoice_line(
 
     Asks the invoice's shop ONCE, by the line's own catalogue number, and adds
     from that answer whichever of three things the component lacks: the product
-    page as a ``shop`` link, the datasheet as a file (or as a link when the shop
-    refuses the download — the import dialog's rule), and the photo, falling
-    back to other shops (``shop_photo_service``). What the component already has
+    page as a ``shop`` link, the datasheet and the photo — each from that shop,
+    else from Digi-Key or element14 (``shop_files_service``), and a datasheet no
+    shop would hand over kept as a link to the invoice shop's own (the import
+    dialog's rule). What the component already has
     is left alone, and one with all three asks no shop at all, so every line of
     an invoice can simply be offered, finalized long ago or just now. All of it
     shares one time budget, and the component's turn (``one_at_a_time``).
 
     A line with no catalogue number of its own, or a supplier no provider
-    serves, cannot be looked up at its shop: its photo comes from the fallbacks,
-    checked in full, and nothing else is filled in. Only for a finalized
+    serves, cannot be looked up at its shop: its datasheet and photo come from
+    the fallbacks, checked in full, and it gets no shop link. Only for a finalized
     invoice: a draft's line can still be pointed at another component.
     """
     line = session.get(InvoiceLine, line_id)
@@ -83,7 +84,9 @@ def fill_in_invoice_line(
         raise ValidationError("finalize the invoice first — its lines can still change")
     component = require_entity(session, Component, line.component_id, "component")
     refuse_if_deleted(component, component.mpn or f"component #{component.id}")
-    with photos.one_at_a_time(line.component_id):
+    with shop_files.one_at_a_time(
+        line.component_id, AttachmentKind.PHOTO, AttachmentKind.DATASHEET
+    ):
         return _fill_in(session, component, invoice, line, clock)
 
 
@@ -148,43 +151,76 @@ def _fill_in(
         if page and link(LinkKind.SHOP, page):
             result.shop_link = "added"
 
-    if result.datasheet == "none" and product is not None and product.datasheet_url:
-        try:
-            data, filename = url_fetch.fetch_url(
-                product.datasheet_url, deadline=deadline
-            )
-            attachment_service.create_attachment(
-                session,
-                entity_type="component",
-                entity_id=component_id,
-                kind=AttachmentKind.DATASHEET,
-                filename=filename,
-                data=data,
-            )
-            result.datasheet = "added"
-        except ValidationError as exc:
-            result.reasons.append(f"datasheet: {exc}")
-            # TME's document host and Mouser's Akamai refuse a server for good;
-            # a timeout or a busy moment is worth another try, so stays "none".
-            if not _RETRY_LATER.search(str(exc)) and link(
-                LinkKind.DATASHEET, product.datasheet_url
-            ):
-                result.datasheet = "linked"
+    # The fallback shops' answers, shared by the datasheet's search and the
+    # photo's, so each shop is asked once for both.
+    answers: shop_files.Answers = {}
+
+    if result.datasheet == "none":
+        own = product.datasheet_url if product else None
+        refusal: ValidationError | None = None
+        if own:
+            try:
+                data, filename = url_fetch.fetch_url(own, deadline=deadline)
+                attachment_service.create_attachment(
+                    session,
+                    entity_type="component",
+                    entity_id=component_id,
+                    kind=AttachmentKind.DATASHEET,
+                    filename=filename,
+                    data=data,
+                )
+                result.datasheet = "added"
+            except ValidationError as exc:
+                refusal = exc
+        if result.datasheet == "none":
+            # TME's document host and Mouser's Akamai refuse a server; Digi-Key
+            # or element14 selling the same part may well hand over the file.
+            try:
+                shop_files.attach_from_shops_held(
+                    session,
+                    component,
+                    AttachmentKind.DATASHEET,
+                    None,
+                    source=asked,
+                    deadline=deadline,
+                    clock=clock,
+                    answers=answers,
+                    tried=[own] if own else None,
+                )
+                result.datasheet = "added"
+            except ValidationError as exc:
+                if refusal is not None:
+                    result.reasons.append(f"datasheet: {refusal}")
+                result.reasons.append(str(exc))
+        # No file from anywhere: keep the shop's own as a link, as the import
+        # dialog does — unless its download only failed for the moment (a
+        # timeout, a busy server), since a link would count as having one and
+        # the file would never be fetched after all.
+        if (
+            result.datasheet == "none"
+            and own
+            and refusal is not None
+            and not _RETRY_LATER.search(str(refusal))
+            and link(LinkKind.DATASHEET, own)
+        ):
+            result.datasheet = "linked"
 
     if result.photo == "none":
         if product is not None and not product.image_url:
             result.reasons.append(f"{asked}: no image for this part")
         try:
             # The turn is held and the photo known to be missing: neither again.
-            photos.attach_photo_held(
+            shop_files.attach_from_shops_held(
                 session,
                 component,
+                AttachmentKind.PHOTO,
                 product.image_url if product else None,
                 # Only the shop actually asked is spared as a fallback; one never
                 # asked (no number on the line) may well have the picture.
                 source=asked,
                 deadline=deadline,
                 clock=clock,
+                answers=answers,
             )
             result.photo = "added"
         except ValidationError as exc:
@@ -210,7 +246,7 @@ def _own_shop_product(
     symbol), and then nothing would be left to tell.
     """
     try:
-        product = photos.ask(
+        product = shop_files.ask(
             shop,
             clock,
             lambda: shops.import_by_index(
