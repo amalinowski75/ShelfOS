@@ -12,6 +12,7 @@ const PICKER = `
       <option value="light">Light</option>
       <option value="dark">Dark</option>
       <option value="dim">Dim</option>
+      <option value="warm">Warm</option>
     </select>
   </label>`;
 

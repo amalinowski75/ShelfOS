@@ -1,6 +1,6 @@
-// The colour theme: System, Light, Dark or Dim, picked in the Settings menu and
-// remembered in this browser only — a phone by the shelves and a monitor on the
-// desk are often wanted differently.
+// The colour theme: System, Light, Dark, Dim or Warm, picked in the Settings
+// menu and remembered in this browser only — a phone by the shelves and a
+// monitor on the desk are often wanted differently.
 //
 // Loaded in <head>, before the stylesheet, and synchronously on purpose: the
 // theme has to be on <html> before the first paint, or a dark choice flashes
@@ -10,7 +10,7 @@
 
 (() => {
   const KEY = "shelfos-theme";
-  const THEMES = ["light", "dark", "dim"];
+  const THEMES = ["light", "dark", "dim", "warm"];
   const root = document.documentElement;
 
   // Storage can throw (blocked site data, some private windows); the theme then
