@@ -93,11 +93,31 @@ MIN_INTERVAL = {"mouser": 2.1}
 # another client spending the same key counts against it too.
 RETRY_AFTER = 30.0
 
-# Worth that retry: a briefly failing answer, or a per-minute (not per-day) call
-# limit. Mouser states its limits in the body ("Maximum calls per day
-# exceeded."); a spent DAILY quota is not retried — nothing works until tomorrow.
+# How the shop providers in app/services/shops/ say a shop could not answer,
+# as the API passes them through in a 422's detail. Shared by the two patterns
+# below so they cannot drift apart when a shop's wording turns out to differ;
+# matched without regard to case for the same reason.
+_UNREADABLE = r"could not read the [\w-]+ (token )?response$"
+_UNREACHABLE = r"could not reach "
+# A shop's refusal that came with a failing status (Mouser states the status).
+_REFUSED = r"rejected the request \(HTTP \d+\)"
+_RATE_LIMIT = r"calls per {period} exceeded"
+_DAILY_LIMIT = _RATE_LIMIT.format(period="day")
+
+# Worth one retry: an unreadable or unreachable answer, a per-minute (not per
+# day) call limit, or a refusal with a 429 or 5xx. A spent DAILY quota is not
+# retried — Mouser says "Maximum calls per day exceeded." with a 403, and nothing
+# works again until tomorrow.
 _TRANSIENT = re.compile(
-    r"could not read the [\w-]+ response$|calls per (minute|second) exceeded"
+    "|".join(
+        [
+            _UNREADABLE,
+            _UNREACHABLE,
+            _RATE_LIMIT.format(period="(minute|second)"),
+            r"rejected the request \(HTTP (429|5\d\d)\)",
+        ]
+    ),
+    re.IGNORECASE,
 )
 
 # The order links are tried in; datasheet links never lead to a product page.
@@ -152,9 +172,18 @@ def mismatch(api: Api, row: dict[str, Any], product: dict[str, Any]) -> str | No
 # do what it could, so it exits 1. Matched on the providers' messages in
 # app/services/shops/, which the API passes through as the 422's detail.
 _UNAVAILABLE = re.compile(
-    r"integration is not configured|could not reach "
-    r"|could not read the [\w-]+ (token )?response$|^HTTP 5\d\d|out of time$"
-    r"|calls per (day|minute|second) exceeded"
+    "|".join(
+        [
+            r"integration is not configured",
+            _UNREACHABLE,
+            _UNREADABLE,
+            _REFUSED,
+            _RATE_LIMIT.format(period="(day|minute|second)"),
+            r"^HTTP 5\d\d",
+            r"out of time$",
+        ]
+    ),
+    re.IGNORECASE,
 )
 
 
@@ -216,6 +245,9 @@ class Api:
         self.client = httpx.Client(base_url=base_url.rstrip("/"), timeout=60)
         self.delay = delay
         self.last_call: dict[str, float] = {}
+        # Shops whose daily quota is spent, with the answer that said so: not
+        # asked again this run, since every call would only say it once more.
+        self.exhausted: dict[str, str] = {}
 
     def login(self, username: str, password: str) -> None:
         resp = self.client.post(
@@ -298,10 +330,14 @@ class Api:
         self, shop: str, body: dict[str, Any]
     ) -> tuple[dict[str, Any] | None, str | None]:
         """A shop lookup: (product, None) or (None, the server's reason)."""
+        if shop in self.exhausted:
+            return None, self.exhausted[shop]
         product, reason = self._lookup_once(shop, body)
         if reason and _TRANSIENT.search(reason):
             time.sleep(RETRY_AFTER)
             product, reason = self._lookup_once(shop, body)
+        if reason and re.search(_DAILY_LIMIT, reason, re.IGNORECASE):
+            self.exhausted[shop] = reason
         return product, reason
 
     def _lookup_once(

@@ -14,10 +14,10 @@ pull request, which carries the reasoning and the verification.
 - **#189** — when Mouser refuses a lookup, ShelfOS now shows Mouser's own
   reason. A spent daily quota used to read as "could not read the Mouser
   response", because the provider checked the HTTP status (a 403) before reading
-  the body that explained it. It now reads "Mouser rejected the request: Maximum
-  calls per day exceeded". A network failure reads "could not reach Mouser". The
+  the body that explained it. It now reads "Mouser rejected the request (HTTP
+  403): Maximum calls per day exceeded"; the status is named whenever it failed. A network failure reads "could not reach Mouser". The
   photo script no longer retries a spent daily quota, since nothing works again
-  until the next day.
+  until the next day, and stops asking that shop for the rest of its run.
 
 ## A photo from another shop
 

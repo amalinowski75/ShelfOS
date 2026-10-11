@@ -118,8 +118,9 @@ a picture. The script spaces its Mouser lookups to stay under Mouser's limit of
 Mouser also limits a key to about 1000 calls a day, and a run over a few hundred
 parts can take two calls for each. Every lookup counts, from the import dialog,
 a scanned label, an invoice and this script alike. Once the day's calls are spent,
-Mouser lookups fail with "Mouser rejected the request: Maximum calls per day
-exceeded" until the next day. Imports from the other shops are unaffected.
+Mouser lookups fail with "Mouser rejected the request (HTTP 403): Maximum calls
+per day exceeded" until the next day. The script then stops asking Mouser for the
+rest of its run. Imports from the other shops are unaffected.
 
 ## When the same maker arrives spelled two ways
 
