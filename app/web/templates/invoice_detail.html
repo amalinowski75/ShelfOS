@@ -424,8 +424,9 @@
         <input class="control mono" type="number" name="total_gross" min="0" step="0.000001" placeholder="optional — defaults to net" />
       </div>
       <p id="invoice-finalize-error" class="error" hidden></p>
+      <p id="invoice-finalize-status" class="muted" hidden></p>
       <footer>
-        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="button" class="btn btn-ghost" id="invoice-finalize-cancel" data-close>Cancel</button>
         <button type="submit" class="btn btn-primary">Finalize</button>
       </footer>
     </form>

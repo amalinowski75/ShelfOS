@@ -890,6 +890,157 @@ describe("invoices.js — remove line and finalize", () => {
   });
 });
 
+describe("invoices.js — product photos after finalize", () => {
+  // The import kept no image URL, so once the invoice is final each line's
+  // component is offered to the server, which asks the invoice's shop again.
+  function finalizing({ lines, photo = () => ({ ok: true, json: async () => ({}) }) }) {
+    const calls = [];
+    const release = [];
+    const impl = (url, opts) => {
+      calls.push({ url, method: (opts && opts.method) || "GET" });
+      if (url === "/api/invoices/7/finalize")
+        return Promise.resolve({ ok: true, json: async () => ({ id: 7 }) });
+      if (url === "/api/invoices/7/lines")
+        return Promise.resolve({ ok: true, json: async () => lines });
+      if (url.endsWith("/photo"))
+        return new Promise((resolve) => release.push(() => resolve(photo(url))));
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    };
+    return { calls, impl, release };
+  }
+
+  async function settle(release) {
+    // Each photo request answers only when released, one at a time.
+    for (let i = 0; i < 10; i += 1) {
+      await tick();
+      while (release.length) release.shift()();
+    }
+    await tick();
+  }
+
+  const photoUrls = (calls) =>
+    calls.filter((c) => c.url.endsWith("/photo")).map((c) => c.url);
+
+  it("asks for each line's photo in turn, saying so, then reloads", async () => {
+    const lines = [
+      { id: 3, component_id: 30 },
+      { id: 4, component_id: 40 },
+    ];
+    const { calls, impl, release } = finalizing({ lines });
+    const { document, navigations } = loadPage(detailFixture({ withFinalize: true }), SCRIPTS, {
+      fetchImpl: impl,
+    });
+    document.getElementById("invoice-finalize-btn").click();
+    submit(document, "invoice-finalize-form");
+    await tick();
+    await tick();
+    await tick();
+
+    // The first request is out, the second not yet: one line at a time.
+    expect(photoUrls(calls)).toEqual(["/api/invoices/7/lines/3/photo"]);
+    const status = document.getElementById("invoice-finalize-status");
+    expect(status.hidden).toBe(false);
+    expect(status.textContent).toMatch(/fetching product photos 1\/2/);
+    expect(navigations).toHaveLength(0);
+
+    await settle(release);
+
+    expect(photoUrls(calls)).toEqual([
+      "/api/invoices/7/lines/3/photo",
+      "/api/invoices/7/lines/4/photo",
+    ]);
+    expect(navigations).toHaveLength(1);
+  });
+
+  it("asks once per component, and a failed photo stops nothing", async () => {
+    const lines = [
+      { id: 3, component_id: 30 },
+      { id: 4, component_id: 30 }, // the same part on a second line
+      { id: 5, component_id: 50 },
+    ];
+    const { calls, impl, release } = finalizing({
+      lines,
+      photo: () => ({ ok: false, status: 422, json: async () => ({ detail: "none" }) }),
+    });
+    const { document, navigations } = loadPage(detailFixture({ withFinalize: true }), SCRIPTS, {
+      fetchImpl: impl,
+    });
+    document.getElementById("invoice-finalize-btn").click();
+    submit(document, "invoice-finalize-form");
+    await settle(release);
+
+    expect(photoUrls(calls)).toEqual([
+      "/api/invoices/7/lines/3/photo",
+      "/api/invoices/7/lines/5/photo",
+    ]);
+    expect(navigations).toHaveLength(1);
+  });
+
+  it("reloads at once when the photos are skipped", async () => {
+    const lines = [
+      { id: 3, component_id: 30 },
+      { id: 4, component_id: 40 },
+    ];
+    const { impl } = finalizing({ lines }); // photo requests never answer
+    const { document, navigations } = loadPage(detailFixture({ withFinalize: true }), SCRIPTS, {
+      fetchImpl: impl,
+    });
+    document.getElementById("invoice-finalize-btn").click();
+    submit(document, "invoice-finalize-form");
+    await tick();
+    await tick();
+    await tick();
+
+    const cancel = document.getElementById("invoice-finalize-cancel");
+    expect(cancel.textContent).toBe("Skip photos");
+    cancel.click();
+
+    expect(navigations).toHaveLength(1);
+  });
+
+  it("reloads at once when Esc closes the dialog mid-way", async () => {
+    // Left as it was, the page behind kept showing the draft and a Finalize
+    // button that answered nothing until the photos were done.
+    const lines = [
+      { id: 3, component_id: 30 },
+      { id: 4, component_id: 40 },
+    ];
+    const { impl } = finalizing({ lines }); // photo requests never answer
+    const { document, navigations } = loadPage(
+      detailFixture({ withFinalize: true }),
+      SCRIPTS,
+      { fetchImpl: impl },
+    );
+    document.getElementById("invoice-finalize-btn").click();
+    submit(document, "invoice-finalize-form");
+    await tick();
+    await tick();
+    await tick();
+    expect(navigations).toHaveLength(0);
+
+    // Esc fires "cancel", then closes the dialog; "close" is what both share.
+    document.getElementById("invoice-finalize-dialog").close();
+
+    expect(navigations).toHaveLength(1);
+  });
+
+  it("finalizes as before when the lines can't be read", async () => {
+    const { document, navigations } = loadPage(detailFixture({ withFinalize: true }), SCRIPTS, {
+      fetchImpl: (url) =>
+        url === "/api/invoices/7/lines"
+          ? Promise.resolve({ ok: true, json: async () => ({ unexpected: true }) })
+          : Promise.resolve({ ok: true, json: async () => ({ id: 7 }) }),
+    });
+    document.getElementById("invoice-finalize-btn").click();
+    submit(document, "invoice-finalize-form");
+    await tick();
+    await tick();
+    await tick();
+
+    expect(navigations).toHaveLength(1);
+  });
+});
+
 describe("invoices.js — error surfacing and add-line", () => {
   it("shows the server error message when a write fails", async () => {
     const { document, fetchMock } = loadPage(newInvoiceFixture(), SCRIPTS, {

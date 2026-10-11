@@ -9,6 +9,17 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## Photos for parts from an invoice
+
+- **#190** — finalizing an invoice now fetches photos for its parts. The import
+  doesn't keep the shop's image address, so the finalize dialog stays open and
+  goes through the lines one at a time ("fetching product photos 3/12…"). For
+  each line it asks the invoice's shop by the line's own catalogue number, then
+  falls back to Digi-Key and element14 the same way the import dialog does (#188).
+  A component that already has a photo is skipped without asking any shop.
+  **Skip photos** reloads straight away. New endpoint:
+  `POST /api/invoices/{id}/lines/{line}/photo`.
+
 ## Mouser says why it refused
 
 - **#189** — when Mouser refuses a lookup, ShelfOS now shows Mouser's own

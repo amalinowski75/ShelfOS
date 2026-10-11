@@ -9,6 +9,7 @@ names.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Protocol, cast
 
 from app.services.errors import ValidationError
@@ -164,6 +165,34 @@ def shop_key(url: str | None) -> str | None:
     if provider is None:
         return None
     return next((k for k, p in _BY_INDEX.items() if p is provider), None)
+
+
+# The words each shop goes by on an invoice, beyond its provider's name: a
+# hand-made invoice spells it however its author does ("DigiKey", "Farnell
+# element14", "Newark"). Matched as whole words, or two neighbouring words run
+# together, so "Digi-Key" and "digikey" agree and "Utmel" does not contain TME.
+_SHOP_WORDS: dict[str, tuple[str, ...]] = {
+    "mouser": ("mouser",),
+    "digikey": ("digikey",),
+    "tme": ("tme",),
+    "farnell": ("farnell", "element14", "newark"),
+}
+
+
+def shop_key_by_name(name: str | None) -> str | None:
+    """The shop key a supplier's name stands for ("TME", "Digi-Key" …), or None.
+
+    An invoice records its supplier by the shop's display name — the parsers set
+    the same names the providers carry — and a hand-made one by whatever its
+    author typed; case, spacing and punctuation are not held against it.
+    """
+    words = re.findall(r"[a-z0-9]+", (name or "").casefold())
+    # Each word, and each two neighbours run together ("Digi Key Electronics").
+    said = set(words) | {a + b for a, b in zip(words, words[1:], strict=False)}
+    return next(
+        (key for key, aliases in _SHOP_WORDS.items() if said & set(aliases)),
+        None,
+    )
 
 
 def resolve(url: str) -> ShopProvider | None:

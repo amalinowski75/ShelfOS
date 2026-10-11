@@ -1676,6 +1676,10 @@ def test_invoice_detail_draft_shows_write_controls(client: TestClient) -> None:
     assert 'id="invoice-edit-btn"' in html
     assert 'id="invoice-addline-btn"' in html
     assert 'id="invoice-finalize-btn"' in html
+    # What invoices.js reports the photo fetch in, and skips it with, after the
+    # finalize — its tests run on a fixture of their own, so the page is held here.
+    assert 'id="invoice-finalize-status"' in html
+    assert 'id="invoice-finalize-cancel"' in html
     assert 'id="invoice-line-dialog"' in html
     assert 'data-act="edit-line"' in html
     assert 'data-act="remove-line"' in html
