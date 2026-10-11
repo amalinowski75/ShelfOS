@@ -9,6 +9,28 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## A photo from another shop
+
+- **#188** — an import no longer leaves a part without a photo just because its
+  own shop refuses the download, which Mouser always does. The dialog now asks
+  the server for a photo, and the server tries the import's image first, then
+  Digi-Key's and element14's picture of the same part. It does this even when
+  the import offered no image, since another shop may have one. A fallback
+  picture is used only when it is this part: the part number has to match, and
+  the maker must not be another company (`manufacturer_service.conflicts_with`).
+  element14 answers a Keystone `5270` with ABB's part, and that answer is turned
+  down. A longer spelling of the same maker, such as "NXP USA Inc." for "NXP
+  Semiconductors", is accepted. New endpoint:
+  `POST /api/components/{id}/photo-from-shops`.
+- **#187** — `scripts/fetch_missing_photos.py` gives a photo to every component
+  that has none. It looks each part up at the shop its link points to and falls
+  back to Digi-Key and element14 the same way, and it works only through the API
+  of a running ShelfOS. Mouser lookups are spaced to stay under its limit of 30
+  calls a minute. On a copy of the author's inventory, 94 of 111 components
+  without a photo got one. The script added `manufacturer_conflicts` to each candidate in
+  `/api/manufacturers/same-mpn`, so any API client can check a shop's answer
+  against a component.
+
 ## About
 
 - **#186** — **About** at the bottom of the Settings menu: the logo, what
