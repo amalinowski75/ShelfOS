@@ -122,3 +122,73 @@ describe.each(Object.keys(PALETTES))("the %s palette", (name) => {
     expect(rgb(palette["--unfilled-tint"])).toEqual(rgb(palette["--danger-soft"]));
   });
 });
+
+describe("the header logo", () => {
+  // The logo's lettering has fixed colours: a theme with a dark ground needs the
+  // light-lettered logo-dark.svg, or the name is dark grey on near-black.
+  const darkThemes = [...CSS.matchAll(/:root\[data-theme="(\w+)"\]\s*\{([^}]*)\}/g)]
+    .filter(([, , body]) => /color-scheme:\s*dark\s*;/.test(body))
+    .map(([, name]) => name)
+    .sort();
+
+  // The body of the at-rule block that opens with `head`, braces matched.
+  function atBlock(head) {
+    const at = CSS.indexOf(head);
+    expect(at, `${head} not found`).toBeGreaterThanOrEqual(0);
+    const open = CSS.indexOf("{", at);
+    let depth = 1;
+    let k = open + 1;
+    for (; depth > 0; k++) {
+      if (CSS[k] === "{") depth++;
+      if (CSS[k] === "}") depth--;
+    }
+    return CSS.slice(open + 1, k - 1);
+  }
+
+  // selector -> its display value, for every innermost rule in `text`.
+  function displays(text) {
+    const out = {};
+    const noComments = text.replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const [, selectors, body] of noComments.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const display = body.match(/display:\s*([\w-]+)/);
+      if (!display) continue;
+      for (const selector of selectors.split(",")) {
+        out[selector.replace(/\s+/g, " ").trim()] = display[1];
+      }
+    }
+    return out;
+  }
+
+  const supported = atBlock("@supports (color: light-dark(#000, #fff))");
+
+  it("shows the light-ground version by default", () => {
+    const all = displays(CSS);
+    expect(all[".brand .logo"]).toBe("block");
+    expect(all[".brand .logo-dark"]).toBe("none");
+  });
+
+  it.each(["dark", "dim"])("swaps to the dark-ground version under %s", (theme) => {
+    expect(darkThemes).toContain(theme);
+    const rules = displays(supported);
+    expect(rules[`:root[data-theme="${theme}"] .brand .logo-light`]).toBe("none");
+    expect(rules[`:root[data-theme="${theme}"] .brand .logo-dark`]).toBe("block");
+  });
+
+  it("swaps under System when the OS is dark", () => {
+    const rules = displays(atBlock("@media (prefers-color-scheme: dark)"));
+    expect(rules[":root:not([data-theme]) .brand .logo-light"]).toBe("none");
+    expect(rules[":root:not([data-theme]) .brand .logo-dark"]).toBe("block");
+    expect(supported).toContain("@media (prefers-color-scheme: dark)");
+  });
+
+  it("swaps in every dark theme and in no light one", () => {
+    const swapped = (logo, display) =>
+      Object.entries(displays(supported))
+        .filter(([selector, value]) => selector.endsWith(` .brand .${logo}`) && value === display)
+        .map(([selector]) => selector.match(/data-theme="(\w+)"/)?.[1])
+        .filter(Boolean)
+        .sort();
+    expect(swapped("logo-dark", "block")).toEqual(darkThemes);
+    expect(swapped("logo-light", "none")).toEqual(darkThemes);
+  });
+});

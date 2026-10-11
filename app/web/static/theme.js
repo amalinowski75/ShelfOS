@@ -24,9 +24,22 @@
     }
   }
 
+  // A phone's browser bar (<meta name="theme-color">) takes the page's own
+  // ground, read back from the stylesheet rather than kept as a second copy of
+  // the palette. Before app.css has loaded there is nothing to read: the body's
+  // background is still transparent, and the meta keeps what it has.
+  function paintBrowserBar() {
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (!meta || !document.body) return;
+    const ground = getComputedStyle(document.body).backgroundColor;
+    if (!ground || ground === "transparent" || ground === "rgba(0, 0, 0, 0)") return;
+    meta.content = ground;
+  }
+
   function apply(theme) {
     if (theme) root.dataset.theme = theme;
     else delete root.dataset.theme;
+    paintBrowserBar();
   }
 
   apply(stored());
@@ -58,9 +71,22 @@
     if (picker) picker.value = theme;
   });
 
+  // System follows the OS, so the bar must too when the OS switches.
+  if (window.matchMedia) {
+    window
+      .matchMedia("(prefers-color-scheme: dark)")
+      .addEventListener("change", paintBrowserBar);
+  }
+  // The first moment there is a body, and again once every stylesheet is in.
+  window.addEventListener("load", paintBrowserBar);
+
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", wirePicker);
+    document.addEventListener("DOMContentLoaded", () => {
+      wirePicker();
+      paintBrowserBar();
+    });
   } else {
     wirePicker();
+    paintBrowserBar();
   }
 })();

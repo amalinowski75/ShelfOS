@@ -142,4 +142,58 @@ describe("theme.js", () => {
     choose(picker, "dim");
     expect(root.dataset.theme).toBe("dim");
   });
+
+  describe("the phone's browser bar", () => {
+    // The page's ground per theme, as app.css would give it, and the meta
+    // base.html carries with Light's --bg in it.
+    const GROUNDS = `
+      <style>
+        body { background-color: rgb(246, 247, 249); }
+        :root[data-theme="dark"] body { background-color: rgb(10, 17, 32); }
+      </style>
+      <meta name="theme-color" content="#f6f7f9">`;
+    const bar = (document) =>
+      document.querySelector('meta[name="theme-color"]').getAttribute("content");
+
+    it("takes the page's ground once the page is up", async () => {
+      const { document } = await load(GROUNDS + PICKER, { [KEY]: "dark" });
+      expect(bar(document)).toBe("rgb(10, 17, 32)");
+    });
+
+    it("paints once the stylesheet the parser reaches later is in", async () => {
+      // In base.html theme.js runs in <head>, with no body and no app.css yet:
+      // nothing to read then. Give it the ground only before DOMContentLoaded.
+      const page = loadPage('<meta name="theme-color" content="#f6f7f9">', SCRIPTS, {
+        localStorage: { [KEY]: "dark" },
+      });
+      expect(page.document.readyState).toBe("loading");
+      page.document.body.insertAdjacentHTML("beforeend", GROUNDS.split("<meta")[0]);
+      await contentLoaded(page.document);
+      expect(bar(page.document)).toBe("rgb(10, 17, 32)");
+    });
+
+    it("follows a theme picked here", async () => {
+      const { document, picker } = await load(GROUNDS + PICKER);
+      expect(bar(document)).toBe("rgb(246, 247, 249)");
+      choose(picker, "dark");
+      expect(bar(document)).toBe("rgb(10, 17, 32)");
+      choose(picker, "");
+      expect(bar(document)).toBe("rgb(246, 247, 249)");
+    });
+
+    it("follows a theme picked in another tab", async () => {
+      const { window, document } = await load(GROUNDS + PICKER);
+      window.localStorage.setItem(KEY, "dark");
+      storageEvent(window, KEY, "dark");
+      expect(bar(document)).toBe("rgb(10, 17, 32)");
+    });
+
+    it("keeps its colour while there is no stylesheet to read", async () => {
+      const { document, picker } = await load(
+        '<meta name="theme-color" content="#f6f7f9">' + PICKER,
+      );
+      choose(picker, "dark");
+      expect(bar(document)).toBe("#f6f7f9");
+    });
+  });
 });

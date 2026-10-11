@@ -6,6 +6,14 @@
     <meta name="csrf-token" content="{{ request.session.get('csrf_token', '') }}" />
     <meta name="user-role" content="{{ current_user.role.value if current_user else '' }}" />
     <title>{% block title %}ShelfOS{% endblock %}</title>
+    {# The SVG for every browser that takes one; the .ico for the rest, and for
+       the bare /favicon.ico some still ask for regardless (app/main.py). #}
+    <link rel="icon" href="/static/brand/favicon.svg?v={{ static_version() }}" type="image/svg+xml" />
+    <link rel="icon" href="/static/brand/favicon.ico?v={{ static_version() }}" sizes="any" />
+    <link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png?v={{ static_version() }}" />
+    <link rel="manifest" href="/static/brand/site.webmanifest?v={{ static_version() }}" />
+    {# A phone's browser bar. Light's --bg until theme.js reads the real ground. #}
+    <meta name="theme-color" content="#f6f7f9" />
     {# First and blocking: it puts the chosen theme on <html> before anything is
        painted, so a dark choice never flashes white. #}
     <script src="/static/theme.js?v={{ static_version() }}"></script>
@@ -21,13 +29,12 @@
       <div class="appbar-inner">
         <div class="brand">
           <a href="/">
-            <span class="mark" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="6" y="6" width="12" height="12" rx="1.5" />
-                <path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3" />
-              </svg>
-            </span>
-            ShelfOS
+            {# The logo carries the name itself. Its lettering has fixed colours,
+               so there is one for light grounds and one for dark, and app.css
+               shows whichever the theme needs; the other is display:none, which
+               also keeps it out of the accessibility tree. #}
+            <img class="logo logo-light" src="/static/brand/logo.svg?v={{ static_version() }}" alt="ShelfOS" width="125" height="32" />
+            <img class="logo logo-dark" src="/static/brand/logo-dark.svg?v={{ static_version() }}" alt="ShelfOS" width="125" height="32" />
           </a>
         </div>
         {% if current_user %}
