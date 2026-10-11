@@ -9,6 +9,13 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## A warm theme
+
+- **#183** — a fifth choice in the **Theme** picker, **Warm**: Light with cream
+  and paper grounds, brown text and a burnt-orange accent in place of the cool
+  slate and teal. Like Dim it sets its own full palette, with every text colour at
+  4.5:1 or better on the grounds it is drawn on.
+
 ## TME invoices with a part that has no RoHS mark
 
 - **#182** — a TME invoice with a part TME holds no RoHS mark for (a VISATON
