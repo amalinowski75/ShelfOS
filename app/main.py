@@ -449,11 +449,15 @@ def create_app(*, create_tables: bool = True) -> FastAPI:
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
     # Browsers still ask for /favicon.ico on their own — a bookmark, a feed
-    # reader, a page that never loaded base.html (a JSON error, /docs). Public,
-    # like /static.
-    @app.get("/favicon.ico", include_in_schema=False)
+    # reader, a page that never loaded base.html (a JSON error). Public, like
+    # /static, and answering HEAD as /static does. The type is named rather
+    # than guessed: the guess reads the host's mime.types, which on some
+    # systems says image/x-icon.
+    @app.api_route("/favicon.ico", methods=["GET", "HEAD"], include_in_schema=False)
     def favicon() -> FileResponse:
-        return FileResponse(_STATIC_DIR / "brand" / "favicon.ico")
+        return FileResponse(
+            _STATIC_DIR / "brand" / "favicon.ico", media_type="image/vnd.microsoft.icon"
+        )
 
     @app.get("/health", tags=["meta"])
     def health() -> dict[str, str]:

@@ -3163,11 +3163,13 @@ def test_every_page_links_the_brand_icons_and_each_one_is_served(
     Each is fetched signed out: a browser asks for them without the page's
     cookie in some cases (the manifest, always), so they must be public.
     """
+    # /static guesses the type from the host's mime.types, and some hosts name
+    # an .ico image/x-icon; browsers take either.
     wanted = {
-        "favicon.svg": "image/svg+xml",
-        "favicon.ico": "image/vnd.microsoft.icon",
-        "apple-touch-icon.png": "image/png",
-        "site.webmanifest": "application/manifest+json",
+        "favicon.svg": ("image/svg+xml",),
+        "favicon.ico": ("image/vnd.microsoft.icon", "image/x-icon"),
+        "apple-touch-icon.png": ("image/png",),
+        "site.webmanifest": ("application/manifest+json",),
     }
     for html in (client.get("/").text, anon_client.get("/login").text):
         head = html.split("</head>", 1)[0]
@@ -3222,6 +3224,10 @@ def test_favicon_ico_at_the_root_is_public(anon_client: TestClient) -> None:
     assert response.headers["content-type"] == "image/vnd.microsoft.icon"
     brand = Path(__file__).parent.parent / "app/web/static/brand"
     assert response.content == (brand / "favicon.ico").read_bytes()
+
+    head = anon_client.head("/favicon.ico")
+    assert head.status_code == 200
+    assert head.headers["content-type"] == "image/vnd.microsoft.icon"
 
 
 def test_settings_menu_offers_every_theme(client: TestClient) -> None:
