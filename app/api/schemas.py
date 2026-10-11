@@ -456,7 +456,7 @@ class InvoiceImportLineUpdate(BaseModel):
 
 
 class ShopPhotoRequest(BaseModel):
-    """Find a new component a product photo — see ``shop_photo_service``."""
+    """Find a new component a product photo — see ``shop_files_service``."""
 
     #: The image the import's own shop offered, tried first. Absent when it had
     #: none: another shop may still have one.
@@ -464,6 +464,27 @@ class ShopPhotoRequest(BaseModel):
     #: The shop page the part was imported from. That shop is not asked again
     #: as a fallback: it would only offer the same picture.
     source_url: str | None = Field(default=None, max_length=2048)
+
+
+class ShopFilesRequest(BaseModel):
+    """Find a new component its photo and datasheet — see ``shop_files_service``."""
+
+    #: The files the import's own shop offered, each tried first. Absent when it
+    #: had none: another shop may still have one.
+    image_url: str | None = Field(default=None, max_length=2048)
+    datasheet_url: str | None = Field(default=None, max_length=2048)
+    #: The shop page the part was imported from. That shop is not asked again
+    #: as a fallback: it would only offer the same files.
+    source_url: str | None = Field(default=None, max_length=2048)
+
+
+class ShopFilesRead(BaseModel):
+    """What the search found: per file ``present`` (the component had a file of
+    that kind), ``added`` or ``none``, and what each source said."""
+
+    photo: FillStatus
+    datasheet: FillStatus
+    reasons: list[str]
 
 
 class AttachmentRead(BaseModel):

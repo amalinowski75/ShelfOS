@@ -16,18 +16,21 @@ from app.api.schemas import (
     ParameterValueSet,
     ScannedComponentRead,
     ScannedStockRead,
+    ShopFilesRead,
+    ShopFilesRequest,
     ShopLookup,
     ShopPhotoRequest,
 )
 from app.auth.deps import current_user_id, require_admin
 from app.models.attachment import Attachment
 from app.models.component import Component, ComponentParameter
+from app.models.enums import AttachmentKind
 from app.models.user import User
 from app.services import component_service as cs
 from app.services import label_service as lbl
 from app.services import location_service as ls
 from app.services import manufacturer_service as mfs
-from app.services import shop_photo_service
+from app.services import shop_files_service
 from app.services import stock_service as ss
 from app.services.errors import DuplicateComponentError, NotFoundError, ValidationError
 from app.services.shops.scan import ScanResult, parse_scan
@@ -261,15 +264,41 @@ def photo_from_shops(
     fetched, so a retry cannot stack copies. 422, naming what each source said,
     when no photo could be had. Writers only.
     """
-    attachment, created = shop_photo_service.attach_photo(
+    attachment, created = shop_files_service.attach_from_shops(
         session,
         component_id,
+        AttachmentKind.PHOTO,
         payload.image_url,
         source_url=payload.source_url,
     )
     if not created:
         response.status_code = status.HTTP_200_OK
     return attachment
+
+
+@router.post("/{component_id}/files-from-shops", response_model=ShopFilesRead)
+def files_from_shops(
+    component_id: int,
+    payload: ShopFilesRequest,
+    session: Session = Depends(get_session),
+) -> ShopFilesRead:
+    """Attach a new component's photo and datasheet files: the import's, else
+    another shop's.
+
+    For the import dialog, right after it creates the component. One request for
+    both, so each fallback shop is asked once. TME's document host and Mouser's
+    Akamai refuse a server; Digi-Key or element14 selling the same part now gives
+    the file. A datasheet none would hand over is for the dialog to keep as a
+    link, as before. Writers only.
+    """
+    found = shop_files_service.attach_files_from_shops(
+        session,
+        component_id,
+        image_url=payload.image_url,
+        datasheet_url=payload.datasheet_url,
+        source_url=payload.source_url,
+    )
+    return ShopFilesRead.model_validate(found, from_attributes=True)
 
 
 @router.get("/{component_id}/parameters", response_model=list[ComponentParameter])

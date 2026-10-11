@@ -66,22 +66,28 @@ onto the new component, so the detail page the create opens on already shows bot
 Neither is fetched from your browser: the server downloads them, which means the
 shop has to be willing to serve a datacenter address.
 
-The two differ in what happens when it isn't. A datasheet that can't be downloaded
-is kept as a link instead, and the dialog says so — losing it would matter.
+When it isn't, ShelfOS gets the file from another shop. If the shop you imported
+from has no datasheet or picture for the part, or won't let the server download
+it, ShelfOS asks Digi-Key and then element14 for the same part number. This
+matters most for Mouser and TME: Mouser blocks both downloads, and TME blocks its
+datasheets. Digi-Key's datasheet is often the maker's own PDF, which downloads
+fine. One lookup at each shop serves both files.
 
-A photo is fetched from another shop instead. If the shop you imported from has no
-picture of the part, or won't let the server download it, ShelfOS asks Digi-Key and
-then element14 for the same part number. It takes their picture only when the
-answer is this part: the part number has to match, and both sides must name a
-maker that is not a different company. A component with no maker gets no picture
-from another shop, because there would be nothing to tell its part from another
-company's with the same number. One number can belong to two makers, even in a single shop —
-element14 answers a Keystone `5270` with ABB's part. A shop's longer spelling of the
-same name, such as "NXP USA Inc." for "NXP Semiconductors", is accepted. Each shop
-lookup counts against that shop's API quota, and a shop without a key is skipped.
+ShelfOS takes another shop's file only when the answer is this part: the part
+number has to match, and both sides must name a maker that is not a different
+company. One number can belong to two makers, even in a single shop: element14
+answers a Keystone `5270` with ABB's part. A shop's longer spelling of the same
+name, such as "NXP USA Inc." for "NXP Semiconductors", is accepted. A component
+with no maker gets nothing from another shop, because there would be nothing to
+tell its part from another company's with the same number. Each shop lookup counts
+against that shop's API quota, and a shop without a key is skipped.
 
-If no shop has a picture, the photo is simply absent: no link, no notice. The
-component page opens with an empty gallery, which is the cue to add one by hand.
+If no shop has the file, the two are handled differently:
+
+- **Datasheet:** the import's own address is kept as a link, and the dialog says
+  so, because losing it would matter.
+- **Photo:** the photo is simply absent, with no link and no notice. The component
+  page opens with an empty gallery, which is the cue to add one by hand.
 
 ### Parts that came in on an invoice
 
@@ -96,11 +102,12 @@ component is missing:
 
 - **a shop link**: the product page the shop names, or else the page built from
   the line's number;
-- **a datasheet**: downloaded as a file, or kept as a link when the shop refuses
-  the download (a block page or an HTTP 4xx), the same as an import does. A
-  download that only failed for the moment (a timeout, a 5xx, too many downloads
-  at once) is left out rather than linked, so the next run can still fetch the
-  file;
+- **a datasheet**: downloaded as a file from the invoice's shop, or else from
+  Digi-Key or element14 as above. If no shop hands one over, the invoice shop's
+  own datasheet is kept as a link, the same as an import does. A link doesn't
+  count as having the datasheet: a later run, or **Fill in from shop**, still
+  looks for the file. That includes parts imported before this, whose datasheet
+  is only a link;
 - **a photo**: as above, falling back to Digi-Key and element14.
 
 What a component already has is left alone. A component that has all three is

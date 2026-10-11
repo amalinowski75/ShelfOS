@@ -46,8 +46,8 @@
   // detail page states by showing none — the cue to add one by hand.
   let pendingImageUrl = null;
   // Whether this component came from a shop import, and so should be given a
-  // photo even when the import itself offered none.
-  let photoWanted = false;
+  // photo and a datasheet even when the import itself offered none.
+  let fromShopImport = false;
   // The shop URL the component was imported from: saved as a `shop` link on create,
   // and the target of the "Open in shop" button. Set it only through setShopUrl so
   // the button's enabled state always tracks it.
@@ -344,41 +344,28 @@
     }
   }
 
-  // Download a shop URL as a file attachment via the SSRF-guarded endpoint.
-  // Returns true on success; a non-2xx or a network error is a handled false, never
-  // an exception (the component already exists).
-  async function attachFromUrl(componentId, url, kind) {
+  // Give the new component its photo and datasheet files: the import's own, else
+  // another shop's (POST /api/components/{id}/files-from-shops — one request for
+  // both, so each fallback shop is asked once). The parsed answer, per file
+  // "present" / "added" / "none"; null when the request itself failed — a handled
+  // null, never an exception (the component already exists).
+  async function attachShopFiles(componentId, imageUrl, datasheetUrl, sourceUrl) {
     try {
-      const resp = await fetch("/api/attachments/from-url", {
+      const resp = await fetch(`/api/components/${componentId}/files-from-shops`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        // The source shop is not asked again: it would offer the same files.
         body: JSON.stringify({
-          entity_type: "component",
-          entity_id: componentId,
-          url,
-          kind,
+          image_url: imageUrl,
+          datasheet_url: datasheetUrl,
+          source_url: sourceUrl,
         }),
       });
-      return resp.ok;
+      if (!resp.ok) return null;
+      const found = await resp.json();
+      return found && typeof found === "object" ? found : null;
     } catch {
-      return false;
-    }
-  }
-
-  // Give the new component a product photo: the import's own image, else another
-  // shop's (POST /api/components/{id}/photo-from-shops). Best-effort and silent
-  // like the download it replaces — a 422 means no shop had a picture to give.
-  async function attachShopPhoto(componentId, imageUrl, sourceUrl) {
-    try {
-      const resp = await fetch(`/api/components/${componentId}/photo-from-shops`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-        // The source shop is not asked again: it would offer the same picture.
-        body: JSON.stringify({ image_url: imageUrl, source_url: sourceUrl }),
-      });
-      return resp.ok;
-    } catch {
-      return false;
+      return null;
     }
   }
 
@@ -518,56 +505,49 @@
         if (pendingShopUrl && !(await addLink(created.id, "shop", pendingShopUrl))) {
           lost.push("the shop link");
         }
-        // The datasheet and the photo download TOGETHER, not one after the other:
-        // the server bounds each by a whole-fetch timeout (30 s) — the photo's
-        // fallback to other shops shares that one budget rather than getting its
-        // own per step — and a shop whose file host tarpits us rather than refusing
-        // (Akamai's habit) would otherwise hold this for both budgets end to end.
-        // They land in different attachments, so neither depends on the other.
-        const saving = [];
-        // If the shop blocks server-side fetches — TME's document host answers a
-        // Cloudflare challenge, and Mouser's Akamai serves an "Access Denied" page
-        // to datacenter IPs, so the same import can download on a laptop and fail on
-        // a hosted server — keep the datasheet as a LINK instead. Only if BOTH fail
-        // is it lost, and the user is told.
-        if (pendingDatasheetUrl) {
-          const url = pendingDatasheetUrl;
-          saving.push(
-            (async () => {
-              if (await attachFromUrl(created.id, url, "datasheet")) return;
-              if (await addLink(created.id, "datasheet", url)) {
-                datasheetLinked = true;
-              } else {
-                lost.push("the datasheet");
-              }
-            })(),
-          );
-        }
+        // The photo and the datasheet, in one request: the server tries the
+        // import's own file of each, then Digi-Key's and element14's, asking each
+        // of those once for both, all within one 30 s budget. It is awaited before
+        // the dialog closes: the caller may navigate to the component's page next,
+        // and a file still in flight would miss the gallery and the attachments
+        // panel that page loads. That wait is worth a line of text — without one,
+        // a stalling shop leaves a form that no longer responds and says nothing.
+        //
         // The photo reports nothing either way — a picture is a nicety, and its
-        // absence on the page that opens says it plainly enough without a toast for
-        // something nobody asked for by name.
-        if (photoWanted) {
-          saving.push(attachShopPhoto(created.id, pendingImageUrl, pendingShopUrl));
-        }
-        if (saving.length) {
-          // Both are awaited before the dialog closes: the caller may navigate to
-          // the component's page next, and an attachment still in flight would miss
-          // the gallery and the attachments panel that page loads. That wait is
-          // worth a line of text — without one, a stalling shop leaves a form that
-          // no longer responds and says nothing about why.
+        // absence on the page that opens says it plainly enough. The datasheet is
+        // not lost: when no shop hands over the file (TME's document host answers
+        // a server with a Cloudflare challenge, Mouser's Akamai with an "Access
+        // Denied" page), the import's URL is kept as a LINK instead, and said so.
+        // Only if that fails too is it lost, and the user is told.
+        if (fromShopImport || pendingDatasheetUrl) {
           if (importStatus) {
             importStatus.hidden = false;
             importStatus.className = "muted";
             importStatus.textContent = "Component created — saving its files…";
           }
-          await Promise.all(saving);
+          const url = pendingDatasheetUrl;
+          const found = await attachShopFiles(
+            created.id,
+            pendingImageUrl,
+            url,
+            pendingShopUrl,
+          );
+          const fileSaved =
+            found && (found.datasheet === "added" || found.datasheet === "present");
+          if (url && !fileSaved) {
+            if (await addLink(created.id, "datasheet", url)) {
+              datasheetLinked = true;
+            } else {
+              lost.push("the datasheet");
+            }
+          }
         }
       }
       // Used; clear so a later manual (non-import) create can't reuse a stale URL.
       setShopUrl(null);
       pendingDatasheetUrl = null;
       pendingImageUrl = null;
-      photoWanted = false;
+      fromShopImport = false;
       dialog.close();
       // Said after the jump when there is one: these are the second step's news,
       // and the caller is about to replace the page this toast would appear on.
@@ -818,7 +798,7 @@
   async function applyPrefillFields(prefill) {
     pendingDatasheetUrl = null;
     pendingImageUrl = null;
-    photoWanted = false;
+    fromShopImport = false;
     // An invoice line's prefill carries a prebuilt shop URL; a BOM/blank one has
     // none. A later shop lookup (runImport) overrides this with its source_url.
     setShopUrl(prefill && prefill.shopUrl);
@@ -855,7 +835,7 @@
     set("notes", prefill.notes);
     if (prefill.datasheetUrl) pendingDatasheetUrl = prefill.datasheetUrl;
     if (prefill.imageUrl) pendingImageUrl = prefill.imageUrl;
-    if (prefill.fromShop) photoWanted = true;
+    if (prefill.fromShop) fromShopImport = true;
 
     const proposal = prefill.proposal || null;
     // Package and mounting are type-independent, so apply them up front — before the
@@ -1142,7 +1122,7 @@
       // hand. Dropped up front, so only this code's own answer can set them.
       pendingDatasheetUrl = null;
       pendingImageUrl = null;
-      photoWanted = false;
+      fromShopImport = false;
       importUrl.value = importCode;
       triggerImport();
     }

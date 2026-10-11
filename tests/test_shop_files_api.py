@@ -1,9 +1,9 @@
-"""A new component's photo: the import's own image, else another shop's."""
+"""A new component's photo and datasheet: the import's own, else another shop's."""
 
 from __future__ import annotations
 
 import pytest
-from app.services import shop_photo_service, shops, url_fetch
+from app.services import shop_files_service, shops, url_fetch
 from app.services.errors import ValidationError
 from app.services.shops.base import ProductData
 from fastapi.testclient import TestClient
@@ -45,7 +45,7 @@ class Shops:
 @pytest.fixture
 def fake(monkeypatch: pytest.MonkeyPatch) -> Shops:
     # A shop found down stays down for a while across requests; not across tests.
-    monkeypatch.setattr(shop_photo_service, "_down", {})
+    monkeypatch.setattr(shop_files_service, "_down", {})
     return Shops(monkeypatch)
 
 
@@ -297,7 +297,7 @@ def test_the_chain_shares_one_time_budget(
 ) -> None:
     """Each step used to get the full timeout, so three stalls tripled the wait."""
     from app import config
-    from app.services import shop_photo_service
+    from app.services import shop_files_service
 
     now = [0.0]
     budgets: list[float] = []
@@ -308,10 +308,10 @@ def test_the_chain_shares_one_time_budget(
         raise ValidationError("timed out")
 
     monkeypatch.setattr(url_fetch, "fetch_url", stalling_fetch)
-    real = shop_photo_service.attach_photo
+    real = shop_files_service.attach_from_shops
     monkeypatch.setattr(
-        shop_photo_service,
-        "attach_photo",
+        shop_files_service,
+        "attach_from_shops",
         lambda *a, **k: real(*a, **k, clock=lambda: now[0]),
     )
     cid = _component(client)
@@ -392,7 +392,7 @@ def test_two_requests_for_one_component_attach_one_photo(
         stored.append(SimpleNamespace(id=len(stored) + 1, kind=AttachmentKind.PHOTO))
         return stored[-1]
 
-    monkeypatch.setattr(shop_photo_service, "require_entity", lambda *a: component)
+    monkeypatch.setattr(shop_files_service, "require_entity", lambda *a: component)
     monkeypatch.setattr(attachment_service, "list_attachments", lambda *a, **k: stored)
     monkeypatch.setattr(attachment_service, "create_attachment", create)
     monkeypatch.setattr(url_fetch, "fetch_url", slow_fetch)
@@ -400,7 +400,12 @@ def test_two_requests_for_one_component_attach_one_photo(
 
     def request() -> None:
         results.append(
-            shop_photo_service.attach_photo(None, 1, DIGIKEY)  # type: ignore[arg-type]
+            shop_files_service.attach_from_shops(
+                None,  # type: ignore[arg-type]
+                1,
+                AttachmentKind.PHOTO,
+                DIGIKEY,
+            )
         )
 
     first = threading.Thread(target=request)
@@ -415,3 +420,165 @@ def test_two_requests_for_one_component_attach_one_photo(
 
     assert len(stored) == 1
     assert sorted(created for _, created in results) == [False, True]
+
+
+# --- datasheets ------------------------------------------------------------
+
+MOUSER_SHEET = "https://www.mouser.com/datasheet/2/405/pcf8574a.pdf"
+TI_SHEET = "https://www.ti.com/lit/ds/symlink/pcf8574a.pdf"
+
+
+def _files(  # type: ignore[no-untyped-def]
+    client: TestClient,
+    component_id: int,
+    *,
+    image_url: str | None = None,
+    datasheet_url: str | None = None,
+    source_url: str | None = None,
+):
+    return client.post(
+        f"/api/components/{component_id}/files-from-shops",
+        json={
+            "image_url": image_url,
+            "datasheet_url": datasheet_url,
+            "source_url": source_url,
+        },
+    )
+
+
+def _datasheets(client: TestClient, component_id: int) -> list[str]:
+    listed = client.get(
+        "/api/attachments",
+        params={"entity_type": "component", "entity_id": component_id},
+    ).json()
+    return [a["filename"] for a in listed if a["kind"] == "datasheet"]
+
+
+def test_a_refused_datasheet_comes_from_another_shop(
+    client: TestClient, fake: Shops
+) -> None:
+    """Digi-Key's datasheet is often the maker's own PDF, which downloads."""
+    fake.blocked.add(MOUSER_SHEET)
+    fake.answers["digikey"] = ProductData(
+        mpn="PCF8574ADWR", manufacturer="TI", image_url=DIGIKEY, datasheet_url=TI_SHEET
+    )
+    cid = _component(client)
+
+    resp = _files(client, cid, image_url=MOUSER, datasheet_url=MOUSER_SHEET)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"photo": "added", "datasheet": "added", "reasons": []}
+    assert _datasheets(client, cid) == ["pcf8574a.pdf"]
+    assert _photos(client, cid) == ["x.jpg"]
+    # Both files from one Digi-Key answer: asked once, not once per file.
+    assert fake.asked == ["digikey"]
+    # The photo first: small, and not to be starved by a slow datasheet.
+    assert fake.fetched == [MOUSER, DIGIKEY, MOUSER_SHEET, TI_SHEET]
+
+
+def test_a_file_already_there_is_left_alone(client: TestClient, fake: Shops) -> None:
+    cid = _component(client)
+    _files(client, cid, datasheet_url=TI_SHEET)
+    fetched = len(fake.fetched)
+
+    again = _files(client, cid, datasheet_url=MOUSER_SHEET).json()
+
+    assert again["datasheet"] == "present"
+    assert MOUSER_SHEET not in fake.fetched[fetched:]
+    assert _datasheets(client, cid) == ["pcf8574a.pdf"]
+
+
+def test_no_file_anywhere_says_each_source_once(
+    client: TestClient, fake: Shops
+) -> None:
+    """Both searches ask the same shops; their failures are said once, not twice."""
+    fake.blocked.add(MOUSER_SHEET)
+    fake.answers["digikey"] = ValidationError("Digi-Key integration is not configured")
+    cid = _component(client)
+
+    body = _files(client, cid, image_url=MOUSER, datasheet_url=MOUSER_SHEET).json()
+
+    assert (body["photo"], body["datasheet"]) == ("none", "none")
+    reasons = body["reasons"]
+    assert reasons.count("digikey: Digi-Key integration is not configured") == 1
+    assert any(r.startswith("the shop's datasheet: ") for r in reasons)
+    assert _datasheets(client, cid) == []
+
+
+def test_another_shop_s_photo_is_no_datasheet(client: TestClient, fake: Shops) -> None:
+    fake.blocked.add(MOUSER_SHEET)
+    fake.answers["digikey"] = ProductData(
+        mpn="PCF8574ADWR", manufacturer="TI", image_url=DIGIKEY
+    )
+    cid = _component(client)
+
+    body = _files(client, cid, datasheet_url=MOUSER_SHEET).json()
+
+    assert body["datasheet"] == "none"
+    assert "digikey: no datasheet for this part" in body["reasons"]
+    assert _datasheets(client, cid) == []
+
+
+def test_the_photo_and_the_datasheet_do_not_wait_for_each_other(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The import dialog fetches both at once; one stalling must not hold both.
+
+    The turn is per component AND kind: a second photo request waits, a
+    datasheet request does not.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    from app.models.enums import AttachmentKind
+    from app.services import attachment_service
+
+    component = SimpleNamespace(id=1, mpn="X", manufacturer="Acme", deleted_at=None)
+    stored: list[SimpleNamespace] = []
+    photo_started = threading.Event()
+    release = threading.Event()
+
+    def fetch(url: str, **_k: object) -> tuple[bytes, str]:
+        if url == DIGIKEY:  # the photo stalls until released
+            photo_started.set()
+            release.wait(5)
+        return b"data", url.rsplit("/", 1)[-1]
+
+    def create(*_a: object, kind: AttachmentKind, **_k: object) -> SimpleNamespace:
+        stored.append(SimpleNamespace(id=len(stored) + 1, kind=kind))
+        return stored[-1]
+
+    monkeypatch.setattr(shop_files_service, "require_entity", lambda *a: component)
+    monkeypatch.setattr(attachment_service, "list_attachments", lambda *a, **k: stored)
+    monkeypatch.setattr(attachment_service, "create_attachment", create)
+    monkeypatch.setattr(url_fetch, "fetch_url", fetch)
+
+    def photo() -> None:
+        shop_files_service.attach_from_shops(
+            None,  # type: ignore[arg-type]
+            1,
+            AttachmentKind.PHOTO,
+            DIGIKEY,
+        )
+
+    stalled = threading.Thread(target=photo)
+    stalled.start()
+    try:
+        assert photo_started.wait(5)
+        done = threading.Event()
+
+        def datasheet() -> None:
+            shop_files_service.attach_from_shops(
+                None,  # type: ignore[arg-type]
+                1,
+                AttachmentKind.DATASHEET,
+                TI_SHEET,
+            )
+            done.set()
+
+        threading.Thread(target=datasheet).start()
+        assert done.wait(2), "the datasheet waited for the stalled photo"
+    finally:
+        release.set()
+        stalled.join(5)
+    assert sorted(a.kind.value for a in stored) == ["datasheet", "photo"]

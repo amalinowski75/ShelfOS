@@ -299,8 +299,10 @@ def _absolute(url: str) -> str:
     cause is a URL we failed to normalise. An already-absolute URL is left alone.
 
     This does NOT sanitise the URL, and must not be relied on to: the value is
-    shop-controlled and is only ever handed to ``POST /api/attachments/from-url``,
-    which validates the scheme and guards against SSRF (``app/services/url_fetch``).
+    shop-controlled and is only ever fetched through ``app/services/url_fetch``
+    (by ``POST /api/attachments/from-url``, and server-side by
+    ``shop_files_service`` and the invoice fill-in), which validates the scheme
+    and guards against SSRF.
     If this field ever becomes something rendered as an href, it needs escaping there.
     """
     return urljoin(_DOCUMENT_BASE, url)
