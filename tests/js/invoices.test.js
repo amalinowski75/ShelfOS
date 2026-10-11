@@ -998,6 +998,32 @@ describe("invoices.js — product photos after finalize", () => {
     expect(navigations).toHaveLength(1);
   });
 
+  it("reloads at once when Esc closes the dialog mid-way", async () => {
+    // Left as it was, the page behind kept showing the draft and a Finalize
+    // button that answered nothing until the photos were done.
+    const lines = [
+      { id: 3, component_id: 30 },
+      { id: 4, component_id: 40 },
+    ];
+    const { impl } = finalizing({ lines }); // photo requests never answer
+    const { document, navigations } = loadPage(
+      detailFixture({ withFinalize: true }),
+      SCRIPTS,
+      { fetchImpl: impl },
+    );
+    document.getElementById("invoice-finalize-btn").click();
+    submit(document, "invoice-finalize-form");
+    await tick();
+    await tick();
+    await tick();
+    expect(navigations).toHaveLength(0);
+
+    // Esc fires "cancel", then closes the dialog; "close" is what both share.
+    document.getElementById("invoice-finalize-dialog").close();
+
+    expect(navigations).toHaveLength(1);
+  });
+
   it("finalizes as before when the lines can't be read", async () => {
     const { document, navigations } = loadPage(detailFixture({ withFinalize: true }), SCRIPTS, {
       fetchImpl: (url) =>

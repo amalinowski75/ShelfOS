@@ -730,9 +730,9 @@ if (detail && lineDialog) {
   // (POST /api/invoices/{id}/lines/{line}/photo). One line at a time, said in the
   // dialog as it goes, because each can take a few seconds; a component that
   // already has a photo answers at once without asking any shop. Best-effort:
-  // a line with no photo to be had is simply left without, and "Skip photos"
-  // reloads straight away — whatever is still missing can be fetched later with
-  // scripts/fetch_missing_photos.py.
+  // a line with no photo to be had is simply left without, and closing the
+  // dialog reloads straight away — whatever is still missing can be fetched
+  // later with scripts/fetch_missing_photos.py.
   async function fetchLinePhotos() {
     let lines = [];
     try {
@@ -754,12 +754,13 @@ if (detail && lineDialog) {
     const cancel = document.getElementById("invoice-finalize-cancel");
     const submitBtn = finalizeForm.querySelector('button[type="submit"]');
     if (submitBtn) submitBtn.disabled = true;
-    if (cancel) {
-      cancel.textContent = "Skip photos";
-      cancel.addEventListener("click", () => window.location.reload(), {
-        once: true,
-      });
-    }
+    if (cancel) cancel.textContent = "Skip photos";
+    // However the dialog closes now — Skip photos, the ×, or Esc — the invoice is
+    // final and the page behind it still shows the draft, with a Finalize button
+    // that would do nothing until the loop ends: reload at once instead.
+    finalizeDialog.addEventListener("close", () => window.location.reload(), {
+      once: true,
+    });
     for (const [index, line] of todo.entries()) {
       if (status) {
         status.hidden = false;

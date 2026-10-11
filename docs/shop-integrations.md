@@ -92,8 +92,15 @@ ShelfOS asks the invoice's shop for the part by the line's own catalogue number,
 then falls back to Digi-Key and element14 as above. A component that already has a
 photo is skipped without asking any shop, so finalizing costs one lookup at the
 invoice's shop for each part without a photo, plus any fallbacks. A busy invoice
-can take a minute. **Skip photos** stops at once, and what's left can be fetched
-later with the script below.
+can take a minute. **Skip photos**, the ×, or Esc stops at once, and what's left
+can be fetched later with the script below.
+
+A line with no catalogue number of its own is not looked up at the invoice's
+shop at all, because the part number alone could name a different product in
+that shop's catalogue. It goes to the fallbacks, which check both the part number
+and the maker. A shop that can't answer (not configured, unreachable, or out of
+daily calls) isn't asked again for two minutes, so an invoice with TME down
+doesn't wait out a timeout on every line.
 
 Both downloads run at once, and the dialog stays up saying it is saving the files
 until they are in — that way the component page opens with them already attached.
