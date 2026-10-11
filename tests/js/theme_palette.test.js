@@ -117,3 +117,21 @@ describe("the dim palette", () => {
     expect(rgb(dim["--unfilled-tint"])).toEqual(rgb(dim["--danger-soft"]));
   });
 });
+
+describe("the header logo", () => {
+  // The logo's lettering has fixed colours: a theme with a dark ground needs the
+  // light-lettered logo-dark.svg, or the name is dark grey on near-black.
+  const darkThemes = [...CSS.matchAll(/:root\[data-theme="(\w+)"\]\s*\{([^}]*)\}/g)]
+    .filter(([, , body]) => /color-scheme:\s*dark\s*;/.test(body))
+    .map(([, name]) => name);
+
+  const showing = (logo) =>
+    [...CSS.matchAll(new RegExp(`:root\\[data-theme="(\\w+)"\\] \\.brand \\.${logo}`, "g"))]
+      .map(([, name]) => name);
+
+  it("switches to the dark-ground version in every dark theme, and only there", () => {
+    expect(darkThemes.sort()).toEqual(["dark", "dim"]);
+    expect([...new Set(showing("logo-dark"))].sort()).toEqual(darkThemes);
+    expect([...new Set(showing("logo-light"))].sort()).toEqual(darkThemes);
+  });
+});

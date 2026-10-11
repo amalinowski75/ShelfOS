@@ -3181,6 +3181,25 @@ def test_every_page_links_the_brand_icons_and_each_one_is_served(
             assert response.headers["content-type"].startswith(wanted[name]), href
 
 
+def test_the_header_shows_the_logo_for_light_and_dark_grounds(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    """The logo is the name: no text beside it, and both versions are served.
+
+    app.css picks one by theme; tests/js/theme_palette.test.js holds that side.
+    """
+    html = client.get("/").text
+    brand = html.split('<div class="brand">', 1)[1].split("</div>", 1)[0]
+    logos = dict(re.findall(r'<img class="logo (logo-\w+)" src="([^"]+)"', brand))
+    assert sorted(logos) == ["logo-dark", "logo-light"]
+    # The name is in the logo; the text that used to sit beside it is gone.
+    assert "ShelfOS" not in re.sub(r"<[^>]*>", "", brand)
+    for src in logos.values():
+        response = anon_client.get(src)
+        assert response.status_code == 200, src
+        assert response.headers["content-type"].startswith("image/svg+xml")
+
+
 def test_the_manifest_icons_exist_at_their_sizes(anon_client: TestClient) -> None:
     manifest = anon_client.get("/static/brand/site.webmanifest").json()
     assert manifest["start_url"] == "/"
