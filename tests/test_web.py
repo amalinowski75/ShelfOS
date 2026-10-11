@@ -3178,6 +3178,8 @@ def test_every_page_links_the_brand_icons_and_each_one_is_served(
         names = [h.split("?", 1)[0].removeprefix("/static/brand/") for h in hrefs]
         assert sorted(names) == sorted(wanted)
         for href, name in zip(hrefs, names, strict=True):
+            # A changed file must reach a browser that cached the old one.
+            assert "?v=" in href, href
             response = anon_client.get(href)
             assert response.status_code == 200, href
             assert response.headers["content-type"].startswith(wanted[name]), href
@@ -3205,6 +3207,9 @@ def test_the_header_shows_the_logo_for_light_and_dark_grounds(
 def test_the_manifest_icons_exist_at_their_sizes(anon_client: TestClient) -> None:
     manifest = anon_client.get("/static/brand/site.webmanifest").json()
     assert manifest["start_url"] == "/"
+    # Not standalone: ShelfOS has no back button of its own, and attachment
+    # downloads are unreliable in a standalone window on a phone.
+    assert manifest["display"] == "minimal-ui"
     purposes = {icon.get("purpose", "any") for icon in manifest["icons"]}
     assert purposes == {"any", "maskable"}
     for icon in manifest["icons"]:
