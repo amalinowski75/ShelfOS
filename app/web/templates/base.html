@@ -12,7 +12,8 @@
     <link rel="icon" href="/static/brand/favicon.ico?v={{ static_version() }}" sizes="any" />
     <link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png?v={{ static_version() }}" />
     <link rel="manifest" href="/static/brand/site.webmanifest?v={{ static_version() }}" />
-    <meta name="theme-color" content="#5E9E78" />
+    {# A phone's browser bar. Light's --bg until theme.js reads the real ground. #}
+    <meta name="theme-color" content="#f6f7f9" />
     {# First and blocking: it puts the chosen theme on <html> before anything is
        painted, so a dark choice never flashes white. #}
     <script src="/static/theme.js?v={{ static_version() }}"></script>
