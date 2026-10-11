@@ -122,9 +122,9 @@ class MouserProvider:
         # partSearchOptions is optional; omit it rather than risk an invalid value.
         # mouserPartNumber matches on a manufacturer PN or Mouser's own SKU.
         body = {"SearchByPartRequest": {"mouserPartNumber": mpn}}
-        # A network error, a non-2xx, a non-JSON body (JSONDecodeError → ValueError)
-        # or an unexpected JSON shape (AttributeError) all become a clean 422 — never
-        # a 500, and the exception (which could embed the api-key query string) never
+        # A network error, a non-JSON body (JSONDecodeError → ValueError) or an
+        # unexpected JSON shape (AttributeError) all become a clean 422 — never a
+        # 500, and the exception (which could embed the api-key query string) never
         # reaches the client.
         try:
             with httpx.Client(
@@ -133,14 +133,22 @@ class MouserProvider:
                 resp = client.post(
                     _API_URL, params={"apiKey": config.MOUSER_API_KEY}, json=body
                 )
-                resp.raise_for_status()
-                payload = resp.json()
+        except httpx.HTTPError:
+            raise ValidationError("could not reach Mouser") from None
+        try:
+            payload = resp.json()
             if not isinstance(payload, dict):
                 raise ValueError("unexpected response shape")
             errors = payload.get("Errors")
             parts = (payload.get("SearchResults") or {}).get("Parts") or []
-        except (httpx.HTTPError, ValueError, AttributeError):
-            raise ValidationError("could not read the Mouser response") from None
+        except (ValueError, AttributeError):
+            errors, parts = None, []
+            payload = None
+        # Errors are read BEFORE the status: Mouser answers a spent quota with a
+        # 403 whose body says so ("Maximum calls per day exceeded."), and turning
+        # every non-2xx into "could not read the response" hid exactly that.
+        if not errors and (payload is None or not resp.is_success):
+            raise ValidationError("could not read the Mouser response")
 
         if errors:
             detail = _error_text(errors)
