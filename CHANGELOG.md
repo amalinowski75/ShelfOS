@@ -20,6 +20,9 @@ pull request, which carries the reasoning and the verification.
   name beside it: the light-ground version, or the dark-ground one under Dark,
   Dim, or System on a dark OS. Warm (#183) is a light theme and takes the
   light one.
+- **#184** — on a phone, the browser's own bar takes the page's background
+  colour, so it follows the theme instead of staying white (or brand green)
+  above a dark page. A home-screen shortcut keeps the browser's back button.
 
 ## A warm theme
 
