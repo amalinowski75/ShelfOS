@@ -768,6 +768,8 @@ export function detailFixture({
        <dialog id="invoice-finalize-dialog"><form id="invoice-finalize-form">
          <input name="total_gross" />
          <p id="invoice-finalize-error" hidden></p>
+         <p id="invoice-finalize-status" hidden></p>
+         <button type="button" id="invoice-finalize-cancel" data-close>Cancel</button>
          <button type="submit"></button>
        </form></dialog>`
     : "";
