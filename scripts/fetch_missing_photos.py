@@ -7,8 +7,12 @@ the web UI, and works against a remote server just as well as a local one.
 
 For each component with no photo attachment it walks the component's links
 (``shop`` first, then ``product`` and ``other``; datasheet links are skipped),
-asks the server to look the part up at that shop, and, when the shop names an
-image, has the server download it as a ``photo`` attachment.
+asks the server to look the part up at that shop, and hands what it found to
+``POST /api/components/{id}/photo-from-shops`` — the endpoint the import dialog
+uses. The server downloads that shop's image, or, when there is none or the shop
+will not let it (Mouser's Akamai refuses every script), Digi-Key's or element14's
+picture of the same part, checked by part number and maker. The fallback lives
+there alone, so the dialog and this script cannot drift apart.
 
 **The shop's MPN must match the component's, and its manufacturer must not
 plainly be another company** before anything is attached — one number is sold
@@ -30,25 +34,24 @@ depends on the shop:
   the part number misses is the link itself tried, which still finds a part
   whose link is a real product page.
 
-When the linked shop does not know the part, has no image for it, or will not
-let the server
-download it — Mouser's Akamai refuses every image request from a script, from
-the hosted server and a laptop alike — Digi-Key and then Farnell are asked by
-the same MPN (and checked the same way), and their image is used instead. They are
-asked only then, so a part whose own shop serves its picture spends no other
-shop's quota; ``--no-fallback`` turns this off.
+The linked shop's own answer is checked here, more leniently than a fallback's:
+a maker named on one side only does not refuse it. That shop is where the part
+was bought, so an MPN match there is strong evidence; another shop's same number
+is not, and the server asks it for a maker on both sides.
+
+``--dry-run`` looks the linked shop up but asks the server for nothing, so it
+cannot tell whether a fallback shop would have had a picture.
 
 A component that already has a photo attachment the component table does not
 count (one stored under a name with no image extension) is skipped too, so a
 second run never attaches the same picture again.
 
-It does what it can and reports the rest: a component with no shop link, a shop
-with no API key configured, a product with no image, or an image the shop will
-not hand over, with no other shop to take it from, is listed in the summary.
-One component's failure never stops the run; the exit status is 1 when a shop
-could not answer, a download was refused or an API call failed, and 0 when what
-was left undone was only what the data allows (no link, no MPN, no shop that
-knows the part, no image at any shop that does).
+It does what it can and reports the rest: a component with no shop link, or one
+no shop had a picture of that the server could download, is listed in the
+summary with each source's reason. One component's failure never stops the run;
+the exit status is 1 when a shop could not answer at all (not configured,
+unreachable, an unreadable response, out of time) or an API call failed, and 0
+when what was left undone was only what the data and the shops allow.
 
 Usage::
 
@@ -72,7 +75,6 @@ import os
 import re
 import sys
 import time
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
@@ -89,11 +91,6 @@ MIN_INTERVAL = {"mouser": 2.1}
 # retried once after this many seconds. Pacing alone still met it in runs of a
 # dozen parts — another client spending the same key counts against it too.
 RETRY_AFTER = 30.0
-
-# Shops asked by part number alone when the linked shop has no image, or will
-# not let the server download it (Mouser's Akamai refuses every request from a
-# script). Only shops whose API takes an MPN: TME's takes its own symbol.
-FALLBACK_SHOPS = ("digikey", "farnell")
 
 # The order links are tried in; datasheet links never lead to a product page.
 LINK_KINDS = ("shop", "product", "other")
@@ -148,7 +145,7 @@ def mismatch(api: Api, row: dict[str, Any], product: dict[str, Any]) -> str | No
 # app/services/shops/, which the API passes through as the 422's detail.
 _UNAVAILABLE = re.compile(
     r"integration is not configured|could not reach "
-    r"|could not read the [\w-]+ (token )?response$|^HTTP 5\d\d"
+    r"|could not read the [\w-]+ (token )?response$|^HTTP 5\d\d|out of time$"
 )
 
 
@@ -161,8 +158,6 @@ def unavailable(reason: str | None) -> bool:
 class Search:
     """What looking one component up across the shops came to."""
 
-    #: Some shop answered with this very part (with or without an image).
-    matched: bool = False
     #: Lookups the shop could not answer at all, as "shop: reason".
     errors: list[str] = field(default_factory=list)
 
@@ -317,18 +312,32 @@ class Api:
             return None, "unexpected response shape"
         return product, None
 
-    def attach_photo(self, component_id: int, url: str) -> str | None:
-        """Have the server download ``url`` as a photo; None on success."""
+    def photo_from_shops(
+        self, component_id: int, image_url: str | None, source_url: str | None
+    ) -> list[str] | None:
+        """Ask the server for a photo; None once one is attached, else the reasons.
+
+        The reasons are what each source said, one per entry, as the server
+        lists them ("digikey: no product found").
+        """
         resp = self.client.post(
-            "/api/attachments/from-url",
-            json={
-                "entity_type": "component",
-                "entity_id": component_id,
-                "url": url,
-                "kind": "photo",
-            },
+            f"/api/components/{component_id}/photo-from-shops",
+            json={"image_url": image_url, "source_url": source_url},
         )
-        return None if resp.status_code == 201 else error_text(resp)
+        if resp.status_code in (200, 201):
+            return None
+        if resp.status_code == 405 or (
+            resp.status_code == 404 and error_text(resp) == "HTTP 404: Not Found"
+        ):
+            sys.exit(
+                "The server has no /api/components/{id}/photo-from-shops yet — "
+                "restart it on a build that does."
+            )
+        if resp.status_code != 422:
+            resp.raise_for_status()
+        detail = error_text(resp).removeprefix("HTTP 422: ")
+        _, _, listed = detail.partition(" — ")
+        return (listed or detail).split("; ")
 
 
 def find_product(
@@ -352,7 +361,6 @@ def find_product(
         if product:
             wrong = mismatch(api, row, product)
             if wrong is None:
-                search.matched = True
                 return True
             reason = f"{asked} {wrong}"
         elif unavailable(reason):
@@ -397,7 +405,6 @@ def process(
     report: Report,
     *,
     dry_run: bool,
-    fallback: bool,
 ) -> None:
     """Find and attach one component's photo, recording the outcome."""
     cid = row["id"]
@@ -420,97 +427,38 @@ def process(
 
     search = Search()
     product, shop, reason = find_product(api, row, links, search)
-    refused: list[tuple[str, str]] = []
-    for source, image in images(api, row, product, shop, search, fallback=fallback):
-        if dry_run:
-            print(f"would attach {image} ({source})")
-            report.would_attach.append(label)
-            return
-        error = api.attach_photo(cid, image)
-        if not error:
-            print(f"photo attached ({source})")
-            report.attached.append(label)
-            return
-        print(f"{source} refused the download … ", end="", flush=True)
-        refused.append((urlsplit(image).hostname or image, error))
-    if refused:
-        print("download refused")
-        # One shop refuses a whole batch with the same long message, so it heads
-        # the group rather than repeating on every line.
-        host, error = refused[0]
-        report.skip(
-            f"image download failed — {error}", f"{label} ({host})", failed=True
-        )
-    elif search.errors:
-        # A shop that could not answer might have had the picture: not done.
-        print("a shop could not answer")
-        report.skip(
-            "shop lookup failed", f"{label} — {'; '.join(search.errors)}", failed=True
-        )
-    elif search.matched:
-        print("no shop has an image for it")
-        report.skip("shop has no image", label)
-    else:
-        print(f"not found ({reason})")
-        report.skip("no shop knows the part", f"{label} — {reason}")
-
-
-def images(
-    api: Api,
-    row: dict[str, Any],
-    product: dict[str, Any] | None,
-    shop: str,
-    search: Search,
-    *,
-    fallback: bool,
-) -> Iterator[tuple[str, str]]:
-    """``(shop, image_url)`` pairs to try for this component, best first.
-
-    The linked shop's image leads (``product`` is its answer, None if it had
-    none). The rest come lazily: a fallback shop is asked only once every image
-    before it has failed, so a part whose own shop serves its picture spends no
-    other shop's quota.
-    """
-    if product and product.get("image_url"):
-        yield shop, product["image_url"]
-    if not fallback:
+    image = product.get("image_url") if product else None
+    # The linked shop, so the server does not ask it again as a fallback: it
+    # would only offer the same picture, or the same miss.
+    shop_links = [link["url"] for link in links if shop_key(link["url"])]
+    source = next((u for u in shop_links if shop_key(u) == shop), shop_links[0])
+    if dry_run:
+        found = image or f"no image at the linked shop ({reason or 'none offered'})"
+        print(f"would ask the server for a photo: {found}")
+        report.would_attach.append(label)
         return
-    mpn = row["mpn"]
-    for other in FALLBACK_SHOPS:
-        if other == shop:
-            continue
-        found, reason = api.lookup(
-            other,
-            {
-                "shop_key": other,
-                "part_numbers": [mpn],
-                "manufacturer": row.get("manufacturer") or None,
-            },
-        )
-        if found:
-            reason = mismatch(api, row, found)
-            if reason is None:
-                search.matched = True
-                if found.get("image_url"):
-                    yield other, found["image_url"]
-        elif unavailable(reason):
-            search.errors.append(f"{other}: {reason}")
-        if reason:
-            # Said on the component's line, not swallowed: a rate-limited or
-            # misconfigured fallback otherwise looks exactly like a shop that
-            # does not sell the part.
-            print(f"{other}: {reason} … ", end="", flush=True)
+    reasons = api.photo_from_shops(row["id"], image, source)
+    if reasons is None:
+        print("photo attached")
+        report.attached.append(label)
+        return
+    # A shop that could not answer at all might have had the picture: not done.
+    trouble = search.errors + [r for r in reasons if unavailable(r.split(": ", 1)[-1])]
+    print("no photo")
+    report.skip(
+        "no photo from any shop",
+        f"{label} — {'; '.join(reasons)}",
+        failed=bool(trouble),
+    )
 
 
-def run(
-    api: Api, rows: list[dict[str, Any]], *, dry_run: bool, fallback: bool = True
-) -> Report:
+def run(api: Api, rows: list[dict[str, Any]], *, dry_run: bool) -> Report:
     report = Report()
     for n, row in enumerate(rows, 1):
         label = f"#{row['id']} {row.get('mpn') or '(no MPN)'}"
         print(f"[{n}/{len(rows)}] {label} … ", end="", flush=True)
         try:
-            process(api, row, label, report, dry_run=dry_run, fallback=fallback)
+            process(api, row, label, report, dry_run=dry_run)
         except httpx.HTTPError as exc:
             # A component deleted mid-run, a 5xx, a timeout: note it and go on,
             # so a long paced run still ends with its summary.
@@ -527,7 +475,10 @@ def run(
 def print_summary(report: Report, *, dry_run: bool) -> None:
     print()
     if dry_run:
-        print(f"Would attach a photo to {len(report.would_attach)} component(s).")
+        print(
+            f"Would ask the server for a photo for {len(report.would_attach)} "
+            "component(s)."
+        )
     else:
         print(f"Attached a photo to {len(report.attached)} component(s).")
     for reason, labels in report.skipped.items():
@@ -562,11 +513,6 @@ def main(argv: list[str] | None = None) -> int:
         default=0.5,
         help="seconds between shop lookups (default 0.5)",
     )
-    parser.add_argument(
-        "--no-fallback",
-        action="store_true",
-        help="use only the linked shop's image, never another shop's",
-    )
     args = parser.parse_args(argv)
 
     password = os.environ.get("SHELFOS_PASSWORD") or getpass.getpass(
@@ -580,7 +526,7 @@ def main(argv: list[str] | None = None) -> int:
         only = set(args.only)
         rows = [row for row in rows if row["id"] in only]
     print(f"{len(rows)} component(s) without a photo.\n")
-    report = run(api, rows, dry_run=args.dry_run, fallback=not args.no_fallback)
+    report = run(api, rows, dry_run=args.dry_run)
     print_summary(report, dry_run=args.dry_run)
     return 1 if report.failures else 0
 
