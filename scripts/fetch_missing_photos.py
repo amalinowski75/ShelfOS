@@ -62,9 +62,11 @@ Usage::
 The password is read from ``SHELFOS_PASSWORD`` or asked for. The account must be
 allowed to write (attaching a file is a writer's action), and every lookup spends
 the shop's API quota, so lookups are paced: ``--delay`` apart for each shop, and
-never faster than Mouser's 30 calls a minute (faster, and it answers "could not
-read the Mouser response" for whole runs of parts). A lookup that still meets
-that answer is retried once, half a minute later.
+never faster than Mouser's 30 calls a minute. A lookup that still meets a
+per-minute limit, or an unreadable answer, is retried once, half a minute later.
+Mouser also caps calls per DAY (about 1000): once that is spent, every Mouser
+lookup says "Maximum calls per day exceeded" until the next day, and the run
+reports it rather than retrying.
 """
 
 from __future__ import annotations
@@ -86,11 +88,37 @@ DEFAULT_URL = "http://localhost:9000"
 # Seconds between two lookups at one shop, where its API sets a rate limit.
 MIN_INTERVAL = {"mouser": 2.1}
 
-# A rate-limited (or briefly failing) shop API surfaces as the provider's
-# "could not read the <shop> response", unlike a plain miss; such a lookup is
-# retried once after this many seconds. Pacing alone still met it in runs of a
-# dozen parts — another client spending the same key counts against it too.
+# A rate-limited or briefly failing shop API is retried once, after this many
+# seconds. Pacing alone still met Mouser's limit in runs of a dozen parts —
+# another client spending the same key counts against it too.
 RETRY_AFTER = 30.0
+
+# How the shop providers in app/services/shops/ say a shop could not answer,
+# as the API passes them through in a 422's detail. Shared by the two patterns
+# below so they cannot drift apart when a shop's wording turns out to differ;
+# matched without regard to case for the same reason.
+_UNREADABLE = r"could not read the [\w-]+ (token )?response$"
+_UNREACHABLE = r"could not reach "
+# A shop's refusal that came with a failing status (Mouser states the status).
+_REFUSED = r"rejected the request \(HTTP \d+\)"
+_RATE_LIMIT = r"calls per {period} exceeded"
+_DAILY_LIMIT = _RATE_LIMIT.format(period="day")
+
+# Worth one retry: an unreadable or unreachable answer, a per-minute (not per
+# day) call limit, or a refusal with a 429 or 5xx. A spent DAILY quota is not
+# retried — Mouser says "Maximum calls per day exceeded." with a 403, and nothing
+# works again until tomorrow.
+_TRANSIENT = re.compile(
+    "|".join(
+        [
+            _UNREADABLE,
+            _UNREACHABLE,
+            _RATE_LIMIT.format(period="(minute|second)"),
+            r"rejected the request \(HTTP (429|5\d\d)\)",
+        ]
+    ),
+    re.IGNORECASE,
+)
 
 # The order links are tried in; datasheet links never lead to a product page.
 LINK_KINDS = ("shop", "product", "other")
@@ -144,8 +172,18 @@ def mismatch(api: Api, row: dict[str, Any], product: dict[str, Any]) -> str | No
 # do what it could, so it exits 1. Matched on the providers' messages in
 # app/services/shops/, which the API passes through as the 422's detail.
 _UNAVAILABLE = re.compile(
-    r"integration is not configured|could not reach "
-    r"|could not read the [\w-]+ (token )?response$|^HTTP 5\d\d|out of time$"
+    "|".join(
+        [
+            r"integration is not configured",
+            _UNREACHABLE,
+            _UNREADABLE,
+            _REFUSED,
+            _RATE_LIMIT.format(period="(day|minute|second)"),
+            r"^HTTP 5\d\d",
+            r"out of time$",
+        ]
+    ),
+    re.IGNORECASE,
 )
 
 
@@ -207,6 +245,9 @@ class Api:
         self.client = httpx.Client(base_url=base_url.rstrip("/"), timeout=60)
         self.delay = delay
         self.last_call: dict[str, float] = {}
+        # Shops whose daily quota is spent, with the answer that said so: not
+        # asked again this run, since every call would only say it once more.
+        self.exhausted: dict[str, str] = {}
 
     def login(self, username: str, password: str) -> None:
         resp = self.client.post(
@@ -289,10 +330,14 @@ class Api:
         self, shop: str, body: dict[str, Any]
     ) -> tuple[dict[str, Any] | None, str | None]:
         """A shop lookup: (product, None) or (None, the server's reason)."""
+        if shop in self.exhausted:
+            return None, self.exhausted[shop]
         product, reason = self._lookup_once(shop, body)
-        if reason and re.search(r"could not read the [\w-]+ response$", reason):
+        if reason and _TRANSIENT.search(reason):
             time.sleep(RETRY_AFTER)
             product, reason = self._lookup_once(shop, body)
+        if reason and re.search(_DAILY_LIMIT, reason, re.IGNORECASE):
+            self.exhausted[shop] = reason
         return product, reason
 
     def _lookup_once(

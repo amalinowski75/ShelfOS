@@ -122,9 +122,9 @@ class MouserProvider:
         # partSearchOptions is optional; omit it rather than risk an invalid value.
         # mouserPartNumber matches on a manufacturer PN or Mouser's own SKU.
         body = {"SearchByPartRequest": {"mouserPartNumber": mpn}}
-        # A network error, a non-2xx, a non-JSON body (JSONDecodeError → ValueError)
-        # or an unexpected JSON shape (AttributeError) all become a clean 422 — never
-        # a 500, and the exception (which could embed the api-key query string) never
+        # A network error, a non-JSON body (JSONDecodeError → ValueError) or an
+        # unexpected JSON shape (AttributeError) all become a clean 422 — never a
+        # 500, and the exception (which could embed the api-key query string) never
         # reaches the client.
         try:
             with httpx.Client(
@@ -133,21 +133,38 @@ class MouserProvider:
                 resp = client.post(
                     _API_URL, params={"apiKey": config.MOUSER_API_KEY}, json=body
                 )
-                resp.raise_for_status()
-                payload = resp.json()
-            if not isinstance(payload, dict):
-                raise ValueError("unexpected response shape")
-            errors = payload.get("Errors")
-            parts = (payload.get("SearchResults") or {}).get("Parts") or []
-        except (httpx.HTTPError, ValueError, AttributeError):
-            raise ValidationError("could not read the Mouser response") from None
-
+        except httpx.HTTPError:
+            raise ValidationError("could not reach Mouser") from None
+        try:
+            payload = resp.json()
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict):
+            payload = None
+        # Errors are read on their own, BEFORE the status and before the results:
+        # Mouser answers a spent quota with a 403 whose body says so ("Maximum
+        # calls per day exceeded."), and neither the status nor an oddly shaped
+        # SearchResults beside it may cost us that message.
+        errors = payload.get("Errors") if payload is not None else None
         if errors:
             detail = _error_text(errors)
             # Logged too: a bad/wrong-type key ("Invalid unique identifier.") is the
             # usual cause, and Mouser issues separate Search and Order API keys.
             _logger.warning("Mouser lookup failed: %s", detail)
-            raise ValidationError(f"Mouser rejected the request: {detail}")
+            # The status is kept when it failed: a 429 or a 5xx with a message is
+            # still the shop not answering, which a caller deciding whether to
+            # retry needs to tell from a 200 that refused the query itself.
+            status = "" if resp.is_success else f" (HTTP {resp.status_code})"
+            raise ValidationError(f"Mouser rejected the request{status}: {detail}")
+        try:
+            if payload is None or not resp.is_success:
+                raise ValueError("no answer")
+            parts = (payload.get("SearchResults") or {}).get("Parts") or []
+            if not isinstance(parts, list):
+                raise ValueError("unexpected response shape")
+        except (ValueError, AttributeError):
+            raise ValidationError("could not read the Mouser response") from None
+
         if not parts:
             raise ShopLookupMiss("no product found")
         # SearchByPartRequest matches PARTIALLY (a queried number that is a prefix of

@@ -425,3 +425,78 @@ def test_product_url_matches_shop_key_case_insensitively() -> None:
     # shop_key is stored lowercase, but don't let a stray upper-cased key silently
     # yield no link.
     assert shops.product_url("TME", "SYM1") == shops.product_url("tme", "SYM1")
+
+
+def test_a_spent_daily_quota_says_so(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Mouser answers it with a 403 and says why in the body.
+
+    The status used to be checked first, so this read as "could not read the
+    Mouser response" — indistinguishable from a broken answer, and a retry-worthy
+    one at that, while nothing works again until the next day.
+    """
+    monkeypatch.setattr(config, "MOUSER_API_KEY", "key")
+    body = {
+        "Errors": [
+            {
+                "Id": 0,
+                "Code": "TooManyRequests",
+                "Message": "Maximum calls per day exceeded.",
+                "ResourceKey": "MaxCallPerDay",
+            }
+        ],
+        "SearchResults": None,
+    }
+    transport = httpx.MockTransport(lambda req: httpx.Response(403, json=body))
+    with pytest.raises(
+        ValidationError,
+        match=r"Mouser rejected the request \(HTTP 403\): Maximum calls per day",
+    ):
+        MouserProvider().fetch_by_mpn("SN74LVC1G66DCKR", transport=transport)
+
+
+@pytest.mark.parametrize("results", [["odd"], "odd", 7])
+def test_mouser_s_message_survives_an_odd_result_beside_it(  # type: ignore[no-untyped-def]
+    monkeypatch, results
+) -> None:
+    """Errors are read on their own, so a malformed SearchResults can't hide them."""
+    monkeypatch.setattr(config, "MOUSER_API_KEY", "key")
+    body = {
+        "Errors": [{"Message": "Invalid unique identifier."}],
+        "SearchResults": results,
+    }
+    transport = httpx.MockTransport(lambda req: httpx.Response(200, json=body))
+    with pytest.raises(
+        ValidationError, match="Mouser rejected the request: Invalid unique identifier"
+    ):
+        MouserProvider().fetch_by_mpn("X", transport=transport)
+
+
+def test_an_odd_result_with_no_message_is_unreadable(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(config, "MOUSER_API_KEY", "key")
+    body = {"Errors": [], "SearchResults": {"Parts": "odd"}}
+    transport = httpx.MockTransport(lambda req: httpx.Response(200, json=body))
+    with pytest.raises(ValidationError, match="could not read the Mouser response"):
+        MouserProvider().fetch_by_mpn("X", transport=transport)
+
+
+def test_a_failing_status_with_nothing_to_say_is_unreadable(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(config, "MOUSER_API_KEY", "key")
+    for answer in (
+        httpx.Response(503, text="<html>down</html>"),
+        httpx.Response(500, json={"Errors": [], "SearchResults": None}),
+        # A 4xx carrying a well-formed empty result is still no answer.
+        httpx.Response(429, json={"Errors": [], "SearchResults": {"Parts": []}}),
+    ):
+        transport = httpx.MockTransport(lambda req, a=answer: a)
+        with pytest.raises(ValidationError, match="could not read the Mouser response"):
+            MouserProvider().fetch_by_mpn("X", transport=transport)
+
+
+def test_an_unreachable_mouser_says_so(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(config, "MOUSER_API_KEY", "key")
+
+    def refuse(req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=req)
+
+    with pytest.raises(ValidationError, match="could not reach Mouser"):
+        MouserProvider().fetch_by_mpn("X", transport=httpx.MockTransport(refuse))
