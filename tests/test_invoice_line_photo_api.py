@@ -8,7 +8,7 @@ looked it up by.
 from __future__ import annotations
 
 import pytest
-from app.services import shops, url_fetch
+from app.services import shop_photo_service, shops, url_fetch
 from app.services.errors import ValidationError
 from app.services.shops.base import ProductData
 from fastapi.testclient import TestClient
@@ -61,6 +61,8 @@ class Shops:
 
 @pytest.fixture
 def fake(monkeypatch: pytest.MonkeyPatch) -> Shops:
+    # A shop found down stays down for a while across requests; not across tests.
+    monkeypatch.setattr(shop_photo_service, "_down", {})
     return Shops(monkeypatch)
 
 
@@ -71,8 +73,10 @@ def _line(
     spn: str | None = "0603B104K500CT",
     mpn: str | None = "0603B104K500CT-W",
     maker: str | None = "Walsin",
+    finalize: bool = True,
 ) -> tuple[int, int, int]:
-    """``(invoice id, line id, component id)`` for a one-line draft invoice."""
+    """``(invoice id, line id, component id)`` for a one-line invoice, finalized
+    unless ``finalize`` is False."""
     ctype = client.post("/api/types", json={"name": f"t-{supplier}-{mpn}"}).json()
     component = client.post(
         "/api/components",
@@ -87,6 +91,9 @@ def _line(
             "currency": "PLN",
         },
     ).json()
+    location = client.post(
+        "/api/locations", json={"type": "drawer", "name": f"D-{supplier}-{mpn}"}
+    ).json()
     line = client.post(
         f"/api/invoices/{invoice['id']}/lines",
         json={
@@ -94,9 +101,13 @@ def _line(
             "quantity": 10,
             "unit_price": "0.05",
             "supplier_part_number": spn,
+            "location_id": location["id"],
         },
     )
     assert line.status_code == 201, line.text
+    if finalize:
+        done = client.post(f"/api/invoices/{invoice['id']}/finalize", json={})
+        assert done.status_code == 200, done.text
     return invoice["id"], line.json()["id"], component["id"]
 
 
@@ -115,7 +126,8 @@ def test_the_invoice_s_shop_is_asked_by_the_line_s_own_number(
     resp = _photo(client, invoice_id, line_id)
 
     assert resp.status_code == 201, resp.text
-    assert fake.asked_own == [("tme", ["0603B104K500CT", "0603B104K500CT-W"])]
+    # The line's own number alone — never the MPN standing in for it.
+    assert fake.asked_own == [("tme", ["0603B104K500CT"])]
     assert fake.asked_fallback == []
     assert fake.fetched == [TME]
 
@@ -244,3 +256,84 @@ def test_a_digikey_invoice_s_fallback_is_element14_alone(
 
     assert [shop for shop, _ in fake.asked_own] == ["digikey"]
     assert fake.asked_fallback == ["farnell"]
+
+
+def test_a_line_with_no_shop_number_is_checked_in_full(
+    client: TestClient, fake: Shops
+) -> None:
+    """Its MPN, asked as a TME symbol, could name another product outright."""
+    fake.fallback["digikey"] = ProductData(
+        mpn=None, manufacturer=None, image_url=DIGIKEY
+    )
+    invoice_id, line_id, _ = _line(client, spn=None)
+
+    resp = _photo(client, invoice_id, line_id)
+
+    assert resp.status_code == 422
+    assert fake.asked_own == []  # the invoice's shop is not asked by MPN-as-index
+    assert DIGIKEY not in fake.fetched  # an answer naming no part is not taken
+
+
+def test_a_draft_invoice_s_line_is_refused(client: TestClient, fake: Shops) -> None:
+    """Its line can still be pointed at another component."""
+    invoice_id, line_id, _ = _line(client, finalize=False)
+
+    resp = _photo(client, invoice_id, line_id)
+
+    assert resp.status_code == 422
+    assert "finalize the invoice first" in resp.json()["detail"]
+    assert fake.asked_own == []
+
+
+def test_a_shop_found_down_is_not_asked_again_for_a_while(
+    client: TestClient, fake: Shops
+) -> None:
+    """Each line is its own request; a down shop would cost every one a timeout."""
+    fake.own["tme"] = ValidationError("could not reach TME")
+    first = _line(client, mpn="A1")
+    second = _line(client, mpn="B2")
+
+    _photo(client, *first[:2])
+    resp = _photo(client, *second[:2])
+
+    assert [shop for shop, _ in fake.asked_own] == ["tme"]
+    assert "not asked again for a while" in resp.json()["detail"]
+
+
+def test_a_miss_or_a_one_part_refusal_trips_nothing(
+    client: TestClient, fake: Shops
+) -> None:
+    fake.own["tme"] = ValidationError("no product found")
+    fake.fallback["digikey"] = ValidationError(
+        "Digi-Key rejected the request: Duplicate Products found for 5270"
+    )
+    first = _line(client, mpn="A1")
+    second = _line(client, mpn="B2")
+
+    _photo(client, *first[:2])
+    _photo(client, *second[:2])
+
+    assert len(fake.asked_own) == 2
+    assert fake.asked_fallback.count("digikey") == 2
+
+
+@pytest.mark.parametrize(
+    ("supplier", "shop"),
+    [
+        ("TME", "tme"),
+        ("Digi-Key", "digikey"),
+        ("DigiKey", "digikey"),
+        ("Digi Key Electronics", "digikey"),
+        ("Mouser Electronics", "mouser"),
+        ("Farnell element14", "farnell"),
+        ("element14", "farnell"),
+        ("Newark", "farnell"),
+        ("Utmel", None),  # contains the letters "tme", not the word
+        ("Conrad", None),
+        (None, None),
+    ],
+)
+def test_a_hand_typed_supplier_still_names_its_shop(
+    supplier: str | None, shop: str | None
+) -> None:
+    assert shops.shop_key_by_name(supplier) == shop

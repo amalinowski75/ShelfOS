@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from app.services import shops, url_fetch
+from app.services import shop_photo_service, shops, url_fetch
 from app.services.errors import ValidationError
 from app.services.shops.base import ProductData
 from fastapi.testclient import TestClient
@@ -44,6 +44,8 @@ class Shops:
 
 @pytest.fixture
 def fake(monkeypatch: pytest.MonkeyPatch) -> Shops:
+    # A shop found down stays down for a while across requests; not across tests.
+    monkeypatch.setattr(shop_photo_service, "_down", {})
     return Shops(monkeypatch)
 
 
@@ -359,3 +361,57 @@ def test_a_shop_page_names_its_shop() -> None:
 def test_only_a_shop_searchable_by_part_number_is_asked_by_one() -> None:
     with pytest.raises(ValidationError, match="cannot be searched by part number"):
         shops.import_by_mpn("tme", "PCF8574ADWR")
+
+
+def test_two_requests_for_one_component_attach_one_photo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An invoice finalized in two tabs, or a retry while the first still loads.
+
+    Both used to find no photo and both attach one. Now the second waits for the
+    first, then finds its photo.
+    """
+    import threading
+    import time
+    from types import SimpleNamespace
+
+    from app.models.enums import AttachmentKind
+    from app.services import attachment_service
+
+    component = SimpleNamespace(id=1, mpn="X", manufacturer="Acme", deleted_at=None)
+    stored: list[SimpleNamespace] = []
+    fetching = threading.Event()
+    release = threading.Event()
+
+    def slow_fetch(url: str, **_k: object) -> tuple[bytes, str]:
+        fetching.set()
+        release.wait(5)
+        return b"jpeg", "x.jpg"
+
+    def create(*_a: object, **_k: object) -> SimpleNamespace:
+        stored.append(SimpleNamespace(id=len(stored) + 1, kind=AttachmentKind.PHOTO))
+        return stored[-1]
+
+    monkeypatch.setattr(shop_photo_service, "require_entity", lambda *a: component)
+    monkeypatch.setattr(attachment_service, "list_attachments", lambda *a, **k: stored)
+    monkeypatch.setattr(attachment_service, "create_attachment", create)
+    monkeypatch.setattr(url_fetch, "fetch_url", slow_fetch)
+    results: list[tuple[object, bool]] = []
+
+    def request() -> None:
+        results.append(
+            shop_photo_service.attach_photo(None, 1, DIGIKEY)  # type: ignore[arg-type]
+        )
+
+    first = threading.Thread(target=request)
+    first.start()
+    assert fetching.wait(5)
+    second = threading.Thread(target=request)
+    second.start()
+    time.sleep(0.2)  # long enough for an unguarded second request to get going
+    release.set()
+    first.join(5)
+    second.join(5)
+
+    assert len(stored) == 1
+    assert sorted(created for _, created in results) == [False, True]
