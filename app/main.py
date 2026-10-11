@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session
 from starlette.middleware.sessions import SessionMiddleware
 
-from app import config
+from app import config, version
 from app.api.errors import register_error_handlers
 from app.api.routes import (
     admin,
@@ -358,6 +358,8 @@ def create_app(*, create_tables: bool = True) -> FastAPI:
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if create_tables:
             _bootstrap()
+        # Asked of git now, on a thread, so no page waits on it later.
+        version.warm()
         yield
 
     # The interactive docs and the schema they read are served by

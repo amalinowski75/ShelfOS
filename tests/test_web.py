@@ -3133,9 +3133,15 @@ def _about(client: TestClient) -> str:
     return html.split('<dialog id="about-dialog"', 1)[1].split("</dialog>", 1)[0]
 
 
+_MAIN_BUILD = version.Version(pr=185, ahead=0, commit="c9b38f6", dirty=False)
+
+
 def test_about_is_in_the_settings_menu_with_the_logo_and_the_links(
-    client: TestClient, anon_client: TestClient
+    client: TestClient, anon_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setitem(
+        web_routes.templates.env.globals, "app_version", lambda: _MAIN_BUILD
+    )
     html = client.get("/").text
     menu = html.split('<div class="settings-menu"', 1)[1].split("</div>", 1)[0]
     assert 'id="about-btn"' in menu
@@ -3156,21 +3162,30 @@ def test_about_is_in_the_settings_menu_with_the_logo_and_the_links(
         assert 'target="_blank"' in tag and 'rel="noopener"' in tag, tag
 
 
+def _version_shown(about: str) -> str:
+    facts = about.split('<dl class="about-facts">', 1)[1].split("</dl>", 1)[0]
+    return facts.split("<dd>", 1)[1].split("</dd>", 1)[0].strip()
+
+
 @pytest.mark.parametrize(
     ("build", "shown"),
     [
-        (version.Version(pr=185, ahead=0, commit="c9b38f6"), "#185</a>"),
+        (_MAIN_BUILD, "#185</a>"),
         (
-            version.Version(pr=185, ahead=3, commit="97580c9"),
+            version.Version(pr=185, ahead=3, commit="97580c9", dirty=False),
             "#185</a> + 3 commits (<code>97580c9</code>)",
         ),
         (
-            version.Version(pr=185, ahead=1, commit="97580c9"),
+            version.Version(pr=185, ahead=1, commit="97580c9", dirty=False),
             "#185</a> + 1 commit (<code>97580c9</code>)",
         ),
         (
-            version.Version(pr=None, ahead=4, commit="1a2b3c4"),
-            "development build <code>1a2b3c4</code>",
+            version.Version(pr=185, ahead=0, commit="c9b38f6", dirty=True),
+            "#185</a> + local changes",
+        ),
+        (
+            version.Version(pr=None, ahead=0, commit="1a2b3c4", dirty=True),
+            "development build <code>1a2b3c4</code> + local changes",
         ),
         (version.UNKNOWN, "unknown"),
     ],
@@ -3182,14 +3197,27 @@ def test_about_names_the_build_by_its_pull_request(
     shown: str,
 ) -> None:
     monkeypatch.setitem(web_routes.templates.env.globals, "app_version", lambda: build)
-    about = _about(client)
-    facts = about.split('<dl class="about-facts">', 1)[1].split("</dl>", 1)[0]
-    version_dd = facts.split("<dd>", 1)[1].split("</dd>", 1)[0].strip()
+    version_dd = _version_shown(_about(client))
     assert version_dd.endswith(shown), version_dd
     if build.pr is not None:
-        assert f'href="https://github.com/amalinowski75/ShelfOS/pull/{build.pr}"' in (
-            version_dd
-        )
+        assert f'href="{build.pr_url}"' in version_dd
+
+
+def test_about_links_to_the_repository_the_build_came_from(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fork = version.Version(
+        pr=12,
+        ahead=0,
+        commit="abc1234",
+        dirty=False,
+        repo_url="https://github.com/someone/ShelfOS-fork",
+    )
+    monkeypatch.setitem(web_routes.templates.env.globals, "app_version", lambda: fork)
+    about = _about(client)
+    assert 'href="https://github.com/someone/ShelfOS-fork/pull/12"' in about
+    assert 'href="https://github.com/someone/ShelfOS-fork"' in about
+    assert "https://github.com/amalinowski75" not in about
 
 
 def test_settings_menu_hides_the_admin_only_entries_from_a_reader(

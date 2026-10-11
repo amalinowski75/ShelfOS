@@ -155,16 +155,18 @@
               {% if v.pr is not none -%}
                 <a href="{{ v.pr_url }}" target="_blank" rel="noopener">#{{ v.pr }}</a>
                 {%- if v.ahead %} + {{ v.ahead }} commit{{ "" if v.ahead == 1 else "s" }} (<code>{{ v.commit }}</code>){% endif %}
+                {%- if v.dirty %} + local changes{% endif %}
               {%- elif v.commit -%}
                 development build <code>{{ v.commit }}</code>
+                {%- if v.dirty %} + local changes{% endif %}
               {%- else -%}
                 unknown
               {%- endif -%}
             </dd>
             <dt>Source</dt>
-            <dd><a href="{{ repo_url }}" target="_blank" rel="noopener">{{ repo_url | replace("https://", "") }}</a></dd>
+            <dd><a href="{{ v.repo_url }}" target="_blank" rel="noopener">{{ v.repo_url | replace("https://", "") }}</a></dd>
             <dt>Changes</dt>
-            <dd><a href="{{ changelog_url }}" target="_blank" rel="noopener">Changelog</a></dd>
+            <dd><a href="{{ v.changelog_url }}" target="_blank" rel="noopener">Changelog</a></dd>
           </dl>
           <footer>
             <button type="button" class="btn btn-ghost" data-close>Close</button>

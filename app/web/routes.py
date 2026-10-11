@@ -111,8 +111,6 @@ def _static_version() -> str:
 templates.env.globals["static_version"] = _static_version
 # The About dialog in the Settings menu, on every signed-in page.
 templates.env.globals["app_version"] = version.current
-templates.env.globals["repo_url"] = version.REPO_URL
-templates.env.globals["changelog_url"] = version.CHANGELOG_URL
 templates.env.globals["format_money"] = format_money
 # Build a distributor product-page link from an invoice line's shop + part number,
 # so the review row can hand it to the New Component dialog's "open in shop" button.
