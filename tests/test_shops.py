@@ -449,9 +449,34 @@ def test_a_spent_daily_quota_says_so(monkeypatch) -> None:  # type: ignore[no-un
     transport = httpx.MockTransport(lambda req: httpx.Response(403, json=body))
     with pytest.raises(
         ValidationError,
-        match="Mouser rejected the request: Maximum calls per day exceeded",
+        match=r"Mouser rejected the request \(HTTP 403\): Maximum calls per day",
     ):
         MouserProvider().fetch_by_mpn("SN74LVC1G66DCKR", transport=transport)
+
+
+@pytest.mark.parametrize("results", [["odd"], "odd", 7])
+def test_mouser_s_message_survives_an_odd_result_beside_it(  # type: ignore[no-untyped-def]
+    monkeypatch, results
+) -> None:
+    """Errors are read on their own, so a malformed SearchResults can't hide them."""
+    monkeypatch.setattr(config, "MOUSER_API_KEY", "key")
+    body = {
+        "Errors": [{"Message": "Invalid unique identifier."}],
+        "SearchResults": results,
+    }
+    transport = httpx.MockTransport(lambda req: httpx.Response(200, json=body))
+    with pytest.raises(
+        ValidationError, match="Mouser rejected the request: Invalid unique identifier"
+    ):
+        MouserProvider().fetch_by_mpn("X", transport=transport)
+
+
+def test_an_odd_result_with_no_message_is_unreadable(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(config, "MOUSER_API_KEY", "key")
+    body = {"Errors": [], "SearchResults": {"Parts": "odd"}}
+    transport = httpx.MockTransport(lambda req: httpx.Response(200, json=body))
+    with pytest.raises(ValidationError, match="could not read the Mouser response"):
+        MouserProvider().fetch_by_mpn("X", transport=transport)
 
 
 def test_a_failing_status_with_nothing_to_say_is_unreadable(monkeypatch) -> None:  # type: ignore[no-untyped-def]
