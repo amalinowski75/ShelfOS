@@ -714,10 +714,12 @@ describe("component_dialog.js — you may already have this part", () => {
 describe("component_dialog.js — the datasheet a shop won't hand over", () => {
   // A shop that blocks server-side downloads (Mouser's WAF answers a datacenter IP
   // with an "access denied" page, TME's document host with a Cloudflare challenge)
-  // must not cost the user the datasheet: it is kept as a link, and said so.
+  // must not cost the user the datasheet. The server first tries the other shops
+  // for the same part's file; only when none hands one over is it kept as a link,
+  // and said so.
   const DATASHEET = "https://www.mouser.com/datasheet/2/268/USB5734.pdf";
 
-  function importedPart({ download }) {
+  function importedPart({ download, offered = DATASHEET }) {
     const calls = [];
     const impl = (url, opts) => {
       calls.push({ url, body: opts && opts.body ? JSON.parse(opts.body) : null });
@@ -725,15 +727,16 @@ describe("component_dialog.js — the datasheet a shop won't hand over", () => {
         return ok({
           mpn: "USB5734",
           source_url: "https://www.mouser.pl/ProductDetail/USB5734",
-          datasheet_url: DATASHEET,
+          datasheet_url: offered,
         });
-      if (url === "/api/attachments/from-url")
+      if (url === "/api/components/7/datasheet-from-shops")
         return download
           ? ok({ id: 3 })
           : Promise.resolve({
               ok: false,
               status: 422,
-              json: () => Promise.resolve({ detail: "that URL returned a web page" }),
+              json: () =>
+                Promise.resolve({ detail: "no datasheet could be downloaded" }),
             });
       if (url === "/api/components") return ok({ id: 7 });
       return ok({});
@@ -802,6 +805,36 @@ describe("component_dialog.js — the datasheet a shop won't hand over", () => {
     expect(page.document.querySelector(".toast").textContent).toMatch(
       /saved as a link/,
     );
+  });
+
+  it("asks the server with the shop's own datasheet and where it came from", async () => {
+    const { calls, impl } = importedPart({ download: true });
+    const page = loadPage(dialogFixture(), SCRIPTS, { fetchImpl: impl });
+
+    await createAfterImport(page);
+
+    const asked = calls.filter((c) => c.url.endsWith("/datasheet-from-shops"));
+    expect(asked.map((c) => c.body)).toEqual([
+      {
+        datasheet_url: DATASHEET,
+        source_url: "https://www.mouser.pl/ProductDetail/USB5734",
+      },
+    ]);
+    // No direct download any more: the server's search does it.
+    expect(calls.filter((c) => c.url === "/api/attachments/from-url")).toEqual([]);
+  });
+
+  it("still asks when the shop offered none, and links nothing then", async () => {
+    // Some shops name no datasheet for a part another sells with one.
+    const { calls, impl } = importedPart({ download: false, offered: null });
+    const page = loadPage(dialogFixture(), SCRIPTS, { fetchImpl: impl });
+
+    await createAfterImport(page);
+
+    const asked = calls.filter((c) => c.url.endsWith("/datasheet-from-shops"));
+    expect(asked.map((c) => c.body.datasheet_url)).toEqual([null]);
+    const linked = calls.filter((c) => c.url === "/api/links").map((c) => c.body.kind);
+    expect(linked).toEqual(["shop"]); // no datasheet link to a URL nobody gave
   });
 });
 
@@ -1004,8 +1037,8 @@ describe("component_dialog.js — what the import leaves behind", () => {
       .filter((c) => c.url === "/api/attachments/from-url")
       .map((c) => c.body.kind);
     expect(attached).toEqual([]);
-    // Nor a photo from another shop: B never came from an import at all.
-    expect(calls.filter((c) => c.url.endsWith("/photo-from-shops"))).toEqual([]);
+    // Nor a photo or datasheet from another shop: B never came from an import.
+    expect(calls.filter((c) => c.url.endsWith("-from-shops"))).toEqual([]);
     const linked = calls.filter((c) => c.url === "/api/links").map((c) => c.body.kind);
     expect(linked).toEqual([]); // not even A's shop link
   });
@@ -1025,7 +1058,7 @@ describe("component_dialog.js — what the import leaves behind", () => {
           image_url: PHOTO,
         });
       if (
-        url === "/api/attachments/from-url" ||
+        url === "/api/components/7/datasheet-from-shops" ||
         url === "/api/components/7/photo-from-shops"
       ) {
         inFlight += 1;

@@ -46,8 +46,8 @@
   // detail page states by showing none — the cue to add one by hand.
   let pendingImageUrl = null;
   // Whether this component came from a shop import, and so should be given a
-  // photo even when the import itself offered none.
-  let photoWanted = false;
+  // photo and a datasheet even when the import itself offered none.
+  let fromShopImport = false;
   // The shop URL the component was imported from: saved as a `shop` link on create,
   // and the target of the "Open in shop" button. Set it only through setShopUrl so
   // the button's enabled state always tracks it.
@@ -365,16 +365,18 @@
     }
   }
 
-  // Give the new component a product photo: the import's own image, else another
-  // shop's (POST /api/components/{id}/photo-from-shops). Best-effort and silent
-  // like the download it replaces — a 422 means no shop had a picture to give.
-  async function attachShopPhoto(componentId, imageUrl, sourceUrl) {
+  // Give the new component a photo or a datasheet file: the import's own, else
+  // another shop's (POST /api/components/{id}/photo-from-shops, or
+  // …/datasheet-from-shops). True once one is attached; a 422 means no shop had
+  // one to give.
+  async function attachShopFile(componentId, what, url, sourceUrl) {
+    const field = what === "photo" ? "image_url" : "datasheet_url";
     try {
-      const resp = await fetch(`/api/components/${componentId}/photo-from-shops`, {
+      const resp = await fetch(`/api/components/${componentId}/${what}-from-shops`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-        // The source shop is not asked again: it would offer the same picture.
-        body: JSON.stringify({ image_url: imageUrl, source_url: sourceUrl }),
+        // The source shop is not asked again: it would offer the same file.
+        body: JSON.stringify({ [field]: url, source_url: sourceUrl }),
       });
       return resp.ok;
     } catch {
@@ -530,11 +532,16 @@
         // to datacenter IPs, so the same import can download on a laptop and fail on
         // a hosted server — keep the datasheet as a LINK instead. Only if BOTH fail
         // is it lost, and the user is told.
-        if (pendingDatasheetUrl) {
+        if (pendingDatasheetUrl || fromShopImport) {
           const url = pendingDatasheetUrl;
           saving.push(
             (async () => {
-              if (await attachFromUrl(created.id, url, "datasheet")) return;
+              // The import's own datasheet, else another shop's file
+              // (POST /api/components/{id}/datasheet-from-shops) — and only when
+              // no shop hands one over, the import's URL kept as a link.
+              if (await attachShopFile(created.id, "datasheet", url, pendingShopUrl))
+                return;
+              if (!url) return; // nothing offered, nothing to keep as a link
               if (await addLink(created.id, "datasheet", url)) {
                 datasheetLinked = true;
               } else {
@@ -546,8 +553,8 @@
         // The photo reports nothing either way — a picture is a nicety, and its
         // absence on the page that opens says it plainly enough without a toast for
         // something nobody asked for by name.
-        if (photoWanted) {
-          saving.push(attachShopPhoto(created.id, pendingImageUrl, pendingShopUrl));
+        if (fromShopImport) {
+          saving.push(attachShopFile(created.id, "photo", pendingImageUrl, pendingShopUrl));
         }
         if (saving.length) {
           // Both are awaited before the dialog closes: the caller may navigate to
@@ -567,7 +574,7 @@
       setShopUrl(null);
       pendingDatasheetUrl = null;
       pendingImageUrl = null;
-      photoWanted = false;
+      fromShopImport = false;
       dialog.close();
       // Said after the jump when there is one: these are the second step's news,
       // and the caller is about to replace the page this toast would appear on.
@@ -818,7 +825,7 @@
   async function applyPrefillFields(prefill) {
     pendingDatasheetUrl = null;
     pendingImageUrl = null;
-    photoWanted = false;
+    fromShopImport = false;
     // An invoice line's prefill carries a prebuilt shop URL; a BOM/blank one has
     // none. A later shop lookup (runImport) overrides this with its source_url.
     setShopUrl(prefill && prefill.shopUrl);
@@ -855,7 +862,7 @@
     set("notes", prefill.notes);
     if (prefill.datasheetUrl) pendingDatasheetUrl = prefill.datasheetUrl;
     if (prefill.imageUrl) pendingImageUrl = prefill.imageUrl;
-    if (prefill.fromShop) photoWanted = true;
+    if (prefill.fromShop) fromShopImport = true;
 
     const proposal = prefill.proposal || null;
     // Package and mounting are type-independent, so apply them up front — before the
@@ -1142,7 +1149,7 @@
       // hand. Dropped up front, so only this code's own answer can set them.
       pendingDatasheetUrl = null;
       pendingImageUrl = null;
-      photoWanted = false;
+      fromShopImport = false;
       importUrl.value = importCode;
       triggerImport();
     }
