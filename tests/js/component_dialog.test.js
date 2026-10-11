@@ -729,15 +729,12 @@ describe("component_dialog.js — the datasheet a shop won't hand over", () => {
           source_url: "https://www.mouser.pl/ProductDetail/USB5734",
           datasheet_url: offered,
         });
-      if (url === "/api/components/7/datasheet-from-shops")
-        return download
-          ? ok({ id: 3 })
-          : Promise.resolve({
-              ok: false,
-              status: 422,
-              json: () =>
-                Promise.resolve({ detail: "no datasheet could be downloaded" }),
-            });
+      if (url === "/api/components/7/files-from-shops")
+        return ok({
+          photo: "none",
+          datasheet: download ? "added" : "none",
+          reasons: [],
+        });
       if (url === "/api/components") return ok({ id: 7 });
       return ok({});
     };
@@ -813,9 +810,10 @@ describe("component_dialog.js — the datasheet a shop won't hand over", () => {
 
     await createAfterImport(page);
 
-    const asked = calls.filter((c) => c.url.endsWith("/datasheet-from-shops"));
+    const asked = calls.filter((c) => c.url.endsWith("/files-from-shops"));
     expect(asked.map((c) => c.body)).toEqual([
       {
+        image_url: null,
         datasheet_url: DATASHEET,
         source_url: "https://www.mouser.pl/ProductDetail/USB5734",
       },
@@ -831,7 +829,7 @@ describe("component_dialog.js — the datasheet a shop won't hand over", () => {
 
     await createAfterImport(page);
 
-    const asked = calls.filter((c) => c.url.endsWith("/datasheet-from-shops"));
+    const asked = calls.filter((c) => c.url.endsWith("/files-from-shops"));
     expect(asked.map((c) => c.body.datasheet_url)).toEqual([null]);
     const linked = calls.filter((c) => c.url === "/api/links").map((c) => c.body.kind);
     expect(linked).toEqual(["shop"]); // no datasheet link to a URL nobody gave
@@ -859,20 +857,19 @@ describe("component_dialog.js — the shop's product photo", () => {
           source_url: "https://www.digikey.pl/ProductDetail/USB5734",
           image_url: image,
         });
-      if (url === "/api/components/7/photo-from-shops")
+      if (url === "/api/components/7/files-from-shops")
         return new Promise((resolve) =>
           setTimeout(() => {
             state.stored = download;
-            resolve(
-              download
-                ? { ok: true, json: () => Promise.resolve({ id: 3 }) }
-                : {
-                    ok: false,
-                    status: 422,
-                    json: () =>
-                      Promise.resolve({ detail: "no photo could be downloaded" }),
-                  },
-            );
+            resolve({
+              ok: true,
+              json: () =>
+                Promise.resolve({
+                  photo: download ? "added" : "none",
+                  datasheet: "none",
+                  reasons: download ? [] : ["digikey: no product found"],
+                }),
+            });
           }, 0),
         );
       if (url === "/api/components") return ok({ id: 7 });
@@ -896,7 +893,7 @@ describe("component_dialog.js — the shop's product photo", () => {
   const photoCalls = (calls) =>
     calls.filter(
       (c) =>
-        c.url === "/api/components/7/photo-from-shops" ||
+        c.url === "/api/components/7/files-from-shops" ||
         (c.url === "/api/attachments/from-url" && c.body.kind === "photo"),
     );
 
@@ -914,8 +911,8 @@ describe("component_dialog.js — the shop's product photo", () => {
 
     expect(atNavigation.stored).toBe(true); // the answer was in, not merely asked for
     expect(atNavigation.sent).toHaveLength(1);
-    expect(atNavigation.sent[0].url).toBe("/api/components/7/photo-from-shops");
-    expect(atNavigation.sent[0].body).toEqual({
+    expect(atNavigation.sent[0].url).toBe("/api/components/7/files-from-shops");
+    expect(atNavigation.sent[0].body).toMatchObject({
       image_url: PHOTO,
       source_url: "https://www.digikey.pl/ProductDetail/USB5734",
     });
@@ -1043,33 +1040,29 @@ describe("component_dialog.js — what the import leaves behind", () => {
     expect(linked).toEqual([]); // not even A's shop link
   });
 
-  it("downloads the datasheet and the photo at the same time", async () => {
-    // Each download is bounded by the server's 30s whole-fetch timeout, and a shop
-    // that stalls rather than refusing would hold the dialog for both budgets if
-    // these ran one after the other.
-    let inFlight = 0;
-    let peak = 0;
+  it("asks for the datasheet and the photo in one request, and says it waits", async () => {
+    // One request, so each fallback shop is asked once for both files; the server
+    // bounds the pair by one 30 s budget.
     const release = [];
+    const calls = [];
     const impl = (url, opts) => {
+      calls.push({ url, body: opts && opts.body ? JSON.parse(opts.body) : null });
       if (url === "/api/shops/lookup")
         return ok({
           mpn: "USB5734",
           datasheet_url: DATASHEET,
           image_url: PHOTO,
         });
-      if (
-        url === "/api/components/7/datasheet-from-shops" ||
-        url === "/api/components/7/photo-from-shops"
-      ) {
-        inFlight += 1;
-        peak = Math.max(peak, inFlight);
+      if (url === "/api/components/7/files-from-shops")
         return new Promise((resolve) =>
-          release.push(() => {
-            inFlight -= 1;
-            resolve({ ok: true, json: () => Promise.resolve({ id: 3 }) });
-          }),
+          release.push(() =>
+            resolve({
+              ok: true,
+              json: () =>
+                Promise.resolve({ photo: "added", datasheet: "added", reasons: [] }),
+            }),
+          ),
         );
-      }
       if (url === "/api/components") return ok({ id: 7 });
       return ok({});
     };
@@ -1080,7 +1073,9 @@ describe("component_dialog.js — what the import leaves behind", () => {
     const submitted = submit(page);
     await tick();
 
-    expect(peak).toBe(2);
+    const asked = calls.filter((c) => c.url.endsWith("/files-from-shops"));
+    expect(asked).toHaveLength(1);
+    expect(asked[0].body).toMatchObject({ image_url: PHOTO, datasheet_url: DATASHEET });
     // …and the wait is explained rather than looking like a dead form.
     const status = page.document.getElementById("shop-import-status");
     expect(status.hidden).toBe(false);

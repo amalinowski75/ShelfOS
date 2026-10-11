@@ -344,43 +344,28 @@
     }
   }
 
-  // Download a shop URL as a file attachment via the SSRF-guarded endpoint.
-  // Returns true on success; a non-2xx or a network error is a handled false, never
-  // an exception (the component already exists).
-  async function attachFromUrl(componentId, url, kind) {
+  // Give the new component its photo and datasheet files: the import's own, else
+  // another shop's (POST /api/components/{id}/files-from-shops — one request for
+  // both, so each fallback shop is asked once). The parsed answer, per file
+  // "present" / "added" / "none"; null when the request itself failed — a handled
+  // null, never an exception (the component already exists).
+  async function attachShopFiles(componentId, imageUrl, datasheetUrl, sourceUrl) {
     try {
-      const resp = await fetch("/api/attachments/from-url", {
+      const resp = await fetch(`/api/components/${componentId}/files-from-shops`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        // The source shop is not asked again: it would offer the same files.
         body: JSON.stringify({
-          entity_type: "component",
-          entity_id: componentId,
-          url,
-          kind,
+          image_url: imageUrl,
+          datasheet_url: datasheetUrl,
+          source_url: sourceUrl,
         }),
       });
-      return resp.ok;
+      if (!resp.ok) return null;
+      const found = await resp.json();
+      return found && typeof found === "object" ? found : null;
     } catch {
-      return false;
-    }
-  }
-
-  // Give the new component a photo or a datasheet file: the import's own, else
-  // another shop's (POST /api/components/{id}/photo-from-shops, or
-  // …/datasheet-from-shops). True once one is attached; a 422 means no shop had
-  // one to give.
-  async function attachShopFile(componentId, what, url, sourceUrl) {
-    const field = what === "photo" ? "image_url" : "datasheet_url";
-    try {
-      const resp = await fetch(`/api/components/${componentId}/${what}-from-shops`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-        // The source shop is not asked again: it would offer the same file.
-        body: JSON.stringify({ [field]: url, source_url: sourceUrl }),
-      });
-      return resp.ok;
-    } catch {
-      return false;
+      return null;
     }
   }
 
@@ -520,54 +505,42 @@
         if (pendingShopUrl && !(await addLink(created.id, "shop", pendingShopUrl))) {
           lost.push("the shop link");
         }
-        // The datasheet and the photo download TOGETHER, not one after the other:
-        // the server bounds each by a whole-fetch timeout (30 s) — the photo's
-        // fallback to other shops shares that one budget rather than getting its
-        // own per step — and a shop whose file host tarpits us rather than refusing
-        // (Akamai's habit) would otherwise hold this for both budgets end to end.
-        // They land in different attachments, so neither depends on the other.
-        const saving = [];
-        // If the shop blocks server-side fetches — TME's document host answers a
-        // Cloudflare challenge, and Mouser's Akamai serves an "Access Denied" page
-        // to datacenter IPs, so the same import can download on a laptop and fail on
-        // a hosted server — keep the datasheet as a LINK instead. Only if BOTH fail
-        // is it lost, and the user is told.
-        if (pendingDatasheetUrl || fromShopImport) {
-          const url = pendingDatasheetUrl;
-          saving.push(
-            (async () => {
-              // The import's own datasheet, else another shop's file
-              // (POST /api/components/{id}/datasheet-from-shops) — and only when
-              // no shop hands one over, the import's URL kept as a link.
-              if (await attachShopFile(created.id, "datasheet", url, pendingShopUrl))
-                return;
-              if (!url) return; // nothing offered, nothing to keep as a link
-              if (await addLink(created.id, "datasheet", url)) {
-                datasheetLinked = true;
-              } else {
-                lost.push("the datasheet");
-              }
-            })(),
-          );
-        }
+        // The photo and the datasheet, in one request: the server tries the
+        // import's own file of each, then Digi-Key's and element14's, asking each
+        // of those once for both, all within one 30 s budget. It is awaited before
+        // the dialog closes: the caller may navigate to the component's page next,
+        // and a file still in flight would miss the gallery and the attachments
+        // panel that page loads. That wait is worth a line of text — without one,
+        // a stalling shop leaves a form that no longer responds and says nothing.
+        //
         // The photo reports nothing either way — a picture is a nicety, and its
-        // absence on the page that opens says it plainly enough without a toast for
-        // something nobody asked for by name.
-        if (fromShopImport) {
-          saving.push(attachShopFile(created.id, "photo", pendingImageUrl, pendingShopUrl));
-        }
-        if (saving.length) {
-          // Both are awaited before the dialog closes: the caller may navigate to
-          // the component's page next, and an attachment still in flight would miss
-          // the gallery and the attachments panel that page loads. That wait is
-          // worth a line of text — without one, a stalling shop leaves a form that
-          // no longer responds and says nothing about why.
+        // absence on the page that opens says it plainly enough. The datasheet is
+        // not lost: when no shop hands over the file (TME's document host answers
+        // a server with a Cloudflare challenge, Mouser's Akamai with an "Access
+        // Denied" page), the import's URL is kept as a LINK instead, and said so.
+        // Only if that fails too is it lost, and the user is told.
+        if (fromShopImport || pendingDatasheetUrl) {
           if (importStatus) {
             importStatus.hidden = false;
             importStatus.className = "muted";
             importStatus.textContent = "Component created — saving its files…";
           }
-          await Promise.all(saving);
+          const url = pendingDatasheetUrl;
+          const found = await attachShopFiles(
+            created.id,
+            pendingImageUrl,
+            url,
+            pendingShopUrl,
+          );
+          const fileSaved =
+            found && (found.datasheet === "added" || found.datasheet === "present");
+          if (url && !fileSaved) {
+            if (await addLink(created.id, "datasheet", url)) {
+              datasheetLinked = true;
+            } else {
+              lost.push("the datasheet");
+            }
+          }
         }
       }
       // Used; clear so a later manual (non-import) create can't reuse a stale URL.

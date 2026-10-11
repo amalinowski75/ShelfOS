@@ -727,10 +727,17 @@ describe("component_dialog.js — shop import", () => {
       ],
     },
   };
+  // The shop lookup answers with ``product``; the server's file search (one
+  // request for the photo and the datasheet) finds both.
   const withLookup = (product) => (url, opts) =>
     url === "/api/shops/lookup"
       ? Promise.resolve({ ok: true, json: async () => product })
-      : fetchImpl(url, opts);
+      : url === "/api/components/99/files-from-shops"
+        ? Promise.resolve({
+            ok: true,
+            json: async () => ({ photo: "added", datasheet: "added", reasons: [] }),
+          })
+        : fetchImpl(url, opts);
 
   async function openAndImport(document) {
     document.getElementById("new-component-btn").click();
@@ -907,7 +914,7 @@ describe("component_dialog.js — shop import", () => {
     await tick();
     // The server's search: the shop's own datasheet first, then another shop's.
     const attach = fetchMock.mock.calls.find(
-      (c) => c[0] === "/api/components/99/datasheet-from-shops",
+      (c) => c[0] === "/api/components/99/files-from-shops",
     );
     expect(attach).toBeTruthy();
     expect(JSON.parse(attach[1].body)).toMatchObject({
@@ -1006,7 +1013,7 @@ describe("component_dialog.js — shop import", () => {
     // when no other shop has the file either the search 422s. The datasheet must not
     // be lost: it becomes a link instead.
     const impl = (url, opts) =>
-      url === "/api/components/99/datasheet-from-shops"
+      url === "/api/components/99/files-from-shops"
         ? Promise.resolve({ ok: false, json: async () => ({ detail: "nope" }) })
         : withLookup(PRODUCT)(url, opts);
     const { document, window, fetchMock } = loadPage(componentPageFixture(), SCRIPTS, {
@@ -1048,7 +1055,7 @@ describe("component_dialog.js — shop import", () => {
     // Both the shop link and the datasheet are lost — the message must not read as
     // though one of them survived.
     const impl = (url, opts) => {
-      if (url === "/api/links" || url === "/api/components/99/datasheet-from-shops") {
+      if (url === "/api/links" || url === "/api/components/99/files-from-shops") {
         return Promise.resolve({ ok: false, json: async () => ({ detail: "no" }) });
       }
       return withLookup(PRODUCT)(url, opts);
@@ -1066,7 +1073,7 @@ describe("component_dialog.js — shop import", () => {
     // Both the download and the link fallback fail — the datasheet is genuinely
     // lost, and that must be reported rather than swallowed.
     const impl = (url, opts) => {
-      if (url === "/api/components/99/datasheet-from-shops" || url === "/api/links") {
+      if (url === "/api/components/99/files-from-shops" || url === "/api/links") {
         return Promise.resolve({ ok: false, json: async () => ({ detail: "no" }) });
       }
       return withLookup(PRODUCT)(url, opts);
