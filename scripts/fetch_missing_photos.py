@@ -10,8 +10,15 @@ For each component with no photo attachment it walks the component's links
 asks the server to look the part up at that shop, and, when the shop names an
 image, has the server download it as a ``photo`` attachment.
 
-**The shop's MPN must match the component's** before anything is attached, so
-a component with no MPN cannot be checked and is skipped. How the shop is asked
+**The shop's MPN must match the component's, and its manufacturer must not
+plainly be another company** before anything is attached — one number is sold
+under several makers, even within a single shop (Farnell answers a Keystone
+"5270" with ABB's). The makers are compared by the server
+(``/api/manufacturers/same-mpn``): an alias, or a shop's longer spelling of the
+same name ("NXP USA Inc." for "NXP Semiconductors"), is no conflict, and neither
+is a side that names nobody. The server must be a build that answers it; the
+script stops if it is not. A component with no MPN cannot be checked and
+is skipped. How the shop is asked
 depends on the shop:
 
 * **TME** is asked through the link itself: its product URL carries TME's own
@@ -27,7 +34,7 @@ When the linked shop does not know the part, has no image for it, or will not
 let the server
 download it — Mouser's Akamai refuses every image request from a script, from
 the hosted server and a laptop alike — Digi-Key and then Farnell are asked by
-the same MPN (verified the same way), and their image is used instead. They are
+the same MPN (and checked the same way), and their image is used instead. They are
 asked only then, so a part whose own shop serves its picture spends no other
 shop's quota; ``--no-fallback`` turns this off.
 
@@ -117,6 +124,21 @@ def shop_key(url: str) -> str | None:
     return None
 
 
+def mismatch(api: Api, row: dict[str, Any], product: dict[str, Any]) -> str | None:
+    """Why a shop's answer is not this component's part, or None if it is.
+
+    The MPN has to match, and the maker must not contradict the component's: one
+    number is sold under several makers, even within a single shop. A side that
+    names no maker leaves the MPN to decide, as a scan does.
+    """
+    if not same_mpn(product.get("mpn"), row.get("mpn")):
+        return f"answered with {product.get('mpn') or 'an unnamed part'}"
+    maker = product.get("manufacturer")
+    if api.maker_conflicts(row, maker):
+        return f"answered with {maker}'s part, not {row.get('manufacturer')}'s"
+    return None
+
+
 def same_mpn(a: str | None, b: str | None) -> bool:
     """Whether two MPNs name the same part, ignoring case and punctuation."""
 
@@ -191,6 +213,38 @@ class Api:
         links = resp.json()
         return links if isinstance(links, list) else []
 
+    def maker_conflicts(
+        self, row: dict[str, Any], manufacturer: str | None
+    ) -> bool | None:
+        """Whether a shop's maker is plainly not the component's, by the server.
+
+        Asked of the server rather than compared here: it resolves the alias
+        table, folds names with a hand-written table, and accepts a shop's longer
+        spelling of the same name ("NXP USA Inc." for "NXP Semiconductors") —
+        rules a copy in this script would drift from. None when either side
+        names nobody: silence contradicts nothing.
+        """
+        resp = self.client.get(
+            "/api/manufacturers/same-mpn",
+            params={"mpn": row["mpn"], "manufacturer": manufacturer},
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        candidates = body.get("candidates") if isinstance(body, dict) else None
+        for candidate in candidates if isinstance(candidates, list) else []:
+            if isinstance(candidate, dict) and candidate.get("id") == row["id"]:
+                if "manufacturer_conflicts" not in candidate:
+                    # An older server: without the verdict every maker would pass
+                    # unchecked, which is the very thing this guards against.
+                    sys.exit(
+                        "The server does not compare manufacturers yet — restart "
+                        "it on a build whose /api/manufacturers/same-mpn answers "
+                        "manufacturer_conflicts."
+                    )
+                verdict = candidate["manufacturer_conflicts"]
+                return verdict if isinstance(verdict, bool) else None
+        return None
+
     def has_photo(self, component_id: int) -> bool:
         """Whether the component has any attachment filed as a photo.
 
@@ -262,10 +316,11 @@ def find_product(
 
     def check(product: dict[str, Any] | None, reason: str | None, asked: str) -> bool:
         nonlocal last_reason
-        if product and same_mpn(product.get("mpn"), mpn):
-            return True
         if product:
-            reason = f"{asked} answered with {product.get('mpn') or 'an unnamed part'}"
+            wrong = mismatch(api, row, product)
+            if wrong is None:
+                return True
+            reason = f"{asked} {wrong}"
         last_reason = reason or last_reason
         return False
 
@@ -385,9 +440,11 @@ def images(
                 "manufacturer": row.get("manufacturer") or None,
             },
         )
-        if found and same_mpn(found.get("mpn"), mpn) and found.get("image_url"):
-            yield other, found["image_url"]
-        elif reason:
+        if found:
+            reason = mismatch(api, row, found)
+            if reason is None and found.get("image_url"):
+                yield other, found["image_url"]
+        if reason:
             # Said on the component's line, not swallowed: a rate-limited or
             # misconfigured fallback otherwise looks exactly like a shop that
             # does not sell the part.
