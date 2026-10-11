@@ -17,11 +17,14 @@ pull request, which carries the reasoning and the verification.
   Digi-Key's and element14's picture of the same part. It does this even when
   the import offered no image, since another shop may have one. A fallback
   picture is used only when it is this part: the part number has to match, and
-  the maker must not be another company (`manufacturer_service.conflicts_with`).
+  both sides must name a maker that is not another company
+  (`manufacturer_service.conflicts_with`).
   element14 answers a Keystone `5270` with ABB's part, and that answer is turned
   down. A longer spelling of the same maker, such as "NXP USA Inc." for "NXP
-  Semiconductors", is accepted. New endpoint:
-  `POST /api/components/{id}/photo-from-shops`.
+  Semiconductors", is accepted. The whole chain shares the 30-second budget of
+  a single download. New endpoint: `POST /api/components/{id}/photo-from-shops`.
+  `scripts/fetch_missing_photos.py` now uses it instead of its own copy of the
+  fallback, so `--no-fallback` is gone.
 - **#187** — `scripts/fetch_missing_photos.py` gives a photo to every component
   that has none. It looks each part up at the shop its link points to and falls
   back to Digi-Key and element14 the same way, and it works only through the API
