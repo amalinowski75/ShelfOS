@@ -6,6 +6,13 @@
     <meta name="csrf-token" content="{{ request.session.get('csrf_token', '') }}" />
     <meta name="user-role" content="{{ current_user.role.value if current_user else '' }}" />
     <title>{% block title %}ShelfOS{% endblock %}</title>
+    {# The SVG for every browser that takes one; the .ico for the rest, and for
+       the bare /favicon.ico some still ask for regardless (app/main.py). #}
+    <link rel="icon" href="/static/brand/favicon.svg?v={{ static_version() }}" type="image/svg+xml" />
+    <link rel="icon" href="/static/brand/favicon.ico?v={{ static_version() }}" sizes="any" />
+    <link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png?v={{ static_version() }}" />
+    <link rel="manifest" href="/static/brand/site.webmanifest" />
+    <meta name="theme-color" content="#5E9E78" />
     {# First and blocking: it puts the chosen theme on <html> before anything is
        painted, so a dark choice never flashes white. #}
     <script src="/static/theme.js?v={{ static_version() }}"></script>

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16" role="img" aria-label="ShelfOS">
+<title>ShelfOS</title>
+<rect width="16" height="16" rx="3.5" fill="#5E9E78"/>
+<rect x="1.6" y="4.5" width="2.2" height="1.1" rx="0.3" fill="#12181F"/>
+<rect x="12.2" y="4.5" width="2.2" height="1.1" rx="0.3" fill="#12181F"/>
+<rect x="1.6" y="7.5" width="2.2" height="1.1" rx="0.3" fill="#12181F"/>
+<rect x="12.2" y="7.5" width="2.2" height="1.1" rx="0.3" fill="#12181F"/>
+<rect x="1.6" y="10.5" width="2.2" height="1.1" rx="0.3" fill="#12181F"/>
+<rect x="12.2" y="10.5" width="2.2" height="1.1" rx="0.3" fill="#12181F"/>
+<rect x="3.5" y="2.5" width="9" height="11" rx="0.8" fill="#1B2430"/>
+<circle cx="8" cy="2.5" r="1.2" fill="#5E9E78"/>
+<rect x="4.6" y="7.3" width="6.8" height="0.7" rx="0.35" fill="#8094AC"/>
+<rect x="4.6" y="11.6" width="6.8" height="0.7" rx="0.35" fill="#8094AC"/>
+<rect x="5" y="4.9" width="2" height="2.4" rx="0.4" fill="#8094AC"/>
+<rect x="8.2" y="4.4" width="2.8" height="2.9" rx="0.4" fill="#5E9E78"/>
+<rect x="5" y="9.4" width="3" height="2.2" rx="0.4" fill="#8094AC"/>
+<rect x="9" y="10" width="2" height="1.6" rx="0.4" fill="#8094AC"/>
+</svg>

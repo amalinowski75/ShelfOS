@@ -3155,6 +3155,56 @@ def test_the_theme_is_set_before_the_stylesheet_on_every_page(
         assert head.index("/static/theme.js") < head.index("/static/app.css")
 
 
+def test_every_page_links_the_brand_icons_and_each_one_is_served(
+    client: TestClient, anon_client: TestClient
+) -> None:
+    """The tab icon, the home-screen icon and the manifest, signed in or not.
+
+    Each is fetched signed out: a browser asks for them without the page's
+    cookie in some cases (the manifest, always), so they must be public.
+    """
+    wanted = {
+        "favicon.svg": "image/svg+xml",
+        "favicon.ico": "image/vnd.microsoft.icon",
+        "apple-touch-icon.png": "image/png",
+        "site.webmanifest": "application/manifest+json",
+    }
+    for html in (client.get("/").text, anon_client.get("/login").text):
+        head = html.split("</head>", 1)[0]
+        link = r'<link rel="(?:icon|apple-touch-icon|manifest)" href="([^"]+)"'
+        hrefs = re.findall(link, head)
+        names = [h.split("?", 1)[0].removeprefix("/static/brand/") for h in hrefs]
+        assert sorted(names) == sorted(wanted)
+        for href, name in zip(hrefs, names, strict=True):
+            response = anon_client.get(href)
+            assert response.status_code == 200, href
+            assert response.headers["content-type"].startswith(wanted[name]), href
+
+
+def test_the_manifest_icons_exist_at_their_sizes(anon_client: TestClient) -> None:
+    manifest = anon_client.get("/static/brand/site.webmanifest").json()
+    assert manifest["start_url"] == "/"
+    purposes = {icon.get("purpose", "any") for icon in manifest["icons"]}
+    assert purposes == {"any", "maskable"}
+    for icon in manifest["icons"]:
+        response = anon_client.get(icon["src"])
+        assert response.status_code == 200, icon["src"]
+        png = response.content
+        assert png[:8] == b"\x89PNG\r\n\x1a\n", icon["src"]
+        # The IHDR chunk: width and height, big-endian, right after its header.
+        width = int.from_bytes(png[16:20], "big")
+        height = int.from_bytes(png[20:24], "big")
+        assert f"{width}x{height}" == icon["sizes"], icon["src"]
+
+
+def test_favicon_ico_at_the_root_is_public(anon_client: TestClient) -> None:
+    response = anon_client.get("/favicon.ico", follow_redirects=False)
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/vnd.microsoft.icon"
+    brand = Path(__file__).parent.parent / "app/web/static/brand"
+    assert response.content == (brand / "favicon.ico").read_bytes()
+
+
 def test_settings_menu_offers_every_theme(client: TestClient) -> None:
     html = client.get("/").text
 

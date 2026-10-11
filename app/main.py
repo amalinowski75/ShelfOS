@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request, Response
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session
 from starlette.middleware.sessions import SessionMiddleware
@@ -446,6 +447,13 @@ def create_app(*, create_tables: bool = True) -> FastAPI:
 
     app.include_router(web_routes.router)
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+
+    # Browsers still ask for /favicon.ico on their own — a bookmark, a feed
+    # reader, a page that never loaded base.html (a JSON error, /docs). Public,
+    # like /static.
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon() -> FileResponse:
+        return FileResponse(_STATIC_DIR / "brand" / "favicon.ico")
 
     @app.get("/health", tags=["meta"])
     def health() -> dict[str, str]:
