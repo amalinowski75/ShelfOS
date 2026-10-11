@@ -62,9 +62,11 @@ Usage::
 The password is read from ``SHELFOS_PASSWORD`` or asked for. The account must be
 allowed to write (attaching a file is a writer's action), and every lookup spends
 the shop's API quota, so lookups are paced: ``--delay`` apart for each shop, and
-never faster than Mouser's 30 calls a minute (faster, and it answers "could not
-read the Mouser response" for whole runs of parts). A lookup that still meets
-that answer is retried once, half a minute later.
+never faster than Mouser's 30 calls a minute. A lookup that still meets a
+per-minute limit, or an unreadable answer, is retried once, half a minute later.
+Mouser also caps calls per DAY (about 1000): once that is spent, every Mouser
+lookup says "Maximum calls per day exceeded" until the next day, and the run
+reports it rather than retrying.
 """
 
 from __future__ import annotations
@@ -86,11 +88,17 @@ DEFAULT_URL = "http://localhost:9000"
 # Seconds between two lookups at one shop, where its API sets a rate limit.
 MIN_INTERVAL = {"mouser": 2.1}
 
-# A rate-limited (or briefly failing) shop API surfaces as the provider's
-# "could not read the <shop> response", unlike a plain miss; such a lookup is
-# retried once after this many seconds. Pacing alone still met it in runs of a
-# dozen parts — another client spending the same key counts against it too.
+# A rate-limited or briefly failing shop API is retried once, after this many
+# seconds. Pacing alone still met Mouser's limit in runs of a dozen parts —
+# another client spending the same key counts against it too.
 RETRY_AFTER = 30.0
+
+# Worth that retry: a briefly failing answer, or a per-minute (not per-day) call
+# limit. Mouser states its limits in the body ("Maximum calls per day
+# exceeded."); a spent DAILY quota is not retried — nothing works until tomorrow.
+_TRANSIENT = re.compile(
+    r"could not read the [\w-]+ response$|calls per (minute|second) exceeded"
+)
 
 # The order links are tried in; datasheet links never lead to a product page.
 LINK_KINDS = ("shop", "product", "other")
@@ -146,6 +154,7 @@ def mismatch(api: Api, row: dict[str, Any], product: dict[str, Any]) -> str | No
 _UNAVAILABLE = re.compile(
     r"integration is not configured|could not reach "
     r"|could not read the [\w-]+ (token )?response$|^HTTP 5\d\d|out of time$"
+    r"|calls per (day|minute|second) exceeded"
 )
 
 
@@ -290,7 +299,7 @@ class Api:
     ) -> tuple[dict[str, Any] | None, str | None]:
         """A shop lookup: (product, None) or (None, the server's reason)."""
         product, reason = self._lookup_once(shop, body)
-        if reason and re.search(r"could not read the [\w-]+ response$", reason):
+        if reason and _TRANSIENT.search(reason):
             time.sleep(RETRY_AFTER)
             product, reason = self._lookup_once(shop, body)
         return product, reason
