@@ -103,11 +103,11 @@ component is missing:
 - **a shop link**: the product page the shop names, or else the page built from
   the line's number;
 - **a datasheet**: downloaded as a file from the invoice's shop, or else from
-  Digi-Key or element14 as above. If no shop hands one over and the invoice's shop
-  refused its own (a block page or an HTTP 4xx), that one is kept as a link, the
-  same as an import does. A download that only failed for the moment (a timeout,
-  a 5xx, too many downloads at once) is left out rather than linked, so the next
-  run can still fetch the file;
+  Digi-Key or element14 as above. If no shop hands one over, the invoice shop's
+  own datasheet is kept as a link, the same as an import does. A link doesn't
+  count as having the datasheet: a later run, or **Fill in from shop**, still
+  looks for the file. That includes parts imported before this, whose datasheet
+  is only a link;
 - **a photo**: as above, falling back to Digi-Key and element14.
 
 What a component already has is left alone. A component that has all three is

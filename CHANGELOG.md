@@ -17,10 +17,11 @@ pull request, which carries the reasoning and the verification.
   only as a link. ShelfOS now asks Digi-Key and then element14 for the same part
   (part number and maker checked as for photos). Digi-Key's datasheet is often
   the maker's own PDF. The link is kept only when no shop hands over a file.
-  This applies to the import dialog (new endpoint
-  `POST /api/components/{id}/datasheet-from-shops`) and to filling in an
-  invoice's parts. One lookup at each shop serves both the photo and the
-  datasheet. `shop_photo_service` is now `shop_files_service`.
+  This applies to the import dialog, which now asks for both files in one request
+  (new endpoint `POST /api/components/{id}/files-from-shops`), and to filling in
+  an invoice's parts, where a datasheet that is only a link no longer counts as
+  having one. One lookup at each shop serves both the photo and the datasheet.
+  `shop_photo_service` is now `shop_files_service`.
 
 ## Invoice parts get their shop link and datasheet
 
