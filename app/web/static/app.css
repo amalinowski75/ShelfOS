@@ -647,9 +647,14 @@ dialog .close {
 dialog .close:hover { background: var(--surface-2); color: var(--text); }
 dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
 
-/* About (Settings menu): the logo, a sentence, and three facts in two columns. */
-.about .logo { height: 48px; align-self: center; margin: 6px 0 2px; }
-.about p { margin: 0; color: var(--muted); }
+/* About (Settings menu): the logo with the sentence beside it, and three facts
+   in two columns under them. Wider than other dialogs, so a logo large enough
+   to be the point of the dialog still leaves the sentence a readable column;
+   on a phone the sentence goes under the logo instead. */
+dialog.about-dialog { width: min(620px, calc(100vw - 32px)); }
+.about-intro { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 22px; }
+.about .logo { height: 64px; }
+.about p { margin: 0; color: var(--muted); flex: 1 1 220px; }
 .about-facts {
   display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0;
 }

@@ -132,20 +132,22 @@
       </article>
     </dialog>
     {% set v = app_version() %}
-    <dialog id="about-dialog">
+    <dialog id="about-dialog" class="about-dialog">
       <article>
         <header>
           <strong>About ShelfOS</strong>
           <button class="close" aria-label="Close" data-close></button>
         </header>
         <div class="dialog-body about">
-          {# Light or dark lettering by theme, the same rule as the header's. #}
-          <img class="logo logo-light" src="/static/brand/logo.svg?v={{ static_version() }}" alt="ShelfOS" width="187" height="48" />
-          <img class="logo logo-dark" src="/static/brand/logo-dark.svg?v={{ static_version() }}" alt="ShelfOS" width="187" height="48" />
-          <p>A lightweight inventory for electronic components: parametric search,
-            purchases and invoices, hierarchical storage locations, stock movements,
-            BOMs and QR labels. Deliberately not an ERP, accounting or warehouse
-            system.</p>
+          <div class="about-intro">
+            {# Light or dark lettering by theme, the same rule as the header's. #}
+            <img class="logo logo-light" src="/static/brand/logo.svg?v={{ static_version() }}" alt="ShelfOS" width="249" height="64" />
+            <img class="logo logo-dark" src="/static/brand/logo-dark.svg?v={{ static_version() }}" alt="ShelfOS" width="249" height="64" />
+            <p>A lightweight inventory for electronic components: parametric search,
+              purchases and invoices, hierarchical storage locations, stock movements,
+              BOMs and QR labels. Deliberately not an ERP, accounting or warehouse
+              system.</p>
+          </div>
           <dl class="about-facts">
             <dt>Version</dt>
             <dd>

@@ -3130,7 +3130,7 @@ def test_settings_menu_holds_the_instance_level_controls(client: TestClient) -> 
 
 def _about(client: TestClient) -> str:
     html = client.get("/").text
-    return html.split('<dialog id="about-dialog">', 1)[1].split("</dialog>", 1)[0]
+    return html.split('<dialog id="about-dialog"', 1)[1].split("</dialog>", 1)[0]
 
 
 def test_about_is_in_the_settings_menu_with_the_logo_and_the_links(
