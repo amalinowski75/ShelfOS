@@ -49,8 +49,9 @@ def parts_sharing_mpn(
     """
     found = cs.find_parts_sharing_mpn(session, mpn)
     types = {t.id: t.name for t in cs.list_types(session)} if found else {}
+    canonical = ms.canonical_name(session, manufacturer)
     return SameMpnRead(
-        manufacturer=ms.canonical_name(session, manufacturer),
+        manufacturer=canonical,
         candidates=[
             SameMpnCandidateRead(
                 id=component.id,
@@ -60,6 +61,11 @@ def parts_sharing_mpn(
                 type_name=types.get(component.type_id),
                 records_alias=ms.would_record_alias(
                     session, alias=manufacturer, canonical=component.manufacturer
+                ),
+                # The stored name through the alias table too: recording an alias
+                # never rewrites a component filed under it before.
+                manufacturer_conflicts=ms.conflicts_with(
+                    canonical, ms.canonical_name(session, component.manufacturer)
                 ),
             )
             for component in found
