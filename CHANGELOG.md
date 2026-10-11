@@ -9,6 +9,19 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## Datasheets from another shop
+
+- **#192** — a datasheet the import's shop won't hand over now comes from
+  another shop, like a photo (#188). TME blocks server downloads of its
+  datasheets and Mouser blocks them too, so such a datasheet used to be kept
+  only as a link. ShelfOS now asks Digi-Key and then element14 for the same part
+  (part number and maker checked as for photos). Digi-Key's datasheet is often
+  the maker's own PDF. The link is kept only when no shop hands over a file.
+  This applies to the import dialog (new endpoint
+  `POST /api/components/{id}/datasheet-from-shops`) and to filling in an
+  invoice's parts. One lookup at each shop serves both the photo and the
+  datasheet. `shop_photo_service` is now `shop_files_service`.
+
 ## Invoice parts get their shop link and datasheet
 
 - **#191** — a component created when an invoice is finalized now gets the shop
