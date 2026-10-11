@@ -9,6 +9,16 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## Mouser says why it refused
+
+- **#189** — when Mouser refuses a lookup, ShelfOS now shows Mouser's own
+  reason. A spent daily quota used to read as "could not read the Mouser
+  response", because the provider checked the HTTP status (a 403) before reading
+  the body that explained it. It now reads "Mouser rejected the request: Maximum
+  calls per day exceeded". A network failure reads "could not reach Mouser". The
+  photo script no longer retries a spent daily quota, since nothing works again
+  until the next day.
+
 ## A photo from another shop
 
 - **#188** — an import no longer leaves a part without a photo just because its
