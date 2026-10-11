@@ -15,7 +15,8 @@ pull request, which carries the reasoning and the verification.
   ShelfOS is, which build is running, and links to the source on GitHub and to
   this changelog. There are no releases yet, so a build is named by the newest
   pull request merged into it, linked to that pull request; a build with commits
-  of its own on top says how many, with its commit.
+  of its own on top says how many, with its commit, and one with uncommitted
+  edits says so.
 
 ## The logo on printed labels
 
