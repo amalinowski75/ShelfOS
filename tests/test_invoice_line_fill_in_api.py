@@ -30,6 +30,9 @@ class Shops:
         self.asked_fallback: list[str] = []
         self.blocked: set[str] = {MOUSER, SHEET}
         self.fetched: list[str] = []
+        self.deadlines: list[object] = []
+        # A failure of one's own for a URL: the message url_fetch would give.
+        self.errors: dict[str, str] = {}
         monkeypatch.setattr(shops, "import_by_index", self._by_index)
         monkeypatch.setattr(shops, "import_by_mpn", self._by_mpn)
         monkeypatch.setattr(url_fetch, "fetch_url", self._fetch)
@@ -54,8 +57,11 @@ class Shops:
         self.asked_fallback.append(shop_key)
         return self._answer(self.fallback.get(shop_key))
 
-    def _fetch(self, url: str, **_kwargs: object) -> tuple[bytes, str]:
+    def _fetch(self, url: str, **kwargs: object) -> tuple[bytes, str]:
         self.fetched.append(url)
+        self.deadlines.append(kwargs.get("deadline"))
+        if url in self.errors:
+            raise ValidationError(f"could not fetch the URL: {self.errors[url]}")
         if url in self.blocked:
             raise ValidationError("that URL returned a web page, not a file")
         return b"\xff\xd8\xff\xe0 jpeg", url.rsplit("/", 1)[-1]
@@ -423,3 +429,94 @@ def test_a_hand_typed_supplier_still_names_its_shop(
     supplier: str | None, shop: str | None
 ) -> None:
     assert shops.shop_key_by_name(supplier) == shop
+
+
+def test_a_shop_never_asked_is_still_a_fallback(
+    client: TestClient, fake: Shops
+) -> None:
+    """A Digi-Key invoice line with no number: Digi-Key wasn't asked, so may be."""
+    fake.fallback["digikey"] = ProductData(
+        mpn="LM358", manufacturer="TI", image_url=DIGIKEY
+    )
+    invoice_id, line_id, _ = _line(
+        client, supplier="Digi-Key", spn=None, mpn="LM358", maker="TI"
+    )
+
+    body = _fill(client, invoice_id, line_id).json()
+
+    assert body["photo"] == "added"
+    assert fake.asked_own == []
+    assert fake.asked_fallback == ["digikey"]
+
+
+def test_the_datasheet_and_the_photo_share_one_time_budget(
+    client: TestClient, fake: Shops
+) -> None:
+    """Each used to get its own 30 s, so a line could hold its turn for a minute."""
+    fake.blocked.discard(SHEET)
+    fake.own["tme"] = ProductData(**WALSIN, image_url=TME, datasheet_url=SHEET)
+    invoice_id, line_id, _ = _line(client)
+
+    _fill(client, invoice_id, line_id)
+
+    assert fake.fetched == [SHEET, TME]
+    assert len(set(fake.deadlines)) == 1 and fake.deadlines[0] is not None
+
+
+@pytest.mark.parametrize(
+    ("failure", "kept"),
+    [
+        ("timed out", "none"),
+        ("too many downloads in progress — try again shortly", "none"),
+        ("could not reach the server", "none"),
+        ("the server returned an error (HTTP 503)", "none"),
+        ("the server returned an error (HTTP 403)", "linked"),
+        ("that URL returned a web page, not a file", "linked"),
+    ],
+)
+def test_only_a_refused_datasheet_is_kept_as_a_link(
+    client: TestClient, fake: Shops, failure: str, kept: str
+) -> None:
+    """A link counts as having one, so a passing failure must not leave one."""
+    fake.errors[SHEET] = failure
+    fake.own["tme"] = ProductData(**WALSIN, image_url=TME, datasheet_url=SHEET)
+    invoice_id, line_id, cid = _line(client)
+
+    body = _fill(client, invoice_id, line_id).json()
+
+    assert body["datasheet"] == kept
+    linked = f"datasheet:{SHEET}" in _has(client, cid)["links"]
+    assert linked is (kept == "linked")
+
+
+def test_the_own_shop_having_no_picture_is_said(
+    client: TestClient, fake: Shops
+) -> None:
+    fake.own["tme"] = ProductData(**WALSIN)
+    invoice_id, line_id, _ = _line(client)
+
+    body = _fill(client, invoice_id, line_id).json()
+
+    assert body["photo"] == "none"
+    assert "tme: no image for this part" in body["reasons"]
+
+
+def test_the_attachments_are_listed_once(
+    client: TestClient, fake: Shops, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fill-in knows the photo is missing; the photo search doesn't re-ask."""
+    from app.services import attachment_service
+
+    fake.own["tme"] = ProductData(**WALSIN, image_url=TME, source_url=TME_PAGE)
+    invoice_id, line_id, _ = _line(client)
+    listed = []
+    real = attachment_service.list_attachments
+    monkeypatch.setattr(
+        attachment_service,
+        "list_attachments",
+        lambda *a, **k: listed.append(1) or real(*a, **k),
+    )
+
+    _fill(client, invoice_id, line_id)
+
+    assert len(listed) == 1

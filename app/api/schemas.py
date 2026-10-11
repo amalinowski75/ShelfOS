@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.models.enums import (
     AttachmentKind,
     ContainerType,
+    FillStatus,
     LinkKind,
     LocationType,
     MountingType,
@@ -315,9 +316,9 @@ class InvoiceLineFillIn(BaseModel):
     whatever is still missing.
     """
 
-    photo: str
-    datasheet: str
-    shop_link: str
+    photo: FillStatus
+    datasheet: FillStatus
+    shop_link: FillStatus
     reasons: list[str]
 
 

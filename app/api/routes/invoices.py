@@ -27,9 +27,9 @@ from app.api.schemas import (
 )
 from app.auth.deps import current_user_id
 from app.models.invoice import Invoice, InvoiceLine
+from app.services import invoice_fill_in_service
 from app.services import invoice_import_service as imp
 from app.services import invoice_service as inv
-from app.services import shop_photo_service
 from app.services.errors import ValidationError
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
@@ -316,13 +316,8 @@ def fill_in_invoice_line(
     all three; what the component already has is left alone. 422 for a draft
     invoice's line. Writers only.
     """
-    done = shop_photo_service.fill_in_invoice_line(session, invoice_id, line_id)
-    return InvoiceLineFillIn(
-        photo=done.photo,
-        datasheet=done.datasheet,
-        shop_link=done.shop_link,
-        reasons=done.reasons,
-    )
+    done = invoice_fill_in_service.fill_in_invoice_line(session, invoice_id, line_id)
+    return InvoiceLineFillIn.model_validate(done, from_attributes=True)
 
 
 @router.post("/{invoice_id}/finalize", response_model=Invoice)

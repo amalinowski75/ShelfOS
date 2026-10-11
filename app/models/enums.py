@@ -8,6 +8,7 @@ the member *value* (not its name), keeping stored tokens stable and readable.
 from __future__ import annotations
 
 import enum
+from typing import Literal
 
 from sqlalchemy import Column
 from sqlalchemy import Enum as SAEnum
@@ -131,3 +132,10 @@ def enum_column(enum_cls: type[enum.Enum], **kwargs: object) -> Column:  # type:
         SAEnum(enum_cls, values_callable=lambda cls: [m.value for m in cls]),
         **kwargs,  # type: ignore[arg-type]
     )
+
+
+#: What filling an invoice line's component in from its shop did with one thing
+#: (its shop link, datasheet or photo): it already had one, so nothing was asked
+#: ("present"); one was added; a datasheet the shop would not let the server
+#: download was kept as a link ("linked"); or there is still none.
+FillStatus = Literal["present", "added", "linked", "none"]
