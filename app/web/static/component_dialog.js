@@ -368,12 +368,13 @@
   // Give the new component a product photo: the import's own image, else another
   // shop's (POST /api/components/{id}/photo-from-shops). Best-effort and silent
   // like the download it replaces — a 422 means no shop had a picture to give.
-  async function attachShopPhoto(componentId, imageUrl) {
+  async function attachShopPhoto(componentId, imageUrl, sourceUrl) {
     try {
       const resp = await fetch(`/api/components/${componentId}/photo-from-shops`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-        body: JSON.stringify({ image_url: imageUrl }),
+        // The source shop is not asked again: it would offer the same picture.
+        body: JSON.stringify({ image_url: imageUrl, source_url: sourceUrl }),
       });
       return resp.ok;
     } catch {
@@ -518,10 +519,11 @@
           lost.push("the shop link");
         }
         // The datasheet and the photo download TOGETHER, not one after the other:
-        // the server bounds each fetch by a whole-fetch timeout (30 s), and a shop
-        // whose file host tarpits us rather than refusing — Akamai's habit — would
-        // otherwise hold this for both budgets end to end. They land in different
-        // attachments, so neither depends on the other's outcome.
+        // the server bounds each by a whole-fetch timeout (30 s) — the photo's
+        // fallback to other shops shares that one budget rather than getting its
+        // own per step — and a shop whose file host tarpits us rather than refusing
+        // (Akamai's habit) would otherwise hold this for both budgets end to end.
+        // They land in different attachments, so neither depends on the other.
         const saving = [];
         // If the shop blocks server-side fetches — TME's document host answers a
         // Cloudflare challenge, and Mouser's Akamai serves an "Access Denied" page
@@ -545,7 +547,7 @@
         // absence on the page that opens says it plainly enough without a toast for
         // something nobody asked for by name.
         if (photoWanted) {
-          saving.push(attachShopPhoto(created.id, pendingImageUrl));
+          saving.push(attachShopPhoto(created.id, pendingImageUrl, pendingShopUrl));
         }
         if (saving.length) {
           // Both are awaited before the dialog closes: the caller may navigate to

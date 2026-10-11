@@ -882,7 +882,10 @@ describe("component_dialog.js — the shop's product photo", () => {
     expect(atNavigation.stored).toBe(true); // the answer was in, not merely asked for
     expect(atNavigation.sent).toHaveLength(1);
     expect(atNavigation.sent[0].url).toBe("/api/components/7/photo-from-shops");
-    expect(atNavigation.sent[0].body).toEqual({ image_url: PHOTO });
+    expect(atNavigation.sent[0].body).toEqual({
+      image_url: PHOTO,
+      source_url: "https://www.digikey.pl/ProductDetail/USB5734",
+    });
   });
 
   it("still asks when the shop offered no photo — another shop may have one", async () => {
@@ -892,7 +895,7 @@ describe("component_dialog.js — the shop's product photo", () => {
 
     await createAfterImport(page);
 
-    expect(photoCalls(calls).map((c) => c.body)).toEqual([{ image_url: null }]);
+    expect(photoCalls(calls).map((c) => c.body.image_url)).toEqual([null]);
   });
 
   it("says nothing and links nothing when the download fails", async () => {
