@@ -9,6 +9,14 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## About
+
+- **About** at the bottom of the Settings menu: the logo, what ShelfOS is, which
+  build is running, and links to the source on GitHub and to this changelog.
+  There are no releases yet, so a build is named by the newest pull request
+  merged into it, linked to that pull request; a build with commits of its own
+  on top says how many, with its commit.
+
 ## The logo on printed labels
 
 - **#185** — labels from the label printer, for locations and components alike,
