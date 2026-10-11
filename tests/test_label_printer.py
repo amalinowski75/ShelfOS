@@ -424,6 +424,149 @@ def test_no_font_anywhere_says_what_to_set(monkeypatch) -> None:  # type: ignore
         lp.font_paths()
 
 
+def _component_label() -> LabelData:
+    return LabelData(
+        id=345,
+        name="STM32F103C8T6",
+        detail="ARM Cortex-M3 MCU, 64 KB Flash, LQFP-48\nSTMicroelectronics",
+        qr_payload=component_qr_payload(345),
+        separator=" ",
+        trim="tail",
+    )
+
+
+def _upright_with_and_without_logo(
+    monkeypatch: pytest.MonkeyPatch, label: LabelData, geometry: lp.TapeGeometry
+) -> tuple[Image.Image, Image.Image, tuple[int, int, int, int]]:
+    """The label as composed (before any quarter turn), with and without the logo,
+    and the rectangle the logo would take: the bottom-right corner inside the
+    margin."""
+    canvas_w, canvas_h, turn = lp._drawing_size(geometry)
+
+    def upright(image: Image.Image) -> Image.Image:
+        return image.transpose(Image.Transpose.ROTATE_270) if turn else image
+
+    with_logo = upright(lp.render_label(label, geometry))
+    with monkeypatch.context() as patch:
+        # A logo one dot wide and taller than any tape: fits nowhere, costs
+        # nothing. (Asking _logo for a huge height would scale the real bitmap
+        # to half a gigapixel and keep it in its cache.)
+        patch.setattr(lp, "_logo", lambda height_px: Image.new("1", (1, 100_000), 1))
+        without = upright(lp.render_label(label, geometry))
+    margin = lp._margin_for(canvas_w, canvas_h)
+    logo = lp._logo(round(lp._LOGO_HEIGHT_MM * lp._PX_PER_MM))
+    right, bottom = canvas_w - margin, canvas_h - margin
+    return with_logo, without, (right - logo.width, bottom - logo.height, right, bottom)
+
+
+def test_a_roomy_label_carries_the_logo_in_its_corner_and_nothing_else_moves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    geometry = lp.tape_geometry(tape="62")
+    with_logo, without, spot = _upright_with_and_without_logo(
+        monkeypatch, _label(), geometry
+    )
+    logo = lp._logo(round(lp._LOGO_HEIGHT_MM * lp._PX_PER_MM))
+    assert ImageChops.difference(with_logo.crop(spot), logo).getbbox() is None
+    # Centred text already clears the corner on a 30 mm label: the logo is the
+    # only change.
+    changed = ImageChops.difference(with_logo, without).getbbox()
+    assert changed is not None
+    left, top, right, bottom = spot
+    assert left <= changed[0] and top <= changed[1]
+    assert changed[2] <= right and changed[3] <= bottom
+
+
+def test_a_small_label_is_left_without_the_logo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for tape in ("12", "17x54"):
+        for label in (_label(), _component_label()):
+            geometry = lp.tape_geometry(tape=tape)
+            with_logo, without, _ = _upright_with_and_without_logo(
+                monkeypatch, label, geometry
+            )
+            assert ImageChops.difference(with_logo, without).getbbox() is None, tape
+
+
+def test_the_logo_never_lands_on_the_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    """On every tape there is a layout for: the logo whole, or not there at all.
+
+    The text is drawn after the logo, so text running into the corner would
+    show as a logo that no longer matches itself. The text block is fitted
+    before the logo is considered, so the logo cannot take a line from it.
+    """
+    logo = lp._logo(round(lp._LOGO_HEIGHT_MM * lp._PX_PER_MM))
+    carried = set()
+    for choice in lp.tape_choices():
+        geometry = lp.tape_geometry(tape=choice.id)
+        for label in (_label(), _component_label()):
+            with_logo, without, spot = _upright_with_and_without_logo(
+                monkeypatch, label, geometry
+            )
+            if ImageChops.difference(with_logo, without).getbbox() is None:
+                continue
+            mismatch = ImageChops.difference(with_logo.crop(spot), logo)
+            assert mismatch.getbbox() is None, choice.id
+            # And the text keeps clear of the logo's rows altogether, a margin's
+            # width above it included, across the whole text column: a short
+            # line that happens to stop before the corner is no excuse.
+            canvas_w, canvas_h, _ = lp._drawing_size(geometry)
+            margin = lp._margin_for(canvas_w, canvas_h)
+            box_w, box_h = canvas_w - 2 * margin, canvas_h - 2 * margin
+            beside, qr_box = lp._layout(box_w, box_h)
+            qr_w = lp._qr_image(label.qr_payload, qr_box, geometry.tape).width
+            column = margin + qr_w + margin if beside else margin
+            band = with_logo.copy()
+            band.paste(1, spot)  # the logo itself is allowed there
+            rows = band.crop((column, spot[1] - margin, canvas_w, canvas_h))
+            assert _ink_box(rows) is None, (choice.id, label.name)
+            carried.add(choice.id)
+    # Not vacuous: the common rolls do carry it.
+    assert {"62", "29x90", "62x29"} <= carried
+
+
+def test_the_logo_is_cropped_to_its_drawing() -> None:
+    """Every row of the logo prints something: the SVG's empty bands are gone,
+    so its height is the drawing's and the room check reserves no blank tape."""
+    logo = lp._logo(round(lp._LOGO_HEIGHT_MM * lp._PX_PER_MM))
+    assert _ink_box(logo) == (0, 0, logo.width, logo.height)
+
+
+@pytest.mark.parametrize(
+    ("box_h", "qr_h", "text_h", "lowest", "tops"),
+    [
+        # Room enough: both centred, as without a logo.
+        (200, 180, 80, 100, (10, 60)),
+        # The text must go 20 up and the code can follow: still centred on
+        # each other (both centres at 80).
+        (200, 100, 80, 40, (30, 40)),
+        # The code can rise only 5: both to the top rather than out of step.
+        (200, 190, 80, 30, (0, 0)),
+    ],
+)
+def test_the_code_beside_the_text_moves_with_it(
+    box_h: int, qr_h: int, text_h: int, lowest: int, tops: tuple[int, int]
+) -> None:
+    assert lp._beside_tops(box_h, qr_h, text_h, lowest) == tops
+
+
+def test_a_label_lifted_for_the_logo_keeps_its_code_level_with_the_text() -> None:
+    """54 x 29 mm: the text has to rise for the logo, and the code, which nearly
+    fills the height, cannot follow as far; both start at the top margin."""
+    geometry = lp.tape_geometry(tape="54x29")
+    label = _label()
+    image = lp.render_label(geometry=geometry, label=label)
+    canvas_w, canvas_h, _ = lp._drawing_size(geometry)
+    margin = lp._margin_for(canvas_w, canvas_h)
+    beside, qr_box = lp._layout(canvas_w - 2 * margin, canvas_h - 2 * margin)
+    assert beside
+    qr = lp._qr_image(label.qr_payload, qr_box, geometry.tape)
+    quiet = qr.width // lp._qr_modules() * lp._QR_BORDER
+    code = _ink_box(image.crop((0, 0, margin + qr.width, canvas_h)))
+    assert code is not None and code[1] == margin + quiet
+
+
 def test_render_png_is_a_png_of_the_same_bitmap() -> None:
     data = lp.render_png(_label())
     assert data.startswith(b"\x89PNG\r\n\x1a\n")
