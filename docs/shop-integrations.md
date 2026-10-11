@@ -83,37 +83,38 @@ lookup counts against that shop's API quota, and a shop without a key is skipped
 If no shop has a picture, the photo is simply absent: no link, no notice. The
 component page opens with an empty gallery, which is the cue to add one by hand.
 
-### Photos for parts that came in on an invoice
+### Parts that came in on an invoice
 
-An invoice import doesn't keep the shop's image address, so the photos come when
-the invoice is finalized. The finalize dialog stays open and goes through the
-invoice's lines one by one ("fetching product photos 3/12…"). For each line,
-ShelfOS asks the invoice's shop for the part by the line's own catalogue number,
-then falls back to Digi-Key and element14 as above. A component that already has a
-photo is skipped without asking any shop, so finalizing costs one lookup at the
-invoice's shop for each part without a photo, plus any fallbacks. A busy invoice
-can take a minute. **Skip photos**, the ×, or Esc stops at once, and what's left
-can be fetched later with the script below.
+A component created when an invoice is finalized is built from the invoice line
+alone. The import asked the shop about the part but kept none of what it answered,
+so such a component starts with no shop link, no datasheet and no photo.
 
-A line with no catalogue number of its own is not looked up at the invoice's
-shop at all, because the part number alone could name a different product in
-that shop's catalogue. It goes to the fallbacks, which check both the part number
-and the maker. A shop that can't answer (not configured, unreachable, or out of
-daily calls) isn't asked again for two minutes, so an invoice with TME down
-doesn't wait out a timeout on every line.
+Finalize fills them in. The dialog stays open and goes through the invoice's lines
+one by one ("fetching product details 3/12…"). For each line, ShelfOS asks the
+invoice's shop once, by the line's own catalogue number, and adds whatever the
+component is missing:
 
-Both downloads run at once, and the dialog stays up saying it is saving the files
-until they are in — that way the component page opens with them already attached.
-A shop that stalls rather than refusing can make that wait noticeable. It ends at
-the server's download timeout of 30 seconds, and the photo's fallback to other
-shops shares that budget rather than starting a new one at each step. A shop
-lookup already under way when the time runs out can add a few seconds.
+- **a shop link**: the product page the shop names, or else the page built from
+  the line's number;
+- **a datasheet**: downloaded as a file, or kept as a link when the shop blocks
+  the download, the same as an import does;
+- **a photo**: as above, falling back to Digi-Key and element14.
 
-Expect refusals from Mouser. Its images sit behind the same Akamai that refuses
-our datasheet downloads, and since October 2026 it refuses them from a laptop as
-well as from a hosted server. TME, Digi-Key and element14 serve their images from
-plain CDNs, which is why a Mouser part's picture usually comes from Digi-Key or
-element14.
+What a component already has is left alone. A component that has all three is
+skipped without asking any shop, so finalizing costs one lookup at the invoice's
+shop for each part that is missing something, plus any photo fallbacks. A busy
+invoice can take a minute. **Skip**, the ×, or Esc stops at once.
+
+A finalized invoice has a **Fill in from shop** button that runs the same pass
+again. Use it for invoices finalized before finalize did this, or ones whose run
+was skipped.
+
+A line with no catalogue number of its own is not looked up at the invoice's shop
+at all, because the part number alone could name a different product in that
+shop's catalogue. It only gets a photo, from the fallbacks, which check both the
+part number and the maker. A shop that can't answer (not configured, unreachable,
+or out of daily calls) isn't asked again for two minutes, so an invoice with TME
+down doesn't wait out a timeout on every line.
 
 ### Photos for parts already in stock
 
