@@ -222,22 +222,24 @@ a { color: var(--accent-strong); text-underline-offset: 2px; }
 }
 .brand { display: flex; align-items: center; }
 .brand a { display: inline-flex; align-items: center; }
-/* The logo, in its light-ground or dark-ground version: dark for Dark and
-   Dim, and for System when the OS is dark; light for everything else. Only
-   where light-dark() works — below it the palette is always the light one
-   (see the fallback at the top), whatever data-theme says. */
-.brand .logo { display: block; height: 32px; width: auto; flex: none; }
-.brand .logo-dark { display: none; }
+/* The logo, in its light-ground or dark-ground version — in the header and in
+   the About dialog: dark for Dark and Dim, and for System when the OS is dark;
+   light for everything else. Only where light-dark() works — below it the
+   palette is always the light one (see the fallback at the top), whatever
+   data-theme says. */
+.logo { display: block; width: auto; flex: none; }
+.logo-dark { display: none; }
 @supports (color: light-dark(#000, #fff)) {
-  :root[data-theme="dark"] .brand .logo-light,
-  :root[data-theme="dim"] .brand .logo-light { display: none; }
-  :root[data-theme="dark"] .brand .logo-dark,
-  :root[data-theme="dim"] .brand .logo-dark { display: block; }
+  :root[data-theme="dark"] .logo-light,
+  :root[data-theme="dim"] .logo-light { display: none; }
+  :root[data-theme="dark"] .logo-dark,
+  :root[data-theme="dim"] .logo-dark { display: block; }
   @media (prefers-color-scheme: dark) {
-    :root:not([data-theme]) .brand .logo-light { display: none; }
-    :root:not([data-theme]) .brand .logo-dark { display: block; }
+    :root:not([data-theme]) .logo-light { display: none; }
+    :root:not([data-theme]) .logo-dark { display: block; }
   }
 }
+.brand .logo { height: 32px; }
 .appbar nav { margin-left: 8px; display: flex; gap: 4px; }
 .appbar nav a {
   color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 500;
@@ -644,6 +646,20 @@ dialog .close {
 }
 dialog .close:hover { background: var(--surface-2); color: var(--text); }
 dialog .close::before { content: "\00d7"; font-size: 20px; line-height: 1; }
+
+/* About (Settings menu): the logo with the sentence beside it, and three facts
+   in two columns under them. Wider than other dialogs, so a logo large enough
+   to be the point of the dialog still leaves the sentence a readable column;
+   on a phone the sentence goes under the logo instead. */
+dialog.about-dialog { width: min(620px, calc(100vw - 32px)); }
+.about-intro { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 22px; }
+.about .logo { height: 64px; }
+.about p { margin: 0; color: var(--muted); flex: 1 1 220px; }
+.about-facts {
+  display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0;
+}
+.about-facts dt { color: var(--muted); }
+.about-facts dd { margin: 0; overflow-wrap: anywhere; }
 
 .error { color: var(--danger); font-size: 13.5px; margin: 0; }
 /* A failure and the button that undoes it, on one line. The message yields so a

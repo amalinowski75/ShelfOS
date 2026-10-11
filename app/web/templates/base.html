@@ -93,6 +93,7 @@
                   <option value="warm">Warm</option>
                 </select>
               </label>
+              <button type="button" id="about-btn">About</button>
             </div>
           </div>
           <form action="/logout" method="post">
@@ -130,6 +131,49 @@
         </form>
       </article>
     </dialog>
+    {% set v = app_version() %}
+    <dialog id="about-dialog" class="about-dialog">
+      <article>
+        <header>
+          <strong>About ShelfOS</strong>
+          <button class="close" aria-label="Close" data-close></button>
+        </header>
+        <div class="dialog-body about">
+          <div class="about-intro">
+            {# Light or dark lettering by theme, the same rule as the header's. #}
+            <img class="logo logo-light" src="/static/brand/logo.svg?v={{ static_version() }}" alt="ShelfOS" width="249" height="64" />
+            <img class="logo logo-dark" src="/static/brand/logo-dark.svg?v={{ static_version() }}" alt="ShelfOS" width="249" height="64" />
+            <p>A lightweight inventory for electronic components: parametric search,
+              purchases and invoices, hierarchical storage locations, stock movements,
+              BOMs and QR labels. Deliberately not an ERP, accounting or warehouse
+              system.</p>
+          </div>
+          <dl class="about-facts">
+            <dt>Version</dt>
+            <dd>
+              {#- No releases yet: a build is named by the newest pull request in it. -#}
+              {% if v.pr is not none -%}
+                <a href="{{ v.pr_url }}" target="_blank" rel="noopener">#{{ v.pr }}</a>
+                {%- if v.ahead %} + {{ v.ahead }} commit{{ "" if v.ahead == 1 else "s" }} (<code>{{ v.commit }}</code>){% endif %}
+                {%- if v.dirty %} + local changes{% endif %}
+              {%- elif v.commit -%}
+                development build <code>{{ v.commit }}</code>
+                {%- if v.dirty %} + local changes{% endif %}
+              {%- else -%}
+                unknown
+              {%- endif -%}
+            </dd>
+            <dt>Source</dt>
+            <dd><a href="{{ v.repo_url }}" target="_blank" rel="noopener">{{ v.repo_url | replace("https://", "") }}</a></dd>
+            <dt>Changes</dt>
+            <dd><a href="{{ v.changelog_url }}" target="_blank" rel="noopener">Changelog</a></dd>
+          </dl>
+          <footer>
+            <button type="button" class="btn btn-ghost" data-close>Close</button>
+          </footer>
+        </div>
+      </article>
+    </dialog>
     <script src="/static/shared.js?v={{ static_version() }}"></script>
     <script src="/static/component_dialog.js?v={{ static_version() }}"></script>
     <script src="/static/location_dialog.js?v={{ static_version() }}"></script>
@@ -138,6 +182,7 @@
     <script src="/static/stock_dialog.js?v={{ static_version() }}"></script>
     <script src="/static/password_dialog.js?v={{ static_version() }}"></script>
     <script src="/static/settings_menu.js?v={{ static_version() }}"></script>
+    <script src="/static/about_dialog.js?v={{ static_version() }}"></script>
     {% endif %}
     {% block scripts %}{% endblock %}
   </body>
