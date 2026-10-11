@@ -78,6 +78,14 @@
     {% if lines or pending_import_lines %}<button type="button" class="btn btn-primary" id="invoice-finalize-btn">Finalize</button>{% endif %}
     <button type="button" class="btn btn-danger" id="invoice-delete-btn">Delete draft</button>
   </div>
+  {% elif invoice.is_finalized and current_user.role.value != "read-only" and lines %}
+  <div class="head-actions">
+    {# Finalize fills each line's component in from the shop as it goes; this is
+       the same run for an invoice finalized before it did, or that was skipped. #}
+    <button type="button" class="btn btn-secondary" id="invoice-fill-btn"
+            data-invoice-id="{{ invoice.id }}"
+            title="Add the shop link, datasheet and photo each part is missing">Fill in from shop</button>
+  </div>
   {% endif %}
 </div>
 
@@ -311,6 +319,22 @@
 {{ attachments_card("invoice", invoice.id,
                     current_user.role.value != "read-only", attachment_kinds) }}
 </div>
+
+{% if invoice.is_finalized and current_user.role.value != "read-only" and lines %}
+<dialog id="invoice-fill-dialog">
+  <article>
+    <header>
+      <strong>Fill in from shop</strong>
+      <button class="close" aria-label="Close" data-close></button>
+    </header>
+    <p class="muted">Each part gets the shop link, datasheet and photo it is missing, from {{ invoice.supplier }} — or a photo from Digi-Key or element14. Parts that have all three are skipped.</p>
+    <p id="invoice-fill-status" class="muted" hidden></p>
+    <footer>
+      <button type="button" class="btn btn-ghost" id="invoice-fill-cancel" data-close>Skip</button>
+    </footer>
+  </article>
+</dialog>
+{% endif %}
 
 {% if can_edit %}
 <dialog id="invoice-meta-dialog">

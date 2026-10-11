@@ -1724,6 +1724,33 @@ def test_invoice_detail_finalized_is_read_only(client: TestClient) -> None:
         assert marker not in html, marker
 
 
+def test_a_finalized_invoice_offers_fill_in_from_shop_to_writers(
+    client: TestClient,
+) -> None:
+    """The one control a finalized invoice keeps: filling its parts in.
+
+    Not on a draft (finalize does it), and not for a read-only account, which
+    could not add the links and files it would fetch.
+    """
+    invoice = _invoice_with_line(client)["invoice"]
+    url = f"/invoices/{invoice['id']}"  # type: ignore[index]
+    draft_html = client.get(url).text
+    assert 'id="invoice-fill-btn"' not in draft_html
+
+    client.post(f"/api/invoices/{invoice['id']}/finalize", json={})  # type: ignore[index]
+    html = client.get(url).text
+    for marker in (
+        'id="invoice-fill-btn"',
+        'id="invoice-fill-dialog"',
+        'id="invoice-fill-status"',
+        'id="invoice-fill-cancel"',
+    ):
+        assert marker in html, marker
+    reader_html = client.get(url, headers=_read_only_headers(client)).text
+    assert 'id="invoice-fill-btn"' not in reader_html
+    assert 'id="invoice-fill-dialog"' not in reader_html
+
+
 def test_invoice_detail_finalize_hidden_without_lines(client: TestClient) -> None:
     """Finalize is offered only once the draft has a line (it is else rejected)."""
     invoice = client.post(
