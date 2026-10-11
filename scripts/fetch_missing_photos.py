@@ -45,9 +45,10 @@ second run never attaches the same picture again.
 It does what it can and reports the rest: a component with no shop link, a shop
 with no API key configured, a product with no image, or an image the shop will
 not hand over, with no other shop to take it from, is listed in the summary.
-One component's failure never stops the run; the exit status is 1 when any
-lookup, download or API call failed, and 0 when what was left undone was only
-what the data allows (no link, no MPN, no image at any shop).
+One component's failure never stops the run; the exit status is 1 when a shop
+could not answer, a download was refused or an API call failed, and 0 when what
+was left undone was only what the data allows (no link, no MPN, no shop that
+knows the part, no image at any shop that does).
 
 Usage::
 
@@ -134,9 +135,36 @@ def mismatch(api: Api, row: dict[str, Any], product: dict[str, Any]) -> str | No
     if not same_mpn(product.get("mpn"), row.get("mpn")):
         return f"answered with {product.get('mpn') or 'an unnamed part'}"
     maker = product.get("manufacturer")
-    if api.maker_conflicts(row, maker):
+    # Either side silent: no verdict to ask for, so no round trip either.
+    if maker and row.get("manufacturer") and api.maker_conflicts(row, maker):
         return f"answered with {maker}'s part, not {row.get('manufacturer')}'s"
     return None
+
+
+# What the shop providers say when the SHOP could not answer at all — as opposed
+# to answering that it does not know the part. Asking that shop again (through
+# a link instead of a part number) would fail the same way, and the run did not
+# do what it could, so it exits 1. Matched on the providers' messages in
+# app/services/shops/, which the API passes through as the 422's detail.
+_UNAVAILABLE = re.compile(
+    r"integration is not configured|could not reach "
+    r"|could not read the [\w-]+ (token )?response$|^HTTP 5\d\d"
+)
+
+
+def unavailable(reason: str | None) -> bool:
+    """Whether a failed lookup means the shop could not answer, not a miss."""
+    return bool(reason and _UNAVAILABLE.search(reason))
+
+
+@dataclass
+class Search:
+    """What looking one component up across the shops came to."""
+
+    #: Some shop answered with this very part (with or without an image).
+    matched: bool = False
+    #: Lookups the shop could not answer at all, as "shop: reason".
+    errors: list[str] = field(default_factory=list)
 
 
 def same_mpn(a: str | None, b: str | None) -> bool:
@@ -304,30 +332,39 @@ class Api:
 
 
 def find_product(
-    api: Api, row: dict[str, Any], links: list[dict[str, Any]]
+    api: Api, row: dict[str, Any], links: list[dict[str, Any]], search: Search
 ) -> tuple[dict[str, Any] | None, str, str]:
-    """The shop's record for this component, verified by MPN, or why there is none.
+    """The linked shop's record for this component, checked, or why there is none.
 
     Returns ``(product, shop key, "")`` on a match, else ``(None, "", reason)``.
+    A shop that could not answer at all is noted in ``search.errors`` and not
+    asked again through its other links.
     """
     mpn = row.get("mpn") or ""
     tried_shops: set[str] = set()
+    down: set[str] = set()
     last_reason = "no shop link"
 
-    def check(product: dict[str, Any] | None, reason: str | None, asked: str) -> bool:
+    def check(
+        product: dict[str, Any] | None, reason: str | None, key: str, asked: str
+    ) -> bool:
         nonlocal last_reason
         if product:
             wrong = mismatch(api, row, product)
             if wrong is None:
+                search.matched = True
                 return True
             reason = f"{asked} {wrong}"
+        elif unavailable(reason):
+            down.add(key)
+            search.errors.append(f"{key}: {reason}")
         last_reason = reason or last_reason
         return False
 
     for link in links:
         url = link["url"]
         key = shop_key(url)
-        if key is None:
+        if key is None or key in down:
             continue
         # By part number first, once per shop: a search link could not answer,
         # and a real product page names the same part anyway. Not for TME, whose
@@ -342,11 +379,13 @@ def find_product(
                     "manufacturer": row.get("manufacturer") or None,
                 },
             )
-            if check(product, reason, key):
+            if check(product, reason, key, key):
                 return product, key, ""
+            if key in down:
+                continue
         # The link as it stands: a product page the part number did not find.
         product, reason = api.lookup(key, {"code": url})
-        if check(product, reason, "the link"):
+        if check(product, reason, key, "the link"):
             return product, key, ""
     return None, "", last_reason
 
@@ -379,9 +418,10 @@ def process(
         report.skip("already has a photo the table does not show", label)
         return
 
-    product, shop, reason = find_product(api, row, links)
+    search = Search()
+    product, shop, reason = find_product(api, row, links, search)
     refused: list[tuple[str, str]] = []
-    for source, image in images(api, row, product, shop, fallback=fallback):
+    for source, image in images(api, row, product, shop, search, fallback=fallback):
         if dry_run:
             print(f"would attach {image} ({source})")
             report.would_attach.append(label)
@@ -393,20 +433,26 @@ def process(
             return
         print(f"{source} refused the download … ", end="", flush=True)
         refused.append((urlsplit(image).hostname or image, error))
-    if product is None and not refused:
-        # Nothing to show from any shop, and the linked one never found it.
-        print(f"not found ({reason})")
-        report.skip("shop lookup failed", f"{label} — {reason}", failed=True)
-        return
-    if not refused:
+    if refused:
+        print("download refused")
+        # One shop refuses a whole batch with the same long message, so it heads
+        # the group rather than repeating on every line.
+        host, error = refused[0]
+        report.skip(
+            f"image download failed — {error}", f"{label} ({host})", failed=True
+        )
+    elif search.errors:
+        # A shop that could not answer might have had the picture: not done.
+        print("a shop could not answer")
+        report.skip(
+            "shop lookup failed", f"{label} — {'; '.join(search.errors)}", failed=True
+        )
+    elif search.matched:
         print("no shop has an image for it")
         report.skip("shop has no image", label)
-        return
-    print("download refused")
-    # One shop refuses a whole batch with the same long message, so it heads the
-    # group rather than repeating on every line.
-    host, error = refused[0]
-    report.skip(f"image download failed — {error}", f"{label} ({host})", failed=True)
+    else:
+        print(f"not found ({reason})")
+        report.skip("no shop knows the part", f"{label} — {reason}")
 
 
 def images(
@@ -414,6 +460,7 @@ def images(
     row: dict[str, Any],
     product: dict[str, Any] | None,
     shop: str,
+    search: Search,
     *,
     fallback: bool,
 ) -> Iterator[tuple[str, str]]:
@@ -442,8 +489,12 @@ def images(
         )
         if found:
             reason = mismatch(api, row, found)
-            if reason is None and found.get("image_url"):
-                yield other, found["image_url"]
+            if reason is None:
+                search.matched = True
+                if found.get("image_url"):
+                    yield other, found["image_url"]
+        elif unavailable(reason):
+            search.errors.append(f"{other}: {reason}")
         if reason:
             # Said on the component's line, not swallowed: a rate-limited or
             # misconfigured fallback otherwise looks exactly like a shop that
