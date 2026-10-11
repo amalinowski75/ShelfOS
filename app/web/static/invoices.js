@@ -151,9 +151,10 @@ if (importBtn) {
 // ones finalized before this existed.
 //
 // One line at a time, said in the dialog as it goes, because each can take a
-// few seconds. Best-effort: what can't be had is left out. Closing the dialog
-// — the cancel button, the ×, or Esc — reloads straight away, and so does the
-// end of the run, so the page shows what was added.
+// few seconds. Best-effort: what can't be had is left out — but said. Returns a
+// summary of what is still missing, which the caller leaves on screen until the
+// dialog is closed; null when nothing is, and the caller reloads at once.
+// Closing the dialog — the cancel button, the ×, or Esc — reloads straight away.
 async function fillInLines(invoiceId, { dialog, status, cancel, submit, prefix = "" }) {
   let lines = [];
   try {
@@ -161,7 +162,7 @@ async function fillInLines(invoiceId, { dialog, status, cancel, submit, prefix =
     const payload = resp.ok ? await resp.json() : [];
     if (Array.isArray(payload)) lines = payload;
   } catch {
-    return; // nothing to fill in from, and nothing lost by not trying
+    return null; // nothing to fill in from, and nothing lost by not trying
   }
   const seen = new Set();
   const todo = lines.filter((line) => {
@@ -169,7 +170,7 @@ async function fillInLines(invoiceId, { dialog, status, cancel, submit, prefix =
     seen.add(line.component_id);
     return true;
   });
-  if (!todo.length) return;
+  if (!todo.length) return null;
 
   if (submit) submit.disabled = true;
   if (cancel) cancel.textContent = "Skip";
@@ -177,6 +178,9 @@ async function fillInLines(invoiceId, { dialog, status, cancel, submit, prefix =
   // behind it still shows the draft, with a Finalize button that would do
   // nothing until the loop ends.
   dialog.addEventListener("close", () => window.location.reload(), { once: true });
+  const missing = { photo: 0, datasheet: 0, "shop link": 0 };
+  let incomplete = 0;
+  let unreached = 0;
   for (const [index, line] of todo.entries()) {
     if (status) {
       status.hidden = false;
@@ -185,11 +189,40 @@ async function fillInLines(invoiceId, { dialog, status, cancel, submit, prefix =
     }
     try {
       const url = `/api/invoices/${invoiceId}/lines/${line.id}/fill-in`;
-      await sendJSON(url, "POST", {});
+      const resp = await sendJSON(url, "POST", {});
+      const done = resp.ok ? await resp.json() : null;
+      if (!done || typeof done !== "object") {
+        unreached += 1;
+        continue;
+      }
+      const gaps = [
+        ["photo", done.photo],
+        ["datasheet", done.datasheet],
+        ["shop link", done.shop_link],
+      ].filter(([, state]) => state === "none");
+      for (const [what] of gaps) missing[what] += 1;
+      if (gaps.length) incomplete += 1;
     } catch {
-      // A line that can't be reached is left as it is, like any other miss.
+      unreached += 1;
     }
   }
+  if (!incomplete && !unreached) return null;
+  const parts = [];
+  if (incomplete) {
+    const what = Object.entries(missing)
+      .filter(([, count]) => count)
+      .map(([name, count]) => `${name}: ${count}`)
+      .join(", ");
+    parts.push(`${incomplete} of ${todo.length} still missing something (${what})`);
+  }
+  if (unreached) parts.push(`${unreached} could not be filled in`);
+  const summary = `${prefix}done — ${parts.join("; ")}.`;
+  if (status) {
+    status.hidden = false;
+    status.textContent = summary;
+  }
+  if (cancel) cancel.textContent = "Close";
+  return summary;
 }
 
 // "Fill in from shop" on a finalized invoice (writers only; see the template).
@@ -197,14 +230,17 @@ const fillBtn = document.getElementById("invoice-fill-btn");
 const fillDialog = document.getElementById("invoice-fill-dialog");
 if (fillBtn && fillDialog) {
   fillBtn.addEventListener("click", () => {
-    fillDialog.showModal();
+    // Opened inside the guard: one that drops the click (another action still
+    // in flight) must not leave an open dialog with nothing behind it.
     guard(async () => {
-      await fillInLines(fillBtn.dataset.invoiceId, {
+      fillDialog.showModal();
+      const summary = await fillInLines(fillBtn.dataset.invoiceId, {
         dialog: fillDialog,
         status: document.getElementById("invoice-fill-status"),
         cancel: document.getElementById("invoice-fill-cancel"),
       });
-      window.location.reload();
+      // A summary stays up until the dialog is closed, which reloads.
+      if (!summary) window.location.reload();
     });
   });
 }
@@ -783,14 +819,15 @@ if (detail && lineDialog) {
           total_gross: gross ? gross : null,
         });
         if (resp.ok) {
-          await fillInLines(invoiceId, {
+          const summary = await fillInLines(invoiceId, {
             dialog: finalizeDialog,
             status: document.getElementById("invoice-finalize-status"),
             cancel: document.getElementById("invoice-finalize-cancel"),
             submit: finalizeForm.querySelector('button[type="submit"]'),
             prefix: "Invoice finalized — ",
           });
-          window.location.reload();
+          // A summary stays up until the dialog is closed, which reloads.
+          if (!summary) window.location.reload();
         } else {
           showError(finalizeError, await errorMessage(resp));
         }

@@ -974,6 +974,15 @@ describe("invoices.js — filling the lines in after finalize", () => {
       "/api/invoices/7/lines/3/fill-in",
       "/api/invoices/7/lines/5/fill-in",
     ]);
+    // Said, not swallowed: the page waits for the dialog to be closed.
+    expect(navigations).toHaveLength(0);
+    expect(document.getElementById("invoice-finalize-status").textContent).toBe(
+      "Invoice finalized — done — 2 could not be filled in.",
+    );
+    expect(document.getElementById("invoice-finalize-cancel").textContent).toBe(
+      "Close",
+    );
+    document.getElementById("invoice-finalize-dialog").close();
     expect(navigations).toHaveLength(1);
   });
 
@@ -1353,6 +1362,23 @@ describe("invoices.js — new component from the add-line flow", () => {
 });
 
 describe("invoices.js — Fill in from shop on a finalized invoice", () => {
+  function lines(answer) {
+    const calls = [];
+    const fetchImpl = (url, opts) => {
+      calls.push({ url, method: (opts && opts.method) || "GET" });
+      if (url === "/api/invoices/7/lines")
+        return Promise.resolve({
+          ok: true,
+          json: async () => [
+            { id: 3, component_id: 30 },
+            { id: 4, component_id: 40 },
+          ],
+        });
+      return Promise.resolve({ ok: true, json: async () => answer(url) });
+    };
+    return { calls, fetchImpl };
+  }
+
   // For an invoice finalized before finalize filled the lines in, or one whose
   // run was skipped: the same run, from its own button and dialog.
   const page = () => `
@@ -1392,5 +1418,44 @@ describe("invoices.js — Fill in from shop on a finalized invoice", () => {
       /^fetching product details 2\/2/,
     );
     expect(navigations).toHaveLength(1);
+  });
+
+  it("says what is still missing, and waits to be closed", async () => {
+    // Before, the page reloaded saying nothing, so a run that added nothing
+    // looked exactly like one that added everything.
+    const { fetchImpl } = lines((url) =>
+      url.includes("/lines/3/")
+        ? { photo: "none", datasheet: "none", shop_link: "added", reasons: [] }
+        : { photo: "added", datasheet: "linked", shop_link: "present", reasons: [] },
+    );
+    const { document, navigations } = loadPage(page(), SCRIPTS, { fetchImpl });
+
+    document.getElementById("invoice-fill-btn").click();
+    for (let i = 0; i < 8; i += 1) await tick();
+
+    expect(document.getElementById("invoice-fill-status").textContent).toBe(
+      "done — 1 of 2 still missing something (photo: 1, datasheet: 1).",
+    );
+    expect(navigations).toHaveLength(0);
+    document.getElementById("invoice-fill-dialog").close();
+    expect(navigations).toHaveLength(1);
+  });
+
+  it("opens nothing while another action is still in flight", async () => {
+    // The guard drops a second run; the dialog must not open for it either.
+    const { fetchImpl } = lines(() => ({}));
+    const { window, document } = loadPage(page(), SCRIPTS, {
+      fetchImpl: (url, opts) =>
+        url === "/api/invoices/7/lines"
+          ? new Promise(() => {}) // the first run never finishes
+          : fetchImpl(url, opts),
+    });
+
+    document.getElementById("invoice-fill-btn").click();
+    await tick();
+    document.getElementById("invoice-fill-btn").click();
+    await tick();
+
+    expect(window.HTMLDialogElement.prototype.showModal).toHaveBeenCalledTimes(1);
   });
 });

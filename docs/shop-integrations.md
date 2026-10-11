@@ -96,14 +96,21 @@ component is missing:
 
 - **a shop link**: the product page the shop names, or else the page built from
   the line's number;
-- **a datasheet**: downloaded as a file, or kept as a link when the shop blocks
-  the download, the same as an import does;
+- **a datasheet**: downloaded as a file, or kept as a link when the shop refuses
+  the download (a block page or an HTTP 4xx), the same as an import does. A
+  download that only failed for the moment (a timeout, a 5xx, too many downloads
+  at once) is left out rather than linked, so the next run can still fetch the
+  file;
 - **a photo**: as above, falling back to Digi-Key and element14.
 
 What a component already has is left alone. A component that has all three is
 skipped without asking any shop, so finalizing costs one lookup at the invoice's
 shop for each part that is missing something, plus any photo fallbacks. A busy
-invoice can take a minute. **Skip**, the ×, or Esc stops at once.
+invoice can take a minute, and the shop link, datasheet and photo for one line
+share the same 30-second download budget. **Skip**, the ×, or Esc stops at once.
+If parts are still missing something when the run ends, the dialog says how many
+and what (for example, "3 of 12 still missing something (photo: 2, datasheet:
+3)") and stays open until you close it.
 
 A finalized invoice has a **Fill in from shop** button that runs the same pass
 again. Use it for invoices finalized before finalize did this, or ones whose run
