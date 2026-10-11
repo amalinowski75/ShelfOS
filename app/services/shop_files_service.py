@@ -28,6 +28,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass, field
 from typing import cast
 
 from sqlmodel import Session
@@ -35,7 +36,7 @@ from sqlmodel import Session
 from app import config
 from app.models.attachment import Attachment
 from app.models.component import Component
-from app.models.enums import AttachmentKind
+from app.models.enums import AttachmentKind, FillStatus
 from app.services import attachment_service, shops, url_fetch
 from app.services import manufacturer_service as ms
 from app.services._common import normalize, refuse_if_deleted, require_entity
@@ -82,13 +83,26 @@ _locks_guard = threading.Lock()
 Answers = dict[str, tuple[ProductData | None, str]]
 
 
+class NoFileFound(ValidationError):
+    """No source handed over the file; ``reasons`` says what each one said."""
+
+    def __init__(self, kind: AttachmentKind, reasons: list[str]):
+        super().__init__(f"no {kind.value} could be downloaded — " + "; ".join(reasons))
+        self.reasons = reasons
+
+
 @contextmanager
-def one_at_a_time(component_id: int, *kinds: AttachmentKind) -> Iterator[None]:
-    """Hold the component's turn for these kinds of file (in a fixed order)."""
+def one_at_a_time(
+    component_id: int, kind: AttachmentKind, *more: AttachmentKind
+) -> Iterator[None]:
+    """Hold the component's turn for these kinds of file (in a fixed order).
+
+    At least one kind, by signature: a turn for no kind would lock nothing.
+    """
     with _locks_guard:
         locks = [
-            _locks.setdefault((component_id, kind), threading.Lock())
-            for kind in sorted(set(kinds), key=lambda k: k.value)
+            _locks.setdefault((component_id, each), threading.Lock())
+            for each in sorted({kind, *more}, key=lambda k: k.value)
         ]
     with ExitStack() as held:
         for lock in locks:
@@ -251,9 +265,109 @@ def attach_from_shops_held(
             if attached is not None:
                 return attached
 
-    raise ValidationError(
-        f"no {kind.value} could be downloaded — " + "; ".join(reasons)
+    raise NoFileFound(kind, reasons)
+
+
+@dataclass
+class FilesFound:
+    """What one search for a component's photo and datasheet came to.
+
+    Each is ``"present"`` (not wanted: it had one), ``"added"`` or ``"none"``.
+    """
+
+    photo: FillStatus = "present"
+    datasheet: FillStatus = "present"
+    reasons: list[str] = field(default_factory=list)
+
+
+def find_files_held(
+    session: Session,
+    component: Component,
+    *,
+    photo: bool,
+    datasheet: bool,
+    image_url: str | None,
+    datasheet_url: str | None,
+    source: str | None,
+    deadline: float,
+    clock: Callable[[], float] = time.monotonic,
+) -> FilesFound:
+    """Search for the wanted files in one go, for a caller holding both turns.
+
+    One lookup per fallback shop serves both (shared answers), and a shop's
+    failure is reported once, not once per file. The photo goes first: it is
+    small, and a datasheet — several megabytes, from a slow document host —
+    should not spend the shared budget it needs.
+    """
+    found = FilesFound(
+        photo="none" if photo else "present",
+        datasheet="none" if datasheet else "present",
     )
+    answers: Answers = {}
+    wanted = [
+        (AttachmentKind.PHOTO, image_url, photo),
+        (AttachmentKind.DATASHEET, datasheet_url, datasheet),
+    ]
+    for kind, url, want in wanted:
+        if not want:
+            continue
+        try:
+            attach_from_shops_held(
+                session,
+                component,
+                kind,
+                url,
+                source=source,
+                deadline=deadline,
+                clock=clock,
+                answers=answers,
+            )
+        except NoFileFound as exc:
+            found.reasons.extend(r for r in exc.reasons if r not in found.reasons)
+            continue
+        if kind is AttachmentKind.PHOTO:
+            found.photo = "added"
+        else:
+            found.datasheet = "added"
+    return found
+
+
+def attach_files_from_shops(
+    session: Session,
+    component_id: int,
+    *,
+    image_url: str | None,
+    datasheet_url: str | None,
+    source_url: str | None = None,
+    clock: Callable[[], float] = time.monotonic,
+) -> FilesFound:
+    """Give a new component its photo and datasheet files, in one request.
+
+    The import dialog's call: the import's own file of each kind, else another
+    shop's (:func:`attach_from_shops`, both at once, so each fallback shop is
+    asked once). A kind the component already has a FILE of is left alone; a
+    datasheet link does not count, since a file is what is being sought.
+    """
+    component = require_entity(session, Component, component_id, "component")
+    refuse_if_deleted(component, component.mpn or f"component #{component_id}")
+    with one_at_a_time(component_id, AttachmentKind.PHOTO, AttachmentKind.DATASHEET):
+        kinds = {
+            a.kind
+            for a in attachment_service.list_attachments(
+                session, entity_type="component", entity_id=component_id
+            )
+        }
+        return find_files_held(
+            session,
+            component,
+            photo=AttachmentKind.PHOTO not in kinds,
+            datasheet=AttachmentKind.DATASHEET not in kinds,
+            image_url=image_url,
+            datasheet_url=datasheet_url,
+            source=shops.shop_key(source_url),
+            deadline=clock() + config.ATTACHMENT_URL_TOTAL_TIMEOUT,
+            clock=clock,
+        )
 
 
 def fallback_product(

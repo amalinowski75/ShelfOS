@@ -265,7 +265,9 @@ def _image_url(product: dict[str, Any]) -> str | None:
     ``mainImageURL`` wins when it is there: it is element14's own answer to the
     question this function otherwise guesses at, and it is no more trusted than
     the datasheet URL beside it — both are shop-controlled and both are only ever
-    handed to the SSRF-guarded ``POST /api/attachments/from-url``.
+    fetched through the SSRF-guarded ``url_fetch``: by ``POST
+    /api/attachments/from-url``, and server-side by ``shop_files_service`` when
+    another shop's file is the fallback.
 
     Assembled from the filename otherwise. That filename is escaped whole — it
     names a file and nothing deeper, and a stray "/" or ".." in it must not be

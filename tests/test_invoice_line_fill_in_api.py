@@ -461,34 +461,47 @@ def test_the_datasheet_and_the_photo_share_one_time_budget(
 
     _fill(client, invoice_id, line_id)
 
-    assert fake.fetched == [SHEET, TME]
+    # The photo first: small, and not to be starved by a slow datasheet.
+    assert fake.fetched == [TME, SHEET]
     assert len(set(fake.deadlines)) == 1 and fake.deadlines[0] is not None
 
 
-@pytest.mark.parametrize(
-    ("failure", "kept"),
-    [
-        ("timed out", "none"),
-        ("too many downloads in progress — try again shortly", "none"),
-        ("could not reach the server", "none"),
-        ("the server returned an error (HTTP 503)", "none"),
-        ("the server returned an error (HTTP 403)", "linked"),
-        ("that URL returned a web page, not a file", "linked"),
-    ],
-)
-def test_only_a_refused_datasheet_is_kept_as_a_link(
-    client: TestClient, fake: Shops, failure: str, kept: str
+def test_a_linked_datasheet_still_gets_its_file_once_a_shop_has_one(
+    client: TestClient, fake: Shops
 ) -> None:
-    """A link counts as having one, so a passing failure must not leave one."""
-    fake.errors[SHEET] = failure
+    """A link points at the datasheet; it is not the file, and stops nothing.
+
+    The first run finds no file anywhere and keeps TME's as a link. A later run
+    — another shop selling the part by then, or one that was down — fetches the
+    file, without a second link.
+    """
     fake.own["tme"] = ProductData(**WALSIN, image_url=TME, datasheet_url=SHEET)
     invoice_id, line_id, cid = _line(client)
 
-    body = _fill(client, invoice_id, line_id).json()
+    first = _fill(client, invoice_id, line_id).json()
+    assert first["datasheet"] == "linked"
+    assert f"datasheet:{SHEET}" in _has(client, cid)["links"]
 
-    assert body["datasheet"] == kept
-    linked = f"datasheet:{SHEET}" in _has(client, cid)["links"]
-    assert linked is (kept == "linked")
+    ti_sheet = "https://www.ti.com/lit/ds/symlink/x.pdf"
+    fake.fallback["digikey"] = ProductData(**WALSIN, datasheet_url=ti_sheet)
+    second = _fill(client, invoice_id, line_id).json()
+
+    assert second["datasheet"] == "added"
+    assert _has(client, cid)["datasheet"] == ["x.pdf"]
+    assert _has(client, cid)["links"].count(f"datasheet:{SHEET}") == 1
+
+
+def test_a_link_already_there_is_not_added_twice(
+    client: TestClient, fake: Shops
+) -> None:
+    fake.own["tme"] = ProductData(**WALSIN, image_url=TME, datasheet_url=SHEET)
+    invoice_id, line_id, cid = _line(client)
+    _fill(client, invoice_id, line_id)
+
+    again = _fill(client, invoice_id, line_id).json()
+
+    assert again["datasheet"] == "linked"
+    assert _has(client, cid)["links"].count(f"datasheet:{SHEET}") == 1
 
 
 def test_the_own_shop_having_no_picture_is_said(

@@ -428,15 +428,21 @@ MOUSER_SHEET = "https://www.mouser.com/datasheet/2/405/pcf8574a.pdf"
 TI_SHEET = "https://www.ti.com/lit/ds/symlink/pcf8574a.pdf"
 
 
-def _datasheet(  # type: ignore[no-untyped-def]
+def _files(  # type: ignore[no-untyped-def]
     client: TestClient,
     component_id: int,
-    datasheet_url: str | None,
+    *,
+    image_url: str | None = None,
+    datasheet_url: str | None = None,
     source_url: str | None = None,
 ):
     return client.post(
-        f"/api/components/{component_id}/datasheet-from-shops",
-        json={"datasheet_url": datasheet_url, "source_url": source_url},
+        f"/api/components/{component_id}/files-from-shops",
+        json={
+            "image_url": image_url,
+            "datasheet_url": datasheet_url,
+            "source_url": source_url,
+        },
     )
 
 
@@ -458,43 +464,59 @@ def test_a_refused_datasheet_comes_from_another_shop(
     )
     cid = _component(client)
 
-    resp = _datasheet(client, cid, MOUSER_SHEET)
+    resp = _files(client, cid, image_url=MOUSER, datasheet_url=MOUSER_SHEET)
 
-    assert resp.status_code == 201, resp.text
-    assert resp.json()["kind"] == "datasheet"
-    assert fake.fetched == [MOUSER_SHEET, TI_SHEET]
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"photo": "added", "datasheet": "added", "reasons": []}
     assert _datasheets(client, cid) == ["pcf8574a.pdf"]
-    assert _photos(client, cid) == []  # a datasheet search attaches no photo
+    assert _photos(client, cid) == ["x.jpg"]
+    # Both files from one Digi-Key answer: asked once, not once per file.
+    assert fake.asked == ["digikey"]
+    # The photo first: small, and not to be starved by a slow datasheet.
+    assert fake.fetched == [MOUSER, DIGIKEY, MOUSER_SHEET, TI_SHEET]
 
 
-def test_a_datasheet_already_there_is_returned_not_fetched_again(
-    client: TestClient, fake: Shops
-) -> None:
+def test_a_file_already_there_is_left_alone(client: TestClient, fake: Shops) -> None:
     cid = _component(client)
-    first = _datasheet(client, cid, TI_SHEET)
+    _files(client, cid, datasheet_url=TI_SHEET)
+    fetched = len(fake.fetched)
 
-    again = _datasheet(client, cid, MOUSER_SHEET)
+    again = _files(client, cid, datasheet_url=MOUSER_SHEET).json()
 
-    assert (first.status_code, again.status_code) == (201, 200)
-    assert fake.fetched == [TI_SHEET]
+    assert again["datasheet"] == "present"
+    assert MOUSER_SHEET not in fake.fetched[fetched:]
+    assert _datasheets(client, cid) == ["pcf8574a.pdf"]
 
 
-def test_no_datasheet_anywhere_says_what_each_source_said(
+def test_no_file_anywhere_says_each_source_once(
     client: TestClient, fake: Shops
 ) -> None:
+    """Both searches ask the same shops; their failures are said once, not twice."""
+    fake.blocked.add(MOUSER_SHEET)
+    fake.answers["digikey"] = ValidationError("Digi-Key integration is not configured")
+    cid = _component(client)
+
+    body = _files(client, cid, image_url=MOUSER, datasheet_url=MOUSER_SHEET).json()
+
+    assert (body["photo"], body["datasheet"]) == ("none", "none")
+    reasons = body["reasons"]
+    assert reasons.count("digikey: Digi-Key integration is not configured") == 1
+    assert any(r.startswith("the shop's datasheet: ") for r in reasons)
+    assert _datasheets(client, cid) == []
+
+
+def test_another_shop_s_photo_is_no_datasheet(client: TestClient, fake: Shops) -> None:
     fake.blocked.add(MOUSER_SHEET)
     fake.answers["digikey"] = ProductData(
         mpn="PCF8574ADWR", manufacturer="TI", image_url=DIGIKEY
     )
     cid = _component(client)
 
-    resp = _datasheet(client, cid, MOUSER_SHEET)
+    body = _files(client, cid, datasheet_url=MOUSER_SHEET).json()
 
-    assert resp.status_code == 422
-    detail = resp.json()["detail"]
-    assert detail.startswith("no datasheet could be downloaded")
-    assert "digikey: no datasheet for this part" in detail
-    assert DIGIKEY not in fake.fetched  # its photo is no datasheet
+    assert body["datasheet"] == "none"
+    assert "digikey: no datasheet for this part" in body["reasons"]
+    assert _datasheets(client, cid) == []
 
 
 def test_the_photo_and_the_datasheet_do_not_wait_for_each_other(

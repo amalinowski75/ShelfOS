@@ -16,7 +16,8 @@ from app.api.schemas import (
     ParameterValueSet,
     ScannedComponentRead,
     ScannedStockRead,
-    ShopDatasheetRequest,
+    ShopFilesRead,
+    ShopFilesRequest,
     ShopLookup,
     ShopPhotoRequest,
 )
@@ -275,36 +276,29 @@ def photo_from_shops(
     return attachment
 
 
-@router.post(
-    "/{component_id}/datasheet-from-shops",
-    response_model=AttachmentRead,
-    status_code=status.HTTP_201_CREATED,
-)
-def datasheet_from_shops(
+@router.post("/{component_id}/files-from-shops", response_model=ShopFilesRead)
+def files_from_shops(
     component_id: int,
-    payload: ShopDatasheetRequest,
-    response: Response,
+    payload: ShopFilesRequest,
     session: Session = Depends(get_session),
-) -> Attachment:
-    """Attach a datasheet file: the import's own, else another shop's.
+) -> ShopFilesRead:
+    """Attach a new component's photo and datasheet files: the import's, else
+    another shop's.
 
-    The photo's twin, for the same dialog. TME's document host and Mouser's
-    Akamai refuse a server, so their datasheets used to be kept only as links;
-    Digi-Key or element14 selling the same part now gives the file. 200 with a
-    datasheet file already there, 422 naming what each source said when none
-    could be had — the dialog then keeps the import's URL as a link, as before.
-    Writers only.
+    For the import dialog, right after it creates the component. One request for
+    both, so each fallback shop is asked once. TME's document host and Mouser's
+    Akamai refuse a server; Digi-Key or element14 selling the same part now gives
+    the file. A datasheet none would hand over is for the dialog to keep as a
+    link, as before. Writers only.
     """
-    attachment, created = shop_files_service.attach_from_shops(
+    found = shop_files_service.attach_files_from_shops(
         session,
         component_id,
-        AttachmentKind.DATASHEET,
-        payload.datasheet_url,
+        image_url=payload.image_url,
+        datasheet_url=payload.datasheet_url,
         source_url=payload.source_url,
     )
-    if not created:
-        response.status_code = status.HTTP_200_OK
-    return attachment
+    return ShopFilesRead.model_validate(found, from_attributes=True)
 
 
 @router.get("/{component_id}/parameters", response_model=list[ComponentParameter])

@@ -10,7 +10,6 @@ once per line, and adds from that answer whatever the component lacks.
 
 from __future__ import annotations
 
-import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -22,23 +21,12 @@ from app import config
 from app.models.component import Component
 from app.models.enums import AttachmentKind, FillStatus, LinkKind
 from app.models.invoice import Invoice, InvoiceLine
-from app.services import attachment_service, link_service, shops, url_fetch
+from app.services import attachment_service, link_service, shops
 from app.services import manufacturer_service as ms
 from app.services import shop_files_service as shop_files
 from app.services._common import normalize, refuse_if_deleted, require_entity
 from app.services.errors import NotFoundError, ValidationError
 from app.services.shops.base import ProductData
-
-# A datasheet download that failed for a reason worth trying again later: the
-# moment, not the shop's policy. Such a datasheet is NOT kept as a link — a link
-# counts as having one, so it would never be downloaded after all. Anything else
-# (a block page, a 4xx, a file too large to keep) is the shop's answer, and the
-# import dialog's rule applies: keep the datasheet as a link.
-_RETRY_LATER = re.compile(
-    r"timed out|too many downloads|could not reach the server"
-    r"|host could not be resolved|\(HTTP (429|5\d\d)\)",
-    re.IGNORECASE,
-)
 
 
 @dataclass
@@ -107,11 +95,12 @@ def _fill_in(
     result = FillIn()
     if not any(a.kind is AttachmentKind.PHOTO for a in files):
         result.photo = "none"
-    if not (
-        any(a.kind is AttachmentKind.DATASHEET for a in files)
-        or any(k.kind is LinkKind.DATASHEET for k in links)
-    ):
+    # A datasheet FILE is what counts — the rule the import dialog's search uses
+    # too. A link alone (a shop that refused the download, before other shops
+    # were asked) is not the file, and may now be had from one of them.
+    if not any(a.kind is AttachmentKind.DATASHEET for a in files):
         result.datasheet = "none"
+    datasheet_linked = any(k.kind is LinkKind.DATASHEET for k in links)
     if not any(k.kind is LinkKind.SHOP for k in links):
         result.shop_link = "none"
     if "none" not in (result.photo, result.datasheet, result.shop_link):
@@ -151,80 +140,30 @@ def _fill_in(
         if page and link(LinkKind.SHOP, page):
             result.shop_link = "added"
 
-    # The fallback shops' answers, shared by the datasheet's search and the
-    # photo's, so each shop is asked once for both.
-    answers: shop_files.Answers = {}
-
+    if result.photo == "none" and product is not None and not product.image_url:
+        result.reasons.append(f"{asked}: no image for this part")
+    # Both files in one search: each fallback shop asked once, and the photo
+    # first. Only the shop actually asked is spared as a fallback; one never
+    # asked (no number on the line) may well have the file.
+    found = shop_files.find_files_held(
+        session,
+        component,
+        photo=result.photo == "none",
+        datasheet=result.datasheet == "none",
+        image_url=product.image_url if product else None,
+        datasheet_url=product.datasheet_url if product else None,
+        source=asked,
+        deadline=deadline,
+        clock=clock,
+    )
+    result.photo, result.datasheet = found.photo, found.datasheet
+    result.reasons.extend(r for r in found.reasons if r not in result.reasons)
     if result.datasheet == "none":
+        # No file from anywhere: point at it instead, as the import dialog does.
+        # A link never stands in for the file — the next run looks again.
         own = product.datasheet_url if product else None
-        refusal: ValidationError | None = None
-        if own:
-            try:
-                data, filename = url_fetch.fetch_url(own, deadline=deadline)
-                attachment_service.create_attachment(
-                    session,
-                    entity_type="component",
-                    entity_id=component_id,
-                    kind=AttachmentKind.DATASHEET,
-                    filename=filename,
-                    data=data,
-                )
-                result.datasheet = "added"
-            except ValidationError as exc:
-                refusal = exc
-        if result.datasheet == "none":
-            # TME's document host and Mouser's Akamai refuse a server; Digi-Key
-            # or element14 selling the same part may well hand over the file.
-            try:
-                shop_files.attach_from_shops_held(
-                    session,
-                    component,
-                    AttachmentKind.DATASHEET,
-                    None,
-                    source=asked,
-                    deadline=deadline,
-                    clock=clock,
-                    answers=answers,
-                    tried=[own] if own else None,
-                )
-                result.datasheet = "added"
-            except ValidationError as exc:
-                if refusal is not None:
-                    result.reasons.append(f"datasheet: {refusal}")
-                result.reasons.append(str(exc))
-        # No file from anywhere: keep the shop's own as a link, as the import
-        # dialog does — unless its download only failed for the moment (a
-        # timeout, a busy server), since a link would count as having one and
-        # the file would never be fetched after all.
-        if (
-            result.datasheet == "none"
-            and own
-            and refusal is not None
-            and not _RETRY_LATER.search(str(refusal))
-            and link(LinkKind.DATASHEET, own)
-        ):
+        if datasheet_linked or (own and link(LinkKind.DATASHEET, own)):
             result.datasheet = "linked"
-
-    if result.photo == "none":
-        if product is not None and not product.image_url:
-            result.reasons.append(f"{asked}: no image for this part")
-        try:
-            # The turn is held and the photo known to be missing: neither again.
-            shop_files.attach_from_shops_held(
-                session,
-                component,
-                AttachmentKind.PHOTO,
-                product.image_url if product else None,
-                # Only the shop actually asked is spared as a fallback; one never
-                # asked (no number on the line) may well have the picture.
-                source=asked,
-                deadline=deadline,
-                clock=clock,
-                answers=answers,
-            )
-            result.photo = "added"
-        except ValidationError as exc:
-            result.reasons.append(str(exc))
     return result
 
 
