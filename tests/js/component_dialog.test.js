@@ -806,8 +806,9 @@ describe("component_dialog.js — the datasheet a shop won't hand over", () => {
 });
 
 describe("component_dialog.js — the shop's product photo", () => {
-  // A shop import that carries a photo downloads it onto the new component, so the
-  // detail page the create jumps to already shows the part. No link fallback and no
+  // A shop import gives the new component a photo, so the detail page the create
+  // jumps to already shows the part: the server downloads the import's own image,
+  // or another shop's when that one is refused or absent. No link fallback and no
   // toast: an absent photo on the page that opens is the cue to add one by hand.
   const PHOTO = "https://mediacdn.digikey.com/photos/USB5734.jpg";
 
@@ -825,7 +826,7 @@ describe("component_dialog.js — the shop's product photo", () => {
           source_url: "https://www.digikey.pl/ProductDetail/USB5734",
           image_url: image,
         });
-      if (url === "/api/attachments/from-url")
+      if (url === "/api/components/7/photo-from-shops")
         return new Promise((resolve) =>
           setTimeout(() => {
             state.stored = download;
@@ -836,7 +837,7 @@ describe("component_dialog.js — the shop's product photo", () => {
                     ok: false,
                     status: 422,
                     json: () =>
-                      Promise.resolve({ detail: "could not fetch the URL" }),
+                      Promise.resolve({ detail: "no photo could be downloaded" }),
                   },
             );
           }, 0),
@@ -861,7 +862,9 @@ describe("component_dialog.js — the shop's product photo", () => {
 
   const photoCalls = (calls) =>
     calls.filter(
-      (c) => c.url === "/api/attachments/from-url" && c.body.kind === "photo",
+      (c) =>
+        c.url === "/api/components/7/photo-from-shops" ||
+        (c.url === "/api/attachments/from-url" && c.body.kind === "photo"),
     );
 
   it("downloads it onto the component before the caller navigates", async () => {
@@ -878,21 +881,18 @@ describe("component_dialog.js — the shop's product photo", () => {
 
     expect(atNavigation.stored).toBe(true); // the answer was in, not merely asked for
     expect(atNavigation.sent).toHaveLength(1);
-    expect(atNavigation.sent[0].body).toMatchObject({
-      entity_type: "component",
-      entity_id: 7,
-      url: PHOTO,
-      kind: "photo",
-    });
+    expect(atNavigation.sent[0].url).toBe("/api/components/7/photo-from-shops");
+    expect(atNavigation.sent[0].body).toEqual({ image_url: PHOTO });
   });
 
-  it("asks for nothing when the shop offered no photo", async () => {
+  it("still asks when the shop offered no photo — another shop may have one", async () => {
+    // Mouser has no picture for some parts that Digi-Key does; the server looks.
     const { calls, impl } = importedPart({ image: null });
     const page = loadPage(dialogFixture(), SCRIPTS, { fetchImpl: impl });
 
     await createAfterImport(page);
 
-    expect(photoCalls(calls)).toHaveLength(0);
+    expect(photoCalls(calls).map((c) => c.body)).toEqual([{ image_url: null }]);
   });
 
   it("says nothing and links nothing when the download fails", async () => {
@@ -1001,6 +1001,8 @@ describe("component_dialog.js — what the import leaves behind", () => {
       .filter((c) => c.url === "/api/attachments/from-url")
       .map((c) => c.body.kind);
     expect(attached).toEqual([]);
+    // Nor a photo from another shop: B never came from an import at all.
+    expect(calls.filter((c) => c.url.endsWith("/photo-from-shops"))).toEqual([]);
     const linked = calls.filter((c) => c.url === "/api/links").map((c) => c.body.kind);
     expect(linked).toEqual([]); // not even A's shop link
   });
@@ -1019,7 +1021,10 @@ describe("component_dialog.js — what the import leaves behind", () => {
           datasheet_url: DATASHEET,
           image_url: PHOTO,
         });
-      if (url === "/api/attachments/from-url") {
+      if (
+        url === "/api/attachments/from-url" ||
+        url === "/api/components/7/photo-from-shops"
+      ) {
         inFlight += 1;
         peak = Math.max(peak, inFlight);
         return new Promise((resolve) =>
