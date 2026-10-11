@@ -142,8 +142,11 @@
    teal accent to a burnt orange — a lamp-lit workbench rather than a lab. Like
    Dim it sets every colour token, and every text colour reaches 4.5:1 on each
    ground it is drawn on; tests/js/theme_palette.test.js holds that. The status
-   colours stay recognisable (green, amber, red) but lean warm, and --warn is a
-   darker ochre than the accent so a warning does not read as a link. */
+   colours stay recognisable (green, amber, red) but lean warm. --warn sits
+   close to the orange accent, so it is pushed apart on two counts: a yellower,
+   olive-leaning mustard, and clearly darker (6.7:1 on --surface against the
+   accent's 5.6:1), with a lemon rather than peach fill — so a warning badge
+   does not read as an accent pill or a link. */
 :root[data-theme="warm"] {
   color-scheme: light;
 
@@ -165,7 +168,7 @@
   --row-picked: #f5d7b5;
 
   --ok: #3d6b1f;      --ok-soft: #e6efd3;
-  --warn: #94590a;    --warn-soft: #faeac2;
+  --warn: #735600;    --warn-soft: #f8edb8;
   --danger: #b42318;  --danger-soft: #fbe0da;
   --neutral: #65543f; --neutral-soft: #efe5d7;
   /* --danger-soft itself, as in Light; see :root for why it is opaque. */
