@@ -9,6 +9,16 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## The ShelfOS icon and logo
+
+- The new brand icon — a chip whose body is a shelf of parts — is the browser
+  tab icon and the home-screen icon on a phone or tablet (Apple touch icon, and
+  a web manifest with a maskable Android icon). The bare `/favicon.ico` some
+  browsers ask for on their own is served too, without signing in.
+- The header shows the ShelfOS logo in place of the old mark and the name beside
+  it: the light-ground version, or the dark-ground one under Dark, Dim, or System
+  on a dark OS.
+
 ## TME invoices with a part that has no RoHS mark
 
 - **#182** — a TME invoice with a part TME holds no RoHS mark for (a VISATON
