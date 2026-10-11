@@ -59,9 +59,10 @@ include = ["app*"]
 
 # The installer template is a shell script that lives beside the code rendering
 # it, so it can be parsed and shellchecked in CI like any other script. Without
-# this it would be left out of a built wheel and the download would 503.
+# this it would be left out of a built wheel and the download would 503. The
+# label logo is a bitmap the label renderer reads the same way.
 [tool.setuptools.package-data]
-"app.services" = ["*.sh"]
+"app.services" = ["*.sh", "label_logo.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

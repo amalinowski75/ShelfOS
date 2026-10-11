@@ -44,7 +44,9 @@ stacks them, and a label longer than it is wide — a 12 mm roll, a 29 × 90 mm
 address label — is composed along its length and turned a quarter turn, which is
 how such a roll is read anyway. The code stops growing at 25 mm, where it is
 already readable across a room, and on a narrow tape the margin gives way before
-the code does.
+the code does. The ShelfOS logo, 3 mm tall, goes in the bottom-right corner
+wherever the text leaves room for it, and is left out where it does not: it never
+takes a line from the name or the path, so the smallest labels go without it.
 
 `GET /api/labels/locations/<id>/preview.png` returns exactly the bitmap the printer
 would receive, and takes `?tape=` / `?length=` to try a roll without touching the

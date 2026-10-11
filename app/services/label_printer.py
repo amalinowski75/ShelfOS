@@ -147,6 +147,16 @@ _DETAIL_MAX_PX: Final = 30
 _DETAIL_MIN_PX: Final = 20
 _DETAIL_MAX_LINES: Final = 3
 
+# The ShelfOS logo, drawn small in the label's bottom-right corner wherever the
+# text leaves room for it, and simply left out where it does not: it is the one
+# thing on a label nobody needs. A bitmap rendered once from label_logo.svg (the
+# one-colour logo) so the server needs no SVG renderer:
+#   inkscape label_logo.svg --export-type=png --export-height=384 \
+#     --export-background=white --export-background-opacity=1
+# 3 mm tall puts "ShelfOS" at about the height of the small print.
+_LOGO_FILE: Final = Path(__file__).with_name("label_logo.png")
+_LOGO_HEIGHT_MM: Final = 3.0
+
 # Sane bounds for a continuous tape's length: below this a QR plus a name does
 # not fit, above it a typo would unroll a metre of tape per label.
 _MIN_LENGTH_MM: Final = 12.0
@@ -442,6 +452,20 @@ def _qr_image(payload: str, box_px: int, tape: str) -> Image.Image:
     return Image.open(buffer).convert("1")
 
 
+@lru_cache(maxsize=4)
+def _logo(height_px: int) -> Image.Image:
+    """The logo at ``height_px`` dots tall, in pure black and white.
+
+    Thresholded rather than dithered: a dithered edge is grey speckle on a
+    thermal head, and the logo is solid shapes that survive a hard cut.
+    """
+    with Image.open(_LOGO_FILE) as source:
+        grey = source.convert("L")
+    width = round(grey.width * height_px / grey.height)
+    scaled = grey.resize((width, height_px), Image.Resampling.LANCZOS)
+    return scaled.point(lambda value: 255 if value >= 128 else 0, mode="1")
+
+
 def _drawing_size(geometry: TapeGeometry) -> tuple[int, int, bool]:
     """The canvas to draw on, and whether it must be turned before printing.
 
@@ -579,15 +603,27 @@ def render_label(label: LabelData, geometry: TapeGeometry | None = None) -> Imag
     text_room = box_h if beside else box_h - qr.height - gap
     lines, text_h = _text_block(label, text_w, text_room)
 
+    # The logo takes only what the text has left: the text was fitted above
+    # without it, so it can never cost a line. Its column is the text's (beside)
+    # or the whole label (stacked), and it needs a gap clear above it.
+    used_h = text_h if beside else qr.height + gap + text_h
+    spare = box_h - used_h
+    logo = _logo(round(_LOGO_HEIGHT_MM * _PX_PER_MM))
+    lift = 0
+    if logo.width <= text_w and spare >= logo.height + gap:
+        canvas.paste(logo, (margin + box_w - logo.width, margin + box_h - logo.height))
+        # Centred as before, but lifted where centring would put the foot of
+        # the text into the logo's corner.
+        lift = max(0, spare // 2 - (spare - logo.height - gap))
+
     if beside:
         canvas.paste(qr, (margin, margin + (box_h - qr.height) // 2))
         text_x = margin + qr.width + gap
-        text_y = margin + max(0, (box_h - text_h) // 2)
+        text_y = margin + max(0, spare // 2 - lift)
     else:
         # Code and text are centred as one block, so the pair sits together
         # wherever the tape leaves spare length.
-        stack_h = qr.height + gap + text_h
-        top = margin + max(0, (box_h - stack_h) // 2)
+        top = margin + max(0, spare // 2 - lift)
         canvas.paste(qr, (margin + (box_w - qr.width) // 2, top))
         text_x, text_y = margin, top + qr.height + gap
 
