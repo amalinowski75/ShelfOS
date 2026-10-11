@@ -439,6 +439,17 @@ class InvoiceImportLineUpdate(BaseModel):
     supplier_part_number: str | None = None
 
 
+class ShopPhotoRequest(BaseModel):
+    """Find a new component a product photo — see ``shop_photo_service``."""
+
+    #: The image the import's own shop offered, tried first. Absent when it had
+    #: none: another shop may still have one.
+    image_url: str | None = Field(default=None, max_length=2048)
+    #: The shop page the part was imported from. That shop is not asked again
+    #: as a fallback: it would only offer the same picture.
+    source_url: str | None = Field(default=None, max_length=2048)
+
+
 class AttachmentRead(BaseModel):
     """Attachment metadata for the API.
 

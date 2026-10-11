@@ -139,6 +139,33 @@ def import_by_index(
     return provider.fetch_by_index(numbers, manufacturer=manufacturer)
 
 
+def import_by_mpn(
+    shop_key: str, mpn: str, *, manufacturer: str | None = None
+) -> ProductData:
+    """Look a part up at ``shop_key`` by its manufacturer part number alone.
+
+    For asking ANOTHER shop about a part already identified — the photo fallback.
+    Not ``import_by_index``: that takes the shop's own catalogue index first, and
+    element14 resolves a number as an order code before an MPN, so an all-digit
+    MPN (Keystone "5270") would find an unrelated product by order code and the
+    MPN search would never run. Raises ValidationError for a shop with no MPN
+    lookup (TME keys on its own symbol).
+    """
+    provider = _BY_MPN.get(shop_key.lower())
+    if provider is None:
+        raise ValidationError(f"{shop_key} cannot be searched by part number")
+    return provider.fetch_by_mpn(mpn, manufacturer=manufacturer)
+
+
+def shop_key(url: str | None) -> str | None:
+    """The shop key (``mouser``, ``tme`` …) of the provider serving ``url``."""
+    # ``object``: the same instance is typed by two protocols here.
+    provider: object = resolve(url) if url else None
+    if provider is None:
+        return None
+    return next((k for k, p in _BY_INDEX.items() if p is provider), None)
+
+
 def resolve(url: str) -> ShopProvider | None:
     """The provider whose host matches ``url``, or None."""
     for provider in _PROVIDERS:

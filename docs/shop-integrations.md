@@ -67,19 +67,54 @@ Neither is fetched from your browser: the server downloads them, which means the
 shop has to be willing to serve a datacenter address.
 
 The two differ in what happens when it isn't. A datasheet that can't be downloaded
-is kept as a link instead, and the dialog says so — losing it would matter. A photo
-that can't be downloaded is simply absent: no link, no notice. The component page
-opens with an empty gallery, which is the cue to add one by hand.
+is kept as a link instead, and the dialog says so — losing it would matter.
+
+A photo is fetched from another shop instead. If the shop you imported from has no
+picture of the part, or won't let the server download it, ShelfOS asks Digi-Key and
+then element14 for the same part number. It takes their picture only when the
+answer is this part: the part number has to match, and both sides must name a
+maker that is not a different company. A component with no maker gets no picture
+from another shop, because there would be nothing to tell its part from another
+company's with the same number. One number can belong to two makers, even in a single shop —
+element14 answers a Keystone `5270` with ABB's part. A shop's longer spelling of the
+same name, such as "NXP USA Inc." for "NXP Semiconductors", is accepted. Each shop
+lookup counts against that shop's API quota, and a shop without a key is skipped.
+
+If no shop has a picture, the photo is simply absent: no link, no notice. The
+component page opens with an empty gallery, which is the cue to add one by hand.
 
 Both downloads run at once, and the dialog stays up saying it is saving the files
 until they are in — that way the component page opens with them already attached.
-A shop that stalls rather than refusing can make that wait noticeable; it ends at
-the server's download timeout.
+A shop that stalls rather than refusing can make that wait noticeable. It ends at
+the server's download timeout of 30 seconds, and the photo's fallback to other
+shops shares that budget rather than starting a new one at each step. A shop
+lookup already under way when the time runs out can add a few seconds.
 
-Expect that of Mouser, whose images sit behind the same Akamai that already refuses
-our datasheet downloads from a hosted server — the same import usually gets both
-when ShelfOS runs on your own machine. TME, Digi-Key and element14 serve their
-images from plain CDNs.
+Expect refusals from Mouser. Its images sit behind the same Akamai that refuses
+our datasheet downloads, and since October 2026 it refuses them from a laptop as
+well as from a hosted server. TME, Digi-Key and element14 serve their images from
+plain CDNs, which is why a Mouser part's picture usually comes from Digi-Key or
+element14.
+
+### Photos for parts already in stock
+
+`scripts/fetch_missing_photos.py` gives the same treatment to components that have
+no photo yet. It goes through every one of them, looks the part up at the shop its
+link points to, and then asks the server for a photo through the same endpoint the
+import dialog uses, so the fallback to Digi-Key and element14 is the same one. It
+reports what it couldn't do. It works only through the HTTP API of a running ShelfOS, so it
+never opens the database:
+
+```
+python scripts/fetch_missing_photos.py --url http://localhost:9000 --user admin --dry-run
+python scripts/fetch_missing_photos.py --url http://localhost:9000 --user admin
+```
+
+`--dry-run` looks each part up at its linked shop but attaches nothing. It
+doesn't ask the other shops, so it can't tell whether one of them would have had
+a picture. The script spaces its Mouser
+lookups to stay under Mouser's limit of 30 calls a minute, so a run over a few
+hundred parts takes several minutes.
 
 ## When the same maker arrives spelled two ways
 

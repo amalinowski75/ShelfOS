@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import cast
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 from sqlmodel import Session
 
 from app.api.deps import get_session
 from app.api.schemas import (
+    AttachmentRead,
     ComponentCreate,
     ComponentScanRead,
     ComponentUpdate,
@@ -16,14 +17,17 @@ from app.api.schemas import (
     ScannedComponentRead,
     ScannedStockRead,
     ShopLookup,
+    ShopPhotoRequest,
 )
 from app.auth.deps import current_user_id, require_admin
+from app.models.attachment import Attachment
 from app.models.component import Component, ComponentParameter
 from app.models.user import User
 from app.services import component_service as cs
 from app.services import label_service as lbl
 from app.services import location_service as ls
 from app.services import manufacturer_service as mfs
+from app.services import shop_photo_service
 from app.services import stock_service as ss
 from app.services.errors import DuplicateComponentError, NotFoundError, ValidationError
 from app.services.shops.scan import ScanResult, parse_scan
@@ -235,6 +239,37 @@ def update_component(
         values=[(p.parameter_definition_id, p.value) for p in payload.parameters],
         user_id=admin.id,
     )
+
+
+@router.post(
+    "/{component_id}/photo-from-shops",
+    response_model=AttachmentRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def photo_from_shops(
+    component_id: int,
+    payload: ShopPhotoRequest,
+    response: Response,
+    session: Session = Depends(get_session),
+) -> Attachment:
+    """Attach a product photo: the import's own image, else another shop's.
+
+    For the import dialog, right after it creates the component. A shop that
+    will not let the server download its image (Mouser) no longer leaves the
+    part without one, as long as Digi-Key or element14 sells the same part. A
+    component that already has a photo gets it back with 200 and nothing is
+    fetched, so a retry cannot stack copies. 422, naming what each source said,
+    when no photo could be had. Writers only.
+    """
+    attachment, created = shop_photo_service.attach_photo(
+        session,
+        component_id,
+        payload.image_url,
+        source_url=payload.source_url,
+    )
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    return attachment
 
 
 @router.get("/{component_id}/parameters", response_model=list[ComponentParameter])

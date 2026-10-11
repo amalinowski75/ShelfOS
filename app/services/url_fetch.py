@@ -135,13 +135,18 @@ def _filename_from(url: str, content_disposition: str | None) -> str:
 
 
 def fetch_url(
-    url: str, *, transport: httpx.BaseTransport | None = None
+    url: str,
+    *,
+    transport: httpx.BaseTransport | None = None,
+    deadline: float | None = None,
 ) -> tuple[bytes, str]:
     """Download ``url`` and return ``(data, filename)``.
 
     Raises :class:`ValidationError` for a bad scheme, a non-public host, a
     non-2xx response, too many redirects, an over-size body, or a network error.
-    ``transport`` is an injection point for tests.
+    ``transport`` is an injection point for tests. ``deadline`` (a
+    ``time.monotonic()`` instant) ends the fetch sooner than its own ceiling, for
+    a caller with a budget shared across several fetches.
     """
     cap = config.MAX_ATTACHMENT_BYTES
     # Bound concurrent fetches so a burst of slow downloads can't exhaust the sync
@@ -152,7 +157,8 @@ def fetch_url(
         # A hard wall-clock deadline across ALL hops (connect + read): each hop's
         # timeout is clamped to the remaining budget, so a server that stalls on
         # connect or trickles bytes can't hold a worker thread past this ceiling.
-        deadline = time.monotonic() + config.ATTACHMENT_URL_TOTAL_TIMEOUT
+        ceiling = time.monotonic() + config.ATTACHMENT_URL_TOTAL_TIMEOUT
+        deadline = ceiling if deadline is None else min(deadline, ceiling)
         current = _guard_url(url)
         return _fetch(current, cap, deadline, transport)
     finally:

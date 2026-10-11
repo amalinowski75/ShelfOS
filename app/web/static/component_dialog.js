@@ -39,10 +39,15 @@
   let pendingDatasheetUrl = null;
   // The shop's product photo, downloaded into the component's attachments right
   // after it is created, so the detail page the create jumps to already shows the
-  // part. Unlike the datasheet it has no link fallback: a shop that won't serve us
-  // the image leaves the component without a photo, which the detail page states by
-  // showing none — and that is exactly the cue to add one by hand.
+  // part. Unlike the datasheet it has no link fallback. A shop that won't serve us
+  // the image (Mouser's Akamai refuses every script) — or has none — is not the
+  // end: the server then asks Digi-Key and Farnell for the same part's picture.
+  // Only when none of them has one is the component left without, which the
+  // detail page states by showing none — the cue to add one by hand.
   let pendingImageUrl = null;
+  // Whether this component came from a shop import, and so should be given a
+  // photo even when the import itself offered none.
+  let photoWanted = false;
   // The shop URL the component was imported from: saved as a `shop` link on create,
   // and the target of the "Open in shop" button. Set it only through setShopUrl so
   // the button's enabled state always tracks it.
@@ -360,6 +365,23 @@
     }
   }
 
+  // Give the new component a product photo: the import's own image, else another
+  // shop's (POST /api/components/{id}/photo-from-shops). Best-effort and silent
+  // like the download it replaces — a 422 means no shop had a picture to give.
+  async function attachShopPhoto(componentId, imageUrl, sourceUrl) {
+    try {
+      const resp = await fetch(`/api/components/${componentId}/photo-from-shops`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        // The source shop is not asked again: it would offer the same picture.
+        body: JSON.stringify({ image_url: imageUrl, source_url: sourceUrl }),
+      });
+      return resp.ok;
+    } catch {
+      return false;
+    }
+  }
+
   // Save an external link on the component. Best-effort like the datasheet download.
   async function addLink(componentId, kind, url) {
     try {
@@ -497,10 +519,11 @@
           lost.push("the shop link");
         }
         // The datasheet and the photo download TOGETHER, not one after the other:
-        // the server bounds each fetch by a whole-fetch timeout (30 s), and a shop
-        // whose file host tarpits us rather than refusing — Akamai's habit — would
-        // otherwise hold this for both budgets end to end. They land in different
-        // attachments, so neither depends on the other's outcome.
+        // the server bounds each by a whole-fetch timeout (30 s) — the photo's
+        // fallback to other shops shares that one budget rather than getting its
+        // own per step — and a shop whose file host tarpits us rather than refusing
+        // (Akamai's habit) would otherwise hold this for both budgets end to end.
+        // They land in different attachments, so neither depends on the other.
         const saving = [];
         // If the shop blocks server-side fetches — TME's document host answers a
         // Cloudflare challenge, and Mouser's Akamai serves an "Access Denied" page
@@ -523,8 +546,8 @@
         // The photo reports nothing either way — a picture is a nicety, and its
         // absence on the page that opens says it plainly enough without a toast for
         // something nobody asked for by name.
-        if (pendingImageUrl) {
-          saving.push(attachFromUrl(created.id, pendingImageUrl, "photo"));
+        if (photoWanted) {
+          saving.push(attachShopPhoto(created.id, pendingImageUrl, pendingShopUrl));
         }
         if (saving.length) {
           // Both are awaited before the dialog closes: the caller may navigate to
@@ -544,6 +567,7 @@
       setShopUrl(null);
       pendingDatasheetUrl = null;
       pendingImageUrl = null;
+      photoWanted = false;
       dialog.close();
       // Said after the jump when there is one: these are the second step's news,
       // and the caller is about to replace the page this toast would appear on.
@@ -794,6 +818,7 @@
   async function applyPrefillFields(prefill) {
     pendingDatasheetUrl = null;
     pendingImageUrl = null;
+    photoWanted = false;
     // An invoice line's prefill carries a prebuilt shop URL; a BOM/blank one has
     // none. A later shop lookup (runImport) overrides this with its source_url.
     setShopUrl(prefill && prefill.shopUrl);
@@ -830,6 +855,7 @@
     set("notes", prefill.notes);
     if (prefill.datasheetUrl) pendingDatasheetUrl = prefill.datasheetUrl;
     if (prefill.imageUrl) pendingImageUrl = prefill.imageUrl;
+    if (prefill.fromShop) photoWanted = true;
 
     const proposal = prefill.proposal || null;
     // Package and mounting are type-independent, so apply them up front — before the
@@ -1010,6 +1036,7 @@
           package: product.package,
           datasheetUrl: product.datasheet_url,
           imageUrl: product.image_url,
+          fromShop: true,
           proposal: product.proposal,
         });
         // applyPrefill cleared these; restore the shop link from the URL the SERVER
@@ -1115,6 +1142,7 @@
       // hand. Dropped up front, so only this code's own answer can set them.
       pendingDatasheetUrl = null;
       pendingImageUrl = null;
+      photoWanted = false;
       importUrl.value = importCode;
       triggerImport();
     }
