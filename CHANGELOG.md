@@ -11,10 +11,10 @@ pull request, which carries the reasoning and the verification.
 
 ## A warm theme
 
-- A fifth choice in the **Theme** picker, **Warm**: Light with cream and paper
-  grounds, brown text and a burnt-orange accent in place of the cool slate and
-  teal. Like Dim it sets its own full palette, with every text colour at 4.5:1 or
-  better on the grounds it is drawn on.
+- **#183** — a fifth choice in the **Theme** picker, **Warm**: Light with cream
+  and paper grounds, brown text and a burnt-orange accent in place of the cool
+  slate and teal. Like Dim it sets its own full palette, with every text colour at
+  4.5:1 or better on the grounds it is drawn on.
 
 ## TME invoices with a part that has no RoHS mark
 
