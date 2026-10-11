@@ -9,6 +9,19 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## Invoice parts get their shop link and datasheet
+
+- **#191** — a component created when an invoice is finalized now gets the shop
+  link and datasheet it was missing, not just the photo. The import asked the
+  shop about each part but kept nothing it answered, and finalize built the
+  component from the line's text alone. Finalize now asks the invoice's shop once
+  per line, by the line's own catalogue number, and adds whatever the component
+  lacks: the product page as a shop link, the datasheet as a file (or as a link
+  when the shop blocks the download), and the photo. A finalized invoice has a
+  **Fill in from shop** button that runs the same pass for invoices finalized
+  earlier. The endpoint is now `POST /api/invoices/{id}/lines/{line}/fill-in`,
+  replacing #190's `/photo`.
+
 ## Photos for parts from an invoice
 
 - **#190** — finalizing an invoice now fetches photos for its parts. The import
