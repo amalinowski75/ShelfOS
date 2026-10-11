@@ -18,7 +18,15 @@ pull request, which carries the reasoning and the verification.
   signing in.
 - **#184** — the header shows the ShelfOS logo in place of the old mark and the
   name beside it: the light-ground version, or the dark-ground one under Dark,
-  Dim, or System on a dark OS.
+  Dim, or System on a dark OS. Warm (#183) is a light theme and takes the
+  light one.
+
+## A warm theme
+
+- **#183** — a fifth choice in the **Theme** picker, **Warm**: Light with cream
+  and paper grounds, brown text and a burnt-orange accent in place of the cool
+  slate and teal. Like Dim it sets its own full palette, with every text colour at
+  4.5:1 or better on the grounds it is drawn on.
 
 ## TME invoices with a part that has no RoHS mark
 

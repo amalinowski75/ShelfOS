@@ -57,7 +57,10 @@ const withoutClearLayers = (value) =>
 const root = declarations(block(":root {"));
 const themed = Object.keys(root).filter((name) => root[name].includes("light-dark("));
 const fallback = declarations(block("@supports not (color: light-dark(#000, #fff)) {\n  :root {"));
-const dim = declarations(block(':root[data-theme="dim"] {'));
+// The themes that set their own palette rather than picking a side of :root.
+const PALETTES = Object.fromEntries(
+  ["dim", "warm"].map((name) => [name, declarations(block(`:root[data-theme="${name}"] {`))]),
+);
 
 describe("the fallback for browsers without light-dark()", () => {
   it("sets every themed token, and only those", () => {
@@ -71,9 +74,11 @@ describe("the fallback for browsers without light-dark()", () => {
   });
 });
 
-describe("the dim palette", () => {
-  it("sets every themed token, so none falls through to Dark", () => {
-    expect(Object.keys(dim).sort()).toEqual([...themed].sort());
+describe.each(Object.keys(PALETTES))("the %s palette", (name) => {
+  const palette = PALETTES[name];
+
+  it("sets every themed token, so none falls through to Light or Dark", () => {
+    expect(Object.keys(palette).sort()).toEqual([...themed].sort());
   });
 
   // WCAG 2 contrast. A translucent fill is flattened onto --surface, which is
@@ -82,7 +87,7 @@ describe("the dim palette", () => {
     const hex = value.match(/^#([0-9a-f]{6})$/i);
     if (hex) return [0, 2, 4].map((i) => parseInt(hex[1].slice(i, i + 2), 16));
     const [r, g, b, a] = value.match(/[\d.]+/g).map(Number);
-    const ground = rgb(dim["--surface"]);
+    const ground = rgb(palette["--surface"]);
     return [r, g, b].map((c, i) => Math.round(a * c + (1 - a) * ground[i]));
   };
   const luminance = (c) =>
@@ -91,7 +96,7 @@ describe("the dim palette", () => {
       .map((x) => (x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4))
       .reduce((sum, x, i) => sum + x * [0.2126, 0.7152, 0.0722][i], 0);
   const contrast = (fg, bg) => {
-    const [a, b] = [luminance(rgb(dim[fg])), luminance(rgb(dim[bg]))];
+    const [a, b] = [luminance(rgb(palette[fg])), luminance(rgb(palette[bg]))];
     return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
   };
 
@@ -114,7 +119,7 @@ describe("the dim palette", () => {
   });
 
   it("keeps --unfilled-tint equal to --danger-soft flattened onto --surface", () => {
-    expect(rgb(dim["--unfilled-tint"])).toEqual(rgb(dim["--danger-soft"]));
+    expect(rgb(palette["--unfilled-tint"])).toEqual(rgb(palette["--danger-soft"]));
   });
 });
 

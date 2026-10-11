@@ -3231,9 +3231,9 @@ def test_settings_menu_offers_every_theme(client: TestClient) -> None:
     picker = menu.split('<select id="theme-select">', 1)[1].split("</select>", 1)[0]
     # The values theme.js and app.css know; "" is System, i.e. no data-theme.
     values = re.findall(r'<option value="([^"]*)"', picker)
-    assert values == ["", "light", "dark", "dim"]
+    assert values == ["", "light", "dark", "dim", "warm"]
     css = (Path(__file__).parent.parent / "app/web/static/app.css").read_text()
-    for theme in ("light", "dark", "dim"):
+    for theme in ("light", "dark", "dim", "warm"):
         assert f':root[data-theme="{theme}"]' in css, theme
 
 
