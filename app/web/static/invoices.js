@@ -141,6 +141,110 @@ if (importBtn) {
   });
 }
 
+// ---- Filling the lines' components in from the invoice's shop --------------
+// A component created at finalize is built from the line's fields alone: the
+// import asked the shop but kept none of what it answered. So each line's
+// component is offered to POST /api/invoices/{id}/lines/{line}/fill-in, which
+// asks the invoice's shop once and adds whichever of the shop link, datasheet
+// and photo the component lacks (one that has all three asks no shop). Run
+// after finalize, and from "Fill in from shop" on a finalized invoice for the
+// ones finalized before this existed.
+//
+// One line at a time, said in the dialog as it goes, because each can take a
+// few seconds. Best-effort: what can't be had is left out — but said. Returns a
+// summary of what is still missing, which the caller leaves on screen until the
+// dialog is closed; null when nothing is, and the caller reloads at once.
+// Closing the dialog — the cancel button, the ×, or Esc — reloads straight away.
+async function fillInLines(invoiceId, { dialog, status, cancel, submit, prefix = "" }) {
+  let lines = [];
+  try {
+    const resp = await fetch(`/api/invoices/${invoiceId}/lines`);
+    const payload = resp.ok ? await resp.json() : [];
+    if (Array.isArray(payload)) lines = payload;
+  } catch {
+    return null; // nothing to fill in from, and nothing lost by not trying
+  }
+  const seen = new Set();
+  const todo = lines.filter((line) => {
+    if (!line || line.id == null || seen.has(line.component_id)) return false;
+    seen.add(line.component_id);
+    return true;
+  });
+  if (!todo.length) return null;
+
+  if (submit) submit.disabled = true;
+  if (cancel) cancel.textContent = "Skip";
+  // However the dialog closes now, reload at once: after a finalize the page
+  // behind it still shows the draft, with a Finalize button that would do
+  // nothing until the loop ends.
+  dialog.addEventListener("close", () => window.location.reload(), { once: true });
+  const missing = { photo: 0, datasheet: 0, "shop link": 0 };
+  let incomplete = 0;
+  let unreached = 0;
+  for (const [index, line] of todo.entries()) {
+    if (status) {
+      status.hidden = false;
+      status.textContent =
+        `${prefix}fetching product details ${index + 1}/${todo.length}…`;
+    }
+    try {
+      const url = `/api/invoices/${invoiceId}/lines/${line.id}/fill-in`;
+      const resp = await sendJSON(url, "POST", {});
+      const done = resp.ok ? await resp.json() : null;
+      if (!done || typeof done !== "object") {
+        unreached += 1;
+        continue;
+      }
+      const gaps = [
+        ["photo", done.photo],
+        ["datasheet", done.datasheet],
+        ["shop link", done.shop_link],
+      ].filter(([, state]) => state === "none");
+      for (const [what] of gaps) missing[what] += 1;
+      if (gaps.length) incomplete += 1;
+    } catch {
+      unreached += 1;
+    }
+  }
+  if (!incomplete && !unreached) return null;
+  const parts = [];
+  if (incomplete) {
+    const what = Object.entries(missing)
+      .filter(([, count]) => count)
+      .map(([name, count]) => `${name}: ${count}`)
+      .join(", ");
+    parts.push(`${incomplete} of ${todo.length} still missing something (${what})`);
+  }
+  if (unreached) parts.push(`${unreached} could not be filled in`);
+  const summary = `${prefix}done — ${parts.join("; ")}.`;
+  if (status) {
+    status.hidden = false;
+    status.textContent = summary;
+  }
+  if (cancel) cancel.textContent = "Close";
+  return summary;
+}
+
+// "Fill in from shop" on a finalized invoice (writers only; see the template).
+const fillBtn = document.getElementById("invoice-fill-btn");
+const fillDialog = document.getElementById("invoice-fill-dialog");
+if (fillBtn && fillDialog) {
+  fillBtn.addEventListener("click", () => {
+    // Opened inside the guard: one that drops the click (another action still
+    // in flight) must not leave an open dialog with nothing behind it.
+    guard(async () => {
+      fillDialog.showModal();
+      const summary = await fillInLines(fillBtn.dataset.invoiceId, {
+        dialog: fillDialog,
+        status: document.getElementById("invoice-fill-status"),
+        cancel: document.getElementById("invoice-fill-cancel"),
+      });
+      // A summary stays up until the dialog is closed, which reloads.
+      if (!summary) window.location.reload();
+    });
+  });
+}
+
 // ---- Detail page: metadata, lines, finalize --------------------------------
 // The edit controls (and their dialogs) are only rendered for a writer viewing
 // a draft; on a finalized or read-only page there is nothing to wire up.
@@ -715,64 +819,19 @@ if (detail && lineDialog) {
           total_gross: gross ? gross : null,
         });
         if (resp.ok) {
-          await fetchLinePhotos();
-          window.location.reload();
+          const summary = await fillInLines(invoiceId, {
+            dialog: finalizeDialog,
+            status: document.getElementById("invoice-finalize-status"),
+            cancel: document.getElementById("invoice-finalize-cancel"),
+            submit: finalizeForm.querySelector('button[type="submit"]'),
+            prefix: "Invoice finalized — ",
+          });
+          // A summary stays up until the dialog is closed, which reloads.
+          if (!summary) window.location.reload();
         } else {
           showError(finalizeError, await errorMessage(resp));
         }
       });
     });
-  }
-
-  // Once the invoice is finalized, give each line's component a product photo.
-  // The import kept no image URL, so the server asks the invoice's shop again —
-  // by the line's own catalogue number — then Digi-Key and element14
-  // (POST /api/invoices/{id}/lines/{line}/photo). One line at a time, said in the
-  // dialog as it goes, because each can take a few seconds; a component that
-  // already has a photo answers at once without asking any shop. Best-effort:
-  // a line with no photo to be had is simply left without, and closing the
-  // dialog reloads straight away — whatever is still missing can be fetched
-  // later with scripts/fetch_missing_photos.py.
-  async function fetchLinePhotos() {
-    let lines = [];
-    try {
-      const resp = await fetch(`/api/invoices/${invoiceId}/lines`);
-      const payload = resp.ok ? await resp.json() : [];
-      if (Array.isArray(payload)) lines = payload;
-    } catch {
-      return; // the invoice is finalized either way; photos are a nicety
-    }
-    const seen = new Set();
-    const todo = lines.filter((line) => {
-      if (!line || line.id == null || seen.has(line.component_id)) return false;
-      seen.add(line.component_id);
-      return true;
-    });
-    if (!todo.length) return;
-
-    const status = document.getElementById("invoice-finalize-status");
-    const cancel = document.getElementById("invoice-finalize-cancel");
-    const submitBtn = finalizeForm.querySelector('button[type="submit"]');
-    if (submitBtn) submitBtn.disabled = true;
-    if (cancel) cancel.textContent = "Skip photos";
-    // However the dialog closes now — Skip photos, the ×, or Esc — the invoice is
-    // final and the page behind it still shows the draft, with a Finalize button
-    // that would do nothing until the loop ends: reload at once instead.
-    finalizeDialog.addEventListener("close", () => window.location.reload(), {
-      once: true,
-    });
-    for (const [index, line] of todo.entries()) {
-      if (status) {
-        status.hidden = false;
-        status.textContent =
-          `Invoice finalized — fetching product photos ${index + 1}/${todo.length}…`;
-      }
-      try {
-        const url = `/api/invoices/${invoiceId}/lines/${line.id}/photo`;
-        await sendJSON(url, "POST", {});
-      } catch {
-        // A line that can't be reached is left without a photo, like a 422.
-      }
-    }
   }
 }

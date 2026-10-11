@@ -34,11 +34,10 @@ from app import config
 from app.models.attachment import Attachment
 from app.models.component import Component
 from app.models.enums import AttachmentKind
-from app.models.invoice import Invoice, InvoiceLine
 from app.services import attachment_service, shops, url_fetch
 from app.services import manufacturer_service as ms
 from app.services._common import normalize, refuse_if_deleted, require_entity
-from app.services.errors import NotFoundError, ValidationError
+from app.services.errors import ValidationError
 from app.services.shops.base import ProductData, ShopLookupMiss
 
 # Shops asked by part number once the imported image has failed, in order. Only
@@ -69,17 +68,22 @@ _component_locks_guard = threading.Lock()
 
 
 @contextmanager
-def _one_at_a_time(component_id: int) -> Iterator[None]:
+def one_at_a_time(component_id: int) -> Iterator[None]:
+    """Hold the component's turn: one request adding things to it at a time."""
     with _component_locks_guard:
         lock = _component_locks.setdefault(component_id, threading.Lock())
     with lock:
         yield
 
 
-def _ask(
+def ask(
     shop: str, clock: Callable[[], float], call: Callable[[], ProductData]
 ) -> ProductData:
-    """``call()`` against ``shop``, unless that shop was found down a moment ago."""
+    """``call()`` against ``shop``, unless that shop was found down a moment ago.
+
+    Every lookup this module and the invoice fill-in make goes through here, so
+    a shop found down by one is skipped by all (see ``SHOP_DOWN_SECONDS``).
+    """
     with _down_lock:
         until, reason = _down.get(shop, (0.0, ""))
     if clock() < until:
@@ -104,7 +108,7 @@ def attach_photo(
     image_url: str | None,
     *,
     source_url: str | None = None,
-    own_shop: tuple[str, str] | None = None,
+    source_shop: str | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> tuple[Attachment, bool]:
     """Give the component a product photo; ``(attachment, created)``.
@@ -113,15 +117,10 @@ def attach_photo(
     absent, since a shop with no picture of a part may sell it all the same.
     Then each fallback shop is asked by the component's MPN — except the one
     ``source_url`` came from, which would only offer the same picture again —
-    and its image used if the answer is this part.
+    and its image used if the answer is this part. ``source_shop`` names that
+    shop by its key instead, for a caller that has no URL for it.
 
-    ``own_shop`` — ``(shop key, that shop's catalogue number for the part)`` —
-    is for a caller that knows where the part was bought but not its image, such
-    as an invoice line: with no ``image_url``, that shop is asked by that number
-    first (the lookup the invoice import makes) and its image tried, then the
-    fallbacks.
-
-    Requests for one component take turns (see ``_one_at_a_time``).
+    Requests for one component take turns (see :func:`one_at_a_time`).
 
     A component that already has a photo gets it back with ``created`` False,
     and nothing is fetched: a retried or doubled request must not stack copies.
@@ -131,33 +130,46 @@ def attach_photo(
     """
     component = require_entity(session, Component, component_id, "component")
     refuse_if_deleted(component, component.mpn or f"component #{component_id}")
-    with _one_at_a_time(component_id):
-        return _attach_photo(session, component, image_url, source_url, own_shop, clock)
+    with one_at_a_time(component_id):
+        existing = next(
+            (
+                a
+                for a in attachment_service.list_attachments(
+                    session, entity_type="component", entity_id=component_id
+                )
+                if a.kind is AttachmentKind.PHOTO
+            ),
+            None,
+        )
+        if existing is not None:
+            return existing, False
+        attached = attach_photo_held(
+            session,
+            component,
+            image_url,
+            source=source_shop or shops.shop_key(source_url),
+            deadline=clock() + config.ATTACHMENT_URL_TOTAL_TIMEOUT,
+            clock=clock,
+        )
+        return attached, True
 
 
-def _attach_photo(
+def attach_photo_held(
     session: Session,
     component: Component,
     image_url: str | None,
-    source_url: str | None,
-    own_shop: tuple[str, str] | None,
-    clock: Callable[[], float],
-) -> tuple[Attachment, bool]:
-    component_id = cast(int, component.id)
-    existing = next(
-        (
-            a
-            for a in attachment_service.list_attachments(
-                session, entity_type="component", entity_id=component_id
-            )
-            if a.kind is AttachmentKind.PHOTO
-        ),
-        None,
-    )
-    if existing is not None:
-        return existing, False
+    *,
+    source: str | None,
+    deadline: float,
+    clock: Callable[[], float] = time.monotonic,
+) -> Attachment:
+    """:func:`attach_photo`'s search, for a caller already holding the turn.
 
-    deadline = clock() + config.ATTACHMENT_URL_TOTAL_TIMEOUT
+    For a caller that knows the component has no photo and holds
+    :func:`one_at_a_time` itself, so neither is repeated; ``deadline`` is the
+    caller's, shared with whatever else it fetches for this component.
+    """
+    component_id = cast(int, component.id)
     tried: list[str] = []
     reasons: list[str] = []
 
@@ -179,17 +191,10 @@ def _attach_photo(
             reasons.append(f"{source}: {exc}")
             return None
 
-    source = shops.shop_key(source_url)
-    if not image_url and own_shop is not None:
-        source, number = own_shop
-        image_url, reason = _own_shop_image(session, component, source, number, clock)
-        if image_url is None:
-            reasons.append(f"{source}: {reason}")
-
     if image_url:
         attached = attempt(image_url, "the shop's image")
         if attached is not None:
-            return attached, True
+            return attached
 
     if not (component.mpn and component.manufacturer):
         what = "part number" if not component.mpn else "manufacturer"
@@ -211,84 +216,9 @@ def _attach_photo(
                 continue
             attached = attempt(url, shop)
             if attached is not None:
-                return attached, True
+                return attached
 
     raise ValidationError("no photo could be downloaded — " + "; ".join(reasons))
-
-
-def attach_invoice_line_photo(
-    session: Session, invoice_id: int, line_id: int
-) -> tuple[Attachment, bool]:
-    """Give an invoice line's component a photo, asking the invoice's shop first.
-
-    For the invoice page right after finalize: an invoice keeps no image URL —
-    the import's shop answer is not stored — so the shop is asked again, by the
-    line's own catalogue number (the key the import looked it up by). A line
-    with no such number, or a supplier no provider serves (a hand-made invoice),
-    goes straight to the fallbacks, every one of them asked by MPN and checked in
-    full. A component that already has a photo is returned as it is, with no
-    shop asked, so every line can simply be offered.
-
-    Only for a finalized invoice: a draft's line can still be pointed at another
-    component, and its picture would stay on the one it left.
-    """
-    line = session.get(InvoiceLine, line_id)
-    if line is None or line.invoice_id != invoice_id:
-        raise NotFoundError(f"invoice line {line_id} not found")
-    invoice = require_entity(session, Invoice, invoice_id, "invoice")
-    if not invoice.is_finalized:
-        raise ValidationError("finalize the invoice first — its lines can still change")
-    shop = shops.shop_key_by_name(invoice.supplier)
-    number = (line.supplier_part_number or "").strip()
-    return attach_photo(
-        session,
-        line.component_id,
-        None,
-        own_shop=(shop, number) if shop and number else None,
-    )
-
-
-def _own_shop_image(
-    session: Session,
-    component: Component,
-    shop: str,
-    number: str,
-    clock: Callable[[], float],
-) -> tuple[str | None, str]:
-    """The image the part's own shop shows for it, by that shop's catalogue number.
-
-    Checked more leniently than a fallback's answer: the part was bought there
-    under that very number, so a maker named on one side only does not refuse
-    it, and an answer naming no MPN (TME may not) is taken on the number alone. A
-    stated different MPN or a plainly different maker still does. The number is
-    the shop's own and nothing else — never the MPN standing in for it, which
-    could name another product in the shop's catalogue (TME looks it up as a
-    symbol), and then nothing would be left to tell.
-    """
-    try:
-        product = _ask(
-            shop,
-            clock,
-            lambda: shops.import_by_index(
-                shop, [number], manufacturer=component.manufacturer
-            ),
-        )
-    except ValidationError as exc:
-        return None, str(exc)
-    if (
-        product.mpn
-        and component.mpn
-        and normalize(product.mpn) != normalize(component.mpn)
-    ):
-        return None, f"answered with {product.mpn}"
-    if ms.conflicts_with(
-        ms.canonical_name(session, product.manufacturer),
-        ms.canonical_name(session, component.manufacturer),
-    ):
-        return None, f"answered with {product.manufacturer}'s part"
-    if not product.image_url:
-        return None, "no image for this part"
-    return product.image_url, ""
 
 
 def _fallback_image(
@@ -296,7 +226,7 @@ def _fallback_image(
 ) -> tuple[str | None, str]:
     """``(image URL, "")`` when ``shop`` sells this very part, else ``(None, why)``."""
     try:
-        product = _ask(
+        product = ask(
             shop,
             clock,
             lambda: shops.import_by_mpn(

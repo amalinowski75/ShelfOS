@@ -190,7 +190,11 @@ def _fetch(
                         current = _guard_url(urljoin(current, location))
                         continue
                     if resp.status_code >= 400:
-                        raise _reject("the server returned an error")
+                        # The status is named: a caller deciding whether to try
+                        # again tells a refusal (403) from a bad moment (503).
+                        raise _reject(
+                            f"the server returned an error (HTTP {resp.status_code})"
+                        )
                     declared = resp.headers.get("content-length", "")
                     if declared.isdigit() and int(declared) > cap:
                         raise _reject(

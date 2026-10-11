@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.models.enums import (
     AttachmentKind,
     ContainerType,
+    FillStatus,
     LinkKind,
     LocationType,
     MountingType,
@@ -304,6 +305,21 @@ class InvoiceLineCreate(BaseModel):
     unit_price: Decimal
     supplier_part_number: str | None = None
     location_id: int | None = None
+
+
+class InvoiceLineFillIn(BaseModel):
+    """What filling an invoice line's component in from its shop came to.
+
+    Each of ``photo``, ``datasheet`` and ``shop_link``: ``present`` (it had one,
+    so nothing was asked), ``added``, ``linked`` (a datasheet the shop would not
+    let us download, kept as a link) or ``none``. ``reasons`` says why, for
+    whatever is still missing.
+    """
+
+    photo: FillStatus
+    datasheet: FillStatus
+    shop_link: FillStatus
+    reasons: list[str]
 
 
 class InvoiceUpdate(BaseModel):

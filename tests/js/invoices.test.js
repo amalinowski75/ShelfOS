@@ -890,9 +890,10 @@ describe("invoices.js — remove line and finalize", () => {
   });
 });
 
-describe("invoices.js — product photos after finalize", () => {
-  // The import kept no image URL, so once the invoice is final each line's
-  // component is offered to the server, which asks the invoice's shop again.
+describe("invoices.js — filling the lines in after finalize", () => {
+  // The import kept none of the shop's answer, so once the invoice is final each
+  // line's component is offered to the server, which asks the invoice's shop again
+  // and adds the shop link, datasheet and photo it lacks.
   function finalizing({ lines, photo = () => ({ ok: true, json: async () => ({}) }) }) {
     const calls = [];
     const release = [];
@@ -902,7 +903,7 @@ describe("invoices.js — product photos after finalize", () => {
         return Promise.resolve({ ok: true, json: async () => ({ id: 7 }) });
       if (url === "/api/invoices/7/lines")
         return Promise.resolve({ ok: true, json: async () => lines });
-      if (url.endsWith("/photo"))
+      if (url.endsWith("/fill-in"))
         return new Promise((resolve) => release.push(() => resolve(photo(url))));
       return Promise.resolve({ ok: true, json: async () => ({}) });
     };
@@ -919,9 +920,9 @@ describe("invoices.js — product photos after finalize", () => {
   }
 
   const photoUrls = (calls) =>
-    calls.filter((c) => c.url.endsWith("/photo")).map((c) => c.url);
+    calls.filter((c) => c.url.endsWith("/fill-in")).map((c) => c.url);
 
-  it("asks for each line's photo in turn, saying so, then reloads", async () => {
+  it("offers each line in turn, saying so, then reloads", async () => {
     const lines = [
       { id: 3, component_id: 30 },
       { id: 4, component_id: 40 },
@@ -937,22 +938,22 @@ describe("invoices.js — product photos after finalize", () => {
     await tick();
 
     // The first request is out, the second not yet: one line at a time.
-    expect(photoUrls(calls)).toEqual(["/api/invoices/7/lines/3/photo"]);
+    expect(photoUrls(calls)).toEqual(["/api/invoices/7/lines/3/fill-in"]);
     const status = document.getElementById("invoice-finalize-status");
     expect(status.hidden).toBe(false);
-    expect(status.textContent).toMatch(/fetching product photos 1\/2/);
+    expect(status.textContent).toMatch(/Invoice finalized — fetching product details 1\/2/);
     expect(navigations).toHaveLength(0);
 
     await settle(release);
 
     expect(photoUrls(calls)).toEqual([
-      "/api/invoices/7/lines/3/photo",
-      "/api/invoices/7/lines/4/photo",
+      "/api/invoices/7/lines/3/fill-in",
+      "/api/invoices/7/lines/4/fill-in",
     ]);
     expect(navigations).toHaveLength(1);
   });
 
-  it("asks once per component, and a failed photo stops nothing", async () => {
+  it("offers each component once, and a failed line stops nothing", async () => {
     const lines = [
       { id: 3, component_id: 30 },
       { id: 4, component_id: 30 }, // the same part on a second line
@@ -960,7 +961,7 @@ describe("invoices.js — product photos after finalize", () => {
     ];
     const { calls, impl, release } = finalizing({
       lines,
-      photo: () => ({ ok: false, status: 422, json: async () => ({ detail: "none" }) }),
+      photo: () => ({ ok: false, status: 500, json: async () => ({ detail: "boom" }) }),
     });
     const { document, navigations } = loadPage(detailFixture({ withFinalize: true }), SCRIPTS, {
       fetchImpl: impl,
@@ -970,13 +971,22 @@ describe("invoices.js — product photos after finalize", () => {
     await settle(release);
 
     expect(photoUrls(calls)).toEqual([
-      "/api/invoices/7/lines/3/photo",
-      "/api/invoices/7/lines/5/photo",
+      "/api/invoices/7/lines/3/fill-in",
+      "/api/invoices/7/lines/5/fill-in",
     ]);
+    // Said, not swallowed: the page waits for the dialog to be closed.
+    expect(navigations).toHaveLength(0);
+    expect(document.getElementById("invoice-finalize-status").textContent).toBe(
+      "Invoice finalized — done — 2 could not be filled in.",
+    );
+    expect(document.getElementById("invoice-finalize-cancel").textContent).toBe(
+      "Close",
+    );
+    document.getElementById("invoice-finalize-dialog").close();
     expect(navigations).toHaveLength(1);
   });
 
-  it("reloads at once when the photos are skipped", async () => {
+  it("reloads at once when the rest is skipped", async () => {
     const lines = [
       { id: 3, component_id: 30 },
       { id: 4, component_id: 40 },
@@ -992,7 +1002,7 @@ describe("invoices.js — product photos after finalize", () => {
     await tick();
 
     const cancel = document.getElementById("invoice-finalize-cancel");
-    expect(cancel.textContent).toBe("Skip photos");
+    expect(cancel.textContent).toBe("Skip");
     cancel.click();
 
     expect(navigations).toHaveLength(1);
@@ -1000,7 +1010,7 @@ describe("invoices.js — product photos after finalize", () => {
 
   it("reloads at once when Esc closes the dialog mid-way", async () => {
     // Left as it was, the page behind kept showing the draft and a Finalize
-    // button that answered nothing until the photos were done.
+    // button that answered nothing until the run was done.
     const lines = [
       { id: 3, component_id: 30 },
       { id: 4, component_id: 40 },
@@ -1348,5 +1358,104 @@ describe("invoices.js — new component from the add-line flow", () => {
     // Only the stacked component dialog closes; the line dialog stays open.
     expect(componentClose).toHaveBeenCalled();
     expect(lineClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("invoices.js — Fill in from shop on a finalized invoice", () => {
+  function lines(answer) {
+    const calls = [];
+    const fetchImpl = (url, opts) => {
+      calls.push({ url, method: (opts && opts.method) || "GET" });
+      if (url === "/api/invoices/7/lines")
+        return Promise.resolve({
+          ok: true,
+          json: async () => [
+            { id: 3, component_id: 30 },
+            { id: 4, component_id: 40 },
+          ],
+        });
+      return Promise.resolve({ ok: true, json: async () => answer(url) });
+    };
+    return { calls, fetchImpl };
+  }
+
+  // For an invoice finalized before finalize filled the lines in, or one whose
+  // run was skipped: the same run, from its own button and dialog.
+  const page = () => `
+    <button id="invoice-fill-btn" data-invoice-id="7"></button>
+    <dialog id="invoice-fill-dialog">
+      <p id="invoice-fill-status" hidden></p>
+      <button type="button" id="invoice-fill-cancel" data-close>Skip</button>
+    </dialog>`;
+
+  it("offers each line in turn, then reloads", async () => {
+    const calls = [];
+    const fetchImpl = (url, opts) => {
+      calls.push({ url, method: (opts && opts.method) || "GET" });
+      if (url === "/api/invoices/7/lines")
+        return Promise.resolve({
+          ok: true,
+          json: async () => [
+            { id: 3, component_id: 30 },
+            { id: 4, component_id: 40 },
+          ],
+        });
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    };
+    const { window, document, navigations } = loadPage(page(), SCRIPTS, { fetchImpl });
+
+    document.getElementById("invoice-fill-btn").click();
+    for (let i = 0; i < 6; i += 1) await tick();
+
+    expect(window.HTMLDialogElement.prototype.showModal).toHaveBeenCalled();
+    expect(
+      calls.filter((c) => c.method === "POST").map((c) => c.url),
+    ).toEqual([
+      "/api/invoices/7/lines/3/fill-in",
+      "/api/invoices/7/lines/4/fill-in",
+    ]);
+    expect(document.getElementById("invoice-fill-status").textContent).toMatch(
+      /^fetching product details 2\/2/,
+    );
+    expect(navigations).toHaveLength(1);
+  });
+
+  it("says what is still missing, and waits to be closed", async () => {
+    // Before, the page reloaded saying nothing, so a run that added nothing
+    // looked exactly like one that added everything.
+    const { fetchImpl } = lines((url) =>
+      url.includes("/lines/3/")
+        ? { photo: "none", datasheet: "none", shop_link: "added", reasons: [] }
+        : { photo: "added", datasheet: "linked", shop_link: "present", reasons: [] },
+    );
+    const { document, navigations } = loadPage(page(), SCRIPTS, { fetchImpl });
+
+    document.getElementById("invoice-fill-btn").click();
+    for (let i = 0; i < 8; i += 1) await tick();
+
+    expect(document.getElementById("invoice-fill-status").textContent).toBe(
+      "done — 1 of 2 still missing something (photo: 1, datasheet: 1).",
+    );
+    expect(navigations).toHaveLength(0);
+    document.getElementById("invoice-fill-dialog").close();
+    expect(navigations).toHaveLength(1);
+  });
+
+  it("opens nothing while another action is still in flight", async () => {
+    // The guard drops a second run; the dialog must not open for it either.
+    const { fetchImpl } = lines(() => ({}));
+    const { window, document } = loadPage(page(), SCRIPTS, {
+      fetchImpl: (url, opts) =>
+        url === "/api/invoices/7/lines"
+          ? new Promise(() => {}) // the first run never finishes
+          : fetchImpl(url, opts),
+    });
+
+    document.getElementById("invoice-fill-btn").click();
+    await tick();
+    document.getElementById("invoice-fill-btn").click();
+    await tick();
+
+    expect(window.HTMLDialogElement.prototype.showModal).toHaveBeenCalledTimes(1);
   });
 });
