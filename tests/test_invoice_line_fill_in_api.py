@@ -1,8 +1,8 @@
-"""A photo for an invoice line's component: the invoice's shop first, then others.
+"""Filling an invoice line's component in from the invoice's shop.
 
-An invoice keeps no image URL, so after finalize the invoice page asks the shop
-again for each line — by the line's own catalogue number, the key the import
-looked it up by.
+A component created at finalize is built from the line's fields alone, so the
+invoice page asks the shop again for each line — once, by the line's own
+catalogue number — and adds the shop link, datasheet and photo it lacks.
 """
 
 from __future__ import annotations
@@ -14,6 +14,8 @@ from app.services.shops.base import ProductData
 from fastapi.testclient import TestClient
 
 TME = "https://ce8dc832c.cloudimg.io/v7/_cdn_/45/50/00/00/0/1364_1.jpg"
+TME_PAGE = "https://www.tme.eu/pl/details/0603b104k500ct/"
+SHEET = "https://www.tme.eu/Document/0603B104K500CT.pdf"
 MOUSER = "https://www.mouser.com/images/ti/images/ITP_TI_SOT-23-5_DBV_t.jpg"
 DIGIKEY = "https://mm.digikey.com/Volume0/opasdata/d220001/medias/images/x.jpg"
 
@@ -26,7 +28,7 @@ class Shops:
         self.fallback: dict[str, ProductData | Exception] = {}
         self.asked_own: list[tuple[str, list[str]]] = []
         self.asked_fallback: list[str] = []
-        self.blocked: set[str] = {MOUSER}
+        self.blocked: set[str] = {MOUSER, SHEET}
         self.fetched: list[str] = []
         monkeypatch.setattr(shops, "import_by_index", self._by_index)
         monkeypatch.setattr(shops, "import_by_mpn", self._by_mpn)
@@ -111,25 +113,120 @@ def _line(
     return invoice["id"], line.json()["id"], component["id"]
 
 
-def _photo(client: TestClient, invoice_id: int, line_id: int):  # type: ignore[no-untyped-def]
-    return client.post(f"/api/invoices/{invoice_id}/lines/{line_id}/photo")
+def _fill(client: TestClient, invoice_id: int, line_id: int):  # type: ignore[no-untyped-def]
+    return client.post(f"/api/invoices/{invoice_id}/lines/{line_id}/fill-in")
 
 
-def test_the_invoice_s_shop_is_asked_by_the_line_s_own_number(
+def _has(client: TestClient, component_id: int) -> dict[str, list[str]]:
+    query = {"entity_type": "component", "entity_id": component_id}
+    files = client.get("/api/attachments", params=query).json()
+    links = client.get("/api/links", params=query).json()
+    return {
+        "photo": [a["filename"] for a in files if a["kind"] == "photo"],
+        "datasheet": [a["filename"] for a in files if a["kind"] == "datasheet"],
+        "links": [f"{k['kind']}:{k['url']}" for k in links],
+    }
+
+
+WALSIN = {"mpn": "0603B104K500CT-W", "manufacturer": "Walsin"}
+
+
+def test_one_lookup_fills_in_link_datasheet_and_photo(
     client: TestClient, fake: Shops
 ) -> None:
+    fake.blocked.discard(SHEET)
     fake.own["tme"] = ProductData(
-        mpn="0603B104K500CT-W", manufacturer="Walsin", image_url=TME
+        **WALSIN, image_url=TME, datasheet_url=SHEET, source_url=TME_PAGE
     )
-    invoice_id, line_id, _ = _line(client)
+    invoice_id, line_id, cid = _line(client)
 
-    resp = _photo(client, invoice_id, line_id)
+    resp = _fill(client, invoice_id, line_id)
 
-    assert resp.status_code == 201, resp.text
-    # The line's own number alone — never the MPN standing in for it.
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "photo": "added",
+        "datasheet": "added",
+        "shop_link": "added",
+        "reasons": [],
+    }
+    # Asked once, by the line's own number — never the MPN standing in for it.
     assert fake.asked_own == [("tme", ["0603B104K500CT"])]
     assert fake.asked_fallback == []
-    assert fake.fetched == [TME]
+    has = _has(client, cid)
+    assert has["photo"] == ["1364_1.jpg"]
+    assert has["datasheet"] == ["0603B104K500CT.pdf"]
+    assert has["links"] == [f"shop:{TME_PAGE}"]
+
+
+def test_a_datasheet_the_shop_withholds_is_kept_as_a_link(
+    client: TestClient, fake: Shops
+) -> None:
+    """TME's document host refuses a server; the import dialog's rule applies."""
+    fake.own["tme"] = ProductData(**WALSIN, image_url=TME, datasheet_url=SHEET)
+    invoice_id, line_id, cid = _line(client)
+
+    body = _fill(client, invoice_id, line_id).json()
+
+    assert body["datasheet"] == "linked"
+    assert f"datasheet:{SHEET}" in _has(client, cid)["links"]
+
+
+def test_with_no_page_named_the_line_s_own_page_is_linked(
+    client: TestClient, fake: Shops
+) -> None:
+    """TME's answer names no product page; the one built from the line does."""
+    fake.own["tme"] = ProductData(**WALSIN, image_url=TME)
+    invoice_id, line_id, cid = _line(client)
+
+    _fill(client, invoice_id, line_id)
+
+    assert _has(client, cid)["links"] == [
+        f"shop:{shops.product_url('tme', '0603B104K500CT')}"
+    ]
+
+
+def test_what_the_component_has_is_left_alone(client: TestClient, fake: Shops) -> None:
+    fake.blocked.discard(SHEET)
+    fake.own["tme"] = ProductData(
+        **WALSIN, image_url=TME, datasheet_url=SHEET, source_url=TME_PAGE
+    )
+    invoice_id, line_id, cid = _line(client)
+    client.post(
+        "/api/links",
+        json={
+            "entity_type": "component",
+            "entity_id": cid,
+            "kind": "shop",
+            "url": "https://www.tme.eu/pl/details/mine/",
+        },
+    )
+
+    body = _fill(client, invoice_id, line_id).json()
+
+    assert body["shop_link"] == "present"
+    assert body["datasheet"] == "added"
+    assert _has(client, cid)["links"] == ["shop:https://www.tme.eu/pl/details/mine/"]
+
+
+def test_a_component_with_everything_asks_no_shop(
+    client: TestClient, fake: Shops
+) -> None:
+    fake.blocked.discard(SHEET)
+    fake.own["tme"] = ProductData(
+        **WALSIN, image_url=TME, datasheet_url=SHEET, source_url=TME_PAGE
+    )
+    invoice_id, line_id, _ = _line(client)
+    _fill(client, invoice_id, line_id)
+
+    again = _fill(client, invoice_id, line_id).json()
+
+    assert again == {
+        "photo": "present",
+        "datasheet": "present",
+        "shop_link": "present",
+        "reasons": [],
+    }
+    assert len(fake.asked_own) == 1
 
 
 def test_a_refused_image_falls_back_to_another_shop(
@@ -149,81 +246,69 @@ def test_a_refused_image_falls_back_to_another_shop(
         maker="Texas Instruments",
     )
 
-    resp = _photo(client, invoice_id, line_id)
+    body = _fill(client, invoice_id, line_id).json()
 
-    assert resp.status_code == 201, resp.text
+    assert body["photo"] == "added"
     assert fake.fetched == [MOUSER, DIGIKEY]
     # The invoice's own shop is not asked a second time as a fallback.
     assert fake.asked_fallback == ["digikey"]
 
 
-def test_an_answer_naming_no_mpn_is_taken_on_the_index(
+def test_an_answer_naming_no_mpn_is_taken_on_the_number(
     client: TestClient, fake: Shops
 ) -> None:
-    """TME's answer may carry no manufacturer symbol; its own index found it."""
+    """TME's answer may carry no manufacturer symbol; its own number found it."""
     fake.own["tme"] = ProductData(mpn=None, manufacturer="Walsin", image_url=TME)
     invoice_id, line_id, _ = _line(client)
 
-    assert _photo(client, invoice_id, line_id).status_code == 201
+    assert _fill(client, invoice_id, line_id).json()["photo"] == "added"
 
 
 def test_another_part_or_maker_from_the_own_shop_is_refused(
     client: TestClient, fake: Shops
 ) -> None:
     fake.own["tme"] = ProductData(
-        mpn="0603B104K500CT-W", manufacturer="ABB", image_url=TME
+        mpn="0603B104K500CT-W", manufacturer="ABB", image_url=TME, source_url=TME_PAGE
     )
-    invoice_id, line_id, _ = _line(client)
-    resp = _photo(client, invoice_id, line_id)
-    assert resp.status_code == 422
-    assert "tme: answered with ABB's part" in resp.json()["detail"]
+    invoice_id, line_id, cid = _line(client)
+    body = _fill(client, invoice_id, line_id).json()
+    assert "tme: answered with ABB's part" in body["reasons"]
+    assert f"shop:{TME_PAGE}" not in _has(client, cid)["links"]  # not its page
 
     fake.own["tme"] = ProductData(
         mpn="0805B104K500CT", manufacturer="Walsin", image_url=TME
     )
-    resp = _photo(client, invoice_id, line_id)
-    assert resp.status_code == 422
-    assert "tme: answered with 0805B104K500CT" in resp.json()["detail"]
+    body = _fill(client, invoice_id, line_id).json()
+    assert "tme: answered with 0805B104K500CT" in body["reasons"]
     assert fake.fetched == []
 
 
-def test_a_supplier_no_shop_serves_goes_straight_to_the_fallbacks(
+def test_a_supplier_no_shop_serves_gets_a_photo_from_the_fallbacks(
     client: TestClient, fake: Shops
 ) -> None:
-    fake.fallback["digikey"] = ProductData(
-        mpn="0603B104K500CT-W", manufacturer="Walsin", image_url=DIGIKEY
+    fake.fallback["digikey"] = ProductData(**WALSIN, image_url=DIGIKEY)
+    invoice_id, line_id, cid = _line(client, supplier="Conrad")
+
+    body = _fill(client, invoice_id, line_id).json()
+
+    assert (body["photo"], body["shop_link"], body["datasheet"]) == (
+        "added",
+        "none",
+        "none",
     )
-    invoice_id, line_id, _ = _line(client, supplier="Conrad")
-
-    resp = _photo(client, invoice_id, line_id)
-
-    assert resp.status_code == 201, resp.text
     assert fake.asked_own == []
-    assert fake.fetched == [DIGIKEY]
-
-
-def test_a_photo_already_there_asks_no_shop(client: TestClient, fake: Shops) -> None:
-    fake.own["tme"] = ProductData(
-        mpn="0603B104K500CT-W", manufacturer="Walsin", image_url=TME
-    )
-    invoice_id, line_id, _ = _line(client)
-    first = _photo(client, invoice_id, line_id)
-
-    again = _photo(client, invoice_id, line_id)
-
-    assert (first.status_code, again.status_code) == (201, 200)
-    assert len(fake.asked_own) == 1
+    assert _has(client, cid)["links"] == []
 
 
 def test_a_line_of_another_invoice_is_404(client: TestClient, fake: Shops) -> None:
     invoice_id, _, _ = _line(client)
     _, other_line, _ = _line(client, supplier="Mouser", mpn="LM358")
 
-    assert _photo(client, invoice_id, other_line).status_code == 404
-    assert _photo(client, invoice_id, 99999).status_code == 404
+    assert _fill(client, invoice_id, other_line).status_code == 404
+    assert _fill(client, invoice_id, 99999).status_code == 404
 
 
-def test_read_only_accounts_cannot_fetch(
+def test_read_only_accounts_cannot_fill_in(
     client: TestClient, anon_client: TestClient, fake: Shops
 ) -> None:
     invoice_id, line_id, _ = _line(client)
@@ -236,7 +321,7 @@ def test_read_only_accounts_cannot_fetch(
     ).json()["access_token"]
 
     resp = anon_client.post(
-        f"/api/invoices/{invoice_id}/lines/{line_id}/photo",
+        f"/api/invoices/{invoice_id}/lines/{line_id}/fill-in",
         headers={"Authorization": f"Bearer {token}"},
     )
 
@@ -252,7 +337,7 @@ def test_a_digikey_invoice_s_fallback_is_element14_alone(
         client, supplier="Digi-Key", spn="296-1395-5-ND", mpn="LM358", maker="TI"
     )
 
-    _photo(client, invoice_id, line_id)
+    _fill(client, invoice_id, line_id)
 
     assert [shop for shop, _ in fake.asked_own] == ["digikey"]
     assert fake.asked_fallback == ["farnell"]
@@ -265,20 +350,21 @@ def test_a_line_with_no_shop_number_is_checked_in_full(
     fake.fallback["digikey"] = ProductData(
         mpn=None, manufacturer=None, image_url=DIGIKEY
     )
-    invoice_id, line_id, _ = _line(client, spn=None)
+    invoice_id, line_id, cid = _line(client, spn=None)
 
-    resp = _photo(client, invoice_id, line_id)
+    body = _fill(client, invoice_id, line_id).json()
 
-    assert resp.status_code == 422
-    assert fake.asked_own == []  # the invoice's shop is not asked by MPN-as-index
+    assert body["photo"] == "none"
+    assert fake.asked_own == []  # the invoice's shop is not asked by MPN-as-number
     assert DIGIKEY not in fake.fetched  # an answer naming no part is not taken
+    assert _has(client, cid)["links"] == []  # nor a page built from nothing
 
 
 def test_a_draft_invoice_s_line_is_refused(client: TestClient, fake: Shops) -> None:
     """Its line can still be pointed at another component."""
     invoice_id, line_id, _ = _line(client, finalize=False)
 
-    resp = _photo(client, invoice_id, line_id)
+    resp = _fill(client, invoice_id, line_id)
 
     assert resp.status_code == 422
     assert "finalize the invoice first" in resp.json()["detail"]
@@ -293,11 +379,11 @@ def test_a_shop_found_down_is_not_asked_again_for_a_while(
     first = _line(client, mpn="A1")
     second = _line(client, mpn="B2")
 
-    _photo(client, *first[:2])
-    resp = _photo(client, *second[:2])
+    _fill(client, *first[:2])
+    body = _fill(client, *second[:2]).json()
 
     assert [shop for shop, _ in fake.asked_own] == ["tme"]
-    assert "not asked again for a while" in resp.json()["detail"]
+    assert any("not asked again for a while" in r for r in body["reasons"])
 
 
 def test_a_miss_or_a_one_part_refusal_trips_nothing(
@@ -310,8 +396,8 @@ def test_a_miss_or_a_one_part_refusal_trips_nothing(
     first = _line(client, mpn="A1")
     second = _line(client, mpn="B2")
 
-    _photo(client, *first[:2])
-    _photo(client, *second[:2])
+    _fill(client, *first[:2])
+    _fill(client, *second[:2])
 
     assert len(fake.asked_own) == 2
     assert fake.asked_fallback.count("digikey") == 2

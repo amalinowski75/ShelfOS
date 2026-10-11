@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from typing import cast
 
-from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from sqlmodel import Session
 
 from app import config
 from app.api.deps import get_session
 from app.api.schemas import (
-    AttachmentRead,
     ImportLineAdopt,
     InvoiceCreate,
     InvoiceDetailRead,
@@ -20,13 +19,13 @@ from app.api.schemas import (
     InvoiceImportResult,
     InvoiceLineComponentRead,
     InvoiceLineCreate,
+    InvoiceLineFillIn,
     InvoiceLineRead,
     InvoiceLineUpdate,
     InvoiceUpdate,
     LineLocationSet,
 )
 from app.auth.deps import current_user_id
-from app.models.attachment import Attachment
 from app.models.invoice import Invoice, InvoiceLine
 from app.services import invoice_import_service as imp
 from app.services import invoice_service as inv
@@ -304,29 +303,26 @@ def remove_line(
     inv.remove_line(session, invoice_id, line_id, user_id=user_id)
 
 
-@router.post(
-    "/{invoice_id}/lines/{line_id}/photo",
-    response_model=AttachmentRead,
-    status_code=status.HTTP_201_CREATED,
-)
-def invoice_line_photo(
+@router.post("/{invoice_id}/lines/{line_id}/fill-in", response_model=InvoiceLineFillIn)
+def fill_in_invoice_line(
     invoice_id: int,
     line_id: int,
-    response: Response,
     session: Session = Depends(get_session),
-) -> Attachment:
-    """Give the line's component a product photo from the invoice's shop, or another.
+) -> InvoiceLineFillIn:
+    """Give the line's component its shop link, datasheet and photo, if missing.
 
-    The invoice page calls it for each line once the invoice is finalized. 200
-    with the photo already there (nothing is fetched), 201 with a new one, 422
-    naming what each source said when none could be had. Writers only.
+    The invoice page calls it for each line, after finalize and from "Fill in
+    from shop" on a finalized invoice. One lookup at the invoice's shop serves
+    all three; what the component already has is left alone. 422 for a draft
+    invoice's line. Writers only.
     """
-    attachment, created = shop_photo_service.attach_invoice_line_photo(
-        session, invoice_id, line_id
+    done = shop_photo_service.fill_in_invoice_line(session, invoice_id, line_id)
+    return InvoiceLineFillIn(
+        photo=done.photo,
+        datasheet=done.datasheet,
+        shop_link=done.shop_link,
+        reasons=done.reasons,
     )
-    if not created:
-        response.status_code = status.HTTP_200_OK
-    return attachment
 
 
 @router.post("/{invoice_id}/finalize", response_model=Invoice)

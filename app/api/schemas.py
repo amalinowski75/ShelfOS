@@ -306,6 +306,21 @@ class InvoiceLineCreate(BaseModel):
     location_id: int | None = None
 
 
+class InvoiceLineFillIn(BaseModel):
+    """What filling an invoice line's component in from its shop came to.
+
+    Each of ``photo``, ``datasheet`` and ``shop_link``: ``present`` (it had one,
+    so nothing was asked), ``added``, ``linked`` (a datasheet the shop would not
+    let us download, kept as a link) or ``none``. ``reasons`` says why, for
+    whatever is still missing.
+    """
+
+    photo: str
+    datasheet: str
+    shop_link: str
+    reasons: list[str]
+
+
 class InvoiceUpdate(BaseModel):
     """Partial edit of a draft invoice's metadata; omitted fields stay unchanged."""
 
