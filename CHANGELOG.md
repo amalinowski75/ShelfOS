@@ -11,13 +11,13 @@ pull request, which carries the reasoning and the verification.
 
 ## The logo on printed labels
 
-- Labels from the label printer, for locations and components alike, carry the
-  one-colour ShelfOS logo, 3 mm tall, in the bottom-right corner. It goes only
-  where the text leaves room: the text is fitted first, exactly as before, and
-  is at most moved up a little to clear the corner. The smallest labels (a 12 mm
-  roll, 17 × 54 mm) go without it, and so does a label whose text fills it, such
-  as a component with a long description on 62 × 29 mm. The browser-print page
-  is unchanged.
+- **#185** — labels from the label printer, for locations and components alike,
+  carry the one-colour ShelfOS logo, 3 mm tall, in the bottom-right corner. It
+  goes only where the text leaves room: the text is fitted first, exactly as
+  before, and is at most moved up a little to clear the corner. The smallest
+  labels (a 12 mm roll, 17 × 54 mm) go without it, and so does a label whose
+  text fills it, such as a component with a long description on 62 × 29 mm. The
+  browser-print page is unchanged.
 
 ## The ShelfOS icon and logo
 
