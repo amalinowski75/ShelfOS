@@ -19,7 +19,7 @@ from app.services.invoice_import import parse_invoice
 from app.services.invoice_import.digikey import DigiKeyInvoiceParser
 from app.services.invoice_import.farnell import FarnellInvoiceParser
 from app.services.invoice_import.mouser import MouserInvoiceParser
-from app.services.invoice_import.pdf import extract_text
+from app.services.invoice_import.pdf import PdfText, extract_text
 from app.services.invoice_import.tme import TmeInvoiceParser
 
 _DIR = Path(__file__).parent / "fixtures" / "invoices"
@@ -332,6 +332,110 @@ def test_tme_does_not_fabricate_a_symbol_from_a_coincidental_suffix() -> None:
     )
     assert parsed.mpn == "XYZ23"
     assert parsed.supplier_part_number == "ABC123"  # NOT "ABC12323"
+
+
+# The rows of TME invoice 1261596985 around its Samwha capacitor, as extracted:
+# TME's own symbol (CS2012X7R475K500NR) wrapped on width alone, its last "R" alone
+# on the row below — in the article's bold face, which the description isn't.
+_SAMWHA_ROWS = [
+    "          R                                                              ",
+    "          Kondensator:ceramiczny;MLCC;4,7uF;50V;X7R;±10%;SMD;0805        ",
+    "          Producent: SAMWHA; Symbol producenta:                          ",
+    "          CS2012X7R475K500NRE; Zgodność RoHS                             ",
+]
+_SAMWHA_HEADER = (
+    "      4   CS2012X7R475K500N               1 000 SZT 11,71/100 SZT 23     117,10"
+)
+
+
+def test_tme_rejoins_a_width_wrapped_symbol_set_in_the_article_s_bold() -> None:
+    """Typeface, not a guess: the bold row under the header is the symbol's tail.
+
+    Text alone can't tell it from a description — the symbol is no MPN and ends on
+    no separator — so the text rules dropped it, and the line reached the invoice
+    with no TME symbol: nothing to look the part up by, and an "R" in its notes.
+    """
+    from app.services.invoice_import.tme import _ITEM, _line
+
+    header = _ITEM.match(_SAMWHA_HEADER)
+    assert header is not None
+
+    parsed = _line(header, list(_SAMWHA_ROWS), [True, False, False, False])
+
+    assert parsed.supplier_part_number == "CS2012X7R475K500NR"
+    assert parsed.mpn == "CS2012X7R475K500NRE"
+    assert (
+        parsed.description == "Kondensator:ceramiczny;MLCC;4,7uF;50V;X7R;±10%;SMD;0805"
+    )
+
+
+def test_tme_without_the_typeface_still_refuses_to_guess() -> None:
+    """No font information (a text fixture): the old, careful rules stand."""
+    from app.services.invoice_import.tme import _ITEM, _line
+
+    header = _ITEM.match(_SAMWHA_HEADER)
+    assert header is not None
+
+    parsed = _line(header, list(_SAMWHA_ROWS))
+
+    assert parsed.supplier_part_number is None
+
+
+def test_tme_glues_no_row_in_the_regular_face() -> None:
+    """A one-word description under an article that fills the column stays one."""
+    from app.services.invoice_import.tme import _ITEM, _line
+
+    header = _ITEM.match(_SAMWHA_HEADER)
+    assert header is not None
+
+    parsed = _line(header, list(_SAMWHA_ROWS), [False, False, False, False])
+
+    assert parsed.supplier_part_number is None
+    assert parsed.description is not None and parsed.description.startswith("R ")
+
+
+def test_tme_parse_reads_the_bold_rows_it_is_given() -> None:
+    """End to end through the parser: the PDF's bold rows reach the item."""
+    text = "\n".join(
+        [
+            "Numer faktury: 1261596985",
+            "Data wystawienia faktury: 01.10.2026",
+            "w walucie: PLN",
+            _SAMWHA_HEADER,
+            *_SAMWHA_ROWS,
+            "Razem:",
+        ]
+    )
+    # Bold rows elsewhere on the page (a heading) are not mistaken for the tail.
+    invoice = TmeInvoiceParser().parse(text, bold_rows=("FAKTURA VAT", "R"))
+
+    assert [line.supplier_part_number for line in invoice.lines] == [
+        "CS2012X7R475K500NR"
+    ]
+    assert TmeInvoiceParser().parse(text).lines[0].supplier_part_number is None
+
+
+def test_parse_invoice_hands_the_pdf_s_bold_rows_to_the_parser(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import app.services.invoice_import as invoice_import
+
+    text = "\n".join(
+        [
+            "Transfer Multisort Elektronik",
+            "Numer faktury: 1261596985",
+            "Data wystawienia faktury: 01.10.2026",
+            "w walucie: PLN",
+            _SAMWHA_HEADER,
+            *_SAMWHA_ROWS,
+            "Razem:",
+        ]
+    )
+    monkeypatch.setattr(
+        invoice_import, "read_pdf", lambda data: PdfText(text=text, bold_rows=("R",))
+    )
+
+    invoice = parse_invoice(b"%PDF", "1261596985.pdf")
+
+    assert invoice.lines[0].supplier_part_number == "CS2012X7R475K500NR"
 
 
 def test_tme_per_pack_unit_price() -> None:
@@ -898,7 +1002,9 @@ def test_farnell_requires_a_currency() -> None:
 def test_parse_invoice_rejects_unrecognised_text(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     import app.services.invoice_import as pkg
 
-    monkeypatch.setattr(pkg, "extract_text", lambda data: "a plain shopping receipt")
+    monkeypatch.setattr(
+        pkg, "read_pdf", lambda data: PdfText(text="a plain shopping receipt")
+    )
     with pytest.raises(ValidationError, match="unrecognised invoice"):
         parse_invoice(b"%PDF-1.4", "receipt.pdf")
 
@@ -913,7 +1019,9 @@ def test_parse_invoice_rejects_unrecognised_text(monkeypatch) -> None:  # type: 
     ],
 )
 def test_parse_invoice_picks_the_right_parser(
-    fixture: str, shop_key: str, monkeypatch  # type: ignore[no-untyped-def]
+    fixture: str,
+    shop_key: str,
+    monkeypatch,  # type: ignore[no-untyped-def]
 ) -> None:
     """Registering a parser is the whole integration surface — check it took.
 
@@ -923,20 +1031,26 @@ def test_parse_invoice_picks_the_right_parser(
     """
     import app.services.invoice_import as pkg
 
-    monkeypatch.setattr(pkg, "extract_text", lambda data: _text(fixture))
+    monkeypatch.setattr(pkg, "read_pdf", lambda data: PdfText(text=_text(fixture)))
     assert parse_invoice(b"%PDF-1.4", fixture).shop_key == shop_key
 
 
-def _minimal_pdf(text: str) -> bytes:
-    """A one-page text PDF with a correct xref, built by hand (no writer library)."""
+def _minimal_pdf(text: str, bold: str | None = None) -> bytes:
+    """A one-page text PDF with a correct xref, built by hand (no writer library).
+
+    ``bold``, if given, is a second row under ``text`` set in Helvetica-Bold.
+    """
     stream = b"BT /F1 12 Tf 20 100 Td (" + text.encode("latin-1") + b") Tj ET\n"
+    if bold is not None:
+        stream += b"BT /F2 12 Tf 20 80 Td (" + bold.encode("latin-1") + b") Tj ET\n"
     objs = [
         b"<</Type/Catalog/Pages 2 0 R>>",
         b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
         b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 144]/Contents 4 0 R"
-        b"/Resources<</Font<</F1 5 0 R>>>>>>",
+        b"/Resources<</Font<</F1 5 0 R/F2 6 0 R>>>>>>",
         b"<</Length %d>>\nstream\n%s endstream" % (len(stream), stream),
         b"<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>",
+        b"<</Type/Font/Subtype/Type1/BaseFont/Helvetica-Bold>>",
     ]
     out = bytearray(b"%PDF-1.4\n")
     offsets = []
@@ -957,6 +1071,15 @@ def _minimal_pdf(text: str) -> bytes:
 
 def test_extract_text_reads_a_real_pdf() -> None:
     assert "Hello Invoice 123" in extract_text(_minimal_pdf("Hello Invoice 123"))
+
+
+def test_read_pdf_tells_the_rows_set_in_bold() -> None:
+    from app.services.invoice_import.pdf import read_pdf
+
+    pdf = read_pdf(_minimal_pdf("Kondensator ceramiczny", bold="CS2012X7R475K500N R"))
+
+    assert "Kondensator ceramiczny" in pdf.text
+    assert pdf.bold_rows == ("CS2012X7R475K500N R",)
 
 
 def test_extract_text_rejects_a_pdf_with_no_text() -> None:

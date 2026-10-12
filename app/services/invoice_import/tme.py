@@ -15,6 +15,8 @@ on from the row below (see :func:`_wrapped_article`). Numbers are Polish
 from __future__ import annotations
 
 import re
+from collections import Counter
+from collections.abc import Sequence
 
 from app.services.errors import ValidationError
 from app.services.invoice_import.base import (
@@ -66,8 +68,20 @@ class TmeInvoiceParser:
     def matches(self, text: str, filename: str) -> bool:
         return "Transfer Multisort Elektronik" in text or "tme.eu" in text
 
-    def parse(self, text: str) -> ParsedInvoice:
+    def parse(self, text: str, *, bold_rows: Sequence[str] = ()) -> ParsedInvoice:
         lines = text.splitlines()
+        # The rows printed wholly in bold, by content: TME sets its own symbol in
+        # bold, and the wrapped tail of a long one on the row under it too, while
+        # the description is in the regular face. Taken one by one as rows match.
+        bold_left = Counter(bold_rows)
+
+        def is_bold(row: str) -> bool:
+            key = " ".join(row.split())
+            if key and bold_left[key] > 0:
+                bold_left[key] -= 1
+                return True
+            return False
+
         number = _search(_NUMBER, text, "invoice number")
         currency = _search(_CURRENCY, text, "currency")
         invoice_date = dotted_date(_search(_DATE, text, "invoice date"))
@@ -75,22 +89,24 @@ class TmeInvoiceParser:
         parsed: list[ParsedLine] = []
         header: re.Match[str] | None = None
         cont: list[str] = []
+        bold: list[bool] = []
 
         def flush() -> None:
             if header is not None:
-                parsed.append(_line(header, cont))
+                parsed.append(_line(header, cont, bold if bold_rows else None))
 
         for line in lines:
             match = _ITEM.match(line)
             if match:
                 flush()
-                header, cont = match, []
+                header, cont, bold = match, [], []
             elif header is not None:
                 if _STOP.search(line):
                     flush()
-                    header, cont = None, []
+                    header, cont, bold = None, [], []
                 else:
                     cont.append(line)
+                    bold.append(is_bold(line))
         flush()
 
         if not parsed:
@@ -188,11 +204,49 @@ def _has_description_after(rest: list[str]) -> bool:
     return False
 
 
-def _line(header: re.Match[str], cont_lines: list[str]) -> ParsedLine:
+def _bold_tail(article: str, cont_lines: list[str], bold: Sequence[bool]) -> int:
+    """How many of the rows under the header carry the article's wrapped tail.
+
+    Read off the typeface, not guessed: the article is printed in bold and so is
+    the tail of a long one on the row under it, while the description that
+    follows is in the regular face. So a bold, symbol-shaped row straight under
+    the header is the article's continuation however it broke — mid-token on a
+    separator, or on width alone into a symbol that is no prefix of anything
+    (TME's ``CS2012X7R475K500N`` + ``R`` for the maker's ``…500NRE``), which the
+    text-only rules have to refuse.
+    """
+    count = 0
+    for row, is_bold in zip(cont_lines, bold, strict=False):
+        candidate = re.sub(r"_{2,}", "", row).strip()
+        if not (is_bold and _ARTICLE_TAIL.match(candidate)):
+            break
+        count += 1
+    return count
+
+
+def _line(
+    header: re.Match[str],
+    cont_lines: list[str],
+    bold: Sequence[bool] | None = None,
+) -> ParsedLine:
+    """One item: the header row and the rows under it, up to the next.
+
+    ``bold`` says, row by row, which of ``cont_lines`` the PDF set wholly in bold
+    — None when the typeface is not known (a text-only fixture, or a PDF that
+    carries no font names), and the wrapped article is then judged from the text
+    alone (:func:`_wrapped_article`, the MPN check and the drop rule below).
+    """
     _, article, qty_s, price_s, per_s = header.groups()
     per = int(per_s) if per_s else 1
     printed = article.strip()
-    article, cont_lines = _wrapped_article(printed, cont_lines)
+    tail = _bold_tail(printed, cont_lines, bold) if bold is not None else 0
+    if tail:
+        article = printed + "".join(
+            re.sub(r"_{2,}", "", row).strip() for row in cont_lines[:tail]
+        )
+        cont_lines = cont_lines[tail:]
+    else:
+        article, cont_lines = _wrapped_article(printed, cont_lines)
     # True only when the article announced its own break (see _wrapped_article), so
     # the rebuilt symbol rests on unambiguous evidence — which is what lets it skip
     # both the MPN check below and the drop rule at the end.
