@@ -924,8 +924,8 @@ describe("invoices.js — filling the lines in after finalize", () => {
 
   it("offers each line in turn, saying so, then reloads", async () => {
     const lines = [
-      { id: 3, component_id: 30 },
-      { id: 4, component_id: 40 },
+      { id: 3, component_id: 30, supplier_part_number: "SPN-3" },
+      { id: 4, component_id: 40, supplier_part_number: "SPN-4" },
     ];
     const { calls, impl, release } = finalizing({ lines });
     const { document, navigations } = loadPage(detailFixture({ withFinalize: true }), SCRIPTS, {
@@ -937,11 +937,19 @@ describe("invoices.js — filling the lines in after finalize", () => {
     await tick();
     await tick();
 
-    // The first request is out, the second not yet: one line at a time.
+    // The first request is out, the second not yet: one line at a time — and the
+    // bar says so: nothing done yet, the part it is on, and how far along.
     expect(photoUrls(calls)).toEqual(["/api/invoices/7/lines/3/fill-in"]);
-    const status = document.getElementById("invoice-finalize-status");
-    expect(status.hidden).toBe(false);
-    expect(status.textContent).toMatch(/Invoice finalized — fetching product details 1\/2/);
+    const progress = document.getElementById("invoice-finalize-progress");
+    expect(progress.hidden).toBe(false);
+    expect(progress.querySelector(".progress-bar").style.width).toBe("0%");
+    expect(progress.querySelector('[role="progressbar"]').getAttribute("aria-valuemax")).toBe(
+      "2",
+    );
+    expect(progress.querySelector(".progress-what").textContent).toBe(
+      "Finalized — fetching product details — SPN-3",
+    );
+    expect(progress.querySelector(".progress-count").textContent).toBe("0 of 2");
     expect(navigations).toHaveLength(0);
 
     await settle(release);
@@ -976,9 +984,16 @@ describe("invoices.js — filling the lines in after finalize", () => {
     ]);
     // Said, not swallowed: the page waits for the dialog to be closed.
     expect(navigations).toHaveLength(0);
-    expect(document.getElementById("invoice-finalize-status").textContent).toBe(
-      "Invoice finalized — done — 2 could not be filled in.",
+    const status = document.getElementById("invoice-finalize-status");
+    expect(status.hidden).toBe(false);
+    expect(status.querySelector("p").textContent).toBe(
+      "0 of 2 parts have everything they could get.",
     );
+    expect([...status.querySelectorAll(".badge")].map((b) => b.textContent)).toEqual([
+      "not reached · 2",
+    ]);
+    // The summary takes the bar's place.
+    expect(document.getElementById("invoice-finalize-progress").hidden).toBe(true);
     expect(document.getElementById("invoice-finalize-cancel").textContent).toBe(
       "Close",
     );
@@ -1384,7 +1399,11 @@ describe("invoices.js — Fill in from shop on a finalized invoice", () => {
   const page = () => `
     <button id="invoice-fill-btn" data-invoice-id="7"></button>
     <dialog id="invoice-fill-dialog">
-      <p id="invoice-fill-status" hidden></p>
+      <div id="invoice-fill-progress" hidden>
+           <div role="progressbar" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"><div class="progress-bar"></div></div>
+           <span class="progress-what"></span><span class="progress-count"></span>
+         </div>
+         <div id="invoice-fill-status" hidden></div>
       <button type="button" id="invoice-fill-cancel" data-close>Skip</button>
     </dialog>`;
 
@@ -1414,9 +1433,12 @@ describe("invoices.js — Fill in from shop on a finalized invoice", () => {
       "/api/invoices/7/lines/3/fill-in",
       "/api/invoices/7/lines/4/fill-in",
     ]);
-    expect(document.getElementById("invoice-fill-status").textContent).toMatch(
-      /^fetching product details 2\/2/,
-    );
+    // The bar ends full; with nothing missing there is no summary to wait on.
+    const progress = document.getElementById("invoice-fill-progress");
+    expect(progress.querySelector(".progress-bar").style.width).toBe("100%");
+    expect(progress.querySelector(".progress-count").textContent).toBe("2 of 2");
+    expect(progress.querySelector(".progress-what").textContent).toBe("Done");
+    expect(document.getElementById("invoice-fill-status").hidden).toBe(true);
     expect(navigations).toHaveLength(1);
   });
 
@@ -1433,9 +1455,18 @@ describe("invoices.js — Fill in from shop on a finalized invoice", () => {
     document.getElementById("invoice-fill-btn").click();
     for (let i = 0; i < 8; i += 1) await tick();
 
-    expect(document.getElementById("invoice-fill-status").textContent).toBe(
-      "done — 1 of 2 still missing something (photo: 1, datasheet: 1).",
+    const status = document.getElementById("invoice-fill-status");
+    expect(status.querySelector("p").textContent).toBe(
+      "1 of 2 parts have everything they could get.",
     );
+    expect([...status.querySelectorAll(".badge")].map((b) => b.textContent)).toEqual([
+      "no photo · 1",
+      "no datasheet · 1",
+    ]);
+    expect([...status.querySelectorAll(".badge")].map((b) => b.className)).toEqual([
+      "badge b-warn",
+      "badge b-warn",
+    ]);
     expect(navigations).toHaveLength(0);
     document.getElementById("invoice-fill-dialog").close();
     expect(navigations).toHaveLength(1);

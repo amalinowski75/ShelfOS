@@ -1678,6 +1678,7 @@ def test_invoice_detail_draft_shows_write_controls(client: TestClient) -> None:
     assert 'id="invoice-finalize-btn"' in html
     # What invoices.js reports the photo fetch in, and skips it with, after the
     # finalize — its tests run on a fixture of their own, so the page is held here.
+    assert 'id="invoice-finalize-progress"' in html
     assert 'id="invoice-finalize-status"' in html
     assert 'id="invoice-finalize-cancel"' in html
     assert 'id="invoice-line-dialog"' in html
@@ -1742,6 +1743,7 @@ def test_a_finalized_invoice_offers_fill_in_from_shop_to_writers(
     for marker in (
         'id="invoice-fill-btn"',
         'id="invoice-fill-dialog"',
+        'id="invoice-fill-progress"',
         'id="invoice-fill-status"',
         'id="invoice-fill-cancel"',
     ):

@@ -768,7 +768,11 @@ export function detailFixture({
        <dialog id="invoice-finalize-dialog"><form id="invoice-finalize-form">
          <input name="total_gross" />
          <p id="invoice-finalize-error" hidden></p>
-         <p id="invoice-finalize-status" hidden></p>
+         <div id="invoice-finalize-progress" hidden>
+           <div role="progressbar" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"><div class="progress-bar"></div></div>
+           <span class="progress-what"></span><span class="progress-count"></span>
+         </div>
+         <div id="invoice-finalize-status" hidden></div>
          <button type="button" id="invoice-finalize-cancel" data-close>Cancel</button>
          <button type="submit"></button>
        </form></dialog>`
