@@ -633,9 +633,10 @@ dialog form { display: flex; flex-direction: column; gap: 14px; padding: 18px 20
 .dialog-body {
   display: flex; flex-direction: column; gap: 14px; padding: 18px 20px;
 }
-/* The gap spaces its children; a paragraph's own margin would add to it, most
-   visibly above the first, which then sits lower than the side insets. */
-.dialog-body > p { margin: 0; }
+/* The gap spaces their children; a paragraph's own margin would add to it, most
+   visibly above the first, which then sits lower than the side insets. Both
+   kinds of dialog body, so the two stay alike. */
+dialog form > p, .dialog-body > p { margin: 0; }
 dialog footer {
   display: flex; justify-content: flex-end; gap: 10px;
   padding: 4px 0 0; border: none; margin: 4px 0 0;
@@ -1025,8 +1026,11 @@ dialog.about-dialog { width: min(620px, calc(100vw - 32px)); }
 /* ---------- progress through a run of shop lookups (invoice fill-in) ----------
    A bar, the line it is on, and how far along, in that order of importance: the
    count is there to be read when wanted, not to be the thing on screen. The
-   summary that may follow is a sentence and a few badges, one per kind of gap. */
-.fill-progress { display: flex; flex-direction: column; gap: 8px; }
+   summary that may follow is a sentence and a few badges, one per kind of gap;
+   it is there (empty) the whole run, so it spaces itself only once filled. */
+.fill-run { display: flex; flex-direction: column; }
+.fill-run .progress-meta { margin-top: 8px; }
+.fill-run .fill-summary:not(:empty) { margin-top: 14px; }
 .progress {
   height: 8px; border-radius: 999px; background: var(--border); overflow: hidden;
 }

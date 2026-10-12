@@ -51,15 +51,17 @@
 {%- endmacro %}
 
 {% block content %}
-{# The bar a fill-in run (invoices.js fillInLines) reports on, and where its
-   summary goes when parts are still missing something. #}
+{# The bar a fill-in run (invoices.js fillInLines) reports on, with its summary
+   under it. The summary is a live region, shown (empty) as soon as the run
+   starts and filled at its end: one that is hidden until it already holds its
+   text is not in the accessibility tree to be watched, and is never read out. #}
 {% macro fill_progress(prefix) %}
-<div class="fill-progress" id="{{ prefix }}-progress" hidden>
+<div class="fill-run" id="{{ prefix }}-progress" hidden>
   <div class="progress" role="progressbar" aria-label="Product details fetched"
        aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"><div class="progress-bar"></div></div>
   <div class="progress-meta"><span class="progress-what"></span><span class="progress-count"></span></div>
+  <div class="fill-summary" id="{{ prefix }}-status" role="status"></div>
 </div>
-<div class="fill-summary" id="{{ prefix }}-status" role="status" hidden></div>
 {% endmacro %}
 <p class="crumb"><a href="/invoices">&larr; Back to invoices</a></p>
 

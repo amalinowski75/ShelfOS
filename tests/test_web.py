@@ -1678,8 +1678,7 @@ def test_invoice_detail_draft_shows_write_controls(client: TestClient) -> None:
     assert 'id="invoice-finalize-btn"' in html
     # What invoices.js reports the photo fetch in, and skips it with, after the
     # finalize — its tests run on a fixture of their own, so the page is held here.
-    assert 'id="invoice-finalize-progress"' in html
-    assert 'id="invoice-finalize-status"' in html
+    _assert_fill_progress(html, "invoice-finalize")
     assert 'id="invoice-finalize-cancel"' in html
     assert 'id="invoice-line-dialog"' in html
     assert 'data-act="edit-line"' in html
@@ -1725,6 +1724,25 @@ def test_invoice_detail_finalized_is_read_only(client: TestClient) -> None:
         assert marker not in html, marker
 
 
+def _assert_fill_progress(html: str, prefix: str) -> None:
+    """The progress block invoices.js drives is there, with every part it finds.
+
+    The JS looks its pieces up by class and skips any it can't find, so a renamed
+    class would leave the bar standing still with every JS test green: those run
+    on a fixture of their own. This holds the rendered page to the names.
+    """
+    start = html.index(f'id="{prefix}-progress"')
+    block = html[start : html.index("</div>\n</div>", start)]
+    for part in (
+        'role="progressbar"',
+        'class="progress-bar"',
+        'class="progress-what"',
+        'class="progress-count"',
+        f'id="{prefix}-status" role="status"',
+    ):
+        assert part in block, (prefix, part)
+
+
 def test_a_finalized_invoice_offers_fill_in_from_shop_to_writers(
     client: TestClient,
 ) -> None:
@@ -1748,6 +1766,7 @@ def test_a_finalized_invoice_offers_fill_in_from_shop_to_writers(
         'id="invoice-fill-cancel"',
     ):
         assert marker in html, marker
+    _assert_fill_progress(html, "invoice-fill")
     reader_html = client.get(url, headers=_read_only_headers(client)).text
     assert 'id="invoice-fill-btn"' not in reader_html
     assert 'id="invoice-fill-dialog"' not in reader_html

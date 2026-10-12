@@ -153,8 +153,8 @@ if (importBtn) {
 // One line at a time, shown as it goes — a bar, the line's part, and how far
 // along — because each can take a few seconds. Best-effort: what can't be had
 // is left out, but said: when parts are still missing something, a summary
-// replaces the bar and stays until the dialog is closed (the return value is
-// its text; null when nothing is missing, and the caller reloads at once).
+// appears under the full bar and stays until the dialog is closed (the return
+// value is its text; null when nothing is missing, and the caller reloads).
 // Closing the dialog — the cancel button, the ×, or Esc — reloads straight away.
 async function fillInLines(
   invoiceId,
@@ -189,6 +189,8 @@ async function fillInLines(
   const count = progress && progress.querySelector(".progress-count");
   function show(done, label) {
     if (!progress) return;
+    // Shown at once with its summary region in it, empty: a live region has to
+    // be in the accessibility tree before its text arrives to be read out.
     progress.hidden = false;
     if (bar) bar.style.width = `${Math.round((done / todo.length) * 100)}%`;
     if (meter) {
@@ -204,7 +206,7 @@ async function fillInLines(
   let unreached = 0;
   for (const [index, line] of todo.entries()) {
     const part = line.supplier_part_number;
-    show(index, part ? `${doing} — ${part}` : `${doing}…`);
+    show(index, part ? `${doing}: ${part}` : `${doing}…`);
     try {
       const url = `/api/invoices/${invoiceId}/lines/${line.id}/fill-in`;
       const resp = await sendJSON(url, "POST", {});
@@ -229,9 +231,14 @@ async function fillInLines(
 
   // The summary: one sentence, and a badge per kind of gap.
   const whole = todo.length - incomplete - unreached;
-  const sentence = `${whole} of ${todo.length} ${
-    todo.length === 1 ? "part has" : "parts have"
-  } everything they could get.`;
+  const parts = (n) => (n === 1 ? "1 part" : `${n} parts`);
+  // Nothing answered at all: nothing is known about any part, complete or not.
+  const sentence =
+    whole === 0 && incomplete === 0
+      ? `${parts(unreached)} could not be checked.`
+      : `${whole} of ${parts(todo.length)} ${
+          todo.length === 1 ? "has everything it" : "have everything they"
+        } could get.`;
   const badges = Object.entries(missing)
     .filter(([, n]) => n)
     .map(([kind, n]) => [`b-warn`, `no ${kind} · ${n}`]);
@@ -248,9 +255,7 @@ async function fillInLines(
       row.append(badge);
     }
     status.replaceChildren(lead, row);
-    status.hidden = false;
   }
-  if (progress) progress.hidden = true;
   if (cancel) cancel.textContent = "Close";
   return [sentence, ...badges.map(([, text]) => text)].join(" ");
 }
@@ -850,13 +855,15 @@ if (detail && lineDialog) {
           total_gross: gross ? gross : null,
         });
         if (resp.ok) {
+          // Said by the title: the label under the bar has room for the part only.
+          const title = finalizeDialog.querySelector("header strong");
+          if (title) title.textContent = "Invoice finalized";
           const summary = await fillInLines(invoiceId, {
             dialog: finalizeDialog,
             progress: document.getElementById("invoice-finalize-progress"),
             status: document.getElementById("invoice-finalize-status"),
             cancel: document.getElementById("invoice-finalize-cancel"),
             submit: finalizeForm.querySelector('button[type="submit"]'),
-            doing: "Finalized — fetching product details",
           });
           // A summary stays up until the dialog is closed, which reloads.
           if (!summary) window.location.reload();
