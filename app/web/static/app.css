@@ -1047,6 +1047,15 @@ dialog.about-dialog { width: min(620px, calc(100vw - 32px)); }
 .fill-summary { display: flex; flex-direction: column; gap: 10px; }
 .fill-summary p { margin: 0; }
 .fill-summary .badges { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Each part still short, a link to open in a tab of its own. A long invoice
+   scrolls its list rather than the dialog. */
+.fill-gaps {
+  margin: 0; padding: 0; list-style: none; font-size: 13.5px;
+  display: flex; flex-direction: column; gap: 4px;
+  max-height: 220px; overflow-y: auto;
+}
+.fill-gaps a { font-weight: 600; }
+.fill-run .fill-gaps { margin-top: 10px; }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }

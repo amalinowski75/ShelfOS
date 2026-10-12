@@ -116,7 +116,7 @@
   }
 
   function askWhatNext(component) {
-    const label = component.mpn || `Component #${component.id}`;
+    const label = componentName(component);
     const held = component.locations;
     partEl.textContent = label;
     descEl.textContent = describe(component);

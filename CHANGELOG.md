@@ -9,6 +9,14 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## Links to the parts still short
+
+- **#194** — when filling in from the shop leaves some parts without a photo,
+  datasheet or shop link, the summary now lists them under its badges. Each part
+  is a plain link to its page, named by its MPN, that opens in a new tab, with
+  what it still lacks beside it. They can be gone through one by one and filled
+  in by hand.
+
 ## A progress bar for filling in from the shop
 
 - **#193** — the dialog for "Fill in from shop" and for the run after finalize
