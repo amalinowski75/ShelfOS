@@ -1010,7 +1010,9 @@ describe("invoices.js — filling the lines in after finalize", () => {
       "not reached · 2",
     ]);
     expect(
-      [...status.querySelectorAll(".fill-gaps li")].map((li) => li.textContent),
+      [...document.querySelectorAll("#invoice-finalize-progress .fill-gaps li")].map(
+        (li) => li.textContent,
+      ),
     ).toEqual(["MPN-30 — not reached", "MPN-50 — not reached"]);
     // Under the full bar, which stays to show the run is over.
     const progress = document.getElementById("invoice-finalize-progress");
@@ -1494,7 +1496,9 @@ describe("invoices.js — Fill in from shop on a finalized invoice", () => {
     ]);
     // …and a plain link to the one part still short, to fill in by hand in a tab
     // of its own; the complete part gets none.
-    const links = [...status.querySelectorAll(".fill-gaps a")];
+    // Beside the live region, not in it: a role="status" is read out whole.
+    expect(status.querySelector(".fill-gaps")).toBe(null);
+    const links = [...document.querySelectorAll("#invoice-fill-progress .fill-gaps a")];
     expect(links.map((a) => a.getAttribute("href"))).toEqual(["/components/30"]);
     expect(links[0].textContent).toBe("MPN-30");
     expect(links[0].target).toBe("_blank");
@@ -1576,9 +1580,51 @@ describe("invoices.js — Fill in from shop on a finalized invoice", () => {
       "/api/invoices/7/lines/4/fill-in",
     ]);
     expect(
-      [...document.querySelectorAll("#invoice-fill-status .fill-gaps li")].map(
+      [...document.querySelectorAll("#invoice-fill-progress .fill-gaps li")].map(
         (li) => li.textContent,
       ),
     ).toEqual(["LM358 — no photo"]);
+  });
+
+  it("skips a part in the trash, and names one without an MPN by its id", async () => {
+    // A trashed part would be refused by the server — no gap to fill, so not
+    // "not reached" either. One with no MPN is "Component #id", as in the
+    // lines table: the shop's catalogue number is not its name.
+    const calls = [];
+    const fetchImpl = (url, opts) => {
+      calls.push({ url, method: (opts && opts.method) || "GET" });
+      if (url === "/api/invoices/7")
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            lines: [
+              { id: 3, component_id: 30, component: { id: 30, mpn: "X", deleted: true } },
+              {
+                id: 4,
+                component_id: 40,
+                supplier_part_number: "595-LM358",
+                component: { id: 40, mpn: null, deleted: false },
+              },
+            ],
+          }),
+        });
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ photo: "none", datasheet: "added", shop_link: "added" }),
+      });
+    };
+    const { document } = loadPage(page(), SCRIPTS, { fetchImpl });
+
+    document.getElementById("invoice-fill-btn").click();
+    for (let i = 0; i < 8; i += 1) await tick();
+
+    expect(calls.filter((c) => c.method === "POST").map((c) => c.url)).toEqual([
+      "/api/invoices/7/lines/4/fill-in",
+    ]);
+    expect(
+      [...document.querySelectorAll("#invoice-fill-progress .fill-gaps li")].map(
+        (li) => li.textContent,
+      ),
+    ).toEqual(["Component #40 — no photo"]);
   });
 });

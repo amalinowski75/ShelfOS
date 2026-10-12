@@ -555,6 +555,7 @@ def test_invoice_list_and_detail_read(client: TestClient) -> None:
     assert line["location_id"] == location["id"]
     assert line["component"]["id"] == component["id"]
     assert line["component"]["mpn"] == "R-100"
+    assert line["component"]["deleted"] is False
 
     # An empty draft still returns a header with no lines.
     empty = client.get(f"/api/invoices/{older['id']}").json()
@@ -647,6 +648,8 @@ def test_invoice_detail_still_names_a_deleted_component(client: TestClient) -> N
     line = client.get(f"/api/invoices/{invoice['id']}").json()["lines"][0]
     assert line["component_id"] == component["id"]
     assert line["component"]["mpn"] == "RC0603"
+    # …and says it is in the trash, so the page's fill-in run leaves it be.
+    assert line["component"]["deleted"] is True
 
 
 def test_invoice_detail_survives_a_component_that_is_really_gone(

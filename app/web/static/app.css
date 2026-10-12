@@ -1055,6 +1055,7 @@ dialog.about-dialog { width: min(620px, calc(100vw - 32px)); }
   max-height: 220px; overflow-y: auto;
 }
 .fill-gaps a { font-weight: 600; }
+.fill-run .fill-gaps { margin-top: 10px; }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }

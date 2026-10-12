@@ -350,6 +350,9 @@ class InvoiceLineComponentRead(BaseModel):
     manufacturer: str | None
     mpn: str | None
     type_id: int
+    #: In the trash (soft-deleted, §20): still named, but nothing is to be added
+    #: to it — the invoice page's fill-in run skips such a line.
+    deleted: bool = False
 
 
 class InvoiceLineRead(BaseModel):

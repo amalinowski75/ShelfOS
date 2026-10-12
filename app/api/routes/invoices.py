@@ -137,6 +137,7 @@ def get_invoice(
                         manufacturer=component.manufacturer,
                         mpn=component.mpn,
                         type_id=component.type_id,
+                        deleted=component.deleted_at is not None,
                     )
                     if component is not None
                     else None

@@ -174,8 +174,10 @@ async function fillInLines(
   }
   const seen = new Set();
   const todo = lines.filter((line) => {
-    // A line whose component was deleted for good has nothing to fill in.
-    if (!line || line.id == null || !line.component) return false;
+    // A line whose component was deleted — for good, or into the trash — has
+    // nothing to fill in, and the server would refuse it: not "not reached".
+    if (!line || line.id == null || !line.component || line.component.deleted)
+      return false;
     if (seen.has(line.component_id)) return false;
     seen.add(line.component_id);
     return true;
@@ -266,7 +268,10 @@ async function fillInLines(
       badge.textContent = text;
       row.append(badge);
     }
-    status.replaceChildren(lead, row, gapLinks(gapsByLine));
+    status.replaceChildren(lead, row);
+    // Beside the live region, not in it: a role="status" is read out whole, and a
+    // forty-line list of links is no announcement.
+    status.after(gapLinks(gapsByLine));
   }
   if (cancel) cancel.textContent = "Close";
   return [sentence, ...badges.map(([, text]) => text)].join(" ");
@@ -285,10 +290,7 @@ function gapLinks(gapsByLine) {
     link.href = `/components/${line.component_id}`;
     link.target = "_blank";
     link.rel = "noopener";
-    link.textContent =
-      (component && component.mpn) ||
-      line.supplier_part_number ||
-      `Component #${line.component_id}`;
+    link.textContent = componentName(component, line.component_id);
     const note = document.createElement("span");
     note.className = "muted";
     note.textContent = ` — ${lacks}`;

@@ -48,6 +48,13 @@ function fetchAttachmentList(url, { fresh = false } = {}) {
 }
 
 // HTML-escape a value for safe interpolation into innerHTML.
+// What a component is called wherever a page names one: its MPN, else its id
+// ("Component #7"). The Jinja templates say the same; a shop's catalogue number
+// is no stand-in, since the component's page never shows it as its name.
+function componentName(component, id = component && component.id) {
+  return (component && component.mpn) || `Component #${id}`;
+}
+
 function esc(value) {
   return String(value ?? "").replace(
     /[&<>"']/g,
