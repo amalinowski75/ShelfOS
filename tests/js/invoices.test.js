@@ -890,6 +890,15 @@ describe("invoices.js — remove line and finalize", () => {
   });
 });
 
+// An invoice's detail as GET /api/invoices/{id} gives it: each line with its
+// component's identity (the fill-in run names parts by MPN).
+const detailWith = (lines) => ({
+  lines: lines.map((line) => ({
+    component: { id: line.component_id, mpn: `MPN-${line.component_id}` },
+    ...line,
+  })),
+});
+
 describe("invoices.js — filling the lines in after finalize", () => {
   // The import kept none of the shop's answer, so once the invoice is final each
   // line's component is offered to the server, which asks the invoice's shop again
@@ -901,8 +910,8 @@ describe("invoices.js — filling the lines in after finalize", () => {
       calls.push({ url, method: (opts && opts.method) || "GET" });
       if (url === "/api/invoices/7/finalize")
         return Promise.resolve({ ok: true, json: async () => ({ id: 7 }) });
-      if (url === "/api/invoices/7/lines")
-        return Promise.resolve({ ok: true, json: async () => lines });
+      if (url === "/api/invoices/7")
+        return Promise.resolve({ ok: true, json: async () => detailWith(lines) });
       if (url.endsWith("/fill-in"))
         return new Promise((resolve) => release.push(() => resolve(photo(url))));
       return Promise.resolve({ ok: true, json: async () => ({}) });
@@ -1000,6 +1009,9 @@ describe("invoices.js — filling the lines in after finalize", () => {
     expect([...status.querySelectorAll(".badge")].map((b) => b.textContent)).toEqual([
       "not reached · 2",
     ]);
+    expect(
+      [...status.querySelectorAll(".fill-gaps li")].map((li) => li.textContent),
+    ).toEqual(["MPN-30 — not reached", "MPN-50 — not reached"]);
     // Under the full bar, which stays to show the run is over.
     const progress = document.getElementById("invoice-finalize-progress");
     expect(progress.hidden).toBe(false);
@@ -1063,7 +1075,7 @@ describe("invoices.js — filling the lines in after finalize", () => {
   it("finalizes as before when the lines can't be read", async () => {
     const { document, navigations } = loadPage(detailFixture({ withFinalize: true }), SCRIPTS, {
       fetchImpl: (url) =>
-        url === "/api/invoices/7/lines"
+        url === "/api/invoices/7"
           ? Promise.resolve({ ok: true, json: async () => ({ unexpected: true }) })
           : Promise.resolve({ ok: true, json: async () => ({ id: 7 }) }),
     });
@@ -1392,13 +1404,14 @@ describe("invoices.js — Fill in from shop on a finalized invoice", () => {
     const calls = [];
     const fetchImpl = (url, opts) => {
       calls.push({ url, method: (opts && opts.method) || "GET" });
-      if (url === "/api/invoices/7/lines")
+      if (url === "/api/invoices/7")
         return Promise.resolve({
           ok: true,
-          json: async () => [
-            { id: 3, component_id: 30 },
-            { id: 4, component_id: 40 },
-          ],
+          json: async () =>
+            detailWith([
+              { id: 3, component_id: 30 },
+              { id: 4, component_id: 40 },
+            ]),
         });
       return Promise.resolve({ ok: true, json: async () => answer(url) });
     };
@@ -1422,13 +1435,14 @@ describe("invoices.js — Fill in from shop on a finalized invoice", () => {
     const calls = [];
     const fetchImpl = (url, opts) => {
       calls.push({ url, method: (opts && opts.method) || "GET" });
-      if (url === "/api/invoices/7/lines")
+      if (url === "/api/invoices/7")
         return Promise.resolve({
           ok: true,
-          json: async () => [
-            { id: 3, component_id: 30 },
-            { id: 4, component_id: 40 },
-          ],
+          json: async () =>
+            detailWith([
+              { id: 3, component_id: 30 },
+              { id: 4, component_id: 40 },
+            ]),
         });
       return Promise.resolve({ ok: true, json: async () => ({}) });
     };
@@ -1478,6 +1492,14 @@ describe("invoices.js — Fill in from shop on a finalized invoice", () => {
       "badge b-warn",
       "badge b-warn",
     ]);
+    // …and a plain link to the one part still short, to fill in by hand in a tab
+    // of its own; the complete part gets none.
+    const links = [...status.querySelectorAll(".fill-gaps a")];
+    expect(links.map((a) => a.getAttribute("href"))).toEqual(["/components/30"]);
+    expect(links[0].textContent).toBe("MPN-30");
+    expect(links[0].target).toBe("_blank");
+    expect(links[0].rel).toBe("noopener");
+    expect(links[0].parentElement.textContent).toBe("MPN-30 — no photo, no datasheet");
     expect(navigations).toHaveLength(0);
     document.getElementById("invoice-fill-dialog").close();
     expect(navigations).toHaveLength(1);
@@ -1488,7 +1510,7 @@ describe("invoices.js — Fill in from shop on a finalized invoice", () => {
     const { fetchImpl } = lines(() => ({}));
     const { window, document } = loadPage(page(), SCRIPTS, {
       fetchImpl: (url, opts) =>
-        url === "/api/invoices/7/lines"
+        url === "/api/invoices/7"
           ? new Promise(() => {}) // the first run never finishes
           : fetchImpl(url, opts),
     });
@@ -1509,8 +1531,11 @@ describe("invoices.js — Fill in from shop on a finalized invoice", () => {
       reasons: [],
     }));
     const one = (url, opts) =>
-      url === "/api/invoices/7/lines"
-        ? Promise.resolve({ ok: true, json: async () => [{ id: 3, component_id: 30 }] })
+      url === "/api/invoices/7"
+        ? Promise.resolve({
+            ok: true,
+            json: async () => detailWith([{ id: 3, component_id: 30 }]),
+          })
         : fetchImpl(url, opts);
     const { document } = loadPage(page(), SCRIPTS, { fetchImpl: one });
 
@@ -1520,5 +1545,40 @@ describe("invoices.js — Fill in from shop on a finalized invoice", () => {
     expect(document.querySelector("#invoice-fill-status p").textContent).toBe(
       "0 of 1 part has everything it could get.",
     );
+  });
+
+  it("skips a line whose component was deleted for good", async () => {
+    // Nothing to fill in, and its page is gone: no request, no link.
+    const calls = [];
+    const fetchImpl = (url, opts) => {
+      calls.push({ url, method: (opts && opts.method) || "GET" });
+      if (url === "/api/invoices/7")
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            lines: [
+              { id: 3, component_id: 30, component: null },
+              { id: 4, component_id: 40, component: { id: 40, mpn: "LM358" } },
+            ],
+          }),
+        });
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ photo: "none", datasheet: "added", shop_link: "added" }),
+      });
+    };
+    const { document } = loadPage(page(), SCRIPTS, { fetchImpl });
+
+    document.getElementById("invoice-fill-btn").click();
+    for (let i = 0; i < 8; i += 1) await tick();
+
+    expect(calls.filter((c) => c.method === "POST").map((c) => c.url)).toEqual([
+      "/api/invoices/7/lines/4/fill-in",
+    ]);
+    expect(
+      [...document.querySelectorAll("#invoice-fill-status .fill-gaps li")].map(
+        (li) => li.textContent,
+      ),
+    ).toEqual(["LM358 — no photo"]);
   });
 });

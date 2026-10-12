@@ -155,22 +155,28 @@ if (importBtn) {
 // is left out, but said: when parts are still missing something, a summary
 // appears under the full bar and stays until the dialog is closed (the return
 // value is its text; null when nothing is missing, and the caller reloads).
+// Under it, a plain link to each part still missing something, opening in a new
+// tab, so the gaps can be filled in by hand one tab at a time.
 // Closing the dialog — the cancel button, the ×, or Esc — reloads straight away.
 async function fillInLines(
   invoiceId,
   { dialog, progress, status, cancel, submit, doing = "Fetching product details" },
 ) {
+  // The invoice's detail rather than its bare lines: each line comes with its
+  // component's MPN, which names the part in the links the summary may offer.
   let lines = [];
   try {
-    const resp = await fetch(`/api/invoices/${invoiceId}/lines`);
-    const payload = resp.ok ? await resp.json() : [];
-    if (Array.isArray(payload)) lines = payload;
+    const resp = await fetch(`/api/invoices/${invoiceId}`);
+    const payload = resp.ok ? await resp.json() : null;
+    if (payload && Array.isArray(payload.lines)) lines = payload.lines;
   } catch {
     return null; // nothing to fill in from, and nothing lost by not trying
   }
   const seen = new Set();
   const todo = lines.filter((line) => {
-    if (!line || line.id == null || seen.has(line.component_id)) return false;
+    // A line whose component was deleted for good has nothing to fill in.
+    if (!line || line.id == null || !line.component) return false;
+    if (seen.has(line.component_id)) return false;
     seen.add(line.component_id);
     return true;
   });
@@ -204,6 +210,7 @@ async function fillInLines(
   const missing = { photo: 0, datasheet: 0, "shop link": 0 };
   let incomplete = 0;
   let unreached = 0;
+  const gapsByLine = []; // [line, what it still lacks], in invoice order
   for (const [index, line] of todo.entries()) {
     const part = line.supplier_part_number;
     show(index, part ? `${doing}: ${part}` : `${doing}…`);
@@ -213,6 +220,7 @@ async function fillInLines(
       const done = resp.ok ? await resp.json() : null;
       if (!done || typeof done !== "object") {
         unreached += 1;
+        gapsByLine.push([line, "not reached"]);
         continue;
       }
       const gaps = [
@@ -221,9 +229,13 @@ async function fillInLines(
         ["shop link", done.shop_link],
       ].filter(([, state]) => state === "none");
       for (const [kind] of gaps) missing[kind] += 1;
-      if (gaps.length) incomplete += 1;
+      if (gaps.length) {
+        incomplete += 1;
+        gapsByLine.push([line, gaps.map(([kind]) => `no ${kind}`).join(", ")]);
+      }
     } catch {
       unreached += 1;
+      gapsByLine.push([line, "not reached"]);
     }
   }
   show(todo.length, "Done");
@@ -254,10 +266,36 @@ async function fillInLines(
       badge.textContent = text;
       row.append(badge);
     }
-    status.replaceChildren(lead, row);
+    status.replaceChildren(lead, row, gapLinks(gapsByLine));
   }
   if (cancel) cancel.textContent = "Close";
   return [sentence, ...badges.map(([, text]) => text)].join(" ");
+}
+
+// The parts a fill-in run left short, as plain links to their pages — each
+// opens in a new tab, so they can be gone through one by one by hand — and
+// beside each, what it still lacks.
+function gapLinks(gapsByLine) {
+  const list = document.createElement("ul");
+  list.className = "fill-gaps";
+  for (const [line, lacks] of gapsByLine) {
+    const component = line.component;
+    const item = document.createElement("li");
+    const link = document.createElement("a");
+    link.href = `/components/${line.component_id}`;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.textContent =
+      (component && component.mpn) ||
+      line.supplier_part_number ||
+      `Component #${line.component_id}`;
+    const note = document.createElement("span");
+    note.className = "muted";
+    note.textContent = ` — ${lacks}`;
+    item.append(link, note);
+    list.append(item);
+  }
+  return list;
 }
 
 // "Fill in from shop" on a finalized invoice (writers only; see the template).

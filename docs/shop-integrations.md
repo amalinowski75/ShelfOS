@@ -116,8 +116,10 @@ shop for each part that is missing something, plus any photo fallbacks. A busy
 invoice can take a minute, and the shop link, datasheet and photo for one line
 share the same 30-second download budget. **Skip**, the ×, or Esc stops at once.
 If parts are still missing something when the run ends, the dialog says how many
-and what (for example, "3 of 12 still missing something (photo: 2, datasheet:
-3)") and stays open until you close it.
+and what, with a badge for each kind of gap. Under that is a link to each such
+part, named by its MPN, with what it still lacks beside it. Each link opens in a
+new tab, so you can go through them one by one and add the rest by hand. The
+dialog stays open until you close it.
 
 A finalized invoice has a **Fill in from shop** button that runs the same pass
 again. Use it for invoices finalized before finalize did this, or ones whose run
