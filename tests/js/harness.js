@@ -765,10 +765,15 @@ export function detailFixture({
     : "";
   const finalize = withFinalize
     ? `<button id="invoice-finalize-btn"></button>
-       <dialog id="invoice-finalize-dialog"><form id="invoice-finalize-form">
+       <dialog id="invoice-finalize-dialog"><header><strong>Finalize invoice</strong></header><form id="invoice-finalize-form">
          <input name="total_gross" />
          <p id="invoice-finalize-error" hidden></p>
-         <p id="invoice-finalize-status" hidden></p>
+         <!-- mirrors invoice_detail.html's fill_progress macro; test_web pins it -->
+         <div class="fill-run" id="invoice-finalize-progress" hidden>
+           <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"><div class="progress-bar"></div></div>
+           <div class="progress-meta"><span class="progress-what"></span><span class="progress-count"></span></div>
+           <div class="fill-summary" id="invoice-finalize-status" role="status"></div>
+         </div>
          <button type="button" id="invoice-finalize-cancel" data-close>Cancel</button>
          <button type="submit"></button>
        </form></dialog>`

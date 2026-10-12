@@ -633,6 +633,10 @@ dialog form { display: flex; flex-direction: column; gap: 14px; padding: 18px 20
 .dialog-body {
   display: flex; flex-direction: column; gap: 14px; padding: 18px 20px;
 }
+/* The gap spaces their children; a paragraph's own margin would add to it, most
+   visibly above the first, which then sits lower than the side insets. Both
+   kinds of dialog body, so the two stay alike. */
+dialog form > p, .dialog-body > p { margin: 0; }
 dialog footer {
   display: flex; justify-content: flex-end; gap: 10px;
   padding: 4px 0 0; border: none; margin: 4px 0 0;
@@ -1018,6 +1022,31 @@ dialog.about-dialog { width: min(620px, calc(100vw - 32px)); }
    wants a different height than shared.js's TABLE_DEFAULTS.rowHeight either clips
    its own content or leaves a gap. One height here means one rowHeight there. */
 .tabulator .tabulator-row .btn { min-height: 28px; }
+
+/* ---------- progress through a run of shop lookups (invoice fill-in) ----------
+   A bar, the line it is on, and how far along, in that order of importance: the
+   count is there to be read when wanted, not to be the thing on screen. The
+   summary that may follow is a sentence and a few badges, one per kind of gap;
+   it is there (empty) the whole run, so it spaces itself only once filled. */
+.fill-run { display: flex; flex-direction: column; }
+.fill-run .progress-meta { margin-top: 8px; }
+.fill-run .fill-summary:not(:empty) { margin-top: 14px; }
+.progress {
+  height: 8px; border-radius: 999px; background: var(--border); overflow: hidden;
+}
+.progress-bar {
+  height: 100%; width: 0; border-radius: inherit; background: var(--accent);
+  transition: width .3s ease;
+}
+.progress-meta {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+  font-size: 13px; color: var(--muted);
+}
+.progress-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.progress-count { flex: none; font-variant-numeric: tabular-nums; }
+.fill-summary { display: flex; flex-direction: column; gap: 10px; }
+.fill-summary p { margin: 0; }
+.fill-summary .badges { display: flex; flex-wrap: wrap; gap: 6px; }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }

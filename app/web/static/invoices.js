@@ -150,12 +150,16 @@ if (importBtn) {
 // after finalize, and from "Fill in from shop" on a finalized invoice for the
 // ones finalized before this existed.
 //
-// One line at a time, said in the dialog as it goes, because each can take a
-// few seconds. Best-effort: what can't be had is left out — but said. Returns a
-// summary of what is still missing, which the caller leaves on screen until the
-// dialog is closed; null when nothing is, and the caller reloads at once.
+// One line at a time, shown as it goes — a bar, the line's part, and how far
+// along — because each can take a few seconds. Best-effort: what can't be had
+// is left out, but said: when parts are still missing something, a summary
+// appears under the full bar and stays until the dialog is closed (the return
+// value is its text; null when nothing is missing, and the caller reloads).
 // Closing the dialog — the cancel button, the ×, or Esc — reloads straight away.
-async function fillInLines(invoiceId, { dialog, status, cancel, submit, prefix = "" }) {
+async function fillInLines(
+  invoiceId,
+  { dialog, progress, status, cancel, submit, doing = "Fetching product details" },
+) {
   let lines = [];
   try {
     const resp = await fetch(`/api/invoices/${invoiceId}/lines`);
@@ -178,15 +182,31 @@ async function fillInLines(invoiceId, { dialog, status, cancel, submit, prefix =
   // behind it still shows the draft, with a Finalize button that would do
   // nothing until the loop ends.
   dialog.addEventListener("close", () => window.location.reload(), { once: true });
+
+  const meter = progress && progress.querySelector('[role="progressbar"]');
+  const bar = progress && progress.querySelector(".progress-bar");
+  const what = progress && progress.querySelector(".progress-what");
+  const count = progress && progress.querySelector(".progress-count");
+  function show(done, label) {
+    if (!progress) return;
+    // Shown at once with its summary region in it, empty: a live region has to
+    // be in the accessibility tree before its text arrives to be read out.
+    progress.hidden = false;
+    if (bar) bar.style.width = `${Math.round((done / todo.length) * 100)}%`;
+    if (meter) {
+      meter.setAttribute("aria-valuemax", String(todo.length));
+      meter.setAttribute("aria-valuenow", String(done));
+    }
+    if (what) what.textContent = label;
+    if (count) count.textContent = `${done} of ${todo.length}`;
+  }
+
   const missing = { photo: 0, datasheet: 0, "shop link": 0 };
   let incomplete = 0;
   let unreached = 0;
   for (const [index, line] of todo.entries()) {
-    if (status) {
-      status.hidden = false;
-      status.textContent =
-        `${prefix}fetching product details ${index + 1}/${todo.length}…`;
-    }
+    const part = line.supplier_part_number;
+    show(index, part ? `${doing}: ${part}` : `${doing}…`);
     try {
       const url = `/api/invoices/${invoiceId}/lines/${line.id}/fill-in`;
       const resp = await sendJSON(url, "POST", {});
@@ -200,29 +220,44 @@ async function fillInLines(invoiceId, { dialog, status, cancel, submit, prefix =
         ["datasheet", done.datasheet],
         ["shop link", done.shop_link],
       ].filter(([, state]) => state === "none");
-      for (const [what] of gaps) missing[what] += 1;
+      for (const [kind] of gaps) missing[kind] += 1;
       if (gaps.length) incomplete += 1;
     } catch {
       unreached += 1;
     }
   }
+  show(todo.length, "Done");
   if (!incomplete && !unreached) return null;
-  const parts = [];
-  if (incomplete) {
-    const what = Object.entries(missing)
-      .filter(([, count]) => count)
-      .map(([name, count]) => `${name}: ${count}`)
-      .join(", ");
-    parts.push(`${incomplete} of ${todo.length} still missing something (${what})`);
-  }
-  if (unreached) parts.push(`${unreached} could not be filled in`);
-  const summary = `${prefix}done — ${parts.join("; ")}.`;
+
+  // The summary: one sentence, and a badge per kind of gap.
+  const whole = todo.length - incomplete - unreached;
+  const parts = (n) => (n === 1 ? "1 part" : `${n} parts`);
+  // Nothing answered at all: nothing is known about any part, complete or not.
+  const sentence =
+    whole === 0 && incomplete === 0
+      ? `${parts(unreached)} could not be checked.`
+      : `${whole} of ${parts(todo.length)} ${
+          todo.length === 1 ? "has everything it" : "have everything they"
+        } could get.`;
+  const badges = Object.entries(missing)
+    .filter(([, n]) => n)
+    .map(([kind, n]) => [`b-warn`, `no ${kind} · ${n}`]);
+  if (unreached) badges.push([`b-danger`, `not reached · ${unreached}`]);
   if (status) {
-    status.hidden = false;
-    status.textContent = summary;
+    const lead = document.createElement("p");
+    lead.textContent = sentence;
+    const row = document.createElement("div");
+    row.className = "badges";
+    for (const [tone, text] of badges) {
+      const badge = document.createElement("span");
+      badge.className = `badge ${tone}`;
+      badge.textContent = text;
+      row.append(badge);
+    }
+    status.replaceChildren(lead, row);
   }
   if (cancel) cancel.textContent = "Close";
-  return summary;
+  return [sentence, ...badges.map(([, text]) => text)].join(" ");
 }
 
 // "Fill in from shop" on a finalized invoice (writers only; see the template).
@@ -236,6 +271,7 @@ if (fillBtn && fillDialog) {
       fillDialog.showModal();
       const summary = await fillInLines(fillBtn.dataset.invoiceId, {
         dialog: fillDialog,
+        progress: document.getElementById("invoice-fill-progress"),
         status: document.getElementById("invoice-fill-status"),
         cancel: document.getElementById("invoice-fill-cancel"),
       });
@@ -819,12 +855,15 @@ if (detail && lineDialog) {
           total_gross: gross ? gross : null,
         });
         if (resp.ok) {
+          // Said by the title: the label under the bar has room for the part only.
+          const title = finalizeDialog.querySelector("header strong");
+          if (title) title.textContent = "Invoice finalized";
           const summary = await fillInLines(invoiceId, {
             dialog: finalizeDialog,
+            progress: document.getElementById("invoice-finalize-progress"),
             status: document.getElementById("invoice-finalize-status"),
             cancel: document.getElementById("invoice-finalize-cancel"),
             submit: finalizeForm.querySelector('button[type="submit"]'),
-            prefix: "Invoice finalized — ",
           });
           // A summary stays up until the dialog is closed, which reloads.
           if (!summary) window.location.reload();
