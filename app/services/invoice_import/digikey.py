@@ -56,7 +56,7 @@ class DigiKeyInvoiceParser:
         lowered = text.lower()
         return "digikey" in lowered or "digi-key" in lowered
 
-    def parse(self, text: str, *, bold_rows: Sequence[str] = ()) -> ParsedInvoice:
+    def parse(self, text: str, *, bold_lines: Sequence[bool] = ()) -> ParsedInvoice:
         number = _NUMBER.search(text)
         if number is None:
             raise ValidationError(

@@ -38,7 +38,7 @@ def parse_invoice(data: bytes, filename: str) -> ParsedInvoice:
     pdf = read_pdf(data)
     for parser in _PARSERS:
         if parser.matches(pdf.text, filename):
-            return parser.parse(pdf.text, bold_rows=pdf.bold_rows)
+            return parser.parse(pdf.text, bold_lines=pdf.bold_lines)
     raise ValidationError(
         "unrecognised invoice — ShelfOS reads TME, Mouser, Digi-Key and Farnell PDFs"
     )

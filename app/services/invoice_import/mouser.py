@@ -78,7 +78,7 @@ class MouserInvoiceParser:
     def matches(self, text: str, filename: str) -> bool:
         return "Mouser Part Number" in text or "mouser.com" in text
 
-    def parse(self, text: str, *, bold_rows: Sequence[str] = ()) -> ParsedInvoice:
+    def parse(self, text: str, *, bold_lines: Sequence[bool] = ()) -> ParsedInvoice:
         header = _HEADER.search(text)
         if header is None:
             raise ValidationError(

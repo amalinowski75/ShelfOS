@@ -74,9 +74,10 @@ class InvoiceParser(Protocol):
 
     def matches(self, text: str, filename: str) -> bool: ...
 
-    def parse(self, text: str, *, bold_rows: Sequence[str] = ()) -> ParsedInvoice:
-        """Parse ``text``; ``bold_rows`` are the rows set wholly in bold (see
-        ``pdf.PdfText``), for a parser whose layout needs them."""
+    def parse(self, text: str, *, bold_lines: Sequence[bool] = ()) -> ParsedInvoice:
+        """Parse ``text``; ``bold_lines`` flags, line by line, the ones set
+        wholly in bold (see ``pdf.PdfText``), for a parser whose layout needs
+        them."""
         ...
 
 

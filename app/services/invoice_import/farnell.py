@@ -80,7 +80,7 @@ class FarnellInvoiceParser:
     def matches(self, text: str, filename: str) -> bool:
         return "Premier Farnell" in text or "farnell.com" in text
 
-    def parse(self, text: str, *, bold_rows: Sequence[str] = ()) -> ParsedInvoice:
+    def parse(self, text: str, *, bold_lines: Sequence[bool] = ()) -> ParsedInvoice:
         number = _search(_INVOICE_NO, text, "invoice number")
         date_text = _search(_INVOICE_DATE, text, "invoice date")
         currency = _search(_CURRENCY, text, "currency")

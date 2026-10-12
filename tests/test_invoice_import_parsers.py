@@ -3,7 +3,7 @@
 The parsers consume extracted PDF text, so these run against text fixtures under
 ``tests/fixtures/invoices/`` — the pdfplumber output of the real invoices with the
 buyer's name/address/VAT redacted (the parsers never read that block). The real
-PDFs are kept out of the repo (``samples/`` is gitignored); ``extract_text`` itself is
+PDFs are kept out of the repo (``samples/`` is gitignored); ``read_pdf`` itself is
 covered separately with a generated PDF so no personal file is committed.
 """
 
@@ -19,7 +19,7 @@ from app.services.invoice_import import parse_invoice
 from app.services.invoice_import.digikey import DigiKeyInvoiceParser
 from app.services.invoice_import.farnell import FarnellInvoiceParser
 from app.services.invoice_import.mouser import MouserInvoiceParser
-from app.services.invoice_import.pdf import PdfText, extract_text
+from app.services.invoice_import.pdf import PdfText, read_pdf
 from app.services.invoice_import.tme import TmeInvoiceParser
 
 _DIR = Path(__file__).parent / "fixtures" / "invoices"
@@ -394,28 +394,86 @@ def test_tme_glues_no_row_in_the_regular_face() -> None:
     assert parsed.description is not None and parsed.description.startswith("R ")
 
 
-def test_tme_parse_reads_the_bold_rows_it_is_given() -> None:
-    """End to end through the parser: the PDF's bold rows reach the item."""
-    text = "\n".join(
+def test_tme_rejoins_no_bold_row_under_a_short_article() -> None:
+    """A column that didn't run out of room did not wrap, whatever the face."""
+    from app.services.invoice_import.tme import _ITEM, _line
+
+    header = _ITEM.match(
+        _SAMWHA_HEADER.replace("CS2012X7R475K500N", "CS2012X7R4      ")
+    )
+    assert header is not None
+
+    parsed = _line(header, list(_SAMWHA_ROWS), [True, False, False, False])
+
+    assert parsed.supplier_part_number == "CS2012X7R4"
+
+
+def test_tme_rejoins_no_bold_row_with_no_description_under_it() -> None:
+    """A bold heading under the item's last row is no tail: the tail sits above
+    the description, so a bold row straight before ``Producent:`` isn't one."""
+    from app.services.invoice_import.tme import _ITEM, _line
+
+    header = _ITEM.match(_SAMWHA_HEADER)
+    assert header is not None
+    rows = ["          PLN", *_SAMWHA_ROWS[2:]]
+
+    parsed = _line(header, rows, [True, False, False])
+
+    assert parsed.supplier_part_number is None
+
+
+def _samwha_invoice(items: int) -> str:
+    return "\n".join(
         [
             "Numer faktury: 1261596985",
             "Data wystawienia faktury: 01.10.2026",
             "w walucie: PLN",
-            _SAMWHA_HEADER,
-            *_SAMWHA_ROWS,
+            *[row for _ in range(items) for row in [_SAMWHA_HEADER, *_SAMWHA_ROWS]],
             "Razem:",
         ]
     )
-    # Bold rows elsewhere on the page (a heading) are not mistaken for the tail.
-    invoice = TmeInvoiceParser().parse(text, bold_rows=("FAKTURA VAT", "R"))
+
+
+def test_tme_parse_reads_each_row_s_own_flag() -> None:
+    """The flag belongs to the row, not to its text.
+
+    Two items print the same "R" under their header; only the second in bold.
+    Matched by content, the first would take the flag — a symbol nobody printed
+    — and the real tail would read as regular.
+    """
+    text = _samwha_invoice(2)
+    flags = [False] * len(text.split("\n"))
+    second_r = [i for i, row in enumerate(text.split("\n")) if row.strip() == "R"][1]
+    flags[second_r] = True
+
+    invoice = TmeInvoiceParser().parse(text, bold_lines=flags)
 
     assert [line.supplier_part_number for line in invoice.lines] == [
-        "CS2012X7R475K500NR"
+        None,
+        "CS2012X7R475K500NR",
     ]
+
+
+def test_tme_parse_ignores_flags_that_do_not_line_up() -> None:
+    """Flags for a different text are no evidence: the text rules stand."""
+    text = _samwha_invoice(1)
+    flags = [row.strip() == "R" for row in text.split("\n")]
+
+    assert (
+        TmeInvoiceParser().parse(text, bold_lines=flags).lines[0].supplier_part_number
+        == "CS2012X7R475K500NR"
+    )
+    assert (
+        TmeInvoiceParser()
+        .parse(text, bold_lines=[*flags, False])
+        .lines[0]
+        .supplier_part_number
+        is None
+    )
     assert TmeInvoiceParser().parse(text).lines[0].supplier_part_number is None
 
 
-def test_parse_invoice_hands_the_pdf_s_bold_rows_to_the_parser(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_parse_invoice_hands_the_pdf_s_bold_lines_to_the_parser(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     import app.services.invoice_import as invoice_import
 
     text = "\n".join(
@@ -429,8 +487,9 @@ def test_parse_invoice_hands_the_pdf_s_bold_rows_to_the_parser(monkeypatch) -> N
             "Razem:",
         ]
     )
+    flags = tuple(row.strip() == "R" for row in text.split("\n"))
     monkeypatch.setattr(
-        invoice_import, "read_pdf", lambda data: PdfText(text=text, bold_rows=("R",))
+        invoice_import, "read_pdf", lambda data: PdfText(text=text, bold_lines=flags)
     )
 
     invoice = parse_invoice(b"%PDF", "1261596985.pdf")
@@ -996,7 +1055,7 @@ def test_farnell_requires_a_currency() -> None:
         FarnellInvoiceParser().parse(broken)
 
 
-# --- Registry / extract_text -------------------------------------------------
+# --- Registry / read_pdf ----------------------------------------------------
 
 
 def test_parse_invoice_rejects_unrecognised_text(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -1035,14 +1094,19 @@ def test_parse_invoice_picks_the_right_parser(
     assert parse_invoice(b"%PDF-1.4", fixture).shop_key == shop_key
 
 
-def _minimal_pdf(text: str, bold: str | None = None) -> bytes:
+def _minimal_pdf(
+    text: str, bold: str | None = None, bold_at: tuple[int, int] = (20, 80)
+) -> bytes:
     """A one-page text PDF with a correct xref, built by hand (no writer library).
 
-    ``bold``, if given, is a second row under ``text`` set in Helvetica-Bold.
+    ``bold``, if given, is set in Helvetica-Bold at ``bold_at`` — by default a
+    second row under ``text``.
     """
     stream = b"BT /F1 12 Tf 20 100 Td (" + text.encode("latin-1") + b") Tj ET\n"
     if bold is not None:
-        stream += b"BT /F2 12 Tf 20 80 Td (" + bold.encode("latin-1") + b") Tj ET\n"
+        x, y = bold_at
+        stream += b"BT /F2 12 Tf %d %d Td (" % (x, y)
+        stream += bold.encode("latin-1") + b") Tj ET\n"
     objs = [
         b"<</Type/Catalog/Pages 2 0 R>>",
         b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
@@ -1069,25 +1133,61 @@ def _minimal_pdf(text: str, bold: str | None = None) -> bytes:
     return bytes(out)
 
 
-def test_extract_text_reads_a_real_pdf() -> None:
-    assert "Hello Invoice 123" in extract_text(_minimal_pdf("Hello Invoice 123"))
+def test_read_pdf_reads_a_real_pdf() -> None:
+    assert "Hello Invoice 123" in read_pdf(_minimal_pdf("Hello Invoice 123")).text
 
 
-def test_read_pdf_tells_the_rows_set_in_bold() -> None:
-    from app.services.invoice_import.pdf import read_pdf
-
+def test_read_pdf_flags_each_line_set_in_bold() -> None:
     pdf = read_pdf(_minimal_pdf("Kondensator ceramiczny", bold="CS2012X7R475K500N R"))
 
-    assert "Kondensator ceramiczny" in pdf.text
-    assert pdf.bold_rows == ("CS2012X7R475K500N R",)
+    lines = pdf.text.split("\n")
+    assert len(pdf.bold_lines) == len(lines)
+    flagged = [
+        line.strip() for line, bold in zip(lines, pdf.bold_lines, strict=True) if bold
+    ]
+    assert flagged == ["CS2012X7R475K500N R"]
+    assert any("Kondensator ceramiczny" in line for line in lines)
 
 
-def test_extract_text_rejects_a_pdf_with_no_text() -> None:
+def test_read_pdf_flags_no_line_that_mixes_faces() -> None:
+    """Bold words beside regular ones on one line don't make it a bold line."""
+    pdf = read_pdf(_minimal_pdf("Producent:", bold="SAMWHA", bold_at=(150, 100)))
+
+    assert any(
+        "Producent:" in line and "SAMWHA" in line for line in pdf.text.split("\n")
+    )
+    assert pdf.bold_lines and not any(pdf.bold_lines)
+
+
+def test_read_pdf_keeps_the_text_when_the_typeface_cannot_be_read(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A Mouser invoice whose text reads fine is not refused over font names."""
+    import pdfplumber.page
+
+    class Unreadable(dict):  # type: ignore[type-arg]
+        def get(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            raise RuntimeError("odd font")
+
+    real = pdfplumber.page.Page._get_textmap
+
+    def textmap(self, **kwargs):  # type: ignore[no-untyped-def]
+        tm = real(self, **kwargs)
+        tm.tuples = [(c, Unreadable(o) if o else o) for c, o in tm.tuples]
+        return tm
+
+    monkeypatch.setattr(pdfplumber.page.Page, "_get_textmap", textmap)
+
+    pdf = read_pdf(_minimal_pdf("Hello Invoice 123", bold="Bold row"))
+
+    assert "Hello Invoice 123" in pdf.text
+    assert pdf.bold_lines == ()
+
+
+def test_read_pdf_rejects_a_pdf_with_no_text() -> None:
     with pytest.raises(ValidationError, match="no extractable text"):
         # A valid PDF page carrying no text object at all.
-        extract_text(_minimal_pdf(" "))
+        read_pdf(_minimal_pdf(" "))
 
 
-def test_extract_text_rejects_a_non_pdf() -> None:
+def test_read_pdf_rejects_a_non_pdf() -> None:
     with pytest.raises(ValidationError, match="could not read this PDF"):
-        extract_text(b"this is not a pdf")
+        read_pdf(b"this is not a pdf")
