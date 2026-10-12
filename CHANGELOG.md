@@ -9,6 +9,14 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## A progress bar for filling in from the shop
+
+- **#193** — the dialog for "Fill in from shop" and for the run after finalize
+  has proper insets, and shows its progress as a bar. Under the bar it names the
+  part being looked up, with a quiet "5 of 12" at the side. When parts are still
+  missing something, the bar is replaced by one sentence and a badge for each
+  kind of gap ("no photo · 2", "not reached · 1").
+
 ## Datasheets from another shop
 
 - **#192** — a datasheet the import's shop won't hand over now comes from
