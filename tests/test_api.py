@@ -1352,7 +1352,7 @@ def test_stock_set_endpoint(client: TestClient) -> None:
     client.post("/api/stock/add", json={**body, "quantity": 10})
 
     counted = client.post("/api/stock/set", json={**body, "quantity": 8})
-    assert counted.status_code == 200
+    assert counted.status_code == 201  # a movement was written, like add/remove
     result = counted.json()
     assert (result["previous"], result["quantity"]) == (10, 8)
     assert result["movement"]["delta_quantity"] == -2
