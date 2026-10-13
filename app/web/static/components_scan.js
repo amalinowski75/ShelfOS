@@ -1,6 +1,6 @@
 // Scan putaway on the components page: a scanned bag resolves to the component it
-// holds, and then ASKS what to do with it — open its details, add stock, or move
-// stock to a shelf you scan. The scanning itself lives in scan_putaway.js, which
+// holds, and then ASKS what to do with it — open its details, add stock, move
+// stock to a shelf you scan, or set the count found there (a stocktake). The scanning itself lives in scan_putaway.js, which
 // this adapter configures; the chooser's markup is templates/_scan_choice.html.
 //
 // A scan used to mean one thing, "move this stock", which is only right when the
@@ -58,7 +58,7 @@
     button.addEventListener("click", () => choose(name));
   }
 
-  const KEYS = { a: "add", d: "details", m: "move" };
+  const KEYS = { a: "add", d: "details", m: "move", s: "set" };
 
   dialog?.addEventListener("keydown", (event) => {
     if (event.ctrlKey || event.altKey || event.metaKey) return;
@@ -81,7 +81,7 @@
     choices = null;
     if (answered) {
       // An answer owns what happens next, and says for itself when it is done:
-      // Add and Move release the queue when their own dialog closes, and Details
+      // Add, Set and Move release the queue when their own dialog closes, and Details
       // never does — it is leaving the page, and draining a second bag into a
       // lookup (and another chooser) in the moment before it goes is exactly the
       // flicker this guard exists to prevent.
@@ -123,7 +123,15 @@
     descEl.hidden = !descEl.textContent;
     noteEl.textContent = held.length
       ? ""
-      : "No stock on record yet — add some before there is anything to move.";
+      : "No stock on record yet — add some before there is anything to move or count.";
+    // An add or a count changes the component's total, which the table's Qty
+    // column shows. Refresh that in place — loadTable() is app.js's global on
+    // this page — rather than reloading, which would wipe the confirmation the
+    // dialog raises (and the count's summary, toasted here).
+    const refresh = (notice) => {
+      if (notice) showToast(notice, { tone: "ok" });
+      if (typeof loadTable === "function") return loadTable();
+    };
     choices = {
       details: () => {
         window.location = `/components/${component.id}`;
@@ -131,16 +139,15 @@
       // The same dialog the row's own Add button opens, so there is one way to
       // add stock and not two that could drift apart.
       add: window.openStockDialog
-        ? () =>
-            window.openStockDialog("add", component.id, () => {
-              // An add changes the component's total, which the table's Qty
-              // column shows. Refresh that in place — loadTable() is app.js's
-              // global on this page — rather than reloading, which would wipe
-              // the confirmation the dialog raises.
-              if (typeof loadTable === "function") return loadTable();
-            })
+        ? () => window.openStockDialog("add", component.id, refresh)
         : null,
       move: held.length ? () => scan.fileTarget(moveTarget(component, label, held)) : null,
+      // A stocktake of the bag in hand. Only where there is a count on record to
+      // correct: a part with no stock yet is an Add, not a count.
+      set:
+        held.length && window.openStockDialog
+          ? () => window.openStockDialog("set", component.id, refresh)
+          : null,
     };
     for (const [name, button] of buttons) button.disabled = !choices[name];
     dialog.showModal();

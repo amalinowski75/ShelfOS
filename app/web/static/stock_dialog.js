@@ -1,7 +1,13 @@
-// Shared Add/Take stock dialog (spec §14-15). Exposes
+// Shared Add/Take/Set stock dialog (spec §14-15, §17). Exposes
 // `openStockDialog(mode, componentId, onSaved)`; `onSaved` runs after a successful
 // write so each page can refresh however it needs (the components list reloads its
-// Tabulator feed, a detail page reloads itself).
+// Tabulator feed, a detail page reloads itself). It is passed a one-line summary
+// when there is something to say beyond "saved" — a Set reports what the count
+// changed — so a page that reloads can carry it across the reload.
+//
+// "set" is a stocktake: the quantity typed is what was COUNTED at the location,
+// and the server writes the difference as a correction. The dialog shows what is
+// on record there and prefills it, so a count that matches is just Enter.
 //
 // Also wires any `[data-stock-act]` button on the page — that's the declarative
 // entry point for server-rendered pages, whose tables have no JSON feed to re-pull,
@@ -14,6 +20,10 @@
   const title = document.getElementById("stock-dialog-title");
   const locScan = document.getElementById("stock-loc-scan");
   const locScanMsg = document.getElementById("stock-loc-scan-msg");
+  const qtyLabel = document.getElementById("stock-qty-label");
+  const currentEl = document.getElementById("stock-current");
+
+  const TITLES = { add: "Add stock", take: "Take from stock", set: "Set stock count" };
 
   let onSaved = null;
   // The per-mode predicate narrowLocations applied to the picker (Take: only where
@@ -21,6 +31,10 @@
   // held to the same rule the manual picker enforces. null = unfiltered (or the
   // usage lookup hasn't answered yet), in which case the server is the check.
   let locationFilter = null;
+  // Set mode: location id -> quantity on record, from the same usage lookup. Empty
+  // until it lands (or if it fails), which shows as "nothing on record" — the
+  // server works out the real difference either way.
+  let quantities = new Map();
   // Resolves when the per-mode filter above has settled for the current open, so a
   // shelf scanned before the usage lookup lands can wait for it instead of racing
   // it (see the scan handler). Reassigned on every open.
@@ -55,14 +69,21 @@
     onSaved = callback || null;
     form.component_id.value = componentId;
     form.mode.value = mode;
-    title.textContent = mode === "add" ? "Add stock" : "Take from stock";
+    title.textContent = TITLES[mode] || TITLES.add;
     errorEl.hidden = true;
-    form.quantity.value = 1;
+    const counting = mode === "set";
+    // A count of zero is a real answer ("the drawer is empty"); a movement of
+    // zero is not.
+    form.quantity.min = counting ? "0" : "1";
+    form.quantity.value = counting ? "" : 1;
+    if (qtyLabel) qtyLabel.textContent = counting ? "Counted quantity" : "Quantity";
+    quantities = new Map();
     form.note.value = ""; // else a note leaks into the NEXT movement
     form.querySelector(".loc-picker")?.reset(); // also drops the previous filter
     locationFilter = null; // narrowLocations sets it once the usage lookup lands
     if (locScan) locScan.value = "";
     if (locScanMsg) locScanMsg.hidden = true;
+    showCurrent(); // after the reset, so a previous open's location can't show
     dialog.showModal();
     // Focus the scan field so a wedge scanner's SL… payload lands there, not in the
     // quantity box (a manual user can pick from the tree or type the count instead).
@@ -130,14 +151,46 @@
     if (!Array.isArray(usage?.holding) || !Array.isArray(usage?.occupied)) return;
     const holding = new Set(usage.holding);
     const occupied = new Set(usage.occupied);
+    if (usage.quantities && typeof usage.quantities === "object") {
+      quantities = new Map(
+        Object.entries(usage.quantities).map(([id, qty]) => [Number(id), Number(qty)]),
+      );
+    }
     const predicate =
-      mode === "take"
+      mode === "take" || mode === "set"
         ? (id) => holding.has(id)
         : // Free, or already holding this same part so a restock can go back in.
           (id) => !occupied.has(id) || holding.has(id);
     locationFilter = predicate; // hold a scan to the same rule as the manual picker
     picker.setFilter(predicate);
+    // A stocktake of a part kept in one place has only one sensible answer for
+    // "where": pick it, so the count is the only thing left to type. Not over a
+    // choice already made (a shelf scanned while this lookup was in flight).
+    if (mode === "set" && usage.holding.length === 1 && form.location_id.value === "") {
+      picker.setValue(usage.holding[0]);
+      showCurrent();
+    }
   }
+
+  // Set mode: say what is on record at the chosen location, and prefill it —
+  // selected, so typing the count replaces it and a matching count is just Enter.
+  function showCurrent() {
+    if (!currentEl) return;
+    const id = form.location_id.value;
+    if (form.mode.value !== "set" || id === "") {
+      currentEl.hidden = true;
+      return;
+    }
+    const onRecord = quantities.get(Number(id)) ?? 0;
+    currentEl.textContent = `On record here: ${onRecord}`;
+    currentEl.hidden = false;
+    form.quantity.value = onRecord;
+    form.quantity.focus();
+    form.quantity.select();
+  }
+
+  // A location picked by hand (the picker fires `change` only for a real click).
+  form.location_id.addEventListener("change", showCurrent);
 
   // A scanned SL… shelf label selects that location in the picker (the manual pick
   // still works — both set the same hidden location_id).
@@ -181,6 +234,8 @@
       return;
     }
     if (locationFilter && !locationFilter(id)) {
+      // Set mode falls through to the Add branch: a part found on a shelf the
+      // record says is empty is exactly what a stocktake is for.
       if (form.mode.value === "take") {
         // A Take from a shelf the part isn't stocked in can't succeed, so leave
         // the field empty rather than fill a location that would only be cleared.
@@ -196,11 +251,18 @@
       // filled, then silently empty. allow() makes the selection real and durable.
       picker.allow(id);
       picker.setValue(id);
-      setScanMsg(`${path} already holds another part — selected anyway.`, true);
+      setScanMsg(
+        form.mode.value === "set"
+          ? `Nothing on record in ${path} — selected anyway.`
+          : `${path} already holds another part — selected anyway.`,
+        true,
+      );
+      showCurrent();
       return;
     }
     picker.setValue(id);
     setScanMsg(`Location set: ${path}`, false);
+    showCurrent();
   });
 
   // [data-close] buttons are wired once in shared.js.
@@ -220,9 +282,12 @@
     // would catch an onSaved rejection after the dialog has closed, writing "Could
     // not reach the server" into an element nobody can see — and mislabelling it,
     // since the server plainly was reached: the movement is already saved.
+    const mode = form.mode.value;
     let resp;
     try {
-      const url = form.mode.value === "add" ? "/api/stock/add" : "/api/stock/remove";
+      const url = { add: "/api/stock/add", take: "/api/stock/remove", set: "/api/stock/set" }[
+        mode
+      ];
       resp = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
@@ -251,9 +316,26 @@
       errorEl.hidden = false;
       return;
     }
+    let notice = null;
+    if (mode === "set") {
+      // What the count did, since nothing else on screen says it: on the list
+      // the table only shows totals, and "unchanged" leaves no movement row.
+      // A body we can't read just leaves the summary out — the write landed.
+      try {
+        const { previous, quantity } = await resp.json();
+        const where = form.querySelector(".loc-picker")?.pathOf(form.location_id.value);
+        const at = where ? ` at ${where}` : "";
+        notice =
+          previous === quantity
+            ? `Count matches the record: ${quantity}${at}.`
+            : `Count set to ${quantity}${at} (was ${previous}).`;
+      } catch {
+        notice = null;
+      }
+    }
     dialog.close();
     try {
-      await onSaved?.();
+      await onSaved?.(notice);
     } catch {
       // The write landed; only the refresh didn't. A toast, not the dialog's error
       // line — the dialog is closed by now, so an inline message would never be
@@ -262,7 +344,7 @@
     }
   });
 
-  // Declarative triggers: `data-stock-act="add|take"` + `data-component-id`. This is
+  // Declarative triggers: `data-stock-act="add|take|set"` + `data-component-id`. This is
   // the entry point for server-rendered pages, whose stock tables have no JSON feed.
   document.querySelectorAll("[data-stock-act]").forEach((button) => {
     const componentId = Number(button.dataset.componentId);
@@ -270,7 +352,8 @@
     // opaque 422; leaving it inert makes the markup bug obvious instead.
     if (!Number.isFinite(componentId)) return;
     button.addEventListener("click", () =>
-      window.openStockDialog(button.dataset.stockAct, componentId, () => {
+      window.openStockDialog(button.dataset.stockAct, componentId, (notice) => {
+        if (notice) showToastAfterReload(notice, { tone: "ok" });
         // Only a reload can show the write: both stock tables were rendered by
         // Jinja. Block further submits until the new page actually arrives.
         navigating = true;
