@@ -177,6 +177,46 @@ def apply_correction(
     )
 
 
+def set_stock(
+    session: Session,
+    *,
+    component_id: int,
+    location_id: int,
+    quantity: int,
+    user_id: int,
+    note: str | None = None,
+) -> tuple[int, StockMovement | None]:
+    """Set a location's stock to a counted ``quantity`` (a stocktake).
+
+    Recorded as a correction by the difference, so the ledger stays a list of
+    deltas like every other write. Returns the quantity found before the count and
+    the movement written — ``None`` when the count matched, since a zero-delta
+    movement would only be noise in the history.
+
+    The difference is read and then applied, so a movement landing between the
+    two would be counted over. Fine for a person at a shelf; the guard in
+    :func:`_apply_delta` still keeps the slot from going negative.
+    """
+    if quantity < 0:
+        raise ValidationError("quantity cannot be negative")
+    previous = get_quantity(session, component_id, location_id)
+    if quantity == previous:
+        # Still the checks a write would make: a count against a deleted part or
+        # a location that doesn't exist must not read as "unchanged".
+        cs.require_live_component(session, component_id)
+        require_entity(session, Location, location_id, "location")
+        return previous, None
+    movement = apply_correction(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        delta=quantity - previous,
+        user_id=user_id,
+        note=note,
+    )
+    return previous, movement
+
+
 def get_quantity(session: Session, component_id: int, location_id: int) -> int:
     """Return the cached quantity of a component at a location (0 if none)."""
     cl = _find_component_location(session, component_id, location_id)

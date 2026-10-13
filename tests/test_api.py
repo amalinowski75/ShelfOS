@@ -1342,6 +1342,32 @@ def test_stock_correction_and_total_endpoints(client: TestClient) -> None:
     assert total.json() == {"component_id": component["id"], "quantity": 7}
 
 
+def test_stock_set_endpoint(client: TestClient) -> None:
+    ctype = client.post("/api/types", json={"name": "resistor"}).json()
+    component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
+    location = client.post(
+        "/api/locations", json={"type": "drawer", "name": "D1"}
+    ).json()
+    body = {"component_id": component["id"], "location_id": location["id"]}
+    client.post("/api/stock/add", json={**body, "quantity": 10})
+
+    counted = client.post("/api/stock/set", json={**body, "quantity": 8})
+    assert counted.status_code == 200
+    result = counted.json()
+    assert (result["previous"], result["quantity"]) == (10, 8)
+    assert result["movement"]["delta_quantity"] == -2
+    assert result["movement"]["reason"] == "correction"
+
+    same = client.post("/api/stock/set", json={**body, "quantity": 8})
+    assert same.status_code == 200
+    assert same.json() == {"previous": 8, "quantity": 8, "movement": None}
+
+    negative = client.post("/api/stock/set", json={**body, "quantity": -1})
+    assert negative.status_code == 422
+    total = client.get("/api/stock/total", params={"component_id": component["id"]})
+    assert total.json()["quantity"] == 8
+
+
 def test_location_path_endpoint(client: TestClient) -> None:
     parent = client.post("/api/locations", json={"type": "room", "name": "Lab"}).json()
     child = client.post(
