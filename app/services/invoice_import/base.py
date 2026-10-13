@@ -10,6 +10,7 @@ know nothing about the database.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -22,8 +23,18 @@ from app.services.errors import ValidationError
 _MONEY_QUANTUM = Decimal("0.000001")
 
 _MONTHS = {
-    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
-    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "may": 5,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
 }
 
 
@@ -63,7 +74,11 @@ class InvoiceParser(Protocol):
 
     def matches(self, text: str, filename: str) -> bool: ...
 
-    def parse(self, text: str) -> ParsedInvoice: ...
+    def parse(self, text: str, *, bold_lines: Sequence[bool] = ()) -> ParsedInvoice:
+        """Parse ``text``; ``bold_lines`` flags, line by line, the ones set
+        wholly in bold (see ``pdf.PdfText``), for a parser whose layout needs
+        them."""
+        ...
 
 
 # Grouping-separator shapes, validated BEFORE stripping: either no groups at all, or

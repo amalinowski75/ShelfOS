@@ -15,6 +15,7 @@ on from the row below (see :func:`_wrapped_article`). Numbers are Polish
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 
 from app.services.errors import ValidationError
 from app.services.invoice_import.base import (
@@ -66,8 +67,14 @@ class TmeInvoiceParser:
     def matches(self, text: str, filename: str) -> bool:
         return "Transfer Multisort Elektronik" in text or "tme.eu" in text
 
-    def parse(self, text: str) -> ParsedInvoice:
-        lines = text.splitlines()
+    def parse(self, text: str, *, bold_lines: Sequence[bool] = ()) -> ParsedInvoice:
+        lines = text.split("\n")
+        # Which rows the PDF printed wholly in bold, by position: TME sets its own
+        # symbol in bold, and the wrapped tail of a long one on the row under it
+        # too, while the description is in the regular face. Flags that don't
+        # line up with the text are no evidence at all.
+        typeface = len(bold_lines) == len(lines)
+
         number = _search(_NUMBER, text, "invoice number")
         currency = _search(_CURRENCY, text, "currency")
         invoice_date = dotted_date(_search(_DATE, text, "invoice date"))
@@ -75,22 +82,24 @@ class TmeInvoiceParser:
         parsed: list[ParsedLine] = []
         header: re.Match[str] | None = None
         cont: list[str] = []
+        bold: list[bool] = []
 
         def flush() -> None:
             if header is not None:
-                parsed.append(_line(header, cont))
+                parsed.append(_line(header, cont, bold if typeface else None))
 
-        for line in lines:
+        for index, line in enumerate(lines):
             match = _ITEM.match(line)
             if match:
                 flush()
-                header, cont = match, []
+                header, cont, bold = match, [], []
             elif header is not None:
                 if _STOP.search(line):
                     flush()
-                    header, cont = None, []
+                    header, cont, bold = None, [], []
                 else:
                     cont.append(line)
+                    bold.append(typeface and bold_lines[index])
         flush()
 
         if not parsed:
@@ -156,7 +165,7 @@ def _wrapped_article(article: str, cont_lines: list[str]) -> tuple[str, list[str
     index = 0
     for position, row in enumerate(cont_lines):
         # "__" is the page-break glyph, stripped here as it is below.
-        candidate = re.sub(r"_{2,}", "", row).strip()
+        candidate = _unglyph(row)
         if not _ARTICLE_TAIL.match(candidate):
             break
         if not _has_description_after(cont_lines[position + 1 :]):
@@ -188,14 +197,68 @@ def _has_description_after(rest: list[str]) -> bool:
     return False
 
 
-def _line(header: re.Match[str], cont_lines: list[str]) -> ParsedLine:
+def _bold_tail(article: str, cont_lines: list[str], bold: Sequence[bool]) -> list[str]:
+    """The rows under the header that carry the article's wrapped tail.
+
+    Read off the typeface, not guessed: the article is printed in bold and so is
+    the tail of a long one on the row under it, while the description that
+    follows is in the regular face. So a bold, symbol-shaped row straight under
+    the header is the article's continuation however it broke — mid-token on a
+    separator, or on width alone into a symbol that is no prefix of anything
+    (TME's ``CS2012X7R475K500N`` + ``R`` for the maker's ``…500NRE``), which the
+    text-only rules have to refuse.
+
+    The typeface says which face a row is in, not why it is there, so the
+    layout still has to agree. The column only wraps once the article ran out
+    of room — it fills the column, or broke on a separator — and the tail lands
+    above the description, so description rows must follow it, as they must in
+    :func:`_wrapped_article`. That keeps out a bold row that only happens to sit
+    under the header: a page's bold heading ("PLN") when the item is the last
+    row before a page break.
+    """
+    if not (len(article) >= _WRAP_WIDTH or article.endswith(_BREAK_CHARS)):
+        return []
+    tail: list[str] = []
+    for position, (row, is_bold) in enumerate(zip(cont_lines, bold, strict=False)):
+        candidate = _unglyph(row)
+        if not (is_bold and _ARTICLE_TAIL.match(candidate)):
+            break
+        if not _has_description_after(cont_lines[position + 1 :]):
+            break
+        tail.append(candidate)
+    return tail
+
+
+def _unglyph(row: str) -> str:
+    """A row without TME's ``__`` page-break glyphs, trimmed."""
+    return re.sub(r"_{2,}", "", row).strip()
+
+
+def _line(
+    header: re.Match[str],
+    cont_lines: list[str],
+    bold: Sequence[bool] | None = None,
+) -> ParsedLine:
+    """One item: the header row and the rows under it, up to the next.
+
+    ``bold`` says, row by row, which of ``cont_lines`` the PDF set wholly in bold
+    — None when the typeface is not known (a text-only fixture, or a PDF that
+    carries no font names), and the wrapped article is then judged from the text
+    alone (:func:`_wrapped_article`, the MPN check and the drop rule below).
+    """
     _, article, qty_s, price_s, per_s = header.groups()
     per = int(per_s) if per_s else 1
     printed = article.strip()
-    article, cont_lines = _wrapped_article(printed, cont_lines)
-    # True only when the article announced its own break (see _wrapped_article), so
-    # the rebuilt symbol rests on unambiguous evidence — which is what lets it skip
-    # both the MPN check below and the drop rule at the end.
+    tail = _bold_tail(printed, cont_lines, bold) if bold is not None else []
+    if tail:
+        article = printed + "".join(tail)
+        cont_lines = cont_lines[len(tail) :]
+    else:
+        article, cont_lines = _wrapped_article(printed, cont_lines)
+    # True only when the typeface or a hanging separator showed the article broke
+    # (see _bold_tail, _wrapped_article), so the rebuilt symbol rests on evidence
+    # the text alone can't fake — which is what lets it skip both the MPN check
+    # below and the drop rule at the end.
     rejoined = article != printed
     joined = " ".join(line.strip() for line in cont_lines)
     # TME prints "__" glyphs at a page break; they land mid-field ("Symbol

@@ -9,6 +9,15 @@ release — the project has no releases yet.
 Each entry says what changed and, where it is not obvious, why. Numbers link to the
 pull request, which carries the reasoning and the verification.
 
+## TME symbols that wrap
+
+- **#195** — a long TME symbol that wraps onto a second row of the invoice is now
+  read whole. The parser tells the wrapped part from the description by its bold
+  typeface. Before, a symbol like `CS2012X7R475K500NR` (for Samwha's
+  `…500NRE`) was dropped as possibly truncated, so the line had no TME symbol and
+  "Fill in from shop" had nothing to look the part up by. The stray last
+  character also ended up in the component's notes.
+
 ## Links to the parts still short
 
 - **#194** — when filling in from the shop leaves some parts without a photo,

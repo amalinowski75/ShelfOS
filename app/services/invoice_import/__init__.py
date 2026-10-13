@@ -18,7 +18,7 @@ from app.services.invoice_import.base import (
 from app.services.invoice_import.digikey import DigiKeyInvoiceParser
 from app.services.invoice_import.farnell import FarnellInvoiceParser
 from app.services.invoice_import.mouser import MouserInvoiceParser
-from app.services.invoice_import.pdf import extract_text
+from app.services.invoice_import.pdf import read_pdf
 from app.services.invoice_import.tme import TmeInvoiceParser
 
 _PARSERS: list[InvoiceParser] = [
@@ -35,10 +35,10 @@ def parse_invoice(data: bytes, filename: str) -> ParsedInvoice:
     Raises if the PDF has no text (a scan) or if no parser recognises it (not a TME,
     Mouser, Digi-Key or Farnell invoice).
     """
-    text = extract_text(data)
+    pdf = read_pdf(data)
     for parser in _PARSERS:
-        if parser.matches(text, filename):
-            return parser.parse(text)
+        if parser.matches(pdf.text, filename):
+            return parser.parse(pdf.text, bold_lines=pdf.bold_lines)
     raise ValidationError(
         "unrecognised invoice — ShelfOS reads TME, Mouser, Digi-Key and Farnell PDFs"
     )

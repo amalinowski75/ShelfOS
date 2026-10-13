@@ -15,6 +15,7 @@ result; supporting it is a follow-up (add the other storefronts' header wording)
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 
 from app.services.errors import ValidationError
 from app.services.invoice_import.base import (
@@ -55,7 +56,7 @@ class DigiKeyInvoiceParser:
         lowered = text.lower()
         return "digikey" in lowered or "digi-key" in lowered
 
-    def parse(self, text: str) -> ParsedInvoice:
+    def parse(self, text: str, *, bold_lines: Sequence[bool] = ()) -> ParsedInvoice:
         number = _NUMBER.search(text)
         if number is None:
             raise ValidationError(
