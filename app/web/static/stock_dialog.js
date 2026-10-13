@@ -31,10 +31,17 @@
   // held to the same rule the manual picker enforces. null = unfiltered (or the
   // usage lookup hasn't answered yet), in which case the server is the check.
   let locationFilter = null;
-  // Set mode: location id -> quantity on record, from the same usage lookup. Empty
-  // until it lands (or if it fails), which shows as "nothing on record" — the
-  // server works out the real difference either way.
-  let quantities = new Map();
+  // Set mode: location id -> quantity on record, from the same usage lookup. null
+  // until it lands, and for good if it fails or comes back without them: then
+  // the record is UNKNOWN, never 0 — a prefilled 0 next to a drawer of 50 invites
+  // an Enter that wipes it.
+  let quantities = null;
+  // Every location holding anything, also from that lookup: a count scanned into
+  // a shelf the part isn't on record in says whether another part lives there.
+  let occupiedIds = null;
+  // Set mode: the user has typed a count. From then on picking (or scanning) the
+  // location must not overwrite it with the record's number.
+  let countTyped = false;
   // Resolves when the per-mode filter above has settled for the current open, so a
   // shelf scanned before the usage lookup lands can wait for it instead of racing
   // it (see the scan handler). Reassigned on every open.
@@ -77,7 +84,9 @@
     form.quantity.min = counting ? "0" : "1";
     form.quantity.value = counting ? "" : 1;
     if (qtyLabel) qtyLabel.textContent = counting ? "Counted quantity" : "Quantity";
-    quantities = new Map();
+    quantities = null;
+    occupiedIds = null;
+    countTyped = false;
     form.note.value = ""; // else a note leaks into the NEXT movement
     form.querySelector(".loc-picker")?.reset(); // also drops the previous filter
     locationFilter = null; // narrowLocations sets it once the usage lookup lands
@@ -151,10 +160,14 @@
     if (!Array.isArray(usage?.holding) || !Array.isArray(usage?.occupied)) return;
     const holding = new Set(usage.holding);
     const occupied = new Set(usage.occupied);
-    if (usage.quantities && typeof usage.quantities === "object") {
-      quantities = new Map(
-        Object.entries(usage.quantities).map(([id, qty]) => [Number(id), Number(qty)]),
-      );
+    occupiedIds = occupied;
+    const counts = usage.quantities;
+    if (counts && typeof counts === "object" && !Array.isArray(counts)) {
+      const entries = Object.entries(counts).map(([id, qty]) => [Number(id), qty]);
+      // All or nothing: one unreadable entry and the whole record is unknown.
+      if (entries.every(([, qty]) => Number.isInteger(qty) && qty >= 0)) {
+        quantities = new Map(entries);
+      }
     }
     const predicate =
       mode === "take" || mode === "set"
@@ -174,6 +187,8 @@
 
   // Set mode: say what is on record at the chosen location, and prefill it —
   // selected, so typing the count replaces it and a matching count is just Enter.
+  // Two things it never does: prefill a number it doesn't know (the lookup
+  // failed), or overwrite a count the user already typed.
   function showCurrent() {
     if (!currentEl) return;
     const id = form.location_id.value;
@@ -181,16 +196,36 @@
       currentEl.hidden = true;
       return;
     }
-    const onRecord = quantities.get(Number(id)) ?? 0;
-    currentEl.textContent = `On record here: ${onRecord}`;
+    // Known record, and the location isn't in it: nothing of this part there.
+    const onRecord = quantities ? (quantities.get(Number(id)) ?? 0) : null;
+    currentEl.textContent = `On record here: ${onRecord ?? "unknown"}`;
     currentEl.hidden = false;
-    form.quantity.value = onRecord;
+    if (countTyped) return;
+    form.quantity.value = onRecord ?? "";
     form.quantity.focus();
     form.quantity.select();
   }
 
   // A location picked by hand (the picker fires `change` only for a real click).
   form.location_id.addEventListener("change", showCurrent);
+
+  form.quantity.addEventListener("input", () => {
+    if (form.mode.value === "set") countTyped = true;
+  });
+
+  // The quantity box can hold focus while a wedge scanner fires (Set mode puts it
+  // there once a location is chosen). A shelf label typed into a number field
+  // loses its letters and keeps the digits — "SL7" becomes 7 — and the trailing
+  // Enter submits that as the count. No count contains a letter, so the first
+  // non-digit hands the keyboard to the scan field, carrying that key with it;
+  // the rest of the payload, Enter included, follows focus there.
+  form.quantity.addEventListener("keydown", (event) => {
+    if (!locScan || event.ctrlKey || event.altKey || event.metaKey) return;
+    if (event.key.length !== 1 || /\d/.test(event.key)) return;
+    event.preventDefault();
+    locScan.value = event.key;
+    locScan.focus();
+  });
 
   // A scanned SL… shelf label selects that location in the picker (the manual pick
   // still works — both set the same hidden location_id).
@@ -251,8 +286,12 @@
       // filled, then silently empty. allow() makes the selection real and durable.
       picker.allow(id);
       picker.setValue(id);
+      // Set mode reaches here for a shelf the part isn't on record in, which is
+      // either free or another part's — and the second is worth the same warning
+      // Add gives before this count puts a second part in the drawer.
+      const counting = form.mode.value === "set";
       setScanMsg(
-        form.mode.value === "set"
+        counting && !occupiedIds?.has(id)
           ? `Nothing on record in ${path} — selected anyway.`
           : `${path} already holds another part — selected anyway.`,
         true,

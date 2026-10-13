@@ -960,12 +960,17 @@ describe("stock_dialog.js — scanning a location label", () => {
 
 describe("stock_dialog.js — Set mode (a stocktake)", () => {
   // The part sits in D1 (5) with 4 and D2 (6) with 10; Store / D9 (9) is free.
-  const counted = ({ holding = [5, 6], quantities = { 5: 4, 6: 10 }, set } = {}) =>
+  const counted = ({
+    holding = [5, 6],
+    quantities = { 5: 4, 6: 10 },
+    occupied = holding,
+    set,
+  } = {}) =>
     (url) => {
       if (url.endsWith("/location-usage")) {
         return Promise.resolve({
           ok: true,
-          json: async () => ({ holding, occupied: holding, quantities }),
+          json: async () => ({ holding, occupied, quantities }),
         });
       }
       if (url === "/api/stock/set") {
@@ -1032,6 +1037,68 @@ describe("stock_dialog.js — Set mode (a stocktake)", () => {
     expect(locationId(h.document)).toBe("9");
     expect(scanMsg(h.document)).toMatch(/Nothing on record in Store \/ D9/);
     expect(h.current.textContent).toBe("On record here: 0");
+  });
+
+  it("calls the record unknown, not 0, when the lookup fails", async () => {
+    // A prefilled 0 beside a drawer that really holds 50 reads as "matches —
+    // press Enter", and that Enter writes -50.
+    const h = await openSet(() => Promise.reject(new Error("offline")));
+    h.node(5).click(); // unfiltered tree after a failure, so any node is pickable
+    expect(h.current.textContent).toBe("On record here: unknown");
+    expect(h.form.quantity.value).toBe("");
+  });
+
+  it("calls the record unknown when the answer has no usable quantities", async () => {
+    // An older server (or a proxy) answering without them: holding still
+    // filters, but "not in quantities" must not turn into "0 on record".
+    // null stands for "absent" here: undefined would take the helper's default.
+    for (const quantities of [null, { 5: "lots", 6: 10 }]) {
+      const h = await openSet(counted({ holding: [5], quantities }));
+      expect(locationId(h.document)).toBe("5"); // still auto-picked
+      expect(h.current.textContent).toBe("On record here: unknown");
+      expect(h.form.quantity.value).toBe("");
+    }
+  });
+
+  it("keeps a count already typed when the location is picked after it", async () => {
+    const h = await openSet(counted());
+    h.form.quantity.value = "37";
+    h.form.quantity.dispatchEvent(new h.window.Event("input", { bubbles: true }));
+    h.node(6).click(); // 10 on record
+    expect(h.form.quantity.value).toBe("37");
+    expect(h.current.textContent).toBe("On record here: 10"); // still shown
+  });
+
+  it("hands a shelf label typed into the quantity box to the scan field", async () => {
+    // Focus sits on quantity once a location is picked. A wedge scan of "SL7"
+    // there would lose its letters, keep 7, and its Enter would save 7 as the
+    // count. The first letter moves the keyboard to the scan field instead.
+    const h = await openSet(counted({ holding: [6], quantities: { 6: 10 } }));
+    expect(h.document.activeElement).toBe(h.form.quantity);
+    const press = (key) => {
+      const event = new h.window.KeyboardEvent("keydown", {
+        key,
+        bubbles: true,
+        cancelable: true,
+      });
+      h.document.activeElement.dispatchEvent(event);
+      return event;
+    };
+    expect(press("7").defaultPrevented).toBe(false); // a digit is a count
+    expect(press("S").defaultPrevented).toBe(true);
+    const field = h.document.getElementById("stock-loc-scan");
+    expect(h.document.activeElement).toBe(field);
+    expect(field.value).toBe("S");
+  });
+
+  it("warns that a scanned shelf holds another part, as Add does", async () => {
+    const h = await openSet(
+      counted({ holding: [5, 6], quantities: { 5: 4, 6: 10 }, occupied: [5, 6, 9] }),
+    );
+    scanLoc(h.document, "SL9");
+    await tick();
+    expect(locationId(h.document)).toBe("9");
+    expect(scanMsg(h.document)).toMatch(/Store \/ D9 already holds another part/);
   });
 
   it("posts the count to /api/stock/set and reports what it changed", async () => {

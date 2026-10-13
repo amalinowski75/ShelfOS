@@ -895,6 +895,9 @@ def test_component_detail_writer_can_add_take_and_set_stock(client: TestClient) 
     assert f'data-stock-act="add" data-component-id="{component["id"]}"' in html
     assert f'data-stock-act="take" data-component-id="{component["id"]}"' in html
     assert f'data-stock-act="set" data-component-id="{component["id"]}"' in html
+    # No stock anywhere yet: a first count is an Add, as in the scan chooser.
+    set_button = html[: html.index('data-stock-act="set"')].rsplit("<button", 1)[1]
+    assert "disabled" in set_button
     assert 'id="stock-dialog"' in html
     # Set mode writes into these two; without them the count has no context.
     assert 'id="stock-current"' in html
@@ -904,10 +907,25 @@ def test_component_detail_writer_can_add_take_and_set_stock(client: TestClient) 
     # The picker is populated: without `location_tree` in this route's context the
     # dialog would render "No locations yet" and be permanently unsubmittable, and
     # an id-only assertion would still pass.
-    client.post("/api/locations", json={"name": "Drawer 5", "type": "drawer"})
+    drawer = client.post(
+        "/api/locations", json={"name": "Drawer 5", "type": "drawer"}
+    ).json()
     html = client.get(f"/components/{component['id']}").text
     assert 'class="loc-picker-node"' in html
     assert "Drawer 5" in html
+
+    # With stock on record there is a count to correct, so Set is offered.
+    client.post(
+        "/api/stock/add",
+        json={
+            "component_id": component["id"],
+            "location_id": drawer["id"],
+            "quantity": 3,
+        },
+    )
+    html = client.get(f"/components/{component['id']}").text
+    set_button = html[: html.index('data-stock-act="set"')].rsplit("<button", 1)[1]
+    assert "disabled" not in set_button
 
 
 def test_component_detail_offers_a_move_per_stock_row(client: TestClient) -> None:
