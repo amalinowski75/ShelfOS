@@ -366,13 +366,15 @@ def component_location_usage(
     component_id: int,
     session: Session = Depends(get_session),
     user: User = Depends(require_web_user),
-) -> dict[str, list[int]]:
+) -> dict[str, object]:
     """Which locations hold this component, and which hold anything at all.
 
     Drives the stock dialog's location filter, which depends on both the mode and
     the component and so can't be baked into the server-rendered picker: **Take**
-    offers only ``holding``; **Add** offers everything outside ``occupied``, plus
-    ``holding`` so a restock can go back into the drawer the part already lives in.
+    and **Set** offer only ``holding``; **Add** offers everything outside
+    ``occupied``, plus ``holding`` so a restock can go back into the drawer the
+    part already lives in. ``quantities`` (location id → count) lets **Set** show
+    what is on record before the user types what they counted.
 
     Advisory, not a constraint — the dialog offers "show all locations", and the
     write endpoints accept any location as they always have.
@@ -380,11 +382,11 @@ def component_location_usage(
     from app.models.component import Component
 
     require_entity(session, Component, component_id, "component")
+    held = ss.list_component_locations(session, component_id)
     return {
-        "holding": [
-            cl.location_id for cl in ss.list_component_locations(session, component_id)
-        ],
+        "holding": [cl.location_id for cl in held],
         "occupied": ss.occupied_location_ids(session),
+        "quantities": {cl.location_id: cl.quantity for cl in held},
     }
 
 

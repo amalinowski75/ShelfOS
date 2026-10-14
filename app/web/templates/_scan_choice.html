@@ -2,8 +2,8 @@
 
    A scan used to mean exactly one thing — move this stock somewhere — which is
    only ever right when the bag is being put away. The same bag in hand is just as
-   often one you want to read about, or top up. So the scan asks first, and the
-   three answers each sit on a single key (A/D/M): at the bench one hand holds the
+   often one you want to read about, top up, or count. So the scan asks first, and
+   the answers each sit on a single key (A/D/M/S): at the bench one hand holds the
    scanner and the other the bag, and neither is free for a mouse.
 
    Behaviour lives in app/web/static/components_scan.js. Components page only —
@@ -35,8 +35,11 @@
         <button type="button" class="btn btn-secondary" data-choice="move">
           <kbd>M</kbd> Move stock
         </button>
+        <button type="button" class="btn btn-secondary" data-choice="set">
+          <kbd>S</kbd> Set count
+        </button>
       </div>
-      {# Why "Move stock" is greyed out, when it is. Always in flow so choosing
+      {# Why "Move stock" and "Set count" are greyed out, when they are. Always in flow so choosing
          doesn't shift the buttons under a finger already on its way to one. #}
       <p class="muted small" id="scan-choice-note"></p>
     </div>

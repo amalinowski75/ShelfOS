@@ -77,6 +77,7 @@ function choiceDialogMarkup() {
         <button type="button" data-choice="details"><kbd>D</kbd> Component details</button>
         <button type="button" data-choice="add"><kbd>A</kbd> Add stock</button>
         <button type="button" data-choice="move"><kbd>M</kbd> Move stock</button>
+        <button type="button" data-choice="set"><kbd>S</kbd> Set count</button>
         <p id="scan-choice-note"></p>
       </article>
     </dialog>`;
@@ -231,8 +232,8 @@ describe("components_scan.js — resolving a bag", () => {
     expect(document.getElementById("scan-choice-desc").textContent).toBe(
       "Amphenol · IDC socket, 8 pin",
     );
-    // All three are on offer for a component that has stock.
-    for (const choice of ["details", "add", "move"]) {
+    // All four are on offer for a component that has stock.
+    for (const choice of ["details", "add", "move", "set"]) {
       expect(
         document.querySelector(`[data-choice="${choice}"]`).disabled,
       ).toBe(false);
@@ -264,6 +265,32 @@ describe("components_scan.js — resolving a bag", () => {
     await page.openStock.mock.calls[0][2](); // the onSaved the dialog would run
 
     expect(refresh).toHaveBeenCalled();
+  });
+
+  it("opens the stock dialog in Set mode on S, for the scanned component", async () => {
+    const page = await openOn(MATCH);
+
+    choose(page, "s");
+
+    expect(page.openStock).toHaveBeenCalledTimes(1);
+    const [mode, componentId] = page.openStock.mock.calls[0];
+    expect(mode).toBe("set");
+    expect(componentId).toBe(42);
+    expect(page.document.getElementById("scan-choice-dialog").open).toBe(false);
+  });
+
+  it("refreshes the Qty column after a count and toasts what it changed", async () => {
+    const page = await openOn(MATCH);
+    const refresh = vi.fn();
+    page.window.loadTable = refresh;
+
+    choose(page, "s");
+    await page.openStock.mock.calls[0][2]("Count set to 90 at Lab / Rack A / D1 (was 100).");
+
+    expect(refresh).toHaveBeenCalled();
+    expect(page.document.querySelector(".toast").textContent).toBe(
+      "Count set to 90 at Lab / Rack A / D1 (was 100).",
+    );
   });
 
   it("opens the move dialog on M, and only then", async () => {
@@ -718,6 +745,8 @@ describe("components_scan.js — resolving a bag", () => {
 
     expect(document.getElementById("scan-choice-dialog").open).toBe(true);
     expect(document.querySelector('[data-choice="move"]').disabled).toBe(true);
+    // Nothing on record to correct: a first count of a part is an Add.
+    expect(document.querySelector('[data-choice="set"]').disabled).toBe(true);
     // Disabled with no explanation is just a dead button; the note carries the why.
     expect(document.getElementById("scan-choice-note").textContent).toMatch(
       /no stock on record/i,

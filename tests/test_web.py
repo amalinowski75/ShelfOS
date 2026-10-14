@@ -886,7 +886,7 @@ def test_a_writer_cannot_restore_a_deleted_component(
     assert 'id="component-restore-btn"' not in html
 
 
-def test_component_detail_writer_can_add_and_take_stock(client: TestClient) -> None:
+def test_component_detail_writer_can_add_take_and_set_stock(client: TestClient) -> None:
     """The list's row actions, replicated on the detail page (same shared dialog)."""
     ctype = client.post("/api/types", json={"name": "resistor"}).json()
     component = client.post("/api/components", json={"type_id": ctype["id"]}).json()
@@ -894,16 +894,38 @@ def test_component_detail_writer_can_add_and_take_stock(client: TestClient) -> N
 
     assert f'data-stock-act="add" data-component-id="{component["id"]}"' in html
     assert f'data-stock-act="take" data-component-id="{component["id"]}"' in html
+    assert f'data-stock-act="set" data-component-id="{component["id"]}"' in html
+    # No stock anywhere yet: a first count is an Add, as in the scan chooser.
+    set_button = html[: html.index('data-stock-act="set"')].rsplit("<button", 1)[1]
+    assert "disabled" in set_button
     assert 'id="stock-dialog"' in html
+    # Set mode writes into these two; without them the count has no context.
+    assert 'id="stock-current"' in html
+    assert 'id="stock-qty-label"' in html
     # The picker offers "+ New location" inline, so that dialog must be there too.
     assert 'id="location-dialog"' in html
     # The picker is populated: without `location_tree` in this route's context the
     # dialog would render "No locations yet" and be permanently unsubmittable, and
     # an id-only assertion would still pass.
-    client.post("/api/locations", json={"name": "Drawer 5", "type": "drawer"})
+    drawer = client.post(
+        "/api/locations", json={"name": "Drawer 5", "type": "drawer"}
+    ).json()
     html = client.get(f"/components/{component['id']}").text
     assert 'class="loc-picker-node"' in html
     assert "Drawer 5" in html
+
+    # With stock on record there is a count to correct, so Set is offered.
+    client.post(
+        "/api/stock/add",
+        json={
+            "component_id": component["id"],
+            "location_id": drawer["id"],
+            "quantity": 3,
+        },
+    )
+    html = client.get(f"/components/{component['id']}").text
+    set_button = html[: html.index('data-stock-act="set"')].rsplit("<button", 1)[1]
+    assert "disabled" not in set_button
 
 
 def test_component_detail_offers_a_move_per_stock_row(client: TestClient) -> None:
@@ -1043,6 +1065,8 @@ def test_location_usage_feed_drives_the_stock_dialog_filter(
     assert sorted(usage["occupied"]) == sorted([mine["id"], theirs["id"]])
     # The free drawer is in neither set, so Add offers it and Take doesn't.
     assert free["id"] not in usage["occupied"]
+    # Set shows what is on record here; JSON keys are strings.
+    assert usage["quantities"] == {str(mine["id"]): 4}
 
 
 def test_location_picker_announces_its_filter_notice(client: TestClient) -> None:
@@ -1076,7 +1100,7 @@ def test_location_usage_readable_by_read_only_but_not_anonymously(
     # Assert the BODY: require_web_user answers an unauthenticated request with a
     # 303 to /login, which the test client follows into a 200 — so a status-only
     # check here would pass with no auth at all.
-    assert set(resp.json()) == {"holding", "occupied"}
+    assert set(resp.json()) == {"holding", "occupied", "quantities"}
 
     anonymous = anon_client.get(url, follow_redirects=False)
     assert anonymous.status_code == 303

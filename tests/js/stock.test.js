@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { JSDOM } from "jsdom";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { loadPage, tick, CSRF } from "./harness.js";
 
 // stock_dialog.js owns the dialog (shared by the components list and a component's
@@ -61,7 +61,9 @@ function stockPageFixture(tree = flatTree(), creatable = false) {
       <form id="stock-form">
         <input name="component_id" />
         <input name="mode" />
+        <label id="stock-qty-label"></label>
         <input name="quantity" type="number" />
+        <p id="stock-current" hidden></p>
         <input id="stock-loc-scan" />
         <p id="stock-loc-scan-msg" hidden></p>
         <div class="loc-picker">
@@ -953,5 +955,214 @@ describe("stock_dialog.js — scanning a location label", () => {
 
     dialog.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
     expect(document.activeElement).toBe(field);
+  });
+});
+
+describe("stock_dialog.js — Set mode (a stocktake)", () => {
+  // The part sits in D1 (5) with 4 and D2 (6) with 10; Store / D9 (9) is free.
+  const counted = ({
+    holding = [5, 6],
+    quantities = { 5: 4, 6: 10 },
+    occupied = holding,
+    set,
+  } = {}) =>
+    (url) => {
+      if (url.endsWith("/location-usage")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ holding, occupied, quantities }),
+        });
+      }
+      if (url === "/api/stock/set") {
+        return Promise.resolve({ ok: true, json: async () => set ?? {} });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    };
+
+  async function openSet(fetchImpl, onSaved) {
+    const handles = loadPage(stockPageFixture(nestedTree()), SCRIPTS, { fetchImpl });
+    handles.window.openStockDialog("set", 7, onSaved);
+    await tick();
+    await tick();
+    handles.form = handles.document.getElementById("stock-form");
+    handles.current = handles.document.getElementById("stock-current");
+    handles.node = (id) =>
+      handles.document.querySelector(`.loc-picker-node[data-loc-id="${id}"]`);
+    return handles;
+  }
+
+  it("is titled for a count, accepts zero, and starts with no guess", async () => {
+    const h = await openSet(counted());
+    expect(h.document.getElementById("stock-dialog-title").textContent).toBe(
+      "Set stock count",
+    );
+    expect(h.document.getElementById("stock-qty-label").textContent).toBe(
+      "Counted quantity",
+    );
+    expect(h.form.quantity.min).toBe("0");
+    // Two places hold it: which one is being counted is the user's to say.
+    expect(locationId(h.document)).toBe("");
+    expect(h.form.quantity.value).toBe("");
+    expect(h.current.hidden).toBe(true);
+  });
+
+  it("offers only where the part is on record", async () => {
+    const h = await openSet(counted());
+    h.node(9).click(); // Store / D9 — nothing of this part there
+    expect(locationId(h.document)).toBe("");
+  });
+
+  it("shows and prefills what is on record at the picked location", async () => {
+    const h = await openSet(counted());
+    h.node(6).click();
+    expect(h.current.hidden).toBe(false);
+    expect(h.current.textContent).toBe("On record here: 10");
+    expect(h.form.quantity.value).toBe("10");
+    // Ready to type over: the count is the only thing left to enter.
+    expect(h.document.activeElement).toBe(h.form.quantity);
+  });
+
+  it("picks the only location the part is kept in", async () => {
+    const h = await openSet(counted({ holding: [6], quantities: { 6: 10 } }));
+    expect(locationId(h.document)).toBe("6");
+    expect(h.current.textContent).toBe("On record here: 10");
+    expect(h.form.quantity.value).toBe("10");
+  });
+
+  it("selects a scanned shelf with nothing on record, at zero", async () => {
+    // A part found where the record says nothing is — what a stocktake is for.
+    const h = await openSet(counted());
+    scanLoc(h.document, "SL9");
+    await tick();
+    expect(locationId(h.document)).toBe("9");
+    expect(scanMsg(h.document)).toMatch(/Nothing on record in Store \/ D9/);
+    expect(h.current.textContent).toBe("On record here: 0");
+  });
+
+  it("calls the record unknown, not 0, when the lookup fails", async () => {
+    // A prefilled 0 beside a drawer that really holds 50 reads as "matches —
+    // press Enter", and that Enter writes -50.
+    const h = await openSet(() => Promise.reject(new Error("offline")));
+    h.node(5).click(); // unfiltered tree after a failure, so any node is pickable
+    expect(h.current.textContent).toBe("On record here: unknown");
+    expect(h.form.quantity.value).toBe("");
+  });
+
+  it("calls the record unknown when the answer has no usable quantities", async () => {
+    // An older server (or a proxy) answering without them: holding still
+    // filters, but "not in quantities" must not turn into "0 on record".
+    // null stands for "absent" here: undefined would take the helper's default.
+    for (const quantities of [null, { 5: "lots", 6: 10 }]) {
+      const h = await openSet(counted({ holding: [5], quantities }));
+      expect(locationId(h.document)).toBe("5"); // still auto-picked
+      expect(h.current.textContent).toBe("On record here: unknown");
+      expect(h.form.quantity.value).toBe("");
+    }
+  });
+
+  it("keeps a count already typed when the location is picked after it", async () => {
+    const h = await openSet(counted());
+    h.form.quantity.value = "37";
+    h.form.quantity.dispatchEvent(new h.window.Event("input", { bubbles: true }));
+    h.node(6).click(); // 10 on record
+    expect(h.form.quantity.value).toBe("37");
+    expect(h.current.textContent).toBe("On record here: 10"); // still shown
+  });
+
+  it("hands a shelf label typed into the quantity box to the scan field", async () => {
+    // Focus sits on quantity once a location is picked. A wedge scan of "SL7"
+    // there would lose its letters, keep 7, and its Enter would save 7 as the
+    // count. The first letter moves the keyboard to the scan field instead.
+    const h = await openSet(counted({ holding: [6], quantities: { 6: 10 } }));
+    expect(h.document.activeElement).toBe(h.form.quantity);
+    const press = (key) => {
+      const event = new h.window.KeyboardEvent("keydown", {
+        key,
+        bubbles: true,
+        cancelable: true,
+      });
+      h.document.activeElement.dispatchEvent(event);
+      return event;
+    };
+    expect(press("7").defaultPrevented).toBe(false); // a digit is a count
+    expect(press("S").defaultPrevented).toBe(true);
+    const field = h.document.getElementById("stock-loc-scan");
+    expect(h.document.activeElement).toBe(field);
+    expect(field.value).toBe("S");
+  });
+
+  it("warns that a scanned shelf holds another part, as Add does", async () => {
+    const h = await openSet(
+      counted({ holding: [5, 6], quantities: { 5: 4, 6: 10 }, occupied: [5, 6, 9] }),
+    );
+    scanLoc(h.document, "SL9");
+    await tick();
+    expect(locationId(h.document)).toBe("9");
+    expect(scanMsg(h.document)).toMatch(/Store \/ D9 already holds another part/);
+  });
+
+  it("posts the count to /api/stock/set and reports what it changed", async () => {
+    const onSaved = vi.fn();
+    const h = await openSet(
+      counted({ set: { previous: 4, quantity: 0, movement: { id: 1 } } }),
+      onSaved,
+    );
+    h.node(5).click();
+    h.form.quantity.value = "0";
+    submitStock(h.document);
+    await tick();
+    await tick();
+
+    const post = h.fetchMock.mock.calls.find(([u]) => u === "/api/stock/set");
+    expect(JSON.parse(post[1].body)).toEqual({
+      component_id: 7,
+      location_id: 5,
+      quantity: 0,
+      note: null,
+    });
+    expect(onSaved).toHaveBeenCalledWith("Count set to 0 at Lab / Rack A / D1 (was 4).");
+  });
+
+  it("says so when the count matches the record", async () => {
+    const onSaved = vi.fn();
+    const h = await openSet(
+      counted({ set: { previous: 4, quantity: 4, movement: null } }),
+      onSaved,
+    );
+    h.node(5).click();
+    submitStock(h.document);
+    await tick();
+    await tick();
+    expect(onSaved).toHaveBeenCalledWith("Count matches the record: 4 at Lab / Rack A / D1.");
+  });
+
+  it("does not carry a count's location or summary into the next open", async () => {
+    const h = await openSet(counted());
+    h.node(6).click();
+    h.window.openStockDialog("add", 7);
+    expect(h.current.hidden).toBe(true);
+    expect(h.form.quantity.value).toBe("1");
+    expect(h.form.quantity.min).toBe("1");
+    expect(h.document.getElementById("stock-qty-label").textContent).toBe("Quantity");
+  });
+
+  it("keeps the summary across the detail page's reload", async () => {
+    const page = loadPage(
+      `<button data-stock-act="set" data-component-id="42">Set</button>
+       ${stockPageFixture(nestedTree())}`,
+      SCRIPTS,
+      { fetchImpl: counted({ set: { previous: 10, quantity: 8, movement: { id: 1 } } }) },
+    );
+    page.document.querySelector('[data-stock-act="set"]').click();
+    await tick();
+    await tick();
+    page.document.querySelector('.loc-picker-node[data-loc-id="6"]').click();
+    page.document.getElementById("stock-form").quantity.value = "8";
+    submitStock(page.document);
+    await tick();
+    await tick();
+    expect(
+      JSON.parse(page.window.sessionStorage.getItem("shelfos:pending-toast")).message,
+    ).toBe("Count set to 8 at Lab / Rack A / D2 (was 10).");
   });
 });

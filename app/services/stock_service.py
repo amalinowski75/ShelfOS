@@ -177,6 +177,83 @@ def apply_correction(
     )
 
 
+def set_stock(
+    session: Session,
+    *,
+    component_id: int,
+    location_id: int,
+    quantity: int,
+    user_id: int,
+    note: str | None = None,
+) -> tuple[int, StockMovement | None]:
+    """Set a location's stock to a counted ``quantity`` (a stocktake).
+
+    Recorded as a correction by the difference, so the ledger stays a list of
+    deltas like every other write. Returns the quantity found before the count and
+    the movement written — ``None`` when the count matched, since a zero-delta
+    movement would only be noise in the history.
+
+    The difference is computed from a read, so the write is made conditional on
+    that read still holding: a movement landing in between makes the update miss,
+    and the count is re-read and retried. The slot ends at the counted number
+    either way, and ``previous`` is the quantity the difference was taken from.
+    """
+    if quantity < 0:
+        raise ValidationError("quantity cannot be negative")
+    for _ in range(_SET_ATTEMPTS):
+        previous = _read_quantity(session, component_id, location_id)
+        if quantity == previous:
+            # Still the checks a write would make: a count against a deleted
+            # part or a location that doesn't exist must not read as "unchanged".
+            cs.require_live_component(session, component_id)
+            require_entity(session, Location, location_id, "location")
+            return previous, None
+        try:
+            movement = _record_movement(
+                session,
+                component_id=component_id,
+                location_id=location_id,
+                delta=quantity - previous,
+                reason=StockReason.CORRECTION,
+                user_id=user_id,
+                note=note,
+                expected=previous,
+            )
+        except _StaleCount:
+            # Nothing was written; drop the transaction so the re-read is fresh.
+            session.rollback()
+            continue
+        return previous, movement
+    raise InsufficientStockError(
+        f"stock at location {location_id} kept changing during the count; "
+        "please count again"
+    )
+
+
+# A count only retries while other movements keep landing on the same slot, which
+# at a hand-held bench means "almost never"; a few rounds is plenty.
+_SET_ATTEMPTS = 3
+
+
+class _StaleCount(Exception):
+    """The slot no longer holds the quantity a count's difference was taken from."""
+
+
+def _read_quantity(session: Session, component_id: int, location_id: int) -> int:
+    """The slot's quantity straight from the database (0 if none).
+
+    A column query rather than :func:`get_quantity`'s ORM object, which the
+    session's identity map could hand back with a quantity it read earlier.
+    """
+    found = session.exec(
+        select(ComponentLocation.quantity).where(
+            ComponentLocation.component_id == component_id,
+            ComponentLocation.location_id == location_id,
+        )
+    ).first()
+    return int(found) if found is not None else 0
+
+
 def get_quantity(session: Session, component_id: int, location_id: int) -> int:
     """Return the cached quantity of a component at a location (0 if none)."""
     cl = _find_component_location(session, component_id, location_id)
@@ -347,11 +424,14 @@ def _record_movement(
     note: str | None = None,
     invoice_id: int | None = None,
     commit: bool = True,
+    expected: int | None = None,
 ) -> StockMovement:
     """Write a movement and update the quantity cache atomically (decision D1).
 
     With ``commit=False`` the movement and cache update are only flushed, so
     they join the caller's transaction and commit (or roll back) together.
+    ``expected`` makes the write conditional on the slot still holding that
+    quantity (see :func:`_apply_delta`).
     """
     # Deleted components take no movements: the row survives so the history
     # pointing at it keeps meaning something, not so stock can keep moving
@@ -360,7 +440,7 @@ def _record_movement(
     require_entity(session, Location, location_id, "location")
 
     new_quantity = _apply_delta(
-        session, component_id, location_id, delta, container_type
+        session, component_id, location_id, delta, container_type, expected
     )
 
     audit_service.record_change(
@@ -398,6 +478,7 @@ def _apply_delta(
     location_id: int,
     delta: int,
     container_type: ContainerType | None,
+    expected: int | None = None,
 ) -> int:
     """Move a slot's cached quantity by ``delta`` and return the new quantity.
 
@@ -412,21 +493,30 @@ def _apply_delta(
     A non-``None`` ``container_type`` is written to the slot (on both create and
     update); ``None`` leaves an existing slot's type untouched and defaults a
     new slot to ``LOOSE``.
+
+    With ``expected``, the update also requires the slot to hold exactly that
+    quantity (``0`` also matching a slot not created yet), and raises
+    :class:`_StaleCount` when it doesn't — a count's difference is only right
+    against the quantity it was taken from.
     """
     values: dict[str, object] = {"quantity": col(ComponentLocation.quantity) + delta}
     if container_type is not None:
         values["container_type"] = container_type
+
+    conditions = [
+        col(ComponentLocation.component_id) == component_id,
+        col(ComponentLocation.location_id) == location_id,
+        col(ComponentLocation.quantity) + delta >= 0,
+    ]
+    if expected is not None:
+        conditions.append(col(ComponentLocation.quantity) == expected)
 
     for _ in range(2):
         result = cast(
             "CursorResult[int]",
             session.execute(
                 update(ComponentLocation)
-                .where(
-                    col(ComponentLocation.component_id) == component_id,
-                    col(ComponentLocation.location_id) == location_id,
-                    col(ComponentLocation.quantity) + delta >= 0,
-                )
+                .where(*conditions)
                 .values(values)
                 .returning(col(ComponentLocation.quantity))
             ),
@@ -436,6 +526,10 @@ def _apply_delta(
             return int(new_quantity)
 
         cl = _find_component_location(session, component_id, location_id)
+        if cl is not None and expected is not None:
+            # Holding `expected`, the update could not have gone negative (the
+            # result is the counted number, never below zero), so the slot moved.
+            raise _StaleCount()
         if cl is not None:
             # The slot exists but the guard rejected the update: it would go
             # negative.
@@ -443,6 +537,8 @@ def _apply_delta(
                 f"cannot remove {-delta}: only {cl.quantity} in stock at "
                 f"location {location_id}"
             )
+        if expected:
+            raise _StaleCount()  # counted against stock that is no longer there
         if delta < 0:
             raise InsufficientStockError(
                 f"cannot remove {-delta}: nothing in stock at location {location_id}"

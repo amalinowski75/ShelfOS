@@ -22,6 +22,7 @@ from app.models.enums import (
     ParameterDataType,
     StockReason,
 )
+from app.models.stock import StockMovement
 
 # Order matters for Pydantic union coercion: bool before int (bool is an int
 # subclass) so JSON ``true`` stays a bool rather than becoming ``1``.
@@ -288,6 +289,23 @@ class StockCorrection(BaseModel):
     location_id: int
     delta: int
     note: str | None = None
+
+
+class StockSet(BaseModel):
+    """A stocktake: the count found at a location, which becomes its quantity."""
+
+    component_id: int
+    location_id: int
+    quantity: int = Field(ge=0)
+    note: str | None = None
+
+
+class StockSetResult(BaseModel):
+    """``movement`` is ``None`` when the count matched what was on record."""
+
+    previous: int
+    quantity: int
+    movement: StockMovement | None
 
 
 class InvoiceCreate(BaseModel):

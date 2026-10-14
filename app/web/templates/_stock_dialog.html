@@ -1,4 +1,4 @@
-{# Shared "Add stock" / "Take from stock" dialog (§14-15). Include on any page a
+{# Shared "Add stock" / "Take from stock" / "Set stock count" dialog (§14-15, §17). Include on any page a
    writer can move stock from — the components list and a component's detail page.
    Its behaviour lives in stock_dialog.js, which exposes
    `openStockDialog(mode, componentId, onSaved)` and also wires any
@@ -19,8 +19,10 @@
       <input type="hidden" name="component_id" />
       <input type="hidden" name="mode" />
       <div class="field">
-        <label>Quantity</label>
+        <label id="stock-qty-label">Quantity</label>
         <input class="control mono" type="number" name="quantity" min="1" value="1" required />
+        {# Set mode only: what the record says is at the chosen location. #}
+        <p id="stock-current" class="muted small" hidden></p>
       </div>
       <div class="field">
         <label>Location</label>

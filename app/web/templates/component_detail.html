@@ -287,7 +287,7 @@
 
   <div class="card card-pad">
     {# Add/Take here mirror the components list's row actions — same dialog, same
-       endpoints. They live on the movements card because a write shows up as a new
+       endpoints; Set is the same dialog in stocktake mode. They live on the movements card because a write shows up as a new
        row right below them. #}
     <div class="widget-head">
       <h2>Stock movements</h2>
@@ -302,6 +302,14 @@
         <button type="button" class="btn btn-secondary btn-sm"
                 aria-label="Take from stock"
                 data-stock-act="take" data-component-id="{{ component.id }}">Take</button>
+        {# A stocktake: type what you counted, the difference is written for you.
+           Only where there is a count on record to correct — a first count is an
+           Add, the same rule as the scan chooser's "Set count". #}
+        <button type="button" class="btn btn-secondary btn-sm"
+                aria-label="Set stock count"
+                title="{{ 'Set the count at a location' if locations else 'No stock on record yet — use Add' }}"
+                {% if not locations %}disabled{% endif %}
+                data-stock-act="set" data-component-id="{{ component.id }}">Set</button>
       </div>
       {% endif %}
     </div>

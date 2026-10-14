@@ -628,3 +628,161 @@ def test_remove_stock_commits_on_its_own_by_default(
 
     assert ss.get_quantity(session, component_id, location_id) == 70
     assert ss.quantity_from_movements(session, component_id, location_id) == 70
+
+
+def test_set_stock_writes_the_difference_as_a_correction(
+    fixture_ids, session: Session
+) -> None:
+    """A stocktake: the count becomes the quantity, via one signed correction."""
+    component_id, location_id, user_id = fixture_ids
+    ss.add_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=10,
+        user_id=user_id,
+    )
+    previous, movement = ss.set_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=7,
+        user_id=user_id,
+        note="stocktake",
+    )
+    assert previous == 10
+    assert movement is not None
+    assert movement.delta_quantity == -3
+    assert movement.reason == StockReason.CORRECTION
+    assert movement.note == "stocktake"
+    assert ss.get_quantity(session, component_id, location_id) == 7
+    assert ss.quantity_from_movements(session, component_id, location_id) == 7
+
+    # Up as well as down, and from an empty slot.
+    _, up = ss.set_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=12,
+        user_id=user_id,
+    )
+    assert up is not None and up.delta_quantity == 5
+    assert ss.get_quantity(session, component_id, location_id) == 12
+
+
+def test_set_stock_to_zero_empties_the_slot(fixture_ids, session: Session) -> None:
+    component_id, location_id, user_id = fixture_ids
+    ss.add_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=4,
+        user_id=user_id,
+    )
+    ss.set_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=0,
+        user_id=user_id,
+    )
+    assert ss.get_quantity(session, component_id, location_id) == 0
+    assert ss.list_component_locations(session, component_id) == []
+
+
+def test_set_stock_to_the_same_count_writes_nothing(
+    fixture_ids, session: Session
+) -> None:
+    """A confirmed count is not a movement — a zero delta would be history noise."""
+    component_id, location_id, user_id = fixture_ids
+    ss.add_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=4,
+        user_id=user_id,
+    )
+    previous, movement = ss.set_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=4,
+        user_id=user_id,
+    )
+    assert (previous, movement) == (4, None)
+    assert len(ss.list_movements(session, component_id)) == 1
+
+
+def test_set_stock_rejects_a_negative_count(fixture_ids, session: Session) -> None:
+    component_id, location_id, user_id = fixture_ids
+    with pytest.raises(ValidationError):
+        ss.set_stock(
+            session,
+            component_id=component_id,
+            location_id=location_id,
+            quantity=-1,
+            user_id=user_id,
+        )
+
+
+def test_set_stock_unchanged_still_checks_the_location(
+    fixture_ids, session: Session
+) -> None:
+    """0 == 0 at a location that doesn't exist must be an error, not "unchanged"."""
+    component_id, _, user_id = fixture_ids
+    with pytest.raises(NotFoundError):
+        ss.set_stock(
+            session,
+            component_id=component_id,
+            location_id=999,
+            quantity=0,
+            user_id=user_id,
+        )
+
+
+def test_set_stock_lands_on_the_count_despite_a_movement_mid_count(
+    fixture_ids, session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A take between the read and the write must not skew the counted result.
+
+    Counted 10 against a record of 12 is "-2" — but if someone takes 5 in
+    between, applying -2 would leave 5. The write is conditional on the read, so
+    it misses, re-reads 7, and writes +3 instead.
+    """
+    component_id, location_id, user_id = fixture_ids
+    ss.add_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=12,
+        user_id=user_id,
+    )
+    real_read = ss._read_quantity
+    reads: list[int] = []
+
+    def read_then_someone_takes(*args: object) -> int:
+        seen = real_read(*args)  # type: ignore[arg-type]
+        reads.append(seen)
+        if len(reads) == 1:
+            ss.remove_stock(
+                session,
+                component_id=component_id,
+                location_id=location_id,
+                quantity=5,
+                user_id=user_id,
+            )
+        return seen
+
+    monkeypatch.setattr(ss, "_read_quantity", read_then_someone_takes)
+    previous, movement = ss.set_stock(
+        session,
+        component_id=component_id,
+        location_id=location_id,
+        quantity=10,
+        user_id=user_id,
+    )
+    assert reads == [12, 7]
+    assert previous == 7
+    assert movement is not None and movement.delta_quantity == 3
+    assert ss.get_quantity(session, component_id, location_id) == 10
+    assert ss.quantity_from_movements(session, component_id, location_id) == 10

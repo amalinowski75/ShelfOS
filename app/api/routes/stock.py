@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 from sqlmodel import Session
 
 from app.api.deps import get_session
-from app.api.schemas import StockAdd, StockCorrection, StockMove, StockRemove
+from app.api.schemas import (
+    StockAdd,
+    StockCorrection,
+    StockMove,
+    StockRemove,
+    StockSet,
+    StockSetResult,
+)
 from app.auth.deps import current_user_id
 from app.models.stock import StockMovement
 from app.services import stock_service as ss
@@ -66,6 +73,36 @@ def correct_stock(
         delta=payload.delta,
         user_id=user_id,
         note=payload.note,
+    )
+
+
+@router.post(
+    "/set", response_model=StockSetResult, status_code=status.HTTP_201_CREATED
+)
+def set_stock(
+    payload: StockSet,
+    response: Response,
+    session: Session = Depends(get_session),
+    user_id: int = Depends(current_user_id),
+) -> StockSetResult:
+    """Set a location's quantity to a counted number (a stocktake).
+
+    Written as a correction by the difference, answered 201 like the other stock
+    writes; a count that matches the record writes nothing and comes back 200
+    with ``movement: null``.
+    """
+    previous, movement = ss.set_stock(
+        session,
+        component_id=payload.component_id,
+        location_id=payload.location_id,
+        quantity=payload.quantity,
+        user_id=user_id,
+        note=payload.note,
+    )
+    if movement is None:
+        response.status_code = status.HTTP_200_OK
+    return StockSetResult(
+        previous=previous, quantity=payload.quantity, movement=movement
     )
 
 
